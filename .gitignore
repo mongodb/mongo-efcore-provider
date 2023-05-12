@@ -1,0 +1,69 @@
+# Visual Studio artifacts
+bin
+obj
+*.user
+*.suo
+*.vsp
+*.csproj.VisualState.xml
+*.vbproj.VisualState.xml
+*.cache
+TestResults
+.vs
+project.lock.json
+.vscode
+
+# JetBrains Rider artifacts
+.idea
+
+# CodeReview
+codereview.rc
+
+# GhostDoc artifacts
+CSharpDriver.sln.GhostDoc.xml
+
+# Mac OS artifacts
+.DS_Store
+
+# MonoDevelop artifacts
+*.pidb
+*.userprefs
+test-results
+
+# NUnit artifacts
+TestResult.xml
+
+# Resharper artifacts
+_ReSharper.*
+
+# Sandcastle artifacts
+Help
+*.shfbproj_*
+
+# Vim artifacts
+*.swp
+*~
+
+# Nuget artifacts
+src/packages
+
+# Nupkg artifacts
+*.nupkg
+
+# NCrunch artifacts
+*.ncrunch*
+
+# Merge tool artifacts
+*.cs.orig
+*.vb.orig
+
+# Fake Artifacts
+.fake
+
+# Cake Artifacts
+.dotnet
+
+# Other
+artifacts
+packages
+/tools
+/evergreen/krb5.conf.empty
