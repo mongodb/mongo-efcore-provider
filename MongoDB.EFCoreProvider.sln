@@ -5,8 +5,6 @@ VisualStudioVersion = 17.6.33606.364
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore", "src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj", "{F50A0110-A930-4876-BBD4-78B039C12D9E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DevSandbox", "src\DevSandbox\DevSandbox.csproj", "{7853EBD1-0BCD-4EBD-83C4-E63FEDB9E91D}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.Tests", "tests\MongoDB.EntityFrameworkCore.Tests\MongoDB.EntityFrameworkCore.Tests.csproj", "{9337C5E2-A5DB-4608-9274-5C679B92ED9E}"
 EndProject
 Global
@@ -19,10 +17,6 @@ Global
 		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Release|Any CPU.Build.0 = Release|Any CPU
-		{7853EBD1-0BCD-4EBD-83C4-E63FEDB9E91D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{7853EBD1-0BCD-4EBD-83C4-E63FEDB9E91D}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{7853EBD1-0BCD-4EBD-83C4-E63FEDB9E91D}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{7853EBD1-0BCD-4EBD-83C4-E63FEDB9E91D}.Release|Any CPU.Build.0 = Release|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
