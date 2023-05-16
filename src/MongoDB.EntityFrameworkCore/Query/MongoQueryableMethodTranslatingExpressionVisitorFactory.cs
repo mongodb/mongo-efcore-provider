@@ -18,7 +18,7 @@ using Microsoft.EntityFrameworkCore.Query;
 namespace MongoDB.EntityFrameworkCore.Query;
 
 /// <summary>
-/// A factory for creating <see cref="MongoQueryableMethodTranslatingExpressionVisitor" /> instances.
+/// A factory for creating <see cref="QueryableMethodTranslatingExpressionVisitor" /> instances for MongoDB.
 /// </summary>
 public class
     MongoQueryableMethodTranslatingExpressionVisitorFactory : IQueryableMethodTranslatingExpressionVisitorFactory
@@ -35,15 +35,15 @@ public class
     }
 
     /// <summary>
-    /// Dependencies for this service passed to each <see cref="MongoQueryableMethodTranslatingExpressionVisitor" /> created.
+    /// Dependencies for this service passed to each <see cref="QueryableMethodTranslatingExpressionVisitor" /> created.
     /// </summary>
     protected virtual QueryableMethodTranslatingExpressionVisitorDependencies Dependencies { get; }
 
     /// <summary>
-    /// Create a <see cref="MongoQueryableMethodTranslatingExpressionVisitor" />.
+    /// Create an implementation of <see cref="QueryableMethodTranslatingExpressionVisitor" />.
     /// </summary>
     /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> to pass to the new visitor.</param>
-    /// <returns>The newly created <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/>.</returns>
+    /// <returns>The newly created <see cref="QueryableMethodTranslatingExpressionVisitor"/>.</returns>
     public virtual QueryableMethodTranslatingExpressionVisitor Create(QueryCompilationContext queryCompilationContext)
-        => new MongoQueryableMethodTranslatingExpressionVisitor(Dependencies, queryCompilationContext);
+        => new CapturingQueryableMethodTranslatingExpressionVisitor(Dependencies, queryCompilationContext);
 }

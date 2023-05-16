@@ -26,7 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// <summary>
 /// Compiles the shaper expression for a given shaped query expression.
 /// </summary>
-public class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
+internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
 {
     static readonly MethodInfo __executeSequence = typeof(MongoShapedQueryCompilingExpressionVisitor).GetTypeInfo().DeclaredMethods
         .Single(m => m.Name == "ExecuteSequence");
@@ -50,13 +50,21 @@ public class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingEx
     protected override Expression VisitShapedQuery(ShapedQueryExpression shapedQueryExpression)
     {
         // The ShapedQueryExpression supplied gives us three important things
-        // 1. The actual query that needs to be translated in QueryExpression
+        // 1. The "server" query that needs to be translated in QueryExpression
         // 2. The "shaper" that turns query results back into CLR types in ShaperExpression
         // 3. An indication as to whether this is a sequence, a single item or a single/default item in ResultCardinality
+        // It wants back an expression it can execute multiple times giving a new QueryContext each time.
+        // This expects a fully translated query back - we can't do that if we want
+        // to push through the existing LINQ3 provider without major rework so instead we'll:
+        // 1. Visit the expression to capture and map any necessary model information (TODO)
+        // 2. Create a BSON class map with that information (TODO)
+        // 3. Ensure our call that we return can evaluate the querycontext (done)
+        // 4. Perform any additional pre and post processing to fit the LINQ3 provider in
+        // 5. Execute the shaper over the top of results (TODO)
 
-        var shaperParameter = Expression.Parameter(typeof(string), "s");
         var shaperBody = (EntityShaperExpression)shapedQueryExpression.ShaperExpression;
-        var shaperLambda = Expression.Lambda(shaperBody, QueryCompilationContext.QueryContextParameter, shaperParameter);
+        // var shaperParameter = Expression.Parameter(typeof(string), "s");
+        // var shaperLambda = Expression.Lambda(shaperBody, QueryCompilationContext.QueryContextParameter, shaperParameter);
 
         var queryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
 
@@ -89,24 +97,18 @@ public class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingEx
         string collectionName,
         MongoQueryExpression queryExpression)
     {
+        Console.WriteLine(
+            $"ExecuteSequence {queryExpression.GetHashCode():x8} {queryContext.GetHashCode():x8}");
+
         var client = ((MongoQueryContext)queryContext).MongoClient;
-        IQueryable<T> queryable = client.Database.GetCollection<T>(collectionName).AsQueryable();
+        var source = client.Database.GetCollection<T>(collectionName).AsQueryable();
 
-        if (queryExpression.Limit is ParameterExpression takeParameter)
-        {
-            var takeMethod = QueryableMethods.Take.MakeGenericMethod(typeof(T));
-            var limit = Expression.Constant(
-                Expression.Lambda(queryExpression.Limit).Compile().DynamicInvoke(queryContext, takeParameter.Name),
-                queryExpression.Limit.Type);
-            queryable = queryable.Provider.CreateQuery<T>(
-                Expression.Call(
-                    null,
-                    takeMethod,
-                    queryable.Expression, limit
-                ));
-        }
+        var query =
+            (MethodCallExpression)new MongoToV3TranslatingEvaluatorExpressionVisitor(queryContext, source.Expression).Visit(
+                queryExpression
+                    .ShuntedExpression)!;
 
-        return queryable;
+        return source.Provider.CreateQuery<T>(Expression.Call(null, query.Method, query.Arguments));
     }
 
     private static T? ExecuteSingle<T>(
@@ -115,6 +117,13 @@ public class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingEx
         MongoQueryExpression queryExpression)
     {
         var client = ((MongoQueryContext)queryContext).MongoClient;
-        return client.Database.GetCollection<T>(collectionName).AsQueryable().FirstOrDefault();
+        var source = client.Database.GetCollection<T>(collectionName).AsQueryable();
+
+        var query =
+            (MethodCallExpression)new MongoToV3TranslatingEvaluatorExpressionVisitor(queryContext, source.Expression).Visit(
+                queryExpression
+                    .ShuntedExpression)!;
+
+        return source.Provider.Execute<T>(Expression.Call(null, query.Method, query.Arguments));
     }
 }

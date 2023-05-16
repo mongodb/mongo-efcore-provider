@@ -25,8 +25,6 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// </summary>
 public class MongoQueryExpression : Expression
 {
-    // TODO: Capture projections, orderings, limit, offset, distinct etc.
-
     /// <summary>
     /// Create a <see cref="MongoQueryExpression"/> for the given entity type.
     /// </summary>
@@ -35,7 +33,6 @@ public class MongoQueryExpression : Expression
         : this(new MongoCollectionExpression(entityType), entityType.GetCollectionName()!)
     {
     }
-
 
     /// <summary>
     /// Creates a <see cref="MongoQueryExpression"/> for the given entity type.
@@ -49,8 +46,8 @@ public class MongoQueryExpression : Expression
     }
 
     public virtual MongoCollectionExpression FromExpression { get; private set; }
-    public virtual Expression? Predicate { get; private set; }
-    public virtual Expression? Limit { get; private set; }
+
+    public Expression? ShuntedExpression { get; set; }
 
     /// <summary>
     /// The underlying name of the collection for this query in MongoDB.
@@ -62,42 +59,4 @@ public class MongoQueryExpression : Expression
 
     /// <inheritdoc />
     public sealed override ExpressionType NodeType => ExpressionType.Extension;
-
-    /// <inheritdoc />
-    protected override Expression VisitChildren(ExpressionVisitor visitor)
-    {
-        var changed = false;
-
-        var fromExpression = (MongoCollectionExpression)visitor.Visit(FromExpression);
-        changed |= fromExpression != FromExpression;
-
-        var predicate = visitor.Visit(Predicate);
-        changed |= predicate != Predicate;
-
-        var limit = visitor.Visit(Limit);
-        changed |= limit != Limit;
-
-        return !changed ? this : new MongoQueryExpression(fromExpression, Collection) {Predicate = predicate, Limit = limit};
-    }
-
-    public virtual void ApplyPredicate(Expression expression)
-    {
-        if (expression is ConstantExpression constantExpression && constantExpression.Value is bool boolValue
-                                                                && boolValue)
-        {
-            return;
-        }
-
-        Predicate = Predicate == null
-            ? expression
-            : MakeBinary( // Consider balancing
-                ExpressionType.AndAlso,
-                Predicate,
-                expression);
-    }
-
-    public virtual void ApplyLimit(Expression limit)
-    {
-        Limit = limit;
-    }
 }
