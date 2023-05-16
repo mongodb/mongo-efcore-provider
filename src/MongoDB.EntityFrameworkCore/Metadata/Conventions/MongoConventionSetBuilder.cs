@@ -45,6 +45,7 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
 
         conventionSet.Add(new CollectionNameFromDbSetConvention(Dependencies));
         conventionSet.Add(new CollectionAttributeConvention(Dependencies));
+        conventionSet.Add(new TableAttributeConvention(Dependencies));
 
         return conventionSet;
     }
