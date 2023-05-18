@@ -13,7 +13,6 @@
 * limitations under the License.
 */
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -28,11 +27,8 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// </summary>
 internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
 {
-    static readonly MethodInfo __executeSequence = typeof(MongoShapedQueryCompilingExpressionVisitor).GetTypeInfo().DeclaredMethods
-        .Single(m => m.Name == "ExecuteSequence");
-
-    static readonly MethodInfo __executeSingle = typeof(MongoShapedQueryCompilingExpressionVisitor).GetTypeInfo().DeclaredMethods
-        .Single(m => m.Name == "ExecuteSingle");
+    static readonly MethodInfo __executeQuery = typeof(MongoShapedQueryCompilingExpressionVisitor).GetTypeInfo().DeclaredMethods
+        .Single(m => m.Name == "ExecuteQuery");
 
     /// <summary>
     /// Creates a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
@@ -60,7 +56,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         // 2. Create a BSON class map with that information (TODO)
         // 3. Ensure our call that we return can evaluate the querycontext (done)
         // 4. Perform any additional pre and post processing to fit the LINQ3 provider in
-        // 5. Execute the shaper over the top of results (TODO)
+        // 5. Execute the shaper over the top of each result (TODO)
 
         var shaperBody = (EntityShaperExpression)shapedQueryExpression.ShaperExpression;
         // var shaperParameter = Expression.Parameter(typeof(string), "s");
@@ -70,60 +66,35 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
 
         string collectionName = queryExpression.Collection;
 
-        switch (shapedQueryExpression.ResultCardinality)
-        {
-            case ResultCardinality.Enumerable:
-                {
-                    return Expression.Call(null, __executeSequence.MakeGenericMethod(shaperBody.Type),
-                        QueryCompilationContext.QueryContextParameter,
-                        Expression.Constant(collectionName),
-                        Expression.Constant(queryExpression));
-                }
-            case ResultCardinality.Single:
-            case ResultCardinality.SingleOrDefault:
-                {
-                    return Expression.Call(null, __executeSingle.MakeGenericMethod(shaperBody.Type),
-                        QueryCompilationContext.QueryContextParameter,
-                        Expression.Constant(collectionName),
-                        Expression.Constant(queryExpression));
-                }
-            default:
-                throw new NotSupportedException($"Unknown Shaper ResultCardinality of {shapedQueryExpression.ResultCardinality}");
-        }
+        return Expression.Call(null, __executeQuery.MakeGenericMethod(shaperBody.Type),
+            QueryCompilationContext.QueryContextParameter,
+            Expression.Constant(collectionName),
+            Expression.Constant(queryExpression), Expression.Constant(shapedQueryExpression.ResultCardinality));
     }
 
-    private static IEnumerable<T> ExecuteSequence<T>(
+    private static IEnumerable<T> ExecuteQuery<T>(
         QueryContext queryContext,
         string collectionName,
-        MongoQueryExpression queryExpression)
+        MongoQueryExpression queryExpression,
+        ResultCardinality resultCardinality)
     {
-        Console.WriteLine(
-            $"ExecuteSequence {queryExpression.GetHashCode():x8} {queryContext.GetHashCode():x8}");
+        // Console.WriteLine(
+        //     $"ExecuteSequence {queryExpression.GetHashCode():x8} {queryContext.GetHashCode():x8}");
 
         var client = ((MongoQueryContext)queryContext).MongoClient;
         var source = client.Database.GetCollection<T>(collectionName).AsQueryable();
+        var provider = source.Provider;
 
         var query =
             (MethodCallExpression)new MongoToV3TranslatingEvaluatorExpressionVisitor(queryContext, source.Expression).Visit(
                 queryExpression
                     .ShuntedExpression)!;
 
-        return source.Provider.CreateQuery<T>(Expression.Call(null, query.Method, query.Arguments));
-    }
+        var mappedCallExpression = Expression.Call(null, query.Method, query.Arguments);
 
-    private static T? ExecuteSingle<T>(
-        QueryContext queryContext,
-        string collectionName,
-        MongoQueryExpression queryExpression)
-    {
-        var client = ((MongoQueryContext)queryContext).MongoClient;
-        var source = client.Database.GetCollection<T>(collectionName).AsQueryable();
-
-        var query =
-            (MethodCallExpression)new MongoToV3TranslatingEvaluatorExpressionVisitor(queryContext, source.Expression).Visit(
-                queryExpression
-                    .ShuntedExpression)!;
-
-        return source.Provider.Execute<T>(Expression.Call(null, query.Method, query.Arguments));
+        // EF wants single items returned in an enumerable but LINQ providers do it differently
+        return resultCardinality == ResultCardinality.Enumerable
+            ? provider.CreateQuery<T>(mappedCallExpression)
+            : new[] {provider.Execute<T>(mappedCallExpression)};
     }
 }
