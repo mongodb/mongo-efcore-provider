@@ -13,12 +13,15 @@
 * limitations under the License.
 */
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using AgileObjects.NetStandardPolyfills;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
@@ -27,8 +30,10 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// </summary>
 internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
 {
-    static readonly MethodInfo __executeQuery = typeof(MongoShapedQueryCompilingExpressionVisitor).GetTypeInfo().DeclaredMethods
-        .Single(m => m.Name == "ExecuteQuery");
+    static readonly MethodInfo __translateAndExecuteQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
+        .GetTypeInfo()
+        .DeclaredMethods
+        .Single(m => m.Name == "TranslateAndExecuteQuery");
 
     /// <summary>
     /// Creates a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
@@ -63,23 +68,30 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         var shaperLambda = Expression.Lambda(shaperBody, QueryCompilationContext.QueryContextParameter, shaperParameter);
 
         var queryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
-        var returnType = queryExpression.ShuntedExpression.Type;
-        var actualReturnType = returnType.GetGenericTypeDefinition() == typeof(IQueryable<>)
-            ? returnType.GetGenericArguments()[0]
-            : returnType;
 
         // Console.WriteLine(
         //    $"VisitShapedQuery 0x{shapedQueryExpression.GetHashCode():x8}");
 
         string collectionName = queryExpression.Collection;
+        Type resultType = DetermineResultType(queryExpression.ShuntedExpression) ?? shaperBody.Type;
 
-        return Expression.Call(null, __executeQuery.MakeGenericMethod(shaperBody.Type, actualReturnType),
+        return Expression.Call(null,
+            __translateAndExecuteQuery.MakeGenericMethod(shaperBody.Type, resultType),
             QueryCompilationContext.QueryContextParameter,
             Expression.Constant(collectionName),
             Expression.Constant(queryExpression), Expression.Constant(shapedQueryExpression.ResultCardinality));
     }
 
-    private static IEnumerable<TResult> ExecuteQuery<TDocument, TResult>(
+    private static Type? DetermineResultType(Expression? expression)
+    {
+        return expression == null
+            ? null
+            : expression.Type.IsGenericType() && expression.Type.GetGenericTypeDefinition() == typeof(IQueryable<>)
+                ? expression.Type.GetGenericArguments()[0]
+                : expression.Type;
+    }
+
+    private static IEnumerable<TResult> TranslateAndExecuteQuery<TDocument, TResult>(
         QueryContext queryContext,
         string collectionName,
         MongoQueryExpression queryExpression,
@@ -90,18 +102,30 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
 
         var client = ((MongoQueryContext)queryContext).MongoClient;
         var source = client.Database.GetCollection<TDocument>(collectionName).AsQueryable();
-        var provider = source.Provider;
+
+        var finalExpression = DetermineFinalExpression(queryContext, queryExpression, source);
+
+        // EF wants single items returned in an enumerable but LINQ providers do it differently
+        return resultCardinality == ResultCardinality.Enumerable
+            ? source.Provider.CreateQuery<TResult>(finalExpression)
+            : new[] {source.Provider.Execute<TResult>(finalExpression)};
+    }
+
+    private static Expression DetermineFinalExpression(
+        QueryContext queryContext,
+        MongoQueryExpression queryExpression,
+        IMongoQueryable source)
+    {
+        if (queryExpression.ShuntedExpression == null) // No LINQ methods, e.g. direct ToList() against DbSet
+        {
+            return source.Expression;
+        }
 
         var query =
             (MethodCallExpression)new MongoToV3TranslatingEvaluatorExpressionVisitor(queryContext, source.Expression).Visit(
                 queryExpression
                     .ShuntedExpression)!;
 
-        var mappedCallExpression = Expression.Call(null, query.Method, query.Arguments);
-
-        // EF wants single items returned in an enumerable but LINQ providers do it differently
-        return resultCardinality == ResultCardinality.Enumerable
-            ? provider.CreateQuery<TResult>(mappedCallExpression)
-            : new[] {provider.Execute<TResult>(mappedCallExpression)};
+        return Expression.Call(null, query.Method, query.Arguments);
     }
 }
