@@ -59,30 +59,37 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         // 5. Execute the shaper over the top of each result (TODO)
 
         var shaperBody = (EntityShaperExpression)shapedQueryExpression.ShaperExpression;
-        // var shaperParameter = Expression.Parameter(typeof(string), "s");
-        // var shaperLambda = Expression.Lambda(shaperBody, QueryCompilationContext.QueryContextParameter, shaperParameter);
+        var shaperParameter = Expression.Parameter(shaperBody.Type, "e");
+        var shaperLambda = Expression.Lambda(shaperBody, QueryCompilationContext.QueryContextParameter, shaperParameter);
 
         var queryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
+        var returnType = queryExpression.ShuntedExpression.Type;
+        var actualReturnType = returnType.GetGenericTypeDefinition() == typeof(IQueryable<>)
+            ? returnType.GetGenericArguments()[0]
+            : returnType;
+
+        // Console.WriteLine(
+        //    $"VisitShapedQuery 0x{shapedQueryExpression.GetHashCode():x8}");
 
         string collectionName = queryExpression.Collection;
 
-        return Expression.Call(null, __executeQuery.MakeGenericMethod(shaperBody.Type),
+        return Expression.Call(null, __executeQuery.MakeGenericMethod(shaperBody.Type, actualReturnType),
             QueryCompilationContext.QueryContextParameter,
             Expression.Constant(collectionName),
             Expression.Constant(queryExpression), Expression.Constant(shapedQueryExpression.ResultCardinality));
     }
 
-    private static IEnumerable<T> ExecuteQuery<T>(
+    private static IEnumerable<TResult> ExecuteQuery<TDocument, TResult>(
         QueryContext queryContext,
         string collectionName,
         MongoQueryExpression queryExpression,
         ResultCardinality resultCardinality)
     {
         // Console.WriteLine(
-        //     $"ExecuteSequence {queryExpression.GetHashCode():x8} {queryContext.GetHashCode():x8}");
+        //    $"ExecuteSequence 0x{queryExpression.GetHashCode():x8} 0x{queryContext.GetHashCode():x8}");
 
         var client = ((MongoQueryContext)queryContext).MongoClient;
-        var source = client.Database.GetCollection<T>(collectionName).AsQueryable();
+        var source = client.Database.GetCollection<TDocument>(collectionName).AsQueryable();
         var provider = source.Provider;
 
         var query =
@@ -94,7 +101,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
 
         // EF wants single items returned in an enumerable but LINQ providers do it differently
         return resultCardinality == ResultCardinality.Enumerable
-            ? provider.CreateQuery<T>(mappedCallExpression)
-            : new[] {provider.Execute<T>(mappedCallExpression)};
+            ? provider.CreateQuery<TResult>(mappedCallExpression)
+            : new[] {provider.Execute<TResult>(mappedCallExpression)};
     }
 }
