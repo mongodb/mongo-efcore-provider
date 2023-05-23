@@ -100,6 +100,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IProviderConventionSetBuilder, MongoConventionSetBuilder>()
             .TryAdd<IQueryContextFactory, MongoQueryContextFactory>()
             .TryAdd<ITypeMappingSource, MongoTypeMappingSource>()
+            .TryAdd<IQueryCompilationContextFactory, MongoQueryCompilationContextFactory>()
             .TryAdd<IQueryableMethodTranslatingExpressionVisitorFactory,
                 MongoQueryableMethodTranslatingExpressionVisitorFactory>()
             .TryAdd<IShapedQueryCompilingExpressionVisitorFactory, MongoShapedQueryCompilingExpressionVisitorFactory>()

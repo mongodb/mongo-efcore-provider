@@ -42,8 +42,9 @@ public class
     /// <summary>
     /// Create an implementation of <see cref="QueryableMethodTranslatingExpressionVisitor" />.
     /// </summary>
-    /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> to pass to the new visitor.</param>
+    /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> to pass to the new visitor.</param>
     /// <returns>The newly created <see cref="QueryableMethodTranslatingExpressionVisitor"/>.</returns>
     public virtual QueryableMethodTranslatingExpressionVisitor Create(QueryCompilationContext queryCompilationContext)
-        => new CapturingQueryableMethodTranslatingExpressionVisitor(Dependencies, queryCompilationContext);
+        => new CapturingQueryableMethodTranslatingExpressionVisitor(Dependencies,
+            (MongoQueryCompilationContext)queryCompilationContext);
 }

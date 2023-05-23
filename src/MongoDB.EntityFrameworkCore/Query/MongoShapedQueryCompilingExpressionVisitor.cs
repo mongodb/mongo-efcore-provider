@@ -18,7 +18,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using AgileObjects.NetStandardPolyfills;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
@@ -86,7 +85,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
     {
         return expression == null
             ? null
-            : expression.Type.IsGenericType() && expression.Type.GetGenericTypeDefinition() == typeof(IQueryable<>)
+            : expression.Type.IsGenericType && expression.Type.GetGenericTypeDefinition() == typeof(IQueryable<>)
                 ? expression.Type.GetGenericArguments()[0]
                 : expression.Type;
     }

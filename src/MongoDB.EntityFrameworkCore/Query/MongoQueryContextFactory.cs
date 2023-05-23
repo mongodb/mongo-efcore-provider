@@ -23,8 +23,6 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// </summary>
 public class MongoQueryContextFactory : IQueryContextFactory
 {
-    private readonly IMongoClientWrapper _mongoClient;
-
     /// <summary>
     /// Create a <see cref="MongoQueryContextFactory"/>.
     /// </summary>
@@ -35,11 +33,11 @@ public class MongoQueryContextFactory : IQueryContextFactory
         IMongoClientWrapper mongoClient)
     {
         Dependencies = dependencies;
-        _mongoClient = mongoClient;
+        Client = mongoClient;
     }
 
     /// <summary>
-    /// The <see cref="QueryContextDependencies"/>  passed to each created <see cref="MongoQueryContext"/>.
+    /// The <see cref="QueryContextDependencies"/> passed to each created <see cref="MongoQueryContext"/>.
     /// </summary>
     protected virtual QueryContextDependencies Dependencies { get; }
 
@@ -47,10 +45,10 @@ public class MongoQueryContextFactory : IQueryContextFactory
     /// Create a <see cref="MongoQueryContext"/>.
     /// </summary>
     /// <returns>A new <see cref="MongoQueryContext"/>.</returns>
-    public virtual QueryContext Create() => new MongoQueryContext(Dependencies, _mongoClient);
+    public virtual QueryContext Create() => new MongoQueryContext(Dependencies, Client);
 
     /// <summary>
     /// The <see cref="IMongoClientWrapper"/> passed to each created <see cref="MongoQueryContext"/>.
     /// </summary>
-    public IMongoClientWrapper Client => _mongoClient;
+    public IMongoClientWrapper Client { get; }
 }

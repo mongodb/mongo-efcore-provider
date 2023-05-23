@@ -41,10 +41,10 @@ internal class CapturingQueryableMethodTranslatingExpressionVisitor : QueryableM
     /// dependencies and query compilation context.
     /// </summary>
     /// <param name="dependencies">The <see cref="QueryableMethodTranslatingExpressionVisitorDependencies"/> this visitor depends upon.</param>
-    /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
+    /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
     public CapturingQueryableMethodTranslatingExpressionVisitor(
         QueryableMethodTranslatingExpressionVisitorDependencies dependencies,
-        QueryCompilationContext queryCompilationContext)
+        MongoQueryCompilationContext queryCompilationContext)
         : base(dependencies, queryCompilationContext, subquery: false)
     {
     }
