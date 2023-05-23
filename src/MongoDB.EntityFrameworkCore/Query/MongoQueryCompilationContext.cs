@@ -13,6 +13,9 @@
 * limitations under the License.
 */
 
+using System;
+using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Query;
@@ -20,10 +23,35 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// <inheritdoc />
 public class MongoQueryCompilationContext : QueryCompilationContext
 {
+    private readonly ExpressionPrinter _expressionPrinter;
+
     public MongoQueryCompilationContext(
         QueryCompilationContextDependencies dependencies,
         bool async)
         : base(dependencies, async)
     {
+        _expressionPrinter = new ExpressionPrinter();
+    }
+
+    public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression query)
+    {
+        query = Dependencies.QueryTranslationPreprocessorFactory.Create(this).Process(query);
+        query = Dependencies.QueryableMethodTranslatingExpressionVisitorFactory.Create(this).Visit(query);
+        query = Dependencies.QueryTranslationPostprocessorFactory.Create(this).Process(query);
+
+        query = Dependencies.ShapedQueryCompilingExpressionVisitorFactory.Create(this).Visit(query);
+
+        var queryExecutorExpression = Expression.Lambda<Func<QueryContext, TResult>>(
+            query,
+            QueryContextParameter);
+
+        try
+        {
+            return queryExecutorExpression.Compile();
+        }
+        finally
+        {
+            Logger.QueryExecutionPlanned(Dependencies.Context, _expressionPrinter, queryExecutorExpression);
+        }
     }
 }

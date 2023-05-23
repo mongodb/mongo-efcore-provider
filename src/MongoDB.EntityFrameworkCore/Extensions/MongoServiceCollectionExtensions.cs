@@ -101,8 +101,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IQueryContextFactory, MongoQueryContextFactory>()
             .TryAdd<ITypeMappingSource, MongoTypeMappingSource>()
             .TryAdd<IQueryCompilationContextFactory, MongoQueryCompilationContextFactory>()
-            .TryAdd<IQueryableMethodTranslatingExpressionVisitorFactory,
-                MongoQueryableMethodTranslatingExpressionVisitorFactory>()
+            .TryAdd<IQueryableMethodTranslatingExpressionVisitorFactory, MongoQueryableMethodTranslatingExpressionVisitorFactory>()
             .TryAdd<IShapedQueryCompilingExpressionVisitorFactory, MongoShapedQueryCompilingExpressionVisitorFactory>()
             .TryAddProviderSpecificServices(
                 b => b

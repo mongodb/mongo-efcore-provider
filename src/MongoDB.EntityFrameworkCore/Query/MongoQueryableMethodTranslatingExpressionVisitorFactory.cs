@@ -20,8 +20,7 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// <summary>
 /// A factory for creating <see cref="QueryableMethodTranslatingExpressionVisitor" /> instances for MongoDB.
 /// </summary>
-public class
-    MongoQueryableMethodTranslatingExpressionVisitorFactory : IQueryableMethodTranslatingExpressionVisitorFactory
+public class MongoQueryableMethodTranslatingExpressionVisitorFactory : IQueryableMethodTranslatingExpressionVisitorFactory
 {
     /// <summary>
     /// Creates a <see cref="MongoQueryableMethodTranslatingExpressionVisitorFactory"/> that will
