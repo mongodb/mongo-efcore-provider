@@ -13,11 +13,11 @@
 * limitations under the License.
 */
 
-#nullable disable
-
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -27,29 +27,33 @@ namespace MongoDB.EntityFrameworkCore.Query;
 
 // TODO: Add async support
 
-internal sealed class QueryingEnumerable<T> : IEnumerable<T>
+internal sealed class QueryingEnumerable<T> : IAsyncEnumerable<T>, IEnumerable<T>
 {
-    private readonly MongoQueryContext _mongoQueryContext;
+    private readonly MongoQueryContext _queryContext;
     private readonly IEnumerable<T> _serverEnumerable;
+    private readonly Func<MongoQueryContext, T, T> _shaper;
     private readonly Type _contextType;
-    private readonly IDiagnosticsLogger<DbLoggerCategory.Query> _queryLogger;
     private readonly bool _standAloneStateManager;
     private readonly bool _threadSafetyChecksEnabled;
 
     public QueryingEnumerable(
-        MongoQueryContext mongoQueryContext,
+        MongoQueryContext queryContext,
         IEnumerable<T> serverEnumerable,
+        Func<MongoQueryContext, T, T> shaper,
         Type contextType,
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled)
     {
-        _mongoQueryContext = mongoQueryContext;
+        _queryContext = queryContext;
         _serverEnumerable = serverEnumerable;
         _contextType = contextType;
-        _queryLogger = mongoQueryContext.QueryLogger;
+        _shaper = shaper;
         _standAloneStateManager = standAloneStateManager;
         _threadSafetyChecksEnabled = threadSafetyChecksEnabled;
     }
+
+    public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        => new Enumerator(this, cancellationToken);
 
     public IEnumerator<T> GetEnumerator()
         => new Enumerator(this);
@@ -57,36 +61,40 @@ internal sealed class QueryingEnumerable<T> : IEnumerable<T>
     IEnumerator IEnumerable.GetEnumerator()
         => GetEnumerator();
 
-    private sealed class Enumerator : IEnumerator<T>
+    private sealed class Enumerator : IEnumerator<T>, IAsyncEnumerator<T>
     {
-        private readonly MongoQueryContext _mongoQueryContext;
+        private readonly MongoQueryContext _queryContext;
         private readonly Func<MongoQueryContext, T, T> _shaper;
         private readonly Type _contextType;
         private readonly IDiagnosticsLogger<DbLoggerCategory.Query> _queryLogger;
         private readonly bool _standAloneStateManager;
+        private readonly CancellationToken _cancellationToken;
         private readonly IConcurrencyDetector? _concurrencyDetector;
         private readonly IExceptionDetector _exceptionDetector;
         private readonly IEnumerable<T> _serverEnumerator;
 
-        private IEnumerator<T> _enumerator;
+        private IEnumerator<T>? _enumerator;
 
-        public Enumerator(QueryingEnumerable<T> queryingEnumerable)
+        public Enumerator(QueryingEnumerable<T> queryingEnumerable, CancellationToken cancellationToken = default)
         {
-            _mongoQueryContext = queryingEnumerable._mongoQueryContext;
+            _queryContext = queryingEnumerable._queryContext;
             _serverEnumerator = queryingEnumerable._serverEnumerable;
             _contextType = queryingEnumerable._contextType;
-            _queryLogger = queryingEnumerable._queryLogger;
+            _shaper = queryingEnumerable._shaper;
+            _queryLogger = _queryContext.QueryLogger;
             _standAloneStateManager = queryingEnumerable._standAloneStateManager;
-            _exceptionDetector = _mongoQueryContext.ExceptionDetector;
+            _cancellationToken = cancellationToken;
+            _exceptionDetector = _queryContext.ExceptionDetector;
+            Current = default!;
 
             _concurrencyDetector = queryingEnumerable._threadSafetyChecksEnabled
-                ? _mongoQueryContext.ConcurrencyDetector
+                ? _queryContext.ConcurrencyDetector
                 : null;
         }
 
         public T Current { get; private set; }
 
-        object IEnumerator.Current => Current;
+        object IEnumerator.Current => Current!;
 
         public bool MoveNext()
         {
@@ -96,22 +104,7 @@ internal sealed class QueryingEnumerable<T> : IEnumerable<T>
 
                 try
                 {
-                    if (_enumerator == null)
-                    {
-                        EntityFrameworkEventSource.Log.QueryExecuting();
-
-                        _enumerator = _serverEnumerator.GetEnumerator();
-                        _mongoQueryContext.InitializeStateManager(_standAloneStateManager);
-                    }
-
-                    bool hasNext = _enumerator.MoveNext();
-
-                    Current
-                        = hasNext
-                            ? _enumerator.Current
-                            : default;
-
-                    return hasNext;
+                    return MoveNextHelper();
                 }
                 finally
                 {
@@ -133,10 +126,75 @@ internal sealed class QueryingEnumerable<T> : IEnumerable<T>
             }
         }
 
+        public ValueTask<bool> MoveNextAsync()
+        {
+            try
+            {
+                _concurrencyDetector?.EnterCriticalSection();
+
+                try
+                {
+                    _cancellationToken.ThrowIfCancellationRequested();
+
+                    return new ValueTask<bool>(MoveNextHelper());
+                }
+                finally
+                {
+                    _concurrencyDetector?.ExitCriticalSection();
+                }
+            }
+            catch (Exception exception)
+            {
+                if (_exceptionDetector.IsCancellation(exception, _cancellationToken))
+                {
+                    _queryLogger.QueryCanceled(_contextType);
+                }
+                else
+                {
+                    _queryLogger.QueryIterationFailed(_contextType, exception);
+                }
+
+                throw;
+            }
+        }
+
+        private bool MoveNextHelper()
+        {
+            if (_enumerator == null)
+            {
+                EntityFrameworkEventSource.Log.QueryExecuting();
+
+                _enumerator = _serverEnumerator.GetEnumerator();
+                _queryContext.InitializeStateManager(_standAloneStateManager);
+            }
+
+            bool hasNext = _enumerator.MoveNext();
+
+            Current = hasNext
+                ? _shaper(_queryContext, _enumerator.Current)
+                : default!;
+
+            return hasNext;
+        }
+
         public void Dispose()
         {
             _enumerator?.Dispose();
             _enumerator = null;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            var enumerator = _enumerator;
+            _enumerator = null;
+
+            if (enumerator is IAsyncDisposable asyncDisposable)
+            {
+                return asyncDisposable.DisposeAsync();
+            }
+
+            enumerator?.Dispose();
+            return default;
         }
 
         public void Reset()
