@@ -43,5 +43,5 @@ public class MongoShapedQueryCompilingExpressionVisitorFactory : IShapedQueryCom
     /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> passed to each newly created <see cref="MongoShapedQueryCompilingExpressionVisitor"/>.</param>
     /// <returns>The newly created <see cref="MongoShapedQueryCompilingExpressionVisitor"/>.</returns>
     public ShapedQueryCompilingExpressionVisitor Create(QueryCompilationContext queryCompilationContext) =>
-        new MongoShapedQueryCompilingExpressionVisitor(Dependencies, queryCompilationContext);
+        new MongoShapedQueryCompilingExpressionVisitor(Dependencies, (MongoQueryCompilationContext)queryCompilationContext);
 }
