@@ -96,7 +96,8 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         var source = mongoQueryContext.MongoClient.Database.GetCollection<TDocument>(queryExpression.Collection).AsQueryable();
         var retargetedExpression = RetargetQueryableExpression(queryContext, queryExpression, source);
 
-        TResult FakeShaper(QueryContext _, TResult t) => t;
+        // TODO: Figure out how to do a real shaper here or bypass it entirely and use QueryContext.StartTracking
+        TResult FakeShaper(QueryContext qc, TResult t) => t;
 
         if (resultCardinality != ResultCardinality.Enumerable)
             return new[] {FakeShaper(queryContext, source.Provider.Execute<TResult>(retargetedExpression))};
@@ -104,7 +105,6 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         return new QueryingEnumerable<TResult>(
             mongoQueryContext,
             source.Provider.CreateQuery<TResult>(retargetedExpression),
-            // TODO: Pass shaper
             FakeShaper,
             contextType,
             standAloneStateManager,
@@ -122,7 +122,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         }
 
         var query =
-            (MethodCallExpression)new MongoToV3TranslatingEvaluatorExpressionVisitor(queryContext, source.Expression).Visit(
+            (MethodCallExpression)new MongoToLinqTranslatingExpressionVisitor(queryContext, source.Expression).Visit(
                 queryExpression
                     .ShuntedExpression)!;
 

@@ -22,12 +22,12 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// <summary>
 /// Visits the tree resolving any query context parameter bindings and EF references so the query can be used with the MongoDB V3 LINQ provider.
 /// </summary>
-internal class MongoToV3TranslatingEvaluatorExpressionVisitor : ExpressionVisitor
+internal class MongoToLinqTranslatingExpressionVisitor : ExpressionVisitor
 {
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
 
-    internal MongoToV3TranslatingEvaluatorExpressionVisitor(QueryContext queryContext, Expression source)
+    internal MongoToLinqTranslatingExpressionVisitor(QueryContext queryContext, Expression source)
     {
         _queryContext = queryContext;
         _source = source;
