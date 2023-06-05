@@ -27,7 +27,12 @@ public static class MongoAnnotationNames
     public const string Prefix = "Mongo:";
 
     /// <summary>
-    /// The name for collection name annotations.
+    /// The key for collection name annotations.
     /// </summary>
     public const string CollectionName = Prefix + "CollectionName";
+
+    /// <summary>
+    /// The key for field name annotations.
+    /// </summary>
+    public const string FieldName = Prefix + "FieldName";
 }

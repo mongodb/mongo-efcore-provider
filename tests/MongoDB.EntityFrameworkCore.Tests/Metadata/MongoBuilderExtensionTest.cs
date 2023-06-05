@@ -13,13 +13,11 @@
 * limitations under the License.
 */
 
-using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using MongoDB.EntityFrameworkCore.Extensions;
-using MongoDB.EntityFrameworkCore.Tests.TestUtilities;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata;
 
@@ -40,6 +38,22 @@ public class MongoBuilderExtensionTest
         Assert.Equal("Second", typeBuilder.Metadata.GetCollectionName());
     }
 
+    [Fact]
+    public void Can_set_field_name()
+    {
+        var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention);
+        var propertyBuilder = typeBuilder.Property(typeof(string), "SampleString", ConfigurationSource.Convention);
+
+        Assert.NotNull(propertyBuilder.ToField("First"));
+        Assert.Equal("First", propertyBuilder.Metadata.GetFieldName());
+
+        Assert.NotNull(propertyBuilder.ToField("Second", fromDataAnnotation: true));
+        Assert.Equal("Second", propertyBuilder.Metadata.GetFieldName());
+
+        Assert.Null(propertyBuilder.ToField("Third"));
+        Assert.Equal("Second", propertyBuilder.Metadata.GetFieldName());
+    }
+
     protected virtual ModelBuilder CreateConventionModelBuilder()
         => MongoTestHelpers.Instance.CreateConventionBuilder();
 
@@ -48,8 +62,6 @@ public class MongoBuilderExtensionTest
 
     private class SampleEntity
     {
-        public static readonly PropertyInfo SampleProperty = typeof(SampleEntity).GetProperty("Sample");
-
-        public int? Sample { get; set; }
+        public string SampleString { get; set; }
     }
 }
