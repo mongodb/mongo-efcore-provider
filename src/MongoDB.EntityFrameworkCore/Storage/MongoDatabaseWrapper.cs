@@ -53,7 +53,7 @@ public class MongoDatabaseWrapper : Database
     /// <summary>
     /// Save all the changes detected in the entities collection to the underlying MongoDB database.
     /// </summary>
-    /// <param name="entries">Entities to process for changes.</param>
+    /// <param name="entries">A list of <see cref="IUpdateEntry"/> indicating which changes to process.</param>
     /// <returns>Number of documents affected during saving changes.</returns>
     public override int SaveChanges(IList<IUpdateEntry> entries)
     {
@@ -65,11 +65,10 @@ public class MongoDatabaseWrapper : Database
     /// <summary>
     /// Save all the changes detected in the entities collection to the underlying MongoDB database asynchronously.
     /// </summary>
-    /// <param name="entries">Entities to process for changes.</param>
+    /// <param name="entries">A list of <see cref="IUpdateEntry"/> indicating which changes to process.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that might be cancelled during the save.</param>
     /// <returns>Task that when resolved contains the number of documents affected during saving changes.</returns>
-    public override Task<int> SaveChangesAsync(IList<IUpdateEntry> entries,
-        CancellationToken cancellationToken = default)
+    public override Task<int> SaveChangesAsync(IList<IUpdateEntry> entries, CancellationToken cancellationToken = default)
     {
         var docsAffected = 0;
         // TODO: Save changes asynchronously

@@ -12,18 +12,15 @@ public class CollectionNameFromDbSetConventionTests
     public virtual void DbSet_names_are_used_as_collection_names()
     {
         using var context = new UnnamedCollectionsDbContext();
-        Assert.Equal("Customers", GetCollectionName<Customer>(context));
+        Assert.Equal("Customers", context.GetCollectionName<Customer>());
     }
 
     [Fact]
     public virtual void Explicit_collection_names_can_be_set()
     {
         using var context = new NamedCollectionsDbContext();
-        Assert.Equal("customersCollection", GetCollectionName<Customer>(context));
+        Assert.Equal("customersCollection", context.GetCollectionName<Customer>());
     }
-
-    static string GetCollectionName<TEntity>(DbContext context) =>
-        context.Model.FindEntityType(typeof(TEntity)).GetCollectionName();
 
     class Customer
     {
@@ -40,7 +37,7 @@ public class CollectionNameFromDbSetConventionTests
     {
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => optionsBuilder
-                .UseMongo("mongodb://localhost:27017", "UnitTests");
+                .UseMongoDB("mongodb://localhost:27017", "UnitTests");
     }
 
     class NamedCollectionsDbContext : BaseDbContext
@@ -53,6 +50,6 @@ public class CollectionNameFromDbSetConventionTests
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => optionsBuilder
-                .UseMongo("mongodb://localhost:27017", "UnitTests");
+                .UseMongoDB("mongodb://localhost:27017", "UnitTests");
     }
 }

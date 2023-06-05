@@ -28,7 +28,7 @@ public class MongoDbContextOptionsExtensionsTest
     public void Can_configure_connection_string_and_database_name(string connectionString, string databaseName)
     {
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddMongo<ApplicationDbContext>(connectionString, databaseName, mongoOptions => { },
+        serviceCollection.AddMongoDB<ApplicationDbContext>(connectionString, databaseName, mongoOptions => { },
             dbContextOptions => { dbContextOptions.EnableDetailedErrors(); });
 
         var services = serviceCollection.BuildServiceProvider(validateScopes: true);
@@ -52,7 +52,7 @@ public class MongoDbContextOptionsExtensionsTest
         var mongoClient = new MongoClient();
 
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddMongo<ApplicationDbContext>(mongoClient, databaseName, mongoOptions => { },
+        serviceCollection.AddMongoDB<ApplicationDbContext>(mongoClient, databaseName, mongoOptions => { },
             dbContextOptions => { dbContextOptions.EnableDetailedErrors(); });
 
         var services = serviceCollection.BuildServiceProvider(validateScopes: true);
@@ -69,7 +69,7 @@ public class MongoDbContextOptionsExtensionsTest
     public void Throws_when_multiple_ef_providers_specified(string connectionString, string databaseName)
     {
         var options = new DbContextOptionsBuilder()
-            .UseMongo(connectionString, databaseName)
+            .UseMongoDB(connectionString, databaseName)
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 

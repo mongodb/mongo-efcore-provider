@@ -14,22 +14,12 @@
 */
 
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.TestUtilities;
-using Microsoft.Extensions.DependencyInjection;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Tests.TestUtilities;
 
-public class MongoTestHelpers : TestHelpers
+internal static class TestExtensions
 {
-    protected MongoTestHelpers()
-    {
-    }
-
-    public static MongoTestHelpers Instance { get; } = new();
-
-    public override IServiceCollection AddProviderServices(IServiceCollection services)
-        => services.AddEntityFrameworkMongoDB();
-
-    public override DbContextOptionsBuilder UseProviderOptions(DbContextOptionsBuilder optionsBuilder)
-        => optionsBuilder.UseMongoDB("mongodb://localhost:27017", "UnitTests");
+    public static string? GetCollectionName<TEntity>(this DbContext context) =>
+        context.Model.FindEntityType(typeof(TEntity))?.GetCollectionName();
 }

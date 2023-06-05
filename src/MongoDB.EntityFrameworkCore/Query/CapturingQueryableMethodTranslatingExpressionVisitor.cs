@@ -17,7 +17,6 @@ using System;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using Microsoft.EntityFrameworkCore.Internal;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -25,7 +24,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 namespace MongoDB.EntityFrameworkCore.Query;
 
 /// <summary>
-/// Captures the final query expression in the chain so it can be rebound against the LINQ v3 provider later.
+/// Captures the final query expression in the chain so it can be run against the MongoDB LINQ v3 provider.
 /// </summary>
 /// <remarks>
 /// Normally this is where you would translate much of your query but we want to use the LINQ v3 provider.
@@ -56,11 +55,17 @@ internal class CapturingQueryableMethodTranslatingExpressionVisitor : QueryableM
         return base.Visit(expression);
     }
 
+    /// <summary>
+    /// Visit the <see cref="MethodCallExpression"/> to capture the cardinality and final expression
+    /// when found on a <see cref="Queryable"/> method.
+    /// </summary>
+    /// <param name="methodCallExpression">The <see cref="MethodCallExpression"/> to visit.</param>
+    /// <returns>A <see cref="ShapedQueryExpression"/> if this method was on a <see cref="Queryable"/>,
+    /// otherwise <see cref="QueryCompilationContext.NotTranslatedExpression"/>.</returns>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
         var method = methodCallExpression.Method;
-        if (method.DeclaringType == typeof(Queryable)
-            || method.DeclaringType == typeof(QueryableExtensions))
+        if (method.DeclaringType == typeof(Queryable))
         {
             var source = Visit(methodCallExpression.Arguments[0]);
             if (source is ShapedQueryExpression shapedQueryExpression)
@@ -69,7 +74,7 @@ internal class CapturingQueryableMethodTranslatingExpressionVisitor : QueryableM
                 if (newCardinality != shapedQueryExpression.ResultCardinality)
                     shapedQueryExpression = shapedQueryExpression.UpdateResultCardinality(newCardinality);
 
-                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).ShuntedExpression = _finalExpression;
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).CapturedExpression = _finalExpression;
                 return shapedQueryExpression;
             }
         }
@@ -77,7 +82,7 @@ internal class CapturingQueryableMethodTranslatingExpressionVisitor : QueryableM
         return QueryCompilationContext.NotTranslatedExpression;
     }
 
-    private ResultCardinality GetResultCardinality(MethodInfo method)
+    private static ResultCardinality GetResultCardinality(MethodInfo method)
     {
         var genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
         switch (method.Name)
@@ -140,7 +145,7 @@ internal class CapturingQueryableMethodTranslatingExpressionVisitor : QueryableM
     }
 
     private static ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType, Expression queryExpression) =>
-        new ShapedQueryExpression(
+        new(
             queryExpression,
             new EntityShaperExpression(
                 entityType,
@@ -148,14 +153,14 @@ internal class CapturingQueryableMethodTranslatingExpressionVisitor : QueryableM
                 false));
 
     /// <inheritdoc />
-    protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor() =>
-        throw new NotImplementedException();
-
-    /// <inheritdoc />
     protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
         => CreateShapedQueryExpression(entityType, new MongoQueryExpression(entityType));
 
-    #region Not implemented as we're capturing the whole expression instead
+    #region Not implemented as we're capturing the query rather than translating here
+
+    /// <inheritdoc />
+    protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor() =>
+        throw new NotImplementedException();
 
     protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate) =>
         throw new NotImplementedException();

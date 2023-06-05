@@ -36,8 +36,7 @@ public class MongoTypeMappingSource : TypeMappingSource
     protected override CoreTypeMapping? FindMapping(in TypeMappingInfo mappingInfo)
     {
         var clrType = mappingInfo.ClrType;
-        if (clrType is {IsValueType: true}
-            || clrType == typeof(string))
+        if (clrType is {IsValueType: true} || clrType == typeof(string))
         {
             return new MongoTypeMapping(clrType);
         }

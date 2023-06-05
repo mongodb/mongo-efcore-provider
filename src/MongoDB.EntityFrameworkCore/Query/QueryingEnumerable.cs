@@ -22,24 +22,23 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Query;
-
-// TODO: Add async support
 
 internal sealed class QueryingEnumerable<T> : IAsyncEnumerable<T>, IEnumerable<T>
 {
     private readonly MongoQueryContext _queryContext;
-    private readonly IEnumerable<T> _serverEnumerable;
-    private readonly Func<MongoQueryContext, T, T> _shaper;
+    private readonly IEnumerable<BsonDocument> _serverEnumerable;
+    private readonly Func<MongoQueryContext, BsonDocument, T> _shaper;
     private readonly Type _contextType;
     private readonly bool _standAloneStateManager;
     private readonly bool _threadSafetyChecksEnabled;
 
     public QueryingEnumerable(
         MongoQueryContext queryContext,
-        IEnumerable<T> serverEnumerable,
-        Func<MongoQueryContext, T, T> shaper,
+        IEnumerable<BsonDocument> serverEnumerable,
+        Func<MongoQueryContext, BsonDocument, T> shaper,
         Type contextType,
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled)
@@ -64,21 +63,21 @@ internal sealed class QueryingEnumerable<T> : IAsyncEnumerable<T>, IEnumerable<T
     private sealed class Enumerator : IEnumerator<T>, IAsyncEnumerator<T>
     {
         private readonly MongoQueryContext _queryContext;
-        private readonly Func<MongoQueryContext, T, T> _shaper;
+        private readonly Func<MongoQueryContext, BsonDocument, T> _shaper;
         private readonly Type _contextType;
         private readonly IDiagnosticsLogger<DbLoggerCategory.Query> _queryLogger;
         private readonly bool _standAloneStateManager;
         private readonly CancellationToken _cancellationToken;
         private readonly IConcurrencyDetector? _concurrencyDetector;
         private readonly IExceptionDetector _exceptionDetector;
-        private readonly IEnumerable<T> _serverEnumerator;
+        private readonly IEnumerable<BsonDocument> _serverEnumerable;
 
-        private IEnumerator<T>? _enumerator;
+        private IEnumerator<BsonDocument>? _enumerator;
 
         public Enumerator(QueryingEnumerable<T> queryingEnumerable, CancellationToken cancellationToken = default)
         {
             _queryContext = queryingEnumerable._queryContext;
-            _serverEnumerator = queryingEnumerable._serverEnumerable;
+            _serverEnumerable = queryingEnumerable._serverEnumerable;
             _contextType = queryingEnumerable._contextType;
             _shaper = queryingEnumerable._shaper;
             _queryLogger = _queryContext.QueryLogger;
@@ -164,7 +163,7 @@ internal sealed class QueryingEnumerable<T> : IAsyncEnumerable<T>, IEnumerable<T
             {
                 EntityFrameworkEventSource.Log.QueryExecuting();
 
-                _enumerator = _serverEnumerator.GetEnumerator();
+                _enumerator = _serverEnumerable.GetEnumerator();
                 _queryContext.InitializeStateManager(_standAloneStateManager);
             }
 

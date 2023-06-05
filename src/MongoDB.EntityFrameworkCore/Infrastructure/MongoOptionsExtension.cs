@@ -136,7 +136,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     protected virtual MongoOptionsExtension Clone() => new(this);
 
     /// <inheritdoc />
-    public virtual void ApplyServices(IServiceCollection services) => services.AddEntityFrameworkMongo();
+    public virtual void ApplyServices(IServiceCollection services) => services.AddEntityFrameworkMongoDB();
 
     /// <inheritdoc />
     public virtual void Validate(IDbContextOptions options)

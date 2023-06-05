@@ -20,14 +20,14 @@ using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
-/// <summary>
-/// Compiles the shaper expression for a given shaped query expression.
-/// </summary>
+/// <inheritdoc/>
 internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
 {
     private readonly Type _contextType;
@@ -36,7 +36,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
     static readonly MethodInfo __translateAndExecuteQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
         .GetTypeInfo()
         .DeclaredMethods
-        .Single(m => m.Name == "ExecuteQuery");
+        .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
 
     /// <summary>
     /// Creates a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
@@ -55,23 +55,35 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
     /// <inheritdoc/>
     protected override Expression VisitShapedQuery(ShapedQueryExpression shapedQueryExpression)
     {
-        // TODO: Support shapers once we can deal with BSON directly
-        var shaperBody = shapedQueryExpression.ShaperExpression;
+        var shaperLambda = CreateShaperLambda(shapedQueryExpression);
 
-        // TODO: Translate, compile and pass shaperLambda
         var queryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
-        var resultType = DetermineResultType(queryExpression.ShuntedExpression) ?? shaperBody.Type;
+        var resultType = DetermineResultType(queryExpression.CapturedExpression) ?? shaperLambda.ReturnType;
         var standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
                                      QueryTrackingBehavior.NoTrackingWithIdentityResolution;
 
         return Expression.Call(null,
-            __translateAndExecuteQuery.MakeGenericMethod(shaperBody.Type, resultType),
+            __translateAndExecuteQuery.MakeGenericMethod(shaperLambda.ReturnType, resultType),
             QueryCompilationContext.QueryContextParameter,
             Expression.Constant(queryExpression),
+            Expression.Constant(shaperLambda.Compile()),
             Expression.Constant(_contextType),
             Expression.Constant(standAloneStateManager),
             Expression.Constant(_threadSafetyChecksEnabled),
             Expression.Constant(shapedQueryExpression.ResultCardinality));
+    }
+
+    private LambdaExpression CreateShaperLambda(ShapedQueryExpression shapedQueryExpression)
+    {
+        var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
+
+        var shaperBody = InjectEntityMaterializers(shapedQueryExpression.ShaperExpression);
+        shaperBody = new MongoBsonShaperRebindingExpressionVisitor(bsonDocParameter).Visit(shaperBody);
+
+        return Expression.Lambda(
+            shaperBody,
+            QueryCompilationContext.QueryContextParameter,
+            bsonDocParameter);
     }
 
     private static Type? DetermineResultType(Expression? expression)
@@ -83,9 +95,10 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
                 : expression.Type;
     }
 
-    private static IEnumerable<TResult> ExecuteQuery<TDocument, TResult>(
+    private static IEnumerable<TResult> TranslateAndExecuteQuery<TSource, TResult>(
         QueryContext queryContext,
         MongoQueryExpression queryExpression,
+        Func<QueryContext, BsonDocument, TResult> shaper,
         Type contextType,
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled,
@@ -93,22 +106,39 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
     {
         // TODO: Make this method non-generic by getting the LINQ provider in a non-generic way
         var mongoQueryContext = (MongoQueryContext)queryContext;
-        var source = mongoQueryContext.MongoClient.Database.GetCollection<TDocument>(queryExpression.Collection).AsQueryable();
+        var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(queryExpression.Collection).AsQueryable();
         var retargetedExpression = RetargetQueryableExpression(queryContext, queryExpression, source);
 
-        // TODO: Figure out how to do a real shaper here or bypass it entirely and use QueryContext.StartTracking
-        TResult FakeShaper(QueryContext qc, TResult t) => t;
-
+        // TODO: We need to support "As" with first/single.
+        // Inject "As" at the end of the chain before the First/Single BUT
+        // also if the first/single has a predicate replace with non-predicate and move the
+        // predicate to a Where before the As.
         if (resultCardinality != ResultCardinality.Enumerable)
-            return new[] {FakeShaper(queryContext, source.Provider.Execute<TResult>(retargetedExpression))};
+        {
+            var document = source.Provider.Execute<TResult>(
+                Expression.Call(
+                    null,
+                    GetMethodInfo(MongoQueryable.As, source, BsonDocumentSerializer.Instance),
+                    Expression.Convert(source.Expression, typeof(IMongoQueryable<TSource>)),
+                    Expression.Constant(BsonDocumentSerializer.Instance))) as BsonDocument;
+            return new[] {shaper(mongoQueryContext, document!)};
+        }
+
+        var documents = ((IMongoQueryable<TResult>)source.Provider.CreateQuery<TResult>(retargetedExpression))
+            .As(BsonDocumentSerializer.Instance);
 
         return new QueryingEnumerable<TResult>(
             mongoQueryContext,
-            source.Provider.CreateQuery<TResult>(retargetedExpression),
-            FakeShaper,
+            documents,
+            shaper,
             contextType,
             standAloneStateManager,
             threadSafetyChecksEnabled);
+    }
+
+    private static MethodInfo GetMethodInfo<T1, T2, T3>(Func<T1, T2, T3> f, T1 unused1, T2 unused2)
+    {
+        return f.GetMethodInfo();
     }
 
     private static Expression RetargetQueryableExpression(
@@ -116,7 +146,9 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         MongoQueryExpression queryExpression,
         IMongoQueryable source)
     {
-        if (queryExpression.ShuntedExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
+        // TODO: Inject As(BsonDocumentSerializer.Instance) here instead of in TranslateAndExecuteQuery
+
+        if (queryExpression.CapturedExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
         {
             return source.Expression;
         }
@@ -124,7 +156,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         var query =
             (MethodCallExpression)new MongoToLinqTranslatingExpressionVisitor(queryContext, source.Expression).Visit(
                 queryExpression
-                    .ShuntedExpression)!;
+                    .CapturedExpression)!;
 
         return Expression.Call(null, query.Method, query.Arguments);
     }

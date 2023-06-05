@@ -32,20 +32,20 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>
     /// <param name="connectionString">The connection string used to identify the MongoDB server to use.</param>
     /// <param name="databaseName">The name of the database to use on the MongoDB server.</param>
-    /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <typeparam name="TContext">The type of context to be configured.</typeparam>
     /// <returns>The options builder so that further configuration can be chained.</returns>
-    public static DbContextOptionsBuilder<TContext> UseMongo<TContext>(
+    public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
         this DbContextOptionsBuilder<TContext> optionsBuilder,
         string connectionString,
         string databaseName,
-        Action<MongoDbContextOptionsBuilder>? mongoOptionsAction = null)
+        Action<MongoDbContextOptionsBuilder>? optionsAction = null)
         where TContext : DbContext
-        => (DbContextOptionsBuilder<TContext>)UseMongo(
+        => (DbContextOptionsBuilder<TContext>)UseMongoDB(
             (DbContextOptionsBuilder)optionsBuilder,
             connectionString,
             databaseName,
-            mongoOptionsAction);
+            optionsAction);
 
     /// <summary>
     /// Configures the context to connect to a MongoDB database using the <see cref="DbContextOptionsBuilder"/>.
@@ -53,13 +53,13 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>
     /// <param name="connectionString">The connection string used to identify the MongoDB server to use.</param>
     /// <param name="databaseName">The name of the database to use on the MongoDB server.</param>
-    /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <returns>The options builder so that further configuration can be chained.</returns>
-    public static DbContextOptionsBuilder UseMongo(
+    public static DbContextOptionsBuilder UseMongoDB(
         this DbContextOptionsBuilder optionsBuilder,
         string connectionString,
         string databaseName,
-        Action<MongoDbContextOptionsBuilder>? mongoOptionsAction = null)
+        Action<MongoDbContextOptionsBuilder>? optionsAction = null)
     {
         ArgumentNullException.ThrowIfNull(optionsBuilder);
         ArgumentNullException.ThrowIfNull(connectionString);
@@ -71,7 +71,7 @@ public static class MongoDbContextOptionsExtensions
             .WithDatabaseName(databaseName);
 
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
-        mongoOptionsAction?.Invoke(new MongoDbContextOptionsBuilder(optionsBuilder));
+        optionsAction?.Invoke(new MongoDbContextOptionsBuilder(optionsBuilder));
         return optionsBuilder;
     }
 
@@ -81,20 +81,20 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>
     /// <param name="mongoClient">The connections string used to identify the MongoDB server to use.</param>
     /// <param name="databaseName">The name of the MongoDB database to use on the server.</param>
-    /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <typeparam name="TContext">The type of context to be configured.</typeparam>
     /// <returns>The options builder so that further configuration can be chained.</returns>
-    public static DbContextOptionsBuilder<TContext> UseMongo<TContext>(
+    public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
         this DbContextOptionsBuilder<TContext> optionsBuilder,
         IMongoClient mongoClient,
         string databaseName,
-        Action<MongoDbContextOptionsBuilder>? mongoOptionsAction = null)
+        Action<MongoDbContextOptionsBuilder>? optionsAction = null)
         where TContext : DbContext
-        => (DbContextOptionsBuilder<TContext>)UseMongo(
+        => (DbContextOptionsBuilder<TContext>)UseMongoDB(
             (DbContextOptionsBuilder)optionsBuilder,
             mongoClient,
             databaseName,
-            mongoOptionsAction);
+            optionsAction);
 
     /// <summary>
     /// Configures the context to connect to a MongoDB database using the <see cref="DbContextOptionsBuilder"/>.
@@ -102,13 +102,13 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>
     /// <param name="mongoClient">The connections string used to identify the MongoDB server to use.</param>
     /// <param name="databaseName">The name of the MongoDB database to use on the server.</param>
-    /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <returns>The options builder so that further configuration can be chained.</returns>
-    public static DbContextOptionsBuilder UseMongo(
+    public static DbContextOptionsBuilder UseMongoDB(
         this DbContextOptionsBuilder optionsBuilder,
         IMongoClient mongoClient,
         string databaseName,
-        Action<MongoDbContextOptionsBuilder>? mongoOptionsAction = null)
+        Action<MongoDbContextOptionsBuilder>? optionsAction = null)
     {
         ArgumentNullException.ThrowIfNull(optionsBuilder);
         ArgumentNullException.ThrowIfNull(mongoClient);
@@ -120,7 +120,7 @@ public static class MongoDbContextOptionsExtensions
             .WithDatabaseName(databaseName);
 
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
-        mongoOptionsAction?.Invoke(new MongoDbContextOptionsBuilder(optionsBuilder));
+        optionsAction?.Invoke(new MongoDbContextOptionsBuilder(optionsBuilder));
         return optionsBuilder;
     }
 }

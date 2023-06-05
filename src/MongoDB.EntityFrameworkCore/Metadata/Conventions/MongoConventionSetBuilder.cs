@@ -93,10 +93,10 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
     private static IServiceScope CreateServiceScope<T>() where T : DbContext
     {
         var serviceProvider = new ServiceCollection()
-            .AddEntityFrameworkMongo()
+            .AddEntityFrameworkMongoDB()
             .AddDbContext<T>(
                 (p, o) =>
-                    o.UseMongo("mongodb://localhost:27017", "_")
+                    o.UseMongoDB("mongodb://localhost:27017", "_")
                         .UseInternalServiceProvider(p))
             .BuildServiceProvider();
 

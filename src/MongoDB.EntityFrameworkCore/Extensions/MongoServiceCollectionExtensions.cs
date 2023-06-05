@@ -46,7 +46,7 @@ public static class MongoServiceCollectionExtensions
     /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
     /// <typeparam name="TContext">The type of context to be registered.</typeparam>
     /// <returns>The same service collection so that multiple calls can be chained.</returns>
-    public static IServiceCollection AddMongo<TContext>(
+    public static IServiceCollection AddMongoDB<TContext>(
         this IServiceCollection serviceCollection,
         string connectionString,
         string databaseName,
@@ -57,7 +57,7 @@ public static class MongoServiceCollectionExtensions
             (serviceProvider, options) =>
             {
                 optionsAction?.Invoke(options);
-                options.UseMongo(connectionString, databaseName, mongoOptionsAction);
+                options.UseMongoDB(connectionString, databaseName, mongoOptionsAction);
             });
 
     /// <summary>
@@ -71,7 +71,7 @@ public static class MongoServiceCollectionExtensions
     /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
     /// <typeparam name="TContext">The type of context to be registered.</typeparam>
     /// <returns>The same service collection so that multiple calls can be chained.</returns>
-    public static IServiceCollection AddMongo<TContext>(
+    public static IServiceCollection AddMongoDB<TContext>(
         this IServiceCollection serviceCollection,
         IMongoClient mongoClient,
         string databaseName,
@@ -82,16 +82,16 @@ public static class MongoServiceCollectionExtensions
             (serviceProvider, options) =>
             {
                 optionsAction?.Invoke(options);
-                options.UseMongo(mongoClient, databaseName, mongoOptionsAction);
+                options.UseMongoDB(mongoClient, databaseName, mongoOptionsAction);
             });
 
     /// <summary>
     /// Adds the services required by the MongoDB provider for Entity Framework to an <see cref="IServiceCollection" />.
     /// </summary>
-    /// <remarks>You probably meant to use <see cref="AddMongo{TContext}" /> instead.</remarks>
+    /// <remarks>You probably meant to use <see cref="AddMongoDB{TContext}" /> instead.</remarks>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
     /// <returns>The same service collection so that multiple calls can be chained.</returns>
-    public static IServiceCollection AddEntityFrameworkMongo(this IServiceCollection serviceCollection)
+    public static IServiceCollection AddEntityFrameworkMongoDB(this IServiceCollection serviceCollection)
     {
         var builder = new EntityFrameworkServicesBuilder(serviceCollection)
             .TryAdd<LoggingDefinitions, MongoLoggingDefinitions>()

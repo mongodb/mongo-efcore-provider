@@ -12,18 +12,15 @@ public class CollectionAttributeConventionTests
     public virtual void Collection_attribute_specified_names_are_used_as_collection_names()
     {
         using var context = new BaseDbContext();
-        Assert.Equal("attributedCollection", GetCollectionName<Customer>(context));
+        Assert.Equal("attributedCollection", context.GetCollectionName<Customer>());
     }
 
     [Fact]
     public virtual void Model_builder_specified_names_override_collection_attribute_names()
     {
         using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("namedCollection", GetCollectionName<Customer>(context));
+        Assert.Equal("namedCollection", context.GetCollectionName<Customer>());
     }
-
-    static string GetCollectionName<TEntity>(DbContext context) =>
-        context.Model.FindEntityType(typeof(TEntity)).GetCollectionName();
 
     [Collection("attributedCollection")]
     class Customer
@@ -38,7 +35,7 @@ public class CollectionAttributeConventionTests
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => optionsBuilder
-                .UseMongo("mongodb://localhost:27017", "UnitTests");
+                .UseMongoDB("mongodb://localhost:27017", "UnitTests");
     }
 
     class ModelBuilderSpecifiedDbContext : BaseDbContext

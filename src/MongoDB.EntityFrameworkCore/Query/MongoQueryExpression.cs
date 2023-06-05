@@ -45,9 +45,15 @@ public class MongoQueryExpression : Expression
         Collection = collection;
     }
 
+    /// <summary>
+    /// Represents the Mongo collection this query is bound to.
+    /// </summary>
     public virtual MongoCollectionExpression FromExpression { get; private set; }
 
-    public Expression? ShuntedExpression { get; set; }
+    /// <summary>
+    /// The <see cref="Expression"/> captured from the original EF-bound LINQ query.
+    /// </summary>
+    public Expression? CapturedExpression { get; set; }
 
     /// <summary>
     /// The underlying name of the collection for this query in MongoDB.

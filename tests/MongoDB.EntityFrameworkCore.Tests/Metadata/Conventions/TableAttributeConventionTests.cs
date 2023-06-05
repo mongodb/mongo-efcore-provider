@@ -39,7 +39,7 @@ public class TableAttributeConventionTests
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => optionsBuilder
-                .UseMongo("mongodb://localhost:27017", "UnitTests");
+                .UseMongoDB("mongodb://localhost:27017", "UnitTests");
     }
 
     class ModelBuilderSpecifiedDbContext : BaseDbContext
