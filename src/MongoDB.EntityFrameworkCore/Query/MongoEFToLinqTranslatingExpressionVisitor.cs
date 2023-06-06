@@ -52,8 +52,7 @@ internal class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
             return InjectAsBsonDocumentMethod(query, BsonDocumentSerializer.Instance);
         }
 
-        var querySource = query.Arguments[0] as ConstantExpression;
-        var documentQueryableSource = InjectAsBsonDocumentMethod(querySource, BsonDocumentSerializer.Instance);
+        var documentQueryableSource = InjectAsBsonDocumentMethod(query.Arguments[0], BsonDocumentSerializer.Instance);
 
         return Expression.Call(
             null,
