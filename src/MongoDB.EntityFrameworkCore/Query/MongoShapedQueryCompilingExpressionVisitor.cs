@@ -21,9 +21,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
-using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
@@ -104,29 +102,21 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         bool threadSafetyChecksEnabled,
         ResultCardinality resultCardinality)
     {
-        // TODO: Make this method non-generic by getting the LINQ provider in a non-generic way
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(queryExpression.Collection).AsQueryable();
-        var retargetedExpression = RetargetQueryableExpression(queryContext, queryExpression, source);
+        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
 
-        // TODO: We need to support "As" with first/single.
-        // Inject "As" at the end of the chain before the First/Single BUT
-        // also if the first/single has a predicate replace with non-predicate and move the
-        // predicate to a Where before the As.
+        var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality)!;
+
         if (resultCardinality != ResultCardinality.Enumerable)
         {
-            var document = source.Provider.Execute<TResult>(
-                Expression.Call(
-                    null,
-                    GetMethodInfo(MongoQueryable.As, source, BsonDocumentSerializer.Instance),
-                    Expression.Convert(source.Expression, typeof(IMongoQueryable<TSource>)),
-                    Expression.Constant(BsonDocumentSerializer.Instance))) as BsonDocument;
-            return new[] {shaper(mongoQueryContext, document!)};
+            mongoQueryContext.InitializeStateManager(standAloneStateManager);
+            var document = source.Provider.Execute<BsonDocument>(translatedQuery);
+            var shapedDocument = shaper(mongoQueryContext, document);
+            return new[] {shapedDocument};
         }
 
-        var documents = ((IMongoQueryable<TResult>)source.Provider.CreateQuery<TResult>(retargetedExpression))
-            .As(BsonDocumentSerializer.Instance);
-
+        var documents = source.Provider.CreateQuery<BsonDocument>(translatedQuery);
         return new QueryingEnumerable<TResult>(
             mongoQueryContext,
             documents,
@@ -134,30 +124,5 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
             contextType,
             standAloneStateManager,
             threadSafetyChecksEnabled);
-    }
-
-    private static MethodInfo GetMethodInfo<T1, T2, T3>(Func<T1, T2, T3> f, T1 unused1, T2 unused2)
-    {
-        return f.GetMethodInfo();
-    }
-
-    private static Expression RetargetQueryableExpression(
-        QueryContext queryContext,
-        MongoQueryExpression queryExpression,
-        IMongoQueryable source)
-    {
-        // TODO: Inject As(BsonDocumentSerializer.Instance) here instead of in TranslateAndExecuteQuery
-
-        if (queryExpression.CapturedExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
-        {
-            return source.Expression;
-        }
-
-        var query =
-            (MethodCallExpression)new MongoToLinqTranslatingExpressionVisitor(queryContext, source.Expression).Visit(
-                queryExpression
-                    .CapturedExpression)!;
-
-        return Expression.Call(null, query.Method, query.Arguments);
     }
 }
