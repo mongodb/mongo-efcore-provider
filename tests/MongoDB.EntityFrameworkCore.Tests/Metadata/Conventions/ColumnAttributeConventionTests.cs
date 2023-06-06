@@ -14,35 +14,40 @@
 */
 
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
-using MongoDB.EntityFrameworkCore.Extensions;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata.Conventions;
 
-public class TableAttributeConventionTests
+public class ColumnAttributeConventionTests
 {
     [Fact]
-    public virtual void TableAttribute_specified_names_are_used_as_Table_names()
+    public virtual void ColumnAttribute_specified_names_are_used_as_Field_names()
     {
         using var context = new BaseDbContext();
-        Assert.Equal("attributeSpecifiedName", GetCollectionName<Customer>(context));
+        Assert.Equal("attributeSpecifiedName", GetFieldName(context, (Customer c) => c.Name));
     }
 
     [Fact]
-    public virtual void ModelBuilder_specified_collection_names_override_TableAttribute_names()
+    public virtual void ModelBuilder_specified_field_names_override_ColumnAttribute_names()
     {
         using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("fluentSpecifiedName", GetCollectionName<Customer>(context));
+        Assert.Equal("fluentSpecifiedName", GetFieldName(context, (Customer c) => c.Name));
     }
 
-    static string GetCollectionName<TEntity>(DbContext context) =>
-        context.Model.FindEntityType(typeof(TEntity)).GetCollectionName();
+    static string GetFieldName<TEntity, TProperty>(DbContext context, Expression<Func<TEntity, TProperty>> propertyExpression)
+    {
+        var entityType = context.Model.FindEntityType(typeof(TEntity));
+        var property = entityType.FindProperty(propertyExpression.GetMemberAccess());
+        return MongoPropertyExtensions.GetFieldName(property);
+    }
 
-    [Table("attributeSpecifiedName")]
     class Customer
     {
         public int Id { get; set; }
-        public string Name { get; set; }
+
+        [Column("attributeSpecifiedName")] public string Name { get; set; }
     }
 
     class BaseDbContext : DbContext
@@ -59,7 +64,7 @@ public class TableAttributeConventionTests
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-            modelBuilder.Entity<Customer>().ToCollection("fluentSpecifiedName");
+            modelBuilder.Entity<Customer>().Property(c => c.Name).ToField("fluentSpecifiedName");
         }
     }
 }

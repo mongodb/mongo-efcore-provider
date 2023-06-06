@@ -43,9 +43,13 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
     {
         var conventionSet = base.CreateConventionSet();
 
+        // Our own chosen convention mechanisms
         conventionSet.Add(new CollectionNameFromDbSetConvention(Dependencies));
         conventionSet.Add(new CollectionAttributeConvention(Dependencies));
+
+        // Convenience conventions for users familiar with EF
         conventionSet.Add(new TableAttributeConvention(Dependencies));
+        conventionSet.Add(new ColumnAttributeConvention(Dependencies));
 
         return conventionSet;
     }
