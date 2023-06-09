@@ -13,13 +13,24 @@
 * limitations under the License.
 */
 
+using System.Linq.Expressions;
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Tests.TestUtilities;
 
-internal static class TestExtensions
+internal static class Utilities
 {
     public static string? GetCollectionName<TEntity>(this DbContext context) =>
         context.Model.FindEntityType(typeof(TEntity))?.GetCollectionName();
+
+    public static PropertyInfo GetPropertyInfo<TEntity, TProperty>(Expression<Func<TEntity, TProperty>> propertyExpression)
+    {
+        return propertyExpression.Body.NodeType switch
+        {
+            ExpressionType.MemberAccess => (PropertyInfo)((MemberExpression)propertyExpression.Body).Member,
+            _ => throw new NotSupportedException($"NodeType '{propertyExpression.Body.NodeType}' not supported.")
+        };
+    }
 }
