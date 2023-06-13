@@ -13,7 +13,10 @@
 * limitations under the License.
 */
 
+using System;
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.EntityFrameworkCore.ChangeTracking;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -36,13 +39,64 @@ public class MongoTypeMappingSource : TypeMappingSource
     protected override CoreTypeMapping? FindMapping(in TypeMappingInfo mappingInfo)
     {
         var clrType = mappingInfo.ClrType;
-        if (clrType is {IsValueType: true} || clrType == typeof(string))
+        if (clrType == null)
+        {
+            throw new InvalidOperationException($"Unable to determine CLR type for mappingInfo {mappingInfo}");
+        }
+
+        return FindPrimitiveMapping(mappingInfo)
+               ?? FindCollectionMapping(mappingInfo)
+               ?? base.FindMapping(mappingInfo);
+    }
+
+    private static CoreTypeMapping? FindPrimitiveMapping(in TypeMappingInfo mappingInfo)
+    {
+        var clrType = mappingInfo.ClrType!;
+        if (clrType is {IsValueType: true, IsEnum: false} || clrType == typeof(string))
         {
             return new MongoTypeMapping(clrType);
         }
 
-        // TODO: Type mappings for MongoDB
+        return null;
+    }
 
-        return base.FindMapping(mappingInfo);
+    private static CoreTypeMapping? FindCollectionMapping(in TypeMappingInfo mappingInfo)
+    {
+        var clrType = mappingInfo.ClrType!;
+        var itemType = clrType.TryGetItemType();
+        if (itemType == null)
+        {
+            return null;
+        }
+
+        // Support arrays on the entity
+        if (clrType.IsArray)
+        {
+            var elementMappingInfo = new TypeMappingInfo(itemType);
+            var elementMapping = FindPrimitiveMapping(elementMappingInfo) ?? FindCollectionMapping(elementMappingInfo);
+            return elementMapping == null
+                ? null
+                : new MongoTypeMapping(clrType, ComparerFactory.CreateComparer(elementMapping, clrType));
+        }
+
+        // Support collection on the entity
+        if (clrType.IsGenericType && !clrType.IsGenericTypeDefinition)
+        {
+            var genericTypeDefinition = clrType.GetGenericTypeDefinition();
+            if (genericTypeDefinition == typeof(List<>)
+                || genericTypeDefinition == typeof(IList<>)
+                || genericTypeDefinition == typeof(ICollection<>)
+                || genericTypeDefinition == typeof(IReadOnlyList<>)
+                || genericTypeDefinition == typeof(IReadOnlyCollection<>))
+            {
+                var elementMappingInfo = new TypeMappingInfo(itemType);
+                var elementMapping = FindPrimitiveMapping(elementMappingInfo) ?? FindCollectionMapping(elementMappingInfo);
+                return elementMapping == null
+                    ? null
+                    : new MongoTypeMapping(clrType, ComparerFactory.CreateComparer(elementMapping, clrType));
+            }
+        }
+
+        return null;
     }
 }

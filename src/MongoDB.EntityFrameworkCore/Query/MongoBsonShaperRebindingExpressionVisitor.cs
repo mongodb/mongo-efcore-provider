@@ -93,16 +93,12 @@ public class MongoBsonShaperRebindingExpressionVisitor : ExpressionVisitor
         IProperty property,
         Type type)
     {
+        var expectedType = property.GetTypeMapping()?.ClrType ?? type;
+
         // TODO: Support json property names with EF method/convention
-        var propertyName = property.Name;
+        var valueExpression = CreateGetBsonValueExpression(bsonDocExpression, property.Name);
+        valueExpression = ConvertToExpectedType(expectedType, valueExpression);
 
-        var valueExpression = CreateGetBsonValueExpression(bsonDocExpression, propertyName);
-
-        var typeMapping = property.GetTypeMapping();
-
-        // TODO: Typemapping converters
-
-        valueExpression = ConvertBsonValueToType(valueExpression, typeMapping?.ClrType ?? type);
         if (valueExpression.Type != type)
         {
             valueExpression = Expression.Convert(valueExpression, type);
@@ -111,27 +107,55 @@ public class MongoBsonShaperRebindingExpressionVisitor : ExpressionVisitor
         return valueExpression;
     }
 
-    private static Expression ConvertBsonValueToType(Expression bsonValueExpression, Type type) =>
-        Expression.Call(bsonValueExpression, GetBsonValueConvertMethodInfo(type));
-
-    private static MethodInfo GetBsonValueConvertMethodInfo(Type type)
+    private static Expression ConvertToExpectedType(Type expectedType, Expression valueExpression)
     {
-        // TODO: This is flexible but slow. Either unroll all possibilities here or add something to BsonValue.
-        return typeof(BsonValue).GetProperties().Single(p => p.PropertyType == type && p.Name.StartsWith("As" + type.Name))
-            .GetMethod!;
+        // Shortcut arrays for performance
+        if (expectedType.IsArray)
+        {
+            valueExpression = Expression.Convert(InitializeCollectionIfNull(valueExpression), typeof(BsonArray));
+            return BsonConverter.BsonArrayToArray(valueExpression, expectedType.TryGetItemType()!);
+        }
+
+        // Support any lists and variants that expose IEnumerable<T> and have a matching constructor
+        if (expectedType.IsGenericType && !expectedType.IsGenericTypeDefinition)
+        {
+            var enumerableType = expectedType.TryFindIEnumerable();
+            if (enumerableType != null)
+            {
+                var constructor = expectedType.TryFindConstructorWithParameter(enumerableType);
+                if (constructor != null)
+                {
+                    valueExpression = Expression.Convert(InitializeCollectionIfNull(valueExpression), typeof(BsonArray));
+                    return BsonConverter.BsonArrayToEnumerable(valueExpression, constructor, expectedType.TryGetItemType()!);
+                }
+            }
+        }
+
+        // Try CLR basic types supported by BsonDocument
+        return BsonConverter.BsonValueToType(valueExpression, expectedType);
+    }
+
+    private static Expression InitializeCollectionIfNull(Expression valueExpression)
+    {
+        // TODO: Consider making this behavior configurable through the fluent API
+        return Expression.Condition(
+            Expression.Equal(valueExpression, Expression.Constant(BsonNull.Value)),
+            Expression.New(typeof(BsonArray)),
+            valueExpression,
+            typeof(BsonValue));
     }
 
     private static Expression CreateGetBsonValueExpression(Expression bsonDocExpression, string propertyName)
         => Expression.Call(bsonDocExpression, __getValueMethodInfo, Expression.Constant(propertyName),
             Expression.Constant(BsonNull.Value));
 
-    private static T GetConstantValue<T>(Expression expression)
-        => expression is ConstantExpression constantExpression
-            ? (T)constantExpression.Value!
-            : throw new InvalidOperationException();
-
     private static readonly MethodInfo __getValueMethodInfo
         = typeof(BsonDocument).GetMethods()
             .Single(mi => mi.Name == "GetValue" && mi.GetParameters().Length == 2 &&
                           mi.GetParameters()[0].ParameterType == typeof(string));
+
+    private static T GetConstantValue<T>(Expression expression)
+        => expression is ConstantExpression constantExpression
+            ? (T)constantExpression.Value!
+            : throw new InvalidOperationException();
 }
