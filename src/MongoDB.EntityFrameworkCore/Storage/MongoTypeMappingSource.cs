@@ -21,7 +21,7 @@ using MongoDB.EntityFrameworkCore.ChangeTracking;
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Creates a <see cref="MongoTypeMapping"/> (or <see cref="CoreTypeMapping"/>) for
+/// Create a <see cref="MongoTypeMapping"/> (or <see cref="CoreTypeMapping"/>) for
 /// each property of an entity that should be mapped to the underlying MongoDB database.
 /// </summary>
 public class MongoTypeMappingSource : TypeMappingSource

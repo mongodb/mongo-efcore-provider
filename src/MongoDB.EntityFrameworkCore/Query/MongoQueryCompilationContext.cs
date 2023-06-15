@@ -25,6 +25,11 @@ public class MongoQueryCompilationContext : QueryCompilationContext
 {
     private readonly ExpressionPrinter _expressionPrinter;
 
+    /// <summary>
+    /// Create a new <see cref="MongoQueryCompilationContext"/>.
+    /// </summary>
+    /// <param name="dependencies">The <see cref="QueryContextDependencies"/> required by this service.</param>
+    /// <param name="async">Whether this is an asynchronous query or not.</param>
     public MongoQueryCompilationContext(
         QueryCompilationContextDependencies dependencies,
         bool async)
@@ -33,6 +38,7 @@ public class MongoQueryCompilationContext : QueryCompilationContext
         _expressionPrinter = new ExpressionPrinter();
     }
 
+    /// <inheritdoc />
     public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression query)
     {
         query = Dependencies.QueryTranslationPreprocessorFactory.Create(this).Process(query);

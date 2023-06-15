@@ -13,7 +13,6 @@
 * limitations under the License.
 */
 
-
 using System;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using MongoDB.EntityFrameworkCore.Metadata;

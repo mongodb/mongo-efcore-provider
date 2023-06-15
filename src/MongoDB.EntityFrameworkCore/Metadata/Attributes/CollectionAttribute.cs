@@ -19,7 +19,7 @@ using System;
 namespace MongoDB.EntityFrameworkCore;
 
 /// <summary>
-/// Specifies the collection that a class is mapped to.
+/// Specifies the collection that an entity is mapped to.
 /// </summary>
 [AttributeUsage(AttributeTargets.Class)]
 public class CollectionAttribute : Attribute

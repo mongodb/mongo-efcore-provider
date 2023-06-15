@@ -37,7 +37,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
 
     /// <summary>
-    /// Creates a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
+    /// Create a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
     /// </summary>
     /// <param name="dependencies">The <see cref="ShapedQueryCompilingExpressionVisitorDependencies"/> used by this compiler.</param>
     /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> gor this specific query.</param>
@@ -108,15 +108,10 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
 
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality)!;
 
-        if (resultCardinality != ResultCardinality.Enumerable)
-        {
-            mongoQueryContext.InitializeStateManager(standAloneStateManager);
-            var document = source.Provider.Execute<BsonDocument>(translatedQuery);
-            var shapedDocument = shaper(mongoQueryContext, document);
-            return new[] {shapedDocument};
-        }
+        IEnumerable<BsonDocument> documents = resultCardinality == ResultCardinality.Enumerable
+            ? source.Provider.CreateQuery<BsonDocument>(translatedQuery)
+            : new[] {source.Provider.Execute<BsonDocument>(translatedQuery)};
 
-        var documents = source.Provider.CreateQuery<BsonDocument>(translatedQuery);
         return new QueryingEnumerable<TResult>(
             mongoQueryContext,
             documents,

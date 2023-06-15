@@ -27,8 +27,18 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
         Dependencies = dependencies;
     }
 
+    /// <summary>
+    /// The <see cref="QueryCompilationContextDependencies"/> to be passed on to each
+    /// <see cref="MongoQueryCompilationContext"/> created by this factory.
+    /// </summary>
     protected virtual QueryCompilationContextDependencies Dependencies { get; }
 
+    /// <summary>
+    /// Create a new <see cref="MongoQueryCompilationContext"/> with the given dependencies.
+    /// </summary>
+    /// <param name="async">Whether the <see cref="MongoQueryCompilationContext"/> will process
+    /// an asynchronous query or not.</param>
+    /// <returns></returns>
     public virtual QueryCompilationContext Create(bool async)
         => new MongoQueryCompilationContext(Dependencies, async);
 }

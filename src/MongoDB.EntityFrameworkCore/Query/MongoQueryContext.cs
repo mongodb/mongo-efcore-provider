@@ -13,9 +13,6 @@
 * limitations under the License.
 */
 
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Storage;
 
@@ -43,10 +40,4 @@ public class MongoQueryContext : QueryContext
     /// The <see cref="IMongoClientWrapper"/> this query should be executed using.
     /// </summary>
     public virtual IMongoClientWrapper MongoClient { get; }
-
-    public override InternalEntityEntry? TryGetEntry(IKey key, object[] keyValues, bool throwOnNullKey,
-        [UnscopedRef] out bool hasNullKey)
-    {
-        return base.TryGetEntry(key, keyValues, throwOnNullKey, out hasNullKey);
-    }
 }
