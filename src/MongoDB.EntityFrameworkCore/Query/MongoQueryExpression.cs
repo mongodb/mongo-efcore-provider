@@ -16,7 +16,6 @@
 using System;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata;
-using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
@@ -30,35 +29,28 @@ public class MongoQueryExpression : Expression
     /// </summary>
     /// <param name="entityType">The <see cref="IEntityType"/> this collection relates to.</param>
     public MongoQueryExpression(IEntityType entityType)
-        : this(new MongoCollectionExpression(entityType), entityType.GetCollectionName()!)
+        : this(new MongoCollectionExpression(entityType))
     {
     }
 
     /// <summary>
     /// Creates a <see cref="MongoQueryExpression"/> for the given entity type.
     /// </summary>
-    /// <param name="fromExpression">The expression this query selects against.</param>
-    /// <param name="collection">The name of the collection on the MongoDB server.</param>
-    public MongoQueryExpression(MongoCollectionExpression fromExpression, string collection)
+    /// <param name="collectionExpression">The expression this query selects against.</param>
+    public MongoQueryExpression(MongoCollectionExpression collectionExpression)
     {
-        FromExpression = fromExpression;
-        Collection = collection;
+        CollectionExpression = collectionExpression;
     }
 
     /// <summary>
     /// Represents the Mongo collection this query is bound to.
     /// </summary>
-    public virtual MongoCollectionExpression FromExpression { get; private set; }
+    public virtual MongoCollectionExpression CollectionExpression { get; private set; }
 
     /// <summary>
     /// The <see cref="Expression"/> captured from the original EF-bound LINQ query.
     /// </summary>
     public Expression? CapturedExpression { get; set; }
-
-    /// <summary>
-    /// The underlying name of the collection for this query in MongoDB.
-    /// </summary>
-    public virtual string Collection { get; }
 
     /// <inheritdoc />
     public override Type Type => typeof(object);

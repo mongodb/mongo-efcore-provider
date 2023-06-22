@@ -16,6 +16,7 @@
 using System;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
@@ -31,12 +32,18 @@ public class MongoCollectionExpression : Expression
     public MongoCollectionExpression(IEntityType entityType)
     {
         EntityType = entityType;
+        CollectionName = entityType.GetCollectionName();
     }
 
     /// <summary>
     /// Which entity this collection is for.
     /// </summary>
     public IEntityType EntityType { get; }
+
+    /// <summary>
+    /// The name of this collection in MongoDB;
+    /// </summary>
+    public string CollectionName { get; }
 
     /// <inheritdoc/>
     public sealed override ExpressionType NodeType => ExpressionType.Extension;

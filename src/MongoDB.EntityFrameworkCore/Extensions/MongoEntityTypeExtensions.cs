@@ -44,11 +44,11 @@ public static class MongoEntityTypeExtensions
     /// </summary>
     /// <param name="entityType">The entity type to get the collection name for.</param>
     /// <returns>The name of the collection to which the entity type is mapped.</returns>
-    public static string? GetCollectionName(this IReadOnlyEntityType entityType)
+    public static string GetCollectionName(this IReadOnlyEntityType entityType)
     {
         var nameAnnotation = entityType.FindAnnotation(MongoAnnotationNames.CollectionName);
-        if (nameAnnotation != null)
-            return (string?)nameAnnotation.Value;
+        if (nameAnnotation?.Value != null)
+            return (string)nameAnnotation.Value;
 
         return GetDefaultCollectionName(entityType);
     }
@@ -58,6 +58,6 @@ public static class MongoEntityTypeExtensions
     /// </summary>
     /// <param name="entityType">The entity type to get the collection name for.</param>
     /// <returns>The default name of the collection to which the entity type would be mapped.</returns>
-    public static string? GetDefaultCollectionName(this IReadOnlyEntityType entityType)
+    public static string GetDefaultCollectionName(this IReadOnlyEntityType entityType)
         => entityType.HasSharedClrType ? entityType.ShortName() : entityType.ClrType.ShortDisplayName();
 }

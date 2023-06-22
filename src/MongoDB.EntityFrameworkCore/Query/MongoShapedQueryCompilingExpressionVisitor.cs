@@ -53,7 +53,8 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
     /// <inheritdoc/>
     protected override Expression VisitShapedQuery(ShapedQueryExpression shapedQueryExpression)
     {
-        var shaperLambda = CreateShaperLambda(shapedQueryExpression);
+        var shaperLambda = CreateShaperLambda(shapedQueryExpression.ShaperExpression);
+        Console.WriteLine(new ExpressionPrinter().Print(shaperLambda));
 
         var queryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
         var resultType = DetermineResultType(queryExpression.CapturedExpression) ?? shaperLambda.ReturnType;
@@ -71,11 +72,11 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
             Expression.Constant(shapedQueryExpression.ResultCardinality));
     }
 
-    private LambdaExpression CreateShaperLambda(ShapedQueryExpression shapedQueryExpression)
+    private LambdaExpression CreateShaperLambda(Expression shaperExpression)
     {
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
 
-        var shaperBody = InjectEntityMaterializers(shapedQueryExpression.ShaperExpression);
+        var shaperBody = InjectEntityMaterializers(shaperExpression);
         shaperBody = new MongoBsonShaperRebindingExpressionVisitor(bsonDocParameter).Visit(shaperBody);
 
         return Expression.Lambda(
@@ -103,10 +104,11 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         ResultCardinality resultCardinality)
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
-        var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(queryExpression.Collection).AsQueryable();
+        var collectionName = queryExpression.CollectionExpression.CollectionName;
+        var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName).AsQueryable();
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
 
-        var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality)!;
+        var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
 
         IEnumerable<BsonDocument> documents = resultCardinality == ResultCardinality.Enumerable
             ? source.Provider.CreateQuery<BsonDocument>(translatedQuery)
