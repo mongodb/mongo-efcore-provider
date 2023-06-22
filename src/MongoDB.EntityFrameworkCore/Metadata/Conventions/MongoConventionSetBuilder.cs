@@ -52,6 +52,9 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         conventionSet.Add(new TableAttributeConvention(Dependencies));
         conventionSet.Add(new ColumnAttributeConvention(Dependencies));
 
+        // Replace default conventions with MongoDB-specific ones
+        conventionSet.Replace<RelationshipDiscoveryConvention>(new MongoRelationshipDiscoveryConvention(Dependencies));
+
         return conventionSet;
     }
 
