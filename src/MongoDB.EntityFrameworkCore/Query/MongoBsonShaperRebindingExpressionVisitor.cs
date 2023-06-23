@@ -85,11 +85,11 @@ public class MongoBsonShaperRebindingExpressionVisitor : ExpressionVisitor
             return base.VisitMethodCall(methodCallExpression);
         }
 
-        var property = GetConstantValue<IProperty>(methodCallExpression.Arguments[2]);
+        var property = methodCallExpression.Arguments[2].GetConstantValue<IProperty>();
         return CreateGetValueExpression(_bsonDocParameter, property, methodCallExpression.Type);
     }
 
-    private Expression CreateGetValueExpression(
+    private static Expression CreateGetValueExpression(
         Expression bsonDocExpression,
         IProperty property,
         Type type)
@@ -154,9 +154,4 @@ public class MongoBsonShaperRebindingExpressionVisitor : ExpressionVisitor
         = typeof(BsonDocument).GetMethods()
             .Single(mi => mi.Name == "GetValue" && mi.GetParameters().Length == 2 &&
                           mi.GetParameters()[0].ParameterType == typeof(string));
-
-    private static T GetConstantValue<T>(Expression expression)
-        => expression is ConstantExpression constantExpression
-            ? (T)constantExpression.Value!
-            : throw new InvalidOperationException();
 }
