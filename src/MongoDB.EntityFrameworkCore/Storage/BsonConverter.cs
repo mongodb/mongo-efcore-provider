@@ -20,7 +20,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
-using MongoDB.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Query.Visitors;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -54,6 +54,7 @@ internal static class BsonConverter
     /// the an enumerable <see cref="elementType"/> container that will be created using <see cref="constructor"/>.
     /// </summary>
     /// <param name="bsonArrayExpression">The expression containing the <see cref="BsonArray"/> to convert.</param>
+    /// <param name="constructor">The constructor to use to create the array.</param>
     /// <param name="elementType">The <see cref="Type"/> of elements in the array.</param>
     /// <returns>The new enumerable type containing the converted elements.</returns>
     public static Expression BsonArrayToEnumerable(Expression bsonArrayExpression, ConstructorInfo constructor, Type elementType) =>
@@ -96,7 +97,7 @@ internal static class BsonConverter
 
     private static readonly MethodInfo __convertBsonValueMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(ConvertValue) && mi.GetParameters().Length == 2)!;
+            .Single(mi => mi.Name == nameof(ConvertValue) && mi.GetParameters().Length == 2);
 
     /// <summary>
     /// Convert a <see cref="BsonValue"/> to the desired <see cref="Type"/> by using
@@ -163,7 +164,7 @@ internal static class BsonConverter
             not null when type == typeof(uint?) => value.IsBsonNull ? null : Convert.ToUInt32(value.AsInt32),
             not null when type == typeof(ulong?) => value.IsBsonNull ? null : Convert.ToUInt32(value.AsInt64),
 
-            _ => throw new NotSupportedException($"Type {type.Name} can not be materialized from the BSON.")
+            _ => throw new NotSupportedException($"Type {type?.Name} can not be materialized from the BSON.")
         };
     }
 }
