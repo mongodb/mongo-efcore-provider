@@ -1,5 +1,4 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <TargetFramework>net7.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -15,22 +14,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="7.0.5" />
+    <PackageReference Include="MongoDB.Driver" Version="2.20.0" />
   </ItemGroup>
-
-  <ItemGroup>
-    <Compile Remove="NewFolder\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Remove="NewFolder\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Remove="NewFolder\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\..\mongo-csharp-driver\src\MongoDB.Driver\MongoDB.Driver.csproj" />
-  </ItemGroup>
-
 </Project>
