@@ -32,17 +32,17 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// To do that we have to hold off as a. The LINQ v3 provider isn't ready for parameters to change underneath it
 /// b. The LINQ v3 provider needs a generic type we don't have at this stage.
 /// </remarks>
-internal class CapturingQueryableMethodTranslatingExpressionVisitor : QueryableMethodTranslatingExpressionVisitor
+internal class MongoQueryableMethodTranslatingExpressionVisitor : QueryableMethodTranslatingExpressionVisitor
 {
     private Expression? _finalExpression;
 
     /// <summary>
-    /// Creates a <see cref="CapturingQueryableMethodTranslatingExpressionVisitor"/> with the given
+    /// Creates a <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/> with the given
     /// dependencies and query compilation context.
     /// </summary>
     /// <param name="dependencies">The <see cref="QueryableMethodTranslatingExpressionVisitorDependencies"/> this visitor depends upon.</param>
     /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
-    public CapturingQueryableMethodTranslatingExpressionVisitor(
+    public MongoQueryableMethodTranslatingExpressionVisitor(
         QueryableMethodTranslatingExpressionVisitorDependencies dependencies,
         MongoQueryCompilationContext queryCompilationContext)
         : base(dependencies, queryCompilationContext, subquery: false)

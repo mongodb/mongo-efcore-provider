@@ -45,6 +45,6 @@ public class MongoQueryableMethodTranslatingExpressionVisitorFactory : IQueryabl
     /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> to pass to the new visitor.</param>
     /// <returns>The newly created <see cref="QueryableMethodTranslatingExpressionVisitor"/>.</returns>
     public virtual QueryableMethodTranslatingExpressionVisitor Create(QueryCompilationContext queryCompilationContext)
-        => new CapturingQueryableMethodTranslatingExpressionVisitor(Dependencies,
+        => new MongoQueryableMethodTranslatingExpressionVisitor(Dependencies,
             (MongoQueryCompilationContext)queryCompilationContext);
 }
