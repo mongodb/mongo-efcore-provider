@@ -38,8 +38,8 @@ public class ColumnAttributeConventionTests
 
     static string GetFieldName<TEntity, TProperty>(DbContext context, Expression<Func<TEntity, TProperty>> propertyExpression)
     {
-        var entityType = context.Model.FindEntityType(typeof(TEntity));
-        var property = entityType.FindProperty(propertyExpression.GetMemberAccess());
+        var entityType = context.Model.FindEntityType(typeof(TEntity))!;
+        var property = entityType.FindProperty(propertyExpression.GetMemberAccess())!;
         return MongoPropertyExtensions.GetFieldName(property);
     }
 

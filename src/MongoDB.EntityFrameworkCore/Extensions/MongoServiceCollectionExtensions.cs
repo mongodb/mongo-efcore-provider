@@ -25,6 +25,7 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 using MongoDB.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Query.Factories;
 using MongoDB.EntityFrameworkCore.Storage;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)

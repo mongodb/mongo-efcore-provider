@@ -26,7 +26,7 @@ public class MongoBuilderExtensionTest
     [Fact]
     public void Can_set_collection_name()
     {
-        var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention);
+        var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention)!;
 
         Assert.NotNull(typeBuilder.ToCollection("First"));
         Assert.Equal("First", typeBuilder.Metadata.GetCollectionName());
@@ -41,8 +41,8 @@ public class MongoBuilderExtensionTest
     [Fact]
     public void Can_set_field_name()
     {
-        var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention);
-        var propertyBuilder = typeBuilder.Property(typeof(string), "SampleString", ConfigurationSource.Convention);
+        var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention)!;
+        var propertyBuilder = typeBuilder.Property(typeof(string), "SampleString", ConfigurationSource.Convention)!;
 
         Assert.NotNull(propertyBuilder.ToField("First"));
         Assert.Equal("First", propertyBuilder.Metadata.GetFieldName());

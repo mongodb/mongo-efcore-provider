@@ -1,8 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <TargetFramework>net7.0</TargetFramework>
-    <Nullable>enable</Nullable>
     <Description>Official MongoDB supported driver for MongoDB. See https://www.mongodb.com/docs/drivers/csharp/ for more details.</Description>
     <Company>MongoDB Inc.</Company>
     <Version>0.0.0-local</Version>
@@ -12,25 +10,14 @@
     <PackageTags>mongodb;mongo;nosql;efcore</PackageTags>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
   </PropertyGroup>
+  
+  <PropertyGroup>
+    <NoWarn>EF1001</NoWarn>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="7.0.5" />
+    <PackageReference Include="MongoDB.Driver" Version="2.20.0" />
   </ItemGroup>
-
-  <ItemGroup>
-    <Compile Remove="NewFolder\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Remove="NewFolder\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Remove="NewFolder\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\..\mongo-csharp-driver\src\MongoDB.Driver\MongoDB.Driver.csproj" />
-  </ItemGroup>
-
 </Project>

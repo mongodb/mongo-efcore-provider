@@ -36,7 +36,7 @@ public class TableAttributeConventionTests
     }
 
     static string GetCollectionName<TEntity>(DbContext context) =>
-        context.Model.FindEntityType(typeof(TEntity)).GetCollectionName();
+        context.Model.FindEntityType(typeof(TEntity))!.GetCollectionName();
 
     [Table("attributeSpecifiedName")]
     class Customer

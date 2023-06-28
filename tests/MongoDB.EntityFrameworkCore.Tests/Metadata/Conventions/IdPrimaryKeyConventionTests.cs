@@ -25,7 +25,7 @@ public class IdPrimaryKeyConventionTests
     {
         using var context = new MyDbContext();
 
-        var keys = context.Model.FindEntityType(typeof(Vendor)).GetKeys().ToArray();
+        var keys = context.Model.FindEntityType(typeof(Vendor))!.GetKeys().ToArray();
 
         var expectedProperty = Utilities.GetPropertyInfo((Vendor v) => v._id);
 
@@ -38,7 +38,7 @@ public class IdPrimaryKeyConventionTests
     {
         using var context = new MyDbContext();
 
-        var keys = context.Model.FindEntityType(typeof(Customer)).GetKeys().ToArray();
+        var keys = context.Model.FindEntityType(typeof(Customer))!.GetKeys().ToArray();
 
         var expectedProperty = Utilities.GetPropertyInfo((Customer c) => c._id);
 
