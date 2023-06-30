@@ -22,23 +22,26 @@ namespace MongoDB.EntityFrameworkCore.Query.Factories;
 /// </summary>
 public class MongoQueryCompilationContextFactory : IQueryCompilationContextFactory
 {
-    public MongoQueryCompilationContextFactory(QueryCompilationContextDependencies dependencies)
+    /// <summary>
+    /// Create a <see cref="MongoQueryContextFactory"/>.
+    /// </summary>
+    /// <param name="dependencies">The <see cref="QueryCompilationContextDependencies"/> passed to each created <see cref="MongoQueryCompilationContext" /> instance.</param>
+    public MongoQueryCompilationContextFactory(
+        QueryCompilationContextDependencies dependencies)
     {
         Dependencies = dependencies;
     }
 
     /// <summary>
-    /// The <see cref="QueryCompilationContextDependencies"/> to be passed on to each
-    /// <see cref="MongoQueryCompilationContext"/> created by this factory.
+    /// The <see cref="QueryCompilationContextDependencies"/> passed to each <see cref="MongoQueryCompilationContext"/> created by this factory.
     /// </summary>
     protected virtual QueryCompilationContextDependencies Dependencies { get; }
 
     /// <summary>
-    /// Create a new <see cref="MongoQueryCompilationContext"/> with the given dependencies.
+    /// Create a new <see cref="MongoQueryCompilationContext"/> with the necessary dependencies.
     /// </summary>
-    /// <param name="async">Whether the <see cref="MongoQueryCompilationContext"/> will process
-    /// an asynchronous query or not.</param>
-    /// <returns></returns>
+    /// <param name="async"><see langref="true"/> if the query to process is asynchronous, <see langref="false"/> if it is synchronous.</param>
+    /// <returns>The newly created <see cref="MongoQueryCompilationContext"/>.</returns>
     public virtual QueryCompilationContext Create(bool async)
         => new MongoQueryCompilationContext(Dependencies, async);
 }

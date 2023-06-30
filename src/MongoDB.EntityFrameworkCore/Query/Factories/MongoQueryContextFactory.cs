@@ -42,10 +42,11 @@ public class MongoQueryContextFactory : IQueryContextFactory
     protected virtual QueryContextDependencies Dependencies { get; }
 
     /// <summary>
-    /// Create a <see cref="MongoQueryContext"/>.
+    /// Create a new <see cref="MongoQueryContext"/> with necessary dependencies.
     /// </summary>
-    /// <returns>A new <see cref="MongoQueryContext"/>.</returns>
-    public virtual QueryContext Create() => new MongoQueryContext(Dependencies, Client);
+    /// <returns>The newly created <see cref="MongoQueryContext"/>.</returns>
+    public virtual QueryContext Create()
+        => new MongoQueryContext(Dependencies, Client);
 
     /// <summary>
     /// The <see cref="IMongoClientWrapper"/> passed to each created <see cref="MongoQueryContext"/>.
