@@ -37,7 +37,7 @@ public class MongoTypeMapping : CoreTypeMapping
     }
 
     /// <summary>
-    /// Create a <see cref="MongoTypeMapping"/> as described the mapping parameters.
+    /// Create a <see cref="MongoTypeMapping"/> as described by the mapping parameters.
     /// </summary>
     /// <param name="parameters">The <see cref="CoreTypeMapping.CoreTypeMappingParameters"/> use to define this mapping.</param>
     protected MongoTypeMapping(CoreTypeMappingParameters parameters)

@@ -26,7 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 internal class MongoCollectionExpression : Expression
 {
     /// <summary>
-    /// Creates a <see cref="MongoCollectionExpression"/> for a given <see cref="IEntityType"/>.
+    /// Create a <see cref="MongoCollectionExpression"/> for a given <see cref="IEntityType"/>.
     /// </summary>
     /// <param name="entityType"></param>
     public MongoCollectionExpression(IEntityType entityType)
@@ -36,7 +36,7 @@ internal class MongoCollectionExpression : Expression
     }
 
     /// <summary>
-    /// Which entity this collection is for.
+    /// Which entity this collection relates to.
     /// </summary>
     public IEntityType EntityType { get; }
 
@@ -46,24 +46,25 @@ internal class MongoCollectionExpression : Expression
     public string CollectionName { get; }
 
     /// <inheritdoc/>
-    public sealed override ExpressionType NodeType => ExpressionType.Extension;
+    public override ExpressionType NodeType
+        => ExpressionType.Extension;
 
     /// <inheritdoc/>
-    public override Type Type => EntityType.ClrType;
+    public override Type Type
+        => EntityType.ClrType;
 
     /// <inheritdoc/>
-    protected override Expression VisitChildren(ExpressionVisitor visitor) => this;
+    protected override Expression VisitChildren(ExpressionVisitor visitor)
+        => this;
 
     /// <inheritdoc/>
-    public override int GetHashCode() => HashCode.Combine(EntityType);
+    public override int GetHashCode()
+        => HashCode.Combine(EntityType);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj)
         => obj != null
            && (ReferenceEquals(this, obj)
                || obj is MongoCollectionExpression collectionExpression
-               && Equals(collectionExpression));
-
-    private bool Equals(MongoCollectionExpression collectionExpression)
-        => EntityType.Equals(collectionExpression.EntityType);
+               && EntityType.Equals(collectionExpression.EntityType));
 }

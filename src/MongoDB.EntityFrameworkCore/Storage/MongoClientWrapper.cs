@@ -21,7 +21,7 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Provides the implementation of the interface between the MongoDB Entity Framework provider
+/// Provides the implementation of the <see cref="IMongoClientWrapper"/> between the MongoDB Entity Framework provider
 /// and the underlying <see cref="IMongoClient"/>.
 /// </summary>
 public class MongoClientWrapper : IMongoClientWrapper

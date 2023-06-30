@@ -72,7 +72,7 @@ internal static class BsonConverter
     {
         var newArray = new T[array.Count];
         for (int i = 0; i < array.Count; i++)
-            newArray[i] = (T)ConvertValue(array[i], typeof(T));
+            newArray[i] = (T)ConvertValue(array[i], typeof(T))!;
         return newArray;
     }
 
@@ -86,7 +86,7 @@ internal static class BsonConverter
     public static IEnumerable<T> AsEnumerable<T>(BsonArray array)
     {
         foreach (var item in array)
-            yield return (T)ConvertValue(item, typeof(T));
+            yield return (T)ConvertValue(item, typeof(T))!;
     }
 
     private static readonly MethodInfo __toArrayMethodInfo
