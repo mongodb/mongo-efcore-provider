@@ -40,7 +40,7 @@ public class MongoRelationshipDiscoveryConvention : RelationshipDiscoveryConvent
     /// </summary>
     /// <param name="targetType">Target entity <see cref="Type"/>.</param>
     /// <param name="model">The <see cref="IConventionModel"/> being built.</param>
-    /// <returns><see langref="true"/> if the type is to be owned, <see langref="false"/> otherwise.</returns>
+    /// <returns><see langword="true"/> if the type is to be owned, <see langword="false"/> otherwise.</returns>
     public static bool ShouldBeOwnedType(Type targetType, IConventionModel model)
         => !targetType.IsGenericType
            || targetType == typeof(Dictionary<string, object>)

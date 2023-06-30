@@ -26,44 +26,42 @@ namespace Microsoft.EntityFrameworkCore;
 public static class MongoPropertyBuilderExtensions
 {
     /// <summary>
-    /// Configures the field that the property is mapped to when targeting MongoDB.
+    /// Configures the document element that the property is mapped to when targeting MongoDB.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="name">The field name for the property.</param>
+    /// <param name="name">The element name for the property.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static PropertyBuilder ToField(
+    public static PropertyBuilder ToElement(
         this PropertyBuilder propertyBuilder,
         string name)
     {
         ArgumentNullException.ThrowIfNull(name);
-        propertyBuilder.Metadata.SetFieldName(name);
+        propertyBuilder.Metadata.SetElementName(name);
         return propertyBuilder;
     }
 
     /// <summary>
-    /// Configures the field that the property is mapped to when targeting MongoDB.
+    /// Configures the document element that the property is mapped to when targeting MongoDB.
     /// </summary>
     /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="name">The field name for the property.</param>
+    /// <param name="name">The element name for the property.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static PropertyBuilder<TProperty> ToField<TProperty>(
+    public static PropertyBuilder<TProperty> ToElement<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
         string name)
-        => (PropertyBuilder<TProperty>)ToField((PropertyBuilder)propertyBuilder, name);
+        => (PropertyBuilder<TProperty>)ToElement((PropertyBuilder)propertyBuilder, name);
 
 
     /// <summary>
-    /// Configures the field that the property is mapped to when targeting MongoDB. If an empty string is
-    /// supplied then the property will not be persisted.
+    /// Configures the document element that the property is mapped to when targeting MongoDB.
+    /// If an empty string is supplied then the property will not be persisted.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="name">The field name for the property.</param>
+    /// <param name="name">The element name for the property.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
-    /// <returns>
-    /// The same builder instance if the configuration was applied, <see langword="null" /> otherwise.
-    /// </returns>
-    public static IConventionPropertyBuilder? ToField(
+    /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.</returns>
+    public static IConventionPropertyBuilder? ToElement(
         this IConventionPropertyBuilder propertyBuilder,
         string? name,
         bool fromDataAnnotation = false)
@@ -73,20 +71,20 @@ public static class MongoPropertyBuilderExtensions
             return null;
         }
 
-        propertyBuilder.Metadata.SetFieldName(name, fromDataAnnotation);
+        propertyBuilder.Metadata.SetElementName(name, fromDataAnnotation);
         return propertyBuilder;
     }
 
     /// <summary>
-    /// Returns a value indicating whether the given field name can be set.
+    /// Returns a value indicating whether the given document element name can be set.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="name">The field name for the property.</param>
+    /// <param name="name">The element name for the property.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
-    /// <returns><see langword="true" /> if the field name can be set.</returns>
+    /// <returns><see langword="true" /> if the field name can be set, <see langword="false"/> if not.</returns>
     public static bool CanSetField(
         this IConventionPropertyBuilder propertyBuilder,
         string? name,
         bool fromDataAnnotation = false)
-        => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.FieldName, name, fromDataAnnotation);
+        => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
 }

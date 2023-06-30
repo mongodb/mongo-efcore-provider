@@ -40,7 +40,7 @@ public class ColumnAttributeConventionTests
     {
         var entityType = context.Model.FindEntityType(typeof(TEntity))!;
         var property = entityType.FindProperty(propertyExpression.GetMemberAccess())!;
-        return MongoPropertyExtensions.GetFieldName(property);
+        return property.GetElementName();
     }
 
     class Customer
@@ -64,7 +64,7 @@ public class ColumnAttributeConventionTests
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-            modelBuilder.Entity<Customer>().Property(c => c.Name).ToField("fluentSpecifiedName");
+            modelBuilder.Entity<Customer>().Property(c => c.Name).ToElement("fluentSpecifiedName");
         }
     }
 }

@@ -24,7 +24,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
-/// A convention that identifies the primary key for entity types based on the underlying mapped name being "_id".
+/// A convention that identifies the primary key for entity types based on the underlying element name being "_id".
 /// </summary>
 public class IdPrimaryKeyConvention : KeyDiscoveryConvention
 {
@@ -54,7 +54,7 @@ public class IdPrimaryKeyConvention : KeyDiscoveryConvention
 
         foreach (var candidate in candidates)
         {
-            if (MongoPropertyExtensions.GetFieldName(candidate) == "_id")
+            if (MongoPropertyExtensions.GetElementName(candidate) == "_id")
             {
                 entityTypeBuilder.PrimaryKey(new[] {candidate});
                 return;

@@ -23,7 +23,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
-/// A convention that configures the field name for entity properties based on an applied <see cref="ColumnAttribute" /> for
+/// A convention that configures the element name for entity properties based on an applied <see cref="ColumnAttribute" /> for
 /// familiarity/compatibility with other EF providers.
 /// </summary>
 public class ColumnAttributeConvention : PropertyAttributeConventionBase<ColumnAttribute>
@@ -37,6 +37,7 @@ public class ColumnAttributeConvention : PropertyAttributeConventionBase<ColumnA
     {
     }
 
+    /// <inheritdoc />
     protected override void ProcessPropertyAdded(
         IConventionPropertyBuilder propertyBuilder,
         ColumnAttribute attribute,
@@ -45,7 +46,7 @@ public class ColumnAttributeConvention : PropertyAttributeConventionBase<ColumnA
     {
         if (!string.IsNullOrWhiteSpace(attribute.Name))
         {
-            propertyBuilder.ToField(attribute.Name, fromDataAnnotation: true);
+            propertyBuilder.ToElement(attribute.Name, fromDataAnnotation: true);
         }
     }
 }

@@ -39,19 +39,19 @@ public class MongoBuilderExtensionTest
     }
 
     [Fact]
-    public void Can_set_field_name()
+    public void Can_set_element_name()
     {
         var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention)!;
         var propertyBuilder = typeBuilder.Property(typeof(string), "SampleString", ConfigurationSource.Convention)!;
 
-        Assert.NotNull(propertyBuilder.ToField("First"));
-        Assert.Equal("First", propertyBuilder.Metadata.GetFieldName());
+        Assert.NotNull(propertyBuilder.ToElement("First"));
+        Assert.Equal("First", propertyBuilder.Metadata.GetElementName());
 
-        Assert.NotNull(propertyBuilder.ToField("Second", fromDataAnnotation: true));
-        Assert.Equal("Second", propertyBuilder.Metadata.GetFieldName());
+        Assert.NotNull(propertyBuilder.ToElement("Second", fromDataAnnotation: true));
+        Assert.Equal("Second", propertyBuilder.Metadata.GetElementName());
 
-        Assert.Null(propertyBuilder.ToField("Third"));
-        Assert.Equal("Second", propertyBuilder.Metadata.GetFieldName());
+        Assert.Null(propertyBuilder.ToElement("Third"));
+        Assert.Equal("Second", propertyBuilder.Metadata.GetElementName());
     }
 
     protected virtual ModelBuilder CreateConventionModelBuilder()
