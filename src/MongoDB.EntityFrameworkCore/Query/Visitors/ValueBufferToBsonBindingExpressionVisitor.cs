@@ -30,17 +30,17 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// Translates an shaper expression tree to use <see cref="BsonDocument"/> and associated methods
 /// instead of the <see cref="ValueBuffer"/> EF provides.
 /// </summary>
-internal class MongoBsonShaperRebindingExpressionVisitor : ExpressionVisitor
+internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
 {
     private readonly ParameterExpression _bsonDocParameter;
 
     /// <summary>
-    /// Create a <see cref="MongoBsonShaperRebindingExpressionVisitor"/>.
+    /// Create a <see cref="ValueBufferToBsonBindingExpressionVisitor"/>.
     /// </summary>
     /// <param name="bsonDocParameter">
     /// The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.
     /// </param>
-    public MongoBsonShaperRebindingExpressionVisitor(ParameterExpression bsonDocParameter)
+    public ValueBufferToBsonBindingExpressionVisitor(ParameterExpression bsonDocParameter)
     {
         _bsonDocParameter = bsonDocParameter;
     }

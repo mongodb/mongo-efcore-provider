@@ -79,7 +79,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
 
         var shaperBody = InjectEntityMaterializers(shaperExpression);
-        shaperBody = new MongoBsonShaperRebindingExpressionVisitor(bsonDocParameter).Visit(shaperBody);
+        shaperBody = new ValueBufferToBsonBindingExpressionVisitor(bsonDocParameter).Visit(shaperBody);
 
         return Expression.Lambda(
             shaperBody,
