@@ -58,12 +58,13 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         Console.WriteLine(new ExpressionPrinter().Print(shaperLambda));
 
         var queryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
-        var resultType = DetermineResultType(queryExpression.CapturedExpression) ?? shaperLambda.ReturnType;
-        var standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
-                                     QueryTrackingBehavior.NoTrackingWithIdentityResolution;
+        var rootEntityType = queryExpression.CollectionExpression.EntityType;
+        var projectedType = shaperLambda.ReturnType;
+        bool standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
+                                      QueryTrackingBehavior.NoTrackingWithIdentityResolution;
 
         return Expression.Call(null,
-            __translateAndExecuteQuery.MakeGenericMethod(shaperLambda.ReturnType, resultType),
+            __translateAndExecuteQuery.MakeGenericMethod(rootEntityType.ClrType, projectedType),
             QueryCompilationContext.QueryContextParameter,
             Expression.Constant(queryExpression),
             Expression.Constant(shaperLambda.Compile()),
@@ -84,15 +85,6 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
             shaperBody,
             QueryCompilationContext.QueryContextParameter,
             bsonDocParameter);
-    }
-
-    private static Type? DetermineResultType(Expression? expression)
-    {
-        return expression == null
-            ? null
-            : expression.Type.IsGenericType && expression.Type.GetGenericTypeDefinition() == typeof(IQueryable<>)
-                ? expression.Type.GetGenericArguments()[0]
-                : expression.Type;
     }
 
     private static IEnumerable<TResult> TranslateAndExecuteQuery<TSource, TResult>(
