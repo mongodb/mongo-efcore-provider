@@ -22,7 +22,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <summary>
 /// Represents a top-level MongoDB-specific collection for querying server-side.
 /// </summary>
-internal class MongoQueryExpression : Expression
+internal sealed class MongoQueryExpression : Expression
 {
     /// <summary>
     /// Create a <see cref="MongoQueryExpression"/> for the given entity type.
@@ -45,7 +45,7 @@ internal class MongoQueryExpression : Expression
     /// <summary>
     /// Represents the Mongo collection this query is bound to.
     /// </summary>
-    public virtual MongoCollectionExpression CollectionExpression { get; private set; }
+    public MongoCollectionExpression CollectionExpression { get; private set; }
 
     /// <summary>
     /// The <see cref="Expression"/> captured from the original EF-bound LINQ query.
@@ -53,8 +53,10 @@ internal class MongoQueryExpression : Expression
     public Expression? CapturedExpression { get; set; }
 
     /// <inheritdoc />
-    public override Type Type => typeof(object);
+    public override Type Type
+        => typeof(object);
 
     /// <inheritdoc />
-    public sealed override ExpressionType NodeType => ExpressionType.Extension;
+    public override ExpressionType NodeType
+        => ExpressionType.Extension;
 }
