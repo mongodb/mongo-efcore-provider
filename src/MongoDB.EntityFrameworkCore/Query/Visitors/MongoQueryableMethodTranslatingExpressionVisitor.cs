@@ -25,20 +25,17 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
 /// <summary>
-/// Captures the final query expression in the chain so it can be run against the MongoDB LINQ v3 provider.
+/// Captures the final query expression in the chain so it can be run against the MongoDB LINQ v3 provider while also
+/// following the shape of the transformation so that the shaper may be correctly adjusted.
 /// </summary>
-/// <remarks>
-/// Normally this is where you would translate much of your query but we want to use the LINQ v3 provider.
-/// To do that we have to hold off as a. The LINQ v3 provider isn't ready for parameters to change underneath it
-/// b. The LINQ v3 provider needs a generic type we don't have at this stage.
-/// </remarks>
-internal class MongoQueryableMethodTranslatingExpressionVisitor : QueryableMethodTranslatingExpressionVisitor
+internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : QueryableMethodTranslatingExpressionVisitor
 {
+    private readonly MongoProjectionBindingExpressionVisitor _projectionBindingExpressionVisitor = new();
+
     private Expression? _finalExpression;
 
     /// <summary>
-    /// Creates a <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/> with the given
-    /// dependencies and query compilation context.
+    /// Create a <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/>.
     /// </summary>
     /// <param name="dependencies">The <see cref="QueryableMethodTranslatingExpressionVisitorDependencies"/> this visitor depends upon.</param>
     /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
@@ -71,6 +68,13 @@ internal class MongoQueryableMethodTranslatingExpressionVisitor : QueryableMetho
             var source = Visit(methodCallExpression.Arguments[0]);
             if (source is ShapedQueryExpression shapedQueryExpression)
             {
+                var genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
+                switch (method.Name)
+                {
+                    case nameof(Queryable.Select) when genericMethod == QueryableMethods.Select:
+                        return base.VisitMethodCall(methodCallExpression);
+                }
+
                 var newCardinality = GetResultCardinality(method);
                 if (newCardinality != shapedQueryExpression.ResultCardinality)
                     shapedQueryExpression = shapedQueryExpression.UpdateResultCardinality(newCardinality);
@@ -81,6 +85,35 @@ internal class MongoQueryableMethodTranslatingExpressionVisitor : QueryableMetho
         }
 
         return QueryCompilationContext.NotTranslatedExpression;
+    }
+
+    /// <inheritdoc />
+    protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector)
+    {
+        // Handle .Select(p => p) no-op/pass-thru
+        if (selector.Body == selector.Parameters[0])
+        {
+            return source;
+        }
+
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        var newSelectorBody =
+            ReplacingExpressionVisitor.Replace(selector.Parameters.Single(), source.ShaperExpression, selector.Body);
+        var newShaper = _projectionBindingExpressionVisitor.Translate(mongoQueryExpression, newSelectorBody);
+
+        return source.UpdateShaperExpression(newShaper);
+    }
+
+    /// <inheritdoc />
+    protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
+    {
+        var queryExpression = new MongoQueryExpression(entityType);
+        return new ShapedQueryExpression(
+            queryExpression,
+            new EntityShaperExpression(
+                entityType,
+                new ProjectionBindingExpression(queryExpression, new ProjectionMember(), typeof(ValueBuffer)),
+                false));
     }
 
     private static ResultCardinality GetResultCardinality(MethodInfo method)
@@ -145,21 +178,8 @@ internal class MongoQueryableMethodTranslatingExpressionVisitor : QueryableMetho
         return ResultCardinality.Enumerable;
     }
 
-    private static ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType, Expression queryExpression) =>
-        new(
-            queryExpression,
-            new EntityShaperExpression(
-                entityType,
-                new ProjectionBindingExpression(queryExpression, new ProjectionMember(), typeof(ValueBuffer)),
-                false));
-
-    /// <inheritdoc />
-    protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
-        => CreateShapedQueryExpression(entityType, new MongoQueryExpression(entityType));
-
     #region Not implemented as we're capturing the query rather than translating here
 
-    /// <inheritdoc />
     protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor() =>
         throw new NotImplementedException();
 
@@ -242,9 +262,6 @@ internal class MongoQueryableMethodTranslatingExpressionVisitor : QueryableMetho
         bool ascending) => throw new NotImplementedException();
 
     protected override ShapedQueryExpression TranslateReverse(ShapedQueryExpression source) => throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector) =>
-        throw new NotImplementedException();
 
     protected override ShapedQueryExpression TranslateSelectMany(ShapedQueryExpression source, LambdaExpression collectionSelector,
         LambdaExpression resultSelector) =>

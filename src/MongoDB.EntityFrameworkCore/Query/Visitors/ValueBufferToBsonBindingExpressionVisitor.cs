@@ -22,6 +22,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -43,6 +44,21 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
     public ValueBufferToBsonBindingExpressionVisitor(ParameterExpression bsonDocParameter)
     {
         _bsonDocParameter = bsonDocParameter;
+    }
+
+    protected override Expression VisitExtension(Expression extensionExpression)
+    {
+        switch (extensionExpression)
+        {
+            case ProjectionBindingExpression projectionBindingExpression:
+                var query = (MongoQueryExpression) projectionBindingExpression.QueryExpression;
+                var projection = query.GetMappedProjection(projectionBindingExpression.ProjectionMember!);
+                var property = ((EntityPropertyBindingExpression)projection).BoundProperty;
+
+                return CreateGetValueExpression(_bsonDocParameter, property, projectionBindingExpression.Type);
+        }
+
+        return base.VisitExtension(extensionExpression);
     }
 
     /// <summary>
@@ -91,21 +107,18 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
 
     private static Expression CreateGetValueExpression(
         Expression bsonDocExpression,
-        IProperty property,
+        IReadOnlyProperty property,
         Type type)
     {
-        var expectedType = property.GetTypeMapping()?.ClrType ?? type;
+        var expectedType = property.GetTypeMapping().ClrType;
 
         // TODO: Support json property names with EF method/convention
         var valueExpression = CreateGetBsonValueExpression(bsonDocExpression, property.Name);
         valueExpression = ConvertToExpectedType(expectedType, valueExpression);
 
-        if (valueExpression.Type != type)
-        {
-            valueExpression = Expression.Convert(valueExpression, type);
-        }
-
-        return valueExpression;
+        return valueExpression.Type != type
+            ? Expression.Convert(valueExpression, type)
+            : valueExpression;
     }
 
     private static Expression ConvertToExpectedType(Type expectedType, Expression valueExpression)
@@ -118,7 +131,7 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
         }
 
         // Support any lists and variants that expose IEnumerable<T> and have a matching constructor
-        if (expectedType.IsGenericType && !expectedType.IsGenericTypeDefinition)
+        if (expectedType is {IsGenericType: true, IsGenericTypeDefinition: false})
         {
             var enumerableType = expectedType.TryFindIEnumerable();
             if (enumerableType != null)
