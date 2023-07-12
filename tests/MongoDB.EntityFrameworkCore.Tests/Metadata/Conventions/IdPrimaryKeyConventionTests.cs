@@ -18,10 +18,10 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata.Conventions;
 
-public class IdPrimaryKeyConventionTests
+public static class IdPrimaryKeyConventionTests
 {
     [Fact]
-    public virtual void Id_fields_are_identified_as_primary_keys_when_strings()
+    public static void Id_fields_are_identified_as_primary_keys_when_strings()
     {
         using var context = new MyDbContext();
 
@@ -34,7 +34,7 @@ public class IdPrimaryKeyConventionTests
     }
 
     [Fact]
-    public virtual void Id_field_are_identified_as_primary_keys_when_objectids()
+    public static void Id_field_are_identified_as_primary_keys_when_objectids()
     {
         using var context = new MyDbContext();
 

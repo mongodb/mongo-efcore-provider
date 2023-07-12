@@ -15,7 +15,7 @@
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata.Attributes;
 
-public class CollectionAttributeTests
+public static class CollectionAttributeTests
 {
     [Theory]
     [InlineData("CollectionNameSet")]

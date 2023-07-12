@@ -18,17 +18,17 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata.Conventions;
 
-public class CollectionAttributeConventionTests
+public static class CollectionAttributeConventionTests
 {
     [Fact]
-    public virtual void Collection_attribute_specified_names_are_used_as_collection_names()
+    public static void Collection_attribute_specified_names_are_used_as_collection_names()
     {
         using var context = new BaseDbContext();
         Assert.Equal("attributedCollection", context.GetCollectionName<Customer>());
     }
 
     [Fact]
-    public virtual void Model_builder_specified_names_override_collection_attribute_names()
+    public static void Model_builder_specified_names_override_collection_attribute_names()
     {
         using var context = new ModelBuilderSpecifiedDbContext();
         Assert.Equal("namedCollection", context.GetCollectionName<Customer>());

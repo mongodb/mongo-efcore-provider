@@ -21,10 +21,10 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata;
 
-public class MongoBuilderExtensionTest
+public static class MongoBuilderExtensionTest
 {
     [Fact]
-    public void Can_set_collection_name()
+    public static void Can_set_collection_name()
     {
         var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention)!;
 
@@ -39,7 +39,7 @@ public class MongoBuilderExtensionTest
     }
 
     [Fact]
-    public void Can_set_element_name()
+    public static void Can_set_element_name()
     {
         var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention)!;
         var propertyBuilder = typeBuilder.Property(typeof(string), "SampleString", ConfigurationSource.Convention)!;
@@ -54,10 +54,10 @@ public class MongoBuilderExtensionTest
         Assert.Equal("Second", propertyBuilder.Metadata.GetElementName());
     }
 
-    protected virtual ModelBuilder CreateConventionModelBuilder()
+    private static ModelBuilder CreateConventionModelBuilder()
         => MongoTestHelpers.Instance.CreateConventionBuilder();
 
-    private InternalModelBuilder CreateBuilder()
+    private static InternalModelBuilder CreateBuilder()
         => (InternalModelBuilder)CreateConventionModelBuilder().GetInfrastructure();
 
     private class SampleEntity

@@ -18,10 +18,10 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Infrastructure;
 
-public class MongoOptionsExtensionTest
+public static class MongoOptionsExtensionTest
 {
     [Fact]
-    public void Can_set_connection_string_and_database_name()
+    public static void Can_set_connection_string_and_database_name()
     {
         var dbOptions = new MongoOptionsExtension()
             .WithConnectionString("mongodb://localhost:1234")
@@ -33,7 +33,7 @@ public class MongoOptionsExtensionTest
 
     [Theory]
     [InlineData("SomeDatabase")]
-    public void Can_set_mongo_client_and_database_name(string databaseName)
+    public static void Can_set_mongo_client_and_database_name(string databaseName)
     {
         var mongoClient = new MongoClient();
 
@@ -46,7 +46,7 @@ public class MongoOptionsExtensionTest
     }
 
     [Fact]
-    public void Throws_if_both_connection_string_and_mongo_client_set()
+    public static void Throws_if_both_connection_string_and_mongo_client_set()
     {
         Assert.Throws<InvalidOperationException>(() => new MongoOptionsExtension()
             .WithMongoClient(new MongoClient())

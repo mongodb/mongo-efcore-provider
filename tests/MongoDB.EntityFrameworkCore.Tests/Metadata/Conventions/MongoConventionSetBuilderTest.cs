@@ -19,10 +19,10 @@ using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata.Conventions;
 
-public class MongoConventionSetBuilderTest
+public static class MongoConventionSetBuilderTest
 {
     [Fact]
-    public void Can_build_a_model_with_default_conventions_without_DI()
+    public static void Can_build_a_model_with_default_conventions_without_DI()
     {
         var modelBuilder = new ModelBuilder(MongoConventionSetBuilder.Build());
         modelBuilder.Entity<Product>();
@@ -35,7 +35,7 @@ public class MongoConventionSetBuilderTest
     }
 
     [Fact]
-    public void Can_build_a_model_with_default_conventions_without_DI_new()
+    public static void Can_build_a_model_with_default_conventions_without_DI_new()
     {
         var modelBuilder = MongoConventionSetBuilder.CreateModelBuilder();
         modelBuilder.Entity<Product>();
@@ -49,7 +49,7 @@ public class MongoConventionSetBuilderTest
     }
 
     [Fact]
-    public void Can_identify_collection_name_from_dbset_property()
+    public static void Can_identify_collection_name_from_dbset_property()
     {
         var modelBuilder = MongoConventionSetBuilder.CreateModelBuilder<ProductsContext>();
 

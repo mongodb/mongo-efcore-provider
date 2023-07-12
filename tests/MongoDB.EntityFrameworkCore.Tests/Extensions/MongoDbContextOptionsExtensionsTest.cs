@@ -21,11 +21,11 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Extensions;
 
-public class MongoDbContextOptionsExtensionsTest
+public static class MongoDbContextOptionsExtensionsTest
 {
     [Theory]
     [InlineData("mongodb://localhost:1234", "myDatabaseName")]
-    public void Can_configure_connection_string_and_database_name(string connectionString, string databaseName)
+    public static void Can_configure_connection_string_and_database_name(string connectionString, string databaseName)
     {
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddMongoDB<ApplicationDbContext>(connectionString, databaseName, mongoOptions => { },
@@ -47,7 +47,7 @@ public class MongoDbContextOptionsExtensionsTest
 
     [Theory]
     [InlineData("myDatabaseName")]
-    public void Can_configure_with_mongo_client_and_database_name(string databaseName)
+    public static void Can_configure_with_mongo_client_and_database_name(string databaseName)
     {
         var mongoClient = new MongoClient();
 
@@ -66,7 +66,7 @@ public class MongoDbContextOptionsExtensionsTest
 
     [Theory]
     [InlineData("mongodb://localhost:1234", "myDatabaseName")]
-    public void Throws_when_multiple_ef_providers_specified(string connectionString, string databaseName)
+    public static void Throws_when_multiple_ef_providers_specified(string connectionString, string databaseName)
     {
         var options = new DbContextOptionsBuilder()
             .UseMongoDB(connectionString, databaseName)

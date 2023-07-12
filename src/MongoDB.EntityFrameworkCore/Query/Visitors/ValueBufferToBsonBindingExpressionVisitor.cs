@@ -61,12 +61,6 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
                 var projection = query.GetMappedProjection(projectionBindingExpression.ProjectionMember!);
                 switch (projection)
                 {
-                    case EntityPropertyBindingExpression propertyBindingExpression:
-                        {
-                            var property = propertyBindingExpression.BoundProperty;
-                            var resultValue = CreateGetValueExpression(_bsonDocParameter, property);
-                            return ConvertTypeIfRequired(resultValue, projectionBindingExpression.Type);
-                        }
                     case BsonElementBindingExpression elementBindingExpression:
                         {
                             var resultValue = CreateGetValueExpression(_bsonDocParameter, elementBindingExpression.ElementName, elementBindingExpression.Type);

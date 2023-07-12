@@ -19,17 +19,17 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata.Conventions;
 
-public class TableAttributeConventionTests
+public static class TableAttributeConventionTests
 {
     [Fact]
-    public virtual void TableAttribute_specified_names_are_used_as_Table_names()
+    public static void TableAttribute_specified_names_are_used_as_Table_names()
     {
         using var context = new BaseDbContext();
         Assert.Equal("attributeSpecifiedName", GetCollectionName<Customer>(context));
     }
 
     [Fact]
-    public virtual void ModelBuilder_specified_collection_names_override_TableAttribute_names()
+    public static void ModelBuilder_specified_collection_names_override_TableAttribute_names()
     {
         using var context = new ModelBuilderSpecifiedDbContext();
         Assert.Equal("fluentSpecifiedName", GetCollectionName<Customer>(context));

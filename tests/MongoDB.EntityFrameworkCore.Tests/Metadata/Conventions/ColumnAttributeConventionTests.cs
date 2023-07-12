@@ -20,17 +20,17 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.Tests.Metadata.Conventions;
 
-public class ColumnAttributeConventionTests
+public static class ColumnAttributeConventionTests
 {
     [Fact]
-    public virtual void ColumnAttribute_specified_names_are_used_as_Field_names()
+    public static void ColumnAttribute_specified_names_are_used_as_Field_names()
     {
         using var context = new BaseDbContext();
         Assert.Equal("attributeSpecifiedName", GetFieldName(context, (Customer c) => c.Name));
     }
 
     [Fact]
-    public virtual void ModelBuilder_specified_field_names_override_ColumnAttribute_names()
+    public static void ModelBuilder_specified_field_names_override_ColumnAttribute_names()
     {
         using var context = new ModelBuilderSpecifiedDbContext();
         Assert.Equal("fluentSpecifiedName", GetFieldName(context, (Customer c) => c.Name));
