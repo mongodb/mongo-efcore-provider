@@ -96,6 +96,14 @@ internal static class TypeExtensions
         return null;
     }
 
+    public static Type GetPropertyOrFieldType(this MemberInfo member)
+        => member.MemberType switch
+        {
+            MemberTypes.Property => ((PropertyInfo)member).PropertyType,
+            MemberTypes.Field => ((FieldInfo)member).FieldType,
+            _ => throw new NotSupportedException("Only properties and fields are supported as binding targets")
+        };
+
     /// <summary>
     /// Create a nullable version of a <see cref="Type"/>.
     /// </summary>

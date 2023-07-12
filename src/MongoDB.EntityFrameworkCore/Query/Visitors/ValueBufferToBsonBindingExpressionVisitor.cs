@@ -59,9 +59,22 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
             case ProjectionBindingExpression projectionBindingExpression:
                 var query = (MongoQueryExpression)projectionBindingExpression.QueryExpression;
                 var projection = query.GetMappedProjection(projectionBindingExpression.ProjectionMember!);
-                var property = ((EntityPropertyBindingExpression)projection).BoundProperty;
-                var resultValue = CreateGetValueExpression(_bsonDocParameter, property);
-                return ConvertTypeIfRequired(resultValue, projectionBindingExpression.Type);
+                switch (projection)
+                {
+                    case EntityPropertyBindingExpression propertyBindingExpression:
+                        {
+                            var property = propertyBindingExpression.BoundProperty;
+                            var resultValue = CreateGetValueExpression(_bsonDocParameter, property);
+                            return ConvertTypeIfRequired(resultValue, projectionBindingExpression.Type);
+                        }
+                    case BsonElementBindingExpression elementBindingExpression:
+                        {
+                            var resultValue = CreateGetValueExpression(_bsonDocParameter, elementBindingExpression.ElementName, elementBindingExpression.Type);
+                            return ConvertTypeIfRequired(resultValue, projectionBindingExpression.Type);
+                        }
+                    default:
+                        throw new NotSupportedException($"Unknown projection binding type `${projection.GetType().Name}`");
+                }
         }
 
         return base.VisitExtension(extensionExpression);
@@ -114,11 +127,14 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
 
     private static Expression CreateGetValueExpression(Expression bsonDocExpression, IReadOnlyProperty property)
     {
-        var mappedType = property.GetTypeMapping().ClrType;
+        return CreateGetValueExpression(bsonDocExpression, property.Name, property.GetTypeMapping().ClrType);
+    }
 
+    private static Expression CreateGetValueExpression(Expression bsonDocExpression, string name, Type mappedType)
+    {
         if (mappedType.IsArray)
         {
-            return CreateGetArrayOf(bsonDocExpression, property.Name, mappedType.TryGetItemType()!);
+            return CreateGetArrayOf(bsonDocExpression, name, mappedType.TryGetItemType()!);
         }
 
         // Support lists and variants that expose IEnumerable<T> and have a matching constructor
@@ -130,12 +146,13 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
                 var constructor = mappedType.TryFindConstructorWithParameter(enumerableType);
                 if (constructor != null)
                 {
-                    return Expression.New(constructor, CreateGetEnumerableOf(bsonDocExpression, property.Name, enumerableType.TryGetItemType()!));
+                    return Expression.New(constructor,
+                        CreateGetEnumerableOf(bsonDocExpression, name, enumerableType.TryGetItemType()!));
                 }
             }
         }
 
-        return CreateGetValueAs(bsonDocExpression, property.Name, mappedType);
+        return CreateGetValueAs(bsonDocExpression, name, mappedType);
     }
 
     private static Expression ConvertTypeIfRequired(Expression expression, Type intendedType)

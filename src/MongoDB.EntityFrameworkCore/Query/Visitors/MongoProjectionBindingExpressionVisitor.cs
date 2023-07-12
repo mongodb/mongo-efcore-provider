@@ -73,9 +73,8 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             case MemberExpression {Expression: EntityShaperExpression entityShaperExpression} memberExpression:
                 {
                     var projectionMember = _projectionMembers.Peek();
-                    var entityType = entityShaperExpression.EntityType;
-                    var property = entityType.FindProperty(memberExpression.Member);
-                    _projectionMapping[projectionMember] = new EntityPropertyBindingExpression(property!);
+                    _projectionMapping[projectionMember] = new BsonElementBindingExpression(projectionMember.Last!.Name,
+                        memberExpression.Member.GetPropertyOrFieldType());
                     return new ProjectionBindingExpression(_queryExpression, projectionMember, expression.Type);
                 }
             default:
