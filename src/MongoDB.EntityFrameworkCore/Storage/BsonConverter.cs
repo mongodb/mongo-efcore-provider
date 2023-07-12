@@ -15,9 +15,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Linq.Expressions;
-using System.Reflection;
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -30,36 +27,43 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 internal static class BsonConverter
 {
     /// <summary>
-    /// Create an expression that will convert the <see cref="BsonValue"/> held in <see cref="bsonValueExpression"/> to
-    /// the desired type <see cref="type"/> using <see cref="ConvertValue"/>.
+    /// Get a value as a specific type.
     /// </summary>
-    /// <param name="bsonValueExpression">The expression containing the <see cref="BsonValue"/> to convert.</param>
-    /// <param name="type">The <see cref="Type"/> to convert the value to.</param>
+    /// <param name="doc">The <see cref="BsonDocument"/> to obtain the value from.</param>
+    /// <param name="name">The string name of the element within the BSON.</param>
+    /// <typeparam name="T">The <see cref="Type"/> of value to obtain.</typeparam>
     /// <returns>The converted value.</returns>
-    public static Expression BsonValueToType(Expression bsonValueExpression, Type type) =>
-        Expression.Call(null, __convertBsonValueMethodInfo, bsonValueExpression, Expression.Constant(type));
+    public static T GetValueAs<T>(BsonDocument doc, string name)
+    {
+        var result = doc.GetValue(name, BsonNull.Value);
+        return (T)(ConvertValue(result, typeof(T)) ?? default(T));
+    }
 
     /// <summary>
-    /// Create an expression that will convert the <see cref="BsonArray"/> held in <see cref="bsonArrayExpression"/> to
-    /// the desired array of <see cref="elementType"/> items using <see cref="ToArray{T}"/>.
+    /// Get a value as an array of typed values.
     /// </summary>
-    /// <param name="bsonArrayExpression">The expression containing the <see cref="BsonArray"/> to convert.</param>
-    /// <param name="elementType">The <see cref="Type"/> of elements in the array.</param>
-    /// <returns>The converted array.</returns>
-    public static Expression BsonArrayToArray(Expression bsonArrayExpression, Type elementType) =>
-        Expression.Call(null, __toArrayMethodInfo.MakeGenericMethod(elementType), bsonArrayExpression);
+    /// <param name="doc">The <see cref="BsonDocument"/> to obtain the values from.</param>
+    /// <param name="name">The string name of the element within the BSON.</param>
+    /// <typeparam name="T">The type to which each item should be converted.</typeparam>
+    /// <returns>The newly created array containing the converted values.</returns>
+    public static T[] GetArrayOf<T>(BsonDocument doc, string name)
+    {
+        var result = doc.GetValue(name, BsonNull.Value);
+        return ToArray<T>(result.IsBsonNull ? new BsonArray() : result.AsBsonArray);
+    }
 
     /// <summary>
-    /// Create an expression that will convert the <see cref="BsonArray"/> held in <see cref="bsonArrayExpression"/> to
-    /// the an enumerable <see cref="elementType"/> container that will be created using <see cref="constructor"/>.
+    /// Get a value as an array of typed values.
     /// </summary>
-    /// <param name="bsonArrayExpression">The expression containing the <see cref="BsonArray"/> to convert.</param>
-    /// <param name="constructor">The constructor to use to create the array.</param>
-    /// <param name="elementType">The <see cref="Type"/> of elements in the array.</param>
-    /// <returns>The new enumerable type containing the converted elements.</returns>
-    public static Expression BsonArrayToEnumerable(Expression bsonArrayExpression, ConstructorInfo constructor, Type elementType) =>
-        Expression.New(constructor,
-            Expression.Call(null, __asEnumerableMethodInfo.MakeGenericMethod(elementType), bsonArrayExpression));
+    /// <param name="doc">The <see cref="BsonDocument"/> to obtain the values from.</param>
+    /// <param name="name">The string name of the element within the BSON.</param>
+    /// <typeparam name="T">The type to which each item should be converted.</typeparam>
+    /// <returns>A <see cref="IEnumerable{T}"/> containing the converted values.</returns>
+    public static IEnumerable<T> GetEnumerableOf<T>(BsonDocument doc, string name)
+    {
+        var result = doc.GetValue(name, BsonNull.Value);
+        return ToEnumerable<T>(result.IsBsonNull ? new BsonArray() : result.AsBsonArray);
+    }
 
     /// <summary>
     /// Create an <see cref="Array"/> of <typeparamref name="T"/> from
@@ -67,7 +71,7 @@ internal static class BsonConverter
     /// </summary>
     /// <param name="array">The <see cref="BsonArray"/> containing the items to be converted.</param>
     /// <typeparam name="T">The type to which each item should be converted.</typeparam>
-    /// <returns>The newly created and converted array.</returns>
+    /// <returns>The newly created array containing the converted values.</returns>
     public static T[] ToArray<T>(BsonArray array)
     {
         var newArray = new T[array.Count];
@@ -83,21 +87,11 @@ internal static class BsonConverter
     /// <param name="array">The <see cref="BsonArray"/> of items to convert.</param>
     /// <typeparam name="T">The type to convert each item to.</typeparam>
     /// <returns>An <see cref="IEnumerable{T}"/> yielding each converted item.</returns>
-    public static IEnumerable<T> AsEnumerable<T>(BsonArray array)
+    public static IEnumerable<T> ToEnumerable<T>(BsonArray array)
     {
         foreach (var item in array)
             yield return (T)ConvertValue(item, typeof(T))!;
     }
-
-    private static readonly MethodInfo __toArrayMethodInfo
-        = typeof(BsonConverter).GetMethod(nameof(ToArray), BindingFlags.Static | BindingFlags.Public)!;
-
-    private static readonly MethodInfo __asEnumerableMethodInfo
-        = typeof(BsonConverter).GetMethod(nameof(AsEnumerable), BindingFlags.Static | BindingFlags.Public)!;
-
-    private static readonly MethodInfo __convertBsonValueMethodInfo
-        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(ConvertValue) && mi.GetParameters().Length == 2);
 
     /// <summary>
     /// Convert a <see cref="BsonValue"/> to the desired <see cref="Type"/> by using

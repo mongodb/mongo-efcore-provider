@@ -106,7 +106,12 @@ internal static class TypeExtensions
             ? type
             : typeof(Nullable<>).MakeGenericType(type);
 
-    private static bool IsNullableType(this Type type)
+    /// <summary>
+    /// Check with a type is nullable or not.
+    /// </summary>
+    /// <param name="type">The <see cref="Type"/> to check.</param>
+    /// <returns><see langref="true"/> is the object is nullable, otherwise <see langref="false"/>.</returns>
+    public static bool IsNullableType(this Type type)
         => !type.IsValueType || type.IsNullableValueType();
 
     private static bool IsNullableValueType(this Type type)

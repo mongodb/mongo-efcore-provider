@@ -28,8 +28,8 @@ using MongoDB.EntityFrameworkCore.Storage;
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
 /// <summary>
-/// Translates an shaper expression tree to use <see cref="BsonDocument"/> and associated methods
-/// instead of the <see cref="ValueBuffer"/> EF provides.
+/// Translates an shaper expression tree to use <see cref="BsonDocument"/> and the right
+/// methods to obtain data instead of the <see cref="ValueBuffer"/> EF provides.
 /// </summary>
 internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
 {
@@ -46,16 +46,22 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
         _bsonDocParameter = bsonDocParameter;
     }
 
+    /// <summary>
+    /// Visits an extension expression to ensure that any <see cref="ProjectionBindingExpression"/> are
+    /// correctly bound to the expected result in the <see cref="BsonDocument"/> returned from MongoDB.
+    /// </summary>
+    /// <param name="extensionExpression">The <see cref="Expression"/> to visit.</param>
+    /// <returns>A translated <see cref="Expression"/>.</returns>
     protected override Expression VisitExtension(Expression extensionExpression)
     {
         switch (extensionExpression)
         {
             case ProjectionBindingExpression projectionBindingExpression:
-                var query = (MongoQueryExpression) projectionBindingExpression.QueryExpression;
+                var query = (MongoQueryExpression)projectionBindingExpression.QueryExpression;
                 var projection = query.GetMappedProjection(projectionBindingExpression.ProjectionMember!);
                 var property = ((EntityPropertyBindingExpression)projection).BoundProperty;
-
-                return CreateGetValueExpression(_bsonDocParameter, property, projectionBindingExpression.Type);
+                var resultValue = CreateGetValueExpression(_bsonDocParameter, property);
+                return ConvertTypeIfRequired(resultValue, projectionBindingExpression.Type);
         }
 
         return base.VisitExtension(extensionExpression);
@@ -102,69 +108,59 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
         }
 
         var property = methodCallExpression.Arguments[2].GetConstantValue<IProperty>();
-        return CreateGetValueExpression(_bsonDocParameter, property, methodCallExpression.Type);
+        var resultValue = CreateGetValueExpression(_bsonDocParameter, property);
+        return ConvertTypeIfRequired(resultValue, methodCallExpression.Type);
     }
 
-    private static Expression CreateGetValueExpression(
-        Expression bsonDocExpression,
-        IReadOnlyProperty property,
-        Type type)
+    private static Expression CreateGetValueExpression(Expression bsonDocExpression, IReadOnlyProperty property)
     {
-        var expectedType = property.GetTypeMapping().ClrType;
+        var mappedType = property.GetTypeMapping().ClrType;
 
-        // TODO: Support json property names with EF method/convention
-        var valueExpression = CreateGetBsonValueExpression(bsonDocExpression, property.Name);
-        valueExpression = ConvertToExpectedType(expectedType, valueExpression);
-
-        return valueExpression.Type != type
-            ? Expression.Convert(valueExpression, type)
-            : valueExpression;
-    }
-
-    private static Expression ConvertToExpectedType(Type expectedType, Expression valueExpression)
-    {
-        // Shortcut arrays for performance
-        if (expectedType.IsArray)
+        if (mappedType.IsArray)
         {
-            valueExpression = Expression.Convert(InitializeCollectionIfNull(valueExpression), typeof(BsonArray));
-            return BsonConverter.BsonArrayToArray(valueExpression, expectedType.TryGetItemType()!);
+            return CreateGetArrayOf(bsonDocExpression, property.Name, mappedType.TryGetItemType()!);
         }
 
-        // Support any lists and variants that expose IEnumerable<T> and have a matching constructor
-        if (expectedType is {IsGenericType: true, IsGenericTypeDefinition: false})
+        // Support lists and variants that expose IEnumerable<T> and have a matching constructor
+        if (mappedType is {IsGenericType: true, IsGenericTypeDefinition: false})
         {
-            var enumerableType = expectedType.TryFindIEnumerable();
+            var enumerableType = mappedType.TryFindIEnumerable();
             if (enumerableType != null)
             {
-                var constructor = expectedType.TryFindConstructorWithParameter(enumerableType);
+                var constructor = mappedType.TryFindConstructorWithParameter(enumerableType);
                 if (constructor != null)
                 {
-                    valueExpression = Expression.Convert(InitializeCollectionIfNull(valueExpression), typeof(BsonArray));
-                    return BsonConverter.BsonArrayToEnumerable(valueExpression, constructor, expectedType.TryGetItemType()!);
+                    return Expression.New(constructor, CreateGetEnumerableOf(bsonDocExpression, property.Name, enumerableType.TryGetItemType()!));
                 }
             }
         }
 
-        // Try CLR basic types supported by BsonDocument
-        return BsonConverter.BsonValueToType(valueExpression, expectedType);
+        return CreateGetValueAs(bsonDocExpression, property.Name, mappedType);
     }
 
-    private static Expression InitializeCollectionIfNull(Expression valueExpression)
-    {
-        // TODO: Consider making this behavior configurable through the fluent API
-        return Expression.Condition(
-            Expression.Equal(valueExpression, Expression.Constant(BsonNull.Value)),
-            Expression.New(typeof(BsonArray)),
-            valueExpression,
-            typeof(BsonValue));
-    }
+    private static Expression ConvertTypeIfRequired(Expression expression, Type intendedType)
+        => expression.Type != intendedType
+            ? Expression.Convert(expression, intendedType)
+            : expression;
 
-    private static Expression CreateGetBsonValueExpression(Expression bsonDocExpression, string propertyName)
-        => Expression.Call(bsonDocExpression, __getValueMethodInfo, Expression.Constant(propertyName),
-            Expression.Constant(BsonNull.Value));
+    private static Expression CreateGetValueAs(Expression bsonValueExpression, string name, Type type) =>
+        Expression.Call(null, __getValueAsMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
 
-    private static readonly MethodInfo __getValueMethodInfo
-        = typeof(BsonDocument).GetMethods()
-            .Single(mi => mi.Name == "GetValue" && mi.GetParameters().Length == 2 &&
-                          mi.GetParameters()[0].ParameterType == typeof(string));
+    private static Expression CreateGetArrayOf(Expression bsonValueExpression, string name, Type type) =>
+        Expression.Call(null, __getArrayOfMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+
+    private static Expression CreateGetEnumerableOf(Expression bsonValueExpression, string name, Type type) =>
+        Expression.Call(null, __getEnumerableOfMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+
+    private static readonly MethodInfo __getValueAsMethodInfo
+        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(BsonConverter.GetValueAs) && mi.GetParameters().Length == 2);
+
+    private static readonly MethodInfo __getArrayOfMethodInfo
+        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(BsonConverter.GetArrayOf) && mi.GetParameters().Length == 2);
+
+    private static readonly MethodInfo __getEnumerableOfMethodInfo
+        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf) && mi.GetParameters().Length == 2);
 }
