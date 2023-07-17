@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 internal static class BsonConverter
 {
     /// <summary>
-    /// Get a value as a specific type.
+    /// Get a value as a specific type by name.
     /// </summary>
     /// <param name="doc">The <see cref="BsonDocument"/> to obtain the value from.</param>
     /// <param name="name">The string name of the element within the BSON.</param>
@@ -37,6 +37,19 @@ internal static class BsonConverter
     {
         var result = doc.GetValue(name, BsonNull.Value);
         return (T)(ConvertValue(result, typeof(T)) ?? default(T));
+    }
+
+    /// <summary>
+    /// Get a value as a specific type by index from an array.
+    /// </summary>
+    /// <param name="doc">The <see cref="BsonDocument"/> to obtain the value from.</param>
+    /// <param name="index">The index of the element within the BSON "_v" element.</param>
+    /// <typeparam name="T">The <see cref="Type"/> of value to obtain.</typeparam>
+    /// <returns>The converted value.</returns>
+    public static T GetValueAs<T>(BsonDocument doc, int index)
+    {
+        var result = doc.GetValue("_v")[index];
+        return (T)ConvertValue(result, typeof(T));
     }
 
     /// <summary>
@@ -56,12 +69,38 @@ internal static class BsonConverter
     /// Get a value as an array of typed values.
     /// </summary>
     /// <param name="doc">The <see cref="BsonDocument"/> to obtain the values from.</param>
+    /// <param name="index">The index of the element within the BSON "_v" element.</param>
+    /// <typeparam name="T">The type to which each item should be converted.</typeparam>
+    /// <returns>The newly created array containing the converted values.</returns>
+    public static T[] GetArrayOf<T>(BsonDocument doc, int index)
+    {
+        var result = doc.GetValue("_v")[index];
+        return ToArray<T>(result.IsBsonNull ? new BsonArray() : result.AsBsonArray);
+    }
+
+    /// <summary>
+    /// Get a value as an array of typed values.
+    /// </summary>
+    /// <param name="doc">The <see cref="BsonDocument"/> to obtain the values from.</param>
     /// <param name="name">The string name of the element within the BSON.</param>
     /// <typeparam name="T">The type to which each item should be converted.</typeparam>
     /// <returns>A <see cref="IEnumerable{T}"/> containing the converted values.</returns>
     public static IEnumerable<T> GetEnumerableOf<T>(BsonDocument doc, string name)
     {
         var result = doc.GetValue(name, BsonNull.Value);
+        return ToEnumerable<T>(result.IsBsonNull ? new BsonArray() : result.AsBsonArray);
+    }
+
+    /// <summary>
+    /// Get a value as an array of typed values.
+    /// </summary>
+    /// <param name="doc">The <see cref="BsonDocument"/> to obtain the values from.</param>
+    /// <param name="index">The index of the element within the BSON "_v" element.</param>
+    /// <typeparam name="T">The type to which each item should be converted.</typeparam>
+    /// <returns>A <see cref="IEnumerable{T}"/> containing the converted values.</returns>
+    public static IEnumerable<T> GetEnumerableOf<T>(BsonDocument doc, int index)
+    {
+        var result = doc.GetValue("_v")[index];
         return ToEnumerable<T>(result.IsBsonNull ? new BsonArray() : result.AsBsonArray);
     }
 

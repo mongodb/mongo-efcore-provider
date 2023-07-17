@@ -33,9 +33,9 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisitor
 {
     private readonly Stack<ProjectionMember> _projectionMembers = new();
-    private readonly Dictionary<ProjectionMember, Expression> _projectionMapping = new();
 
     private MongoQueryExpression _queryExpression;
+    private int _bindingIndex;
 
     /// <summary>
     /// Perform translation of the <paramref name="expression" /> that belongs to the
@@ -46,14 +46,15 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     /// <returns>The translated expression tree.</returns>
     public Expression Translate(MongoQueryExpression queryExpression, Expression expression)
     {
+        _bindingIndex = 0;
         _queryExpression = queryExpression;
         _projectionMembers.Push(new ProjectionMember());
 
         var result = Visit(expression);
-        _queryExpression.ReplaceProjectionMapping(_projectionMapping);
 
         _projectionMembers.Clear();
         _queryExpression = null;
+        _bindingIndex = 0;
 
         return MatchTypes(result, expression.Type);
     }
@@ -65,20 +66,22 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         {
             case null:
                 return null;
-            case NewExpression:
-            case MemberInitExpression:
-            case MethodCallExpression:
-            case EntityShaperExpression:
-                return base.Visit(expression);
-            case MemberExpression {Expression: EntityShaperExpression entityShaperExpression} memberExpression:
+            case MemberExpression {Expression: EntityShaperExpression}:
                 {
                     var projectionMember = _projectionMembers.Peek();
-                    _projectionMapping[projectionMember] = new BsonElementBindingExpression(projectionMember.Last!.Name,
-                        memberExpression.Member.GetPropertyOrFieldType());
-                    return new ProjectionBindingExpression(_queryExpression, projectionMember, expression.Type);
+                    if (projectionMember.Last != null)
+                    {
+                        // Name based projection mapping, follow projected name
+                        return new ProjectionBindingExpression(_queryExpression, projectionMember, expression.Type);
+                    }
+                    else
+                    {
+                        // Reference to field - access via index and _v container
+                        return new ProjectionBindingExpression(_queryExpression, _bindingIndex++, expression.Type);
+                    }
                 }
             default:
-                throw new NotSupportedException();
+                return base.Visit(expression);
         }
     }
 
@@ -89,11 +92,6 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         {
             case EntityShaperExpression entityShaperExpression:
                 {
-                    var projectionBindingExpression = (ProjectionBindingExpression)entityShaperExpression.ValueBufferExpression;
-
-                    _projectionMapping[_projectionMembers.Peek()]
-                        = _queryExpression.GetMappedProjection(projectionBindingExpression.ProjectionMember!);
-
                     return entityShaperExpression.Update(
                         new ProjectionBindingExpression(_queryExpression, _projectionMembers.Peek(), typeof(ValueBuffer)));
                 }
@@ -141,21 +139,29 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     protected override Expression VisitNew(NewExpression newExpression)
     {
         if (newExpression.Arguments.Count == 0) return newExpression;
-        if (newExpression.Members == null) return null!;
+        bool hasMembers = newExpression.Members != null;
 
         var newArguments = new Expression[newExpression.Arguments.Count];
         for (int i = 0; i < newArguments.Length; i++)
         {
             var argument = newExpression.Arguments[i];
-            var projectionMember = _projectionMembers.Peek().Append(newExpression.Members[i]);
-            _projectionMembers.Push(projectionMember);
+
+            if (hasMembers)
+            {
+                var projectionMember = _projectionMembers.Peek().Append(newExpression.Members[i]);
+                _projectionMembers.Push(projectionMember);
+            }
+
             var visitedArgument = Visit(argument);
             if (visitedArgument == null)
             {
                 return null!;
             }
 
-            _projectionMembers.Pop();
+            if (hasMembers)
+            {
+                _projectionMembers.Pop();
+            }
 
             newArguments[i] = MatchTypes(visitedArgument, argument.Type);
         }

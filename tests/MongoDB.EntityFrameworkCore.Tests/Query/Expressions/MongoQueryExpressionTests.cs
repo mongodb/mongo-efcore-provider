@@ -49,28 +49,4 @@ public static class MongoQueryExpressionTests
 
         Assert.Equal(expectedEntityType, actual.CollectionExpression.EntityType);
     }
-
-    [Fact]
-    public static void Can_roundtrip_projection_mappings()
-    {
-        var nestedProjectionMember = new ProjectionMember();
-        foreach (var memberInfo in typeof(Product).GetMembers())
-            nestedProjectionMember.Append(memberInfo);
-
-        var newMappings = new Dictionary<ProjectionMember, Expression>
-        {
-            {new ProjectionMember().Append(typeof(Product).GetMember("Name")[0]), Expression.Constant("productName")},
-            {nestedProjectionMember, Expression.Constant("productProperties")}
-        };
-
-        var context = new QueryDbContext();
-        var mongoQuery = new MongoQueryExpression(context.Model.GetEntityTypes().First());
-        mongoQuery.ReplaceProjectionMapping(newMappings);
-
-        foreach (var mapping in newMappings)
-        {
-            var foundProjection = mongoQuery.GetMappedProjection(mapping.Key);
-            Assert.Equal(mapping.Value, foundProjection);
-        }
-    }
 }

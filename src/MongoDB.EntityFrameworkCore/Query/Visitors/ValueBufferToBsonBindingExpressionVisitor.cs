@@ -22,7 +22,6 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
-using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -57,21 +56,30 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
         switch (extensionExpression)
         {
             case ProjectionBindingExpression projectionBindingExpression:
-                var query = (MongoQueryExpression)projectionBindingExpression.QueryExpression;
-                var projection = query.GetMappedProjection(projectionBindingExpression.ProjectionMember!);
-                switch (projection)
-                {
-                    case BsonElementBindingExpression elementBindingExpression:
-                        {
-                            var resultValue = CreateGetValueExpression(_bsonDocParameter, elementBindingExpression.ElementName, elementBindingExpression.Type);
-                            return ConvertTypeIfRequired(resultValue, projectionBindingExpression.Type);
-                        }
-                    default:
-                        throw new NotSupportedException($"Unknown projection binding type `${projection.GetType().Name}`");
-                }
+                var resultValue = ResolveProjectionBindingExpression(projectionBindingExpression);
+                return ConvertTypeIfRequired(resultValue, projectionBindingExpression.Type);
         }
 
         return base.VisitExtension(extensionExpression);
+    }
+
+    private Expression ResolveProjectionBindingExpression(ProjectionBindingExpression projectionBindingExpression)
+    {
+        if (projectionBindingExpression.ProjectionMember != null)
+        {
+            return CreateGetValueExpression(_bsonDocParameter,
+                projectionBindingExpression.ProjectionMember.Last?.Name!,
+                projectionBindingExpression.Type);
+        }
+
+        if (projectionBindingExpression.Index != null)
+        {
+            return CreateGetValueExpression(_bsonDocParameter,
+                projectionBindingExpression.Index.Value,
+                projectionBindingExpression.Type);
+        }
+
+        throw new NotSupportedException("Unknown ProjectionBindingExpression type - neither Index nor ProjectionMember");
     }
 
     /// <summary>
@@ -149,29 +157,76 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
         return CreateGetValueAs(bsonDocExpression, name, mappedType);
     }
 
+    private static Expression CreateGetValueExpression(Expression bsonDocExpression, int index, Type mappedType)
+    {
+        if (mappedType.IsArray)
+        {
+            return CreateGetArrayOf(bsonDocExpression, index, mappedType.TryGetItemType()!);
+        }
+
+        // Support lists and variants that expose IEnumerable<T> and have a matching constructor
+        if (mappedType is {IsGenericType: true, IsGenericTypeDefinition: false})
+        {
+            var enumerableType = mappedType.TryFindIEnumerable();
+            if (enumerableType != null)
+            {
+                var constructor = mappedType.TryFindConstructorWithParameter(enumerableType);
+                if (constructor != null)
+                {
+                    return Expression.New(constructor,
+                        CreateGetEnumerableOf(bsonDocExpression, index, enumerableType.TryGetItemType()!));
+                }
+            }
+        }
+
+        return CreateGetValueAs(bsonDocExpression, index, mappedType);
+    }
+
     private static Expression ConvertTypeIfRequired(Expression expression, Type intendedType)
         => expression.Type != intendedType
             ? Expression.Convert(expression, intendedType)
             : expression;
 
     private static Expression CreateGetValueAs(Expression bsonValueExpression, string name, Type type) =>
-        Expression.Call(null, __getValueAsMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+        Expression.Call(null, __getValueAsByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+
+    private static Expression CreateGetValueAs(Expression bsonValueExpression, int index, Type type) =>
+        Expression.Call(null, __getValueAsByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression,
+            Expression.Constant(index));
 
     private static Expression CreateGetArrayOf(Expression bsonValueExpression, string name, Type type) =>
-        Expression.Call(null, __getArrayOfMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+        Expression.Call(null, __getArrayOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+
+    private static Expression CreateGetArrayOf(Expression bsonValueExpression, int index, Type type) =>
+        Expression.Call(null, __getArrayOfByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(index));
 
     private static Expression CreateGetEnumerableOf(Expression bsonValueExpression, string name, Type type) =>
-        Expression.Call(null, __getEnumerableOfMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+        Expression.Call(null, __getEnumerableOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
 
-    private static readonly MethodInfo __getValueAsMethodInfo
-        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetValueAs) && mi.GetParameters().Length == 2);
+    private static Expression CreateGetEnumerableOf(Expression bsonValueExpression, int index, Type type) =>
+        Expression.Call(null, __getEnumerableOfByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(index));
 
-    private static readonly MethodInfo __getArrayOfMethodInfo
+    private static readonly MethodInfo __getValueAsByNameMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetArrayOf) && mi.GetParameters().Length == 2);
+            .Single(mi => mi.Name == nameof(BsonConverter.GetValueAs) && mi.GetParameters()[1].ParameterType == typeof(string));
 
-    private static readonly MethodInfo __getEnumerableOfMethodInfo
+    private static readonly MethodInfo __getValueAsByIndexMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf) && mi.GetParameters().Length == 2);
+            .Single(mi => mi.Name == nameof(BsonConverter.GetValueAs) && mi.GetParameters()[1].ParameterType == typeof(int));
+
+    private static readonly MethodInfo __getArrayOfByNameMethodInfo
+        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(BsonConverter.GetArrayOf) && mi.GetParameters()[1].ParameterType == typeof(string));
+
+    private static readonly MethodInfo __getArrayOfByIndexMethodInfo
+        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(BsonConverter.GetArrayOf) && mi.GetParameters()[1].ParameterType == typeof(int));
+
+    private static readonly MethodInfo __getEnumerableOfByNameMethodInfo
+        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf) && mi.GetParameters()[1].ParameterType == typeof(string));
+
+    private static readonly MethodInfo __getEnumerableOfByIndexMethodInfo
+        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf) && mi.GetParameters()[1].ParameterType == typeof(int));
 }

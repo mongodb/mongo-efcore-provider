@@ -26,8 +26,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoQueryExpression : Expression
 {
-    private readonly Dictionary<ProjectionMember, Expression> _projectionMapping = new();
-
     /// <summary>
     /// Create a <see cref="MongoQueryExpression"/> for the given entity type.
     /// </summary>
@@ -54,26 +52,4 @@ internal sealed class MongoQueryExpression : Expression
     /// <inheritdoc />
     public override ExpressionType NodeType
         => ExpressionType.Extension;
-
-    /// <summary>
-    /// Get whatever projection mapping is currently assigned to the <paramref name="projectionMember"/>.
-    /// </summary>
-    /// <param name="projectionMember">The <see cref="ProjectionMember"/> to obtain a mapping for.</param>
-    /// <returns>The <see cref="Expression"/> that is currently mapped.</returns>
-    /// <exception cref="KeyNotFoundException">If the <paramref name="projectionMember"/> has no mapping.</exception>
-    public Expression GetMappedProjection(ProjectionMember projectionMember)
-        => _projectionMapping[projectionMember];
-
-    /// <summary>
-    /// Replaces all current projection mappings with the new ones supplied.
-    /// </summary>
-    /// <param name="projectionMapping">The <see cref="IReadOnlyDictionary{ProjectionMember,Expression}"/> containing the mappings to be copied.</param>
-    public void ReplaceProjectionMapping(IReadOnlyDictionary<ProjectionMember, Expression> projectionMapping)
-    {
-        _projectionMapping.Clear();
-        foreach (var (projectionMember, expression) in projectionMapping)
-        {
-            _projectionMapping[projectionMember] = expression;
-        }
-    }
 }

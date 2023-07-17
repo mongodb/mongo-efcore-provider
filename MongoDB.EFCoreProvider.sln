@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.Tests", "tests\MongoDB.EntityFrameworkCore.Tests\MongoDB.EntityFrameworkCore.Tests.csproj", "{9337C5E2-A5DB-4608-9274-5C679B92ED9E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DevSandbox4", "DevSandbox4\DevSandbox4.csproj", "{1DE390E9-3FFE-4C24-9691-54ADEF30C3CE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1DE390E9-3FFE-4C24-9691-54ADEF30C3CE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1DE390E9-3FFE-4C24-9691-54ADEF30C3CE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1DE390E9-3FFE-4C24-9691-54ADEF30C3CE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1DE390E9-3FFE-4C24-9691-54ADEF30C3CE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
