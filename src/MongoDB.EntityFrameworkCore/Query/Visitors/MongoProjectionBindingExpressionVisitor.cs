@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
@@ -68,10 +69,12 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 return null;
             case MemberExpression {Expression: EntityShaperExpression}:
                 {
-                    var projectionMember = _projectionMembers.Peek();
-                    return projectionMember.Last != null ?
+                    var projectionMember = GetCurrentProjectionMember();
+                    return projectionMember.Last != null
+                        ?
                         // Name based projection mapping, follow projected name
-                        new ProjectionBindingExpression(_queryExpression, projectionMember, expression.Type) :
+                        new ProjectionBindingExpression(_queryExpression, projectionMember, expression.Type)
+                        :
                         // Reference to field - access via index and _v container
                         new ProjectionBindingExpression(_queryExpression, _bindingIndex++, expression.Type);
                 }
@@ -87,10 +90,12 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         {
             case EntityShaperExpression entityShaperExpression:
                 {
-                    var projectionMember = _projectionMembers.Peek();
-                    var projectionBindingExpression = projectionMember.Last != null ?
+                    var projectionMember = GetCurrentProjectionMember();
+                    var projectionBindingExpression = projectionMember.Last != null
+                        ?
                         // Name based projection mapping, follow projected name
-                        new ProjectionBindingExpression(_queryExpression, projectionMember, typeof(ValueBuffer)) :
+                        new ProjectionBindingExpression(_queryExpression, projectionMember, typeof(ValueBuffer))
+                        :
                         // Reference to field - access via index and _v container
                         new ProjectionBindingExpression(_queryExpression, _bindingIndex++, typeof(ValueBuffer));
                     return entityShaperExpression.Update(projectionBindingExpression);
@@ -114,7 +119,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         }
 
         Expression updatedMethodCallExpression = methodCallExpression.Update(
-            newObject != null ? MatchTypes(newObject, methodCallExpression.Object?.Type) : newObject,
+            newObject != null ? MatchTypes(newObject, methodCallExpression.Object?.Type) : null,
             newArguments);
 
         if (newObject?.Type.IsNullableType() == true
@@ -148,19 +153,19 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
             if (hasMembers)
             {
-                var projectionMember = _projectionMembers.Peek().Append(newExpression.Members[i]);
-                _projectionMembers.Push(projectionMember);
+                EnterProjectionMember(newExpression.Members[i]);
             }
 
             var visitedArgument = Visit(argument);
-            if (visitedArgument == null)
-            {
-                return null!;
-            }
 
             if (hasMembers)
             {
-                _projectionMembers.Pop();
+                ExitProjectionMember();
+            }
+
+            if (visitedArgument == null)
+            {
+                return null!;
             }
 
             newArguments[i] = MatchTypes(visitedArgument, argument.Type);
@@ -168,6 +173,49 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
         return newExpression.Update(newArguments);
     }
+
+    protected override MemberAssignment VisitMemberAssignment(MemberAssignment memberAssignment)
+    {
+        EnterProjectionMember(memberAssignment.Member);
+        var visitedExpression = Visit(memberAssignment.Expression);
+        ExitProjectionMember();
+
+        if (visitedExpression == null)
+        {
+            return null!;
+        }
+
+        return memberAssignment.Update(MatchTypes(visitedExpression, memberAssignment.Expression.Type));
+    }
+
+    /// <inheritdoc />
+    protected override Expression VisitMemberInit(MemberInitExpression memberInitExpression)
+    {
+        var newExpression = Visit(memberInitExpression.NewExpression);
+        if (newExpression == null)
+        {
+            return null!;
+        }
+
+        var newBindings = new MemberBinding[memberInitExpression.Bindings.Count];
+        for (var i = 0; i < newBindings.Length; i++)
+        {
+            if (memberInitExpression.Bindings[i].BindingType != MemberBindingType.Assignment)
+            {
+                return null!;
+            }
+
+            newBindings[i] = VisitMemberBinding(memberInitExpression.Bindings[i]);
+
+            if (newBindings[i] == null)
+            {
+                return null!;
+            }
+        }
+
+        return memberInitExpression.Update((NewExpression)newExpression, newBindings);
+    }
+
 
     /// <inheritdoc />
     protected override ElementInit VisitElementInit(ElementInit elementInit)
@@ -177,32 +225,17 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     protected override Expression VisitNewArray(NewArrayExpression newArrayExpression)
         => newArrayExpression.Update(newArrayExpression.Expressions.Select(e => MatchTypes(Visit(e), e.Type)));
 
-    protected override Expression VisitMemberInit(MemberInitExpression memberInitExpression)
-        => GetConstantOrNull(memberInitExpression);
+    private ProjectionMember GetCurrentProjectionMember()
+        => _projectionMembers.Peek();
+
+    private void EnterProjectionMember(MemberInfo memberInfo)
+        => _projectionMembers.Push(_projectionMembers.Peek().Append(memberInfo));
+
+    private void ExitProjectionMember()
+        => _projectionMembers.Pop();
 
     private static Expression MatchTypes(Expression expression, Type targetType) =>
         targetType != expression.Type && targetType.TryGetItemType() == null
             ? Expression.Convert(expression, targetType)
             : expression;
-
-    private static ConstantExpression GetConstantOrNull(Expression expression)
-        => CanEvaluate(expression)
-            ? Expression.Constant(
-                Expression.Lambda<Func<object>>(Expression.Convert(expression, typeof(object)))
-                    .Compile(preferInterpretation: true)
-                    .Invoke(),
-                expression.Type)
-            : null;
-
-    private static bool CanEvaluate(Expression expression) =>
-        expression switch
-        {
-            ConstantExpression => true,
-            NewExpression newExpression => newExpression.Arguments.All(CanEvaluate),
-            MemberInitExpression memberInitExpression => CanEvaluate(memberInitExpression.NewExpression) &&
-                                                         memberInitExpression.Bindings.All(mb =>
-                                                             mb is MemberAssignment memberAssignment &&
-                                                             CanEvaluate(memberAssignment.Expression)),
-            _ => false
-        };
 }

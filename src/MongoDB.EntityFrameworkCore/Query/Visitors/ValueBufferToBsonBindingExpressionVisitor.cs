@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -26,13 +27,15 @@ using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
+#nullable disable
+
 /// <summary>
 /// Translates an shaper expression tree to use <see cref="BsonDocument"/> and the right
 /// methods to obtain data instead of the <see cref="ValueBuffer"/> EF provides.
 /// </summary>
 internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
 {
-    private ParameterExpression _bsonDocParameter;
+    private readonly Stack<ParameterExpression> _currentParameters = new();
 
     /// <summary>
     /// Create a <see cref="ValueBufferToBsonBindingExpressionVisitor"/>.
@@ -42,7 +45,24 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
     /// </param>
     public ValueBufferToBsonBindingExpressionVisitor(ParameterExpression bsonDocParameter)
     {
-        _bsonDocParameter = bsonDocParameter;
+        _currentParameters.Push(bsonDocParameter);
+    }
+
+    public override Expression Visit(Expression node)
+    {
+        // We create an intermediary variable between the block and the projection bindings to ensure we can
+        // shift them down into the sub-element or array. This code makes sure we get rid of that once the block
+        // goes out of scope so the next projection can start again at the parent container.
+        if (node is BlockExpression {Expressions: [BinaryExpression {Left: ParameterExpression parameterExpression}, _]})
+        {
+            var currentParameter = _currentParameters.Peek();
+            var visited = base.Visit(node);
+            if (currentParameter != parameterExpression && parameterExpression == _currentParameters.Peek())
+                _currentParameters.Pop();
+            return visited;
+        }
+
+        return base.Visit(node);
     }
 
     /// <summary>
@@ -53,37 +73,12 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
     /// <returns>A translated <see cref="Expression"/>.</returns>
     protected override Expression VisitExtension(Expression extensionExpression)
     {
-        switch (extensionExpression)
+        return extensionExpression switch
         {
-            case ProjectionBindingExpression projectionBindingExpression:
-                return ResolveProjectionBindingExpression(projectionBindingExpression, projectionBindingExpression.Type);
-        }
-
-        return base.VisitExtension(extensionExpression);
-    }
-
-    private Expression ResolveProjectionBindingExpression(ProjectionBindingExpression projectionBindingExpression, Type type)
-    {
-        if (projectionBindingExpression.ProjectionMember != null)
-        {
-            if (projectionBindingExpression.ProjectionMember.Last != null)
-            {
-                return CreateGetValueExpression(_bsonDocParameter,
-                    projectionBindingExpression.ProjectionMember.Last?.Name!,
-                    type);
-            }
-
-            return _bsonDocParameter;
-        }
-
-        if (projectionBindingExpression.Index != null)
-        {
-            return CreateGetValueExpression(_bsonDocParameter,
-                projectionBindingExpression.Index.Value,
-                type);
-        }
-
-        throw new NotSupportedException("Unknown ProjectionBindingExpression type - neither Index nor ProjectionMember");
+            ProjectionBindingExpression projectionBindingExpression
+                => ResolveProjectionBindingExpression(projectionBindingExpression, projectionBindingExpression.Type),
+            _ => base.VisitExtension(extensionExpression)
+        };
     }
 
     /// <summary>
@@ -102,12 +97,12 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
                 if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
                 {
                     var valueExpression = ResolveProjectionBindingExpression(projectionBindingExpression, parameterExpression.Type);
-                    _bsonDocParameter = parameterExpression;
+                    _currentParameters.Push(parameterExpression);
                     return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
                 }
             }
 
-            // Replace empty ProjectionBindingExpression with ValueBuffer.
+            // Replace empty ProjectionBindingExpression with Empty ValueBuffer.
             if (parameterExpression.Type == typeof(MaterializationContext) &&
                 binaryExpression.Right is NewExpression newExpression &&
                 newExpression.Arguments[0] is ProjectionBindingExpression)
@@ -140,8 +135,32 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
         }
 
         var property = methodCallExpression.Arguments[2].GetConstantValue<IProperty>();
-        var resultValue = CreateGetValueExpression(_bsonDocParameter, property);
+        var resultValue = CreateGetValueExpression(_currentParameters.Peek(), property);
         return ConvertTypeIfRequired(resultValue, methodCallExpression.Type);
+    }
+
+    private Expression ResolveProjectionBindingExpression(ProjectionBindingExpression projectionBindingExpression, Type type)
+    {
+        if (projectionBindingExpression.ProjectionMember != null)
+        {
+            if (projectionBindingExpression.ProjectionMember.Last != null)
+            {
+                return CreateGetValueExpression(_currentParameters.Peek(),
+                    projectionBindingExpression.ProjectionMember.Last?.Name!,
+                    type);
+            }
+
+            return _currentParameters.Peek();
+        }
+
+        if (projectionBindingExpression.Index != null)
+        {
+            return CreateGetValueExpression(_currentParameters.Peek(),
+                projectionBindingExpression.Index.Value,
+                type);
+        }
+
+        throw new NotSupportedException("Unknown ProjectionBindingExpression type - neither Index nor ProjectionMember");
     }
 
     private static Expression CreateGetValueExpression(Expression bsonDocExpression, IReadOnlyProperty property)
