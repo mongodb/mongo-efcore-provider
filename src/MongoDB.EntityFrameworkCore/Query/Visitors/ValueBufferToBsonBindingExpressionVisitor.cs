@@ -32,7 +32,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// </summary>
 internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
 {
-    private readonly ParameterExpression _bsonDocParameter;
+    private ParameterExpression _bsonDocParameter;
 
     /// <summary>
     /// Create a <see cref="ValueBufferToBsonBindingExpressionVisitor"/>.
@@ -56,27 +56,31 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
         switch (extensionExpression)
         {
             case ProjectionBindingExpression projectionBindingExpression:
-                var resultValue = ResolveProjectionBindingExpression(projectionBindingExpression);
-                return ConvertTypeIfRequired(resultValue, projectionBindingExpression.Type);
+                return ResolveProjectionBindingExpression(projectionBindingExpression, projectionBindingExpression.Type);
         }
 
         return base.VisitExtension(extensionExpression);
     }
 
-    private Expression ResolveProjectionBindingExpression(ProjectionBindingExpression projectionBindingExpression)
+    private Expression ResolveProjectionBindingExpression(ProjectionBindingExpression projectionBindingExpression, Type type)
     {
         if (projectionBindingExpression.ProjectionMember != null)
         {
-            return CreateGetValueExpression(_bsonDocParameter,
-                projectionBindingExpression.ProjectionMember.Last?.Name!,
-                projectionBindingExpression.Type);
+            if (projectionBindingExpression.ProjectionMember.Last != null)
+            {
+                return CreateGetValueExpression(_bsonDocParameter,
+                    projectionBindingExpression.ProjectionMember.Last?.Name!,
+                    type);
+            }
+
+            return _bsonDocParameter;
         }
 
         if (projectionBindingExpression.Index != null)
         {
             return CreateGetValueExpression(_bsonDocParameter,
                 projectionBindingExpression.Index.Value,
-                projectionBindingExpression.Type);
+                type);
         }
 
         throw new NotSupportedException("Unknown ProjectionBindingExpression type - neither Index nor ProjectionMember");
@@ -90,18 +94,31 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
     /// <returns>A <see cref="BinaryExpression"/> with any necessary adjustments.</returns>
     protected override Expression VisitBinary(BinaryExpression binaryExpression)
     {
-        // Replace empty ProjectionBindingExpression with ValueBuffer.
-        if (binaryExpression is {NodeType: ExpressionType.Assign, Left: ParameterExpression parameterExpression} &&
-            parameterExpression.Type == typeof(MaterializationContext) &&
-            binaryExpression.Right is NewExpression newExpression &&
-            newExpression.Arguments[0] is ProjectionBindingExpression)
+        if (binaryExpression.NodeType == ExpressionType.Assign && binaryExpression.Left is ParameterExpression parameterExpression)
         {
-            var updatedExpression = Expression.New(
-                newExpression.Constructor!,
-                Expression.Constant(ValueBuffer.Empty),
-                newExpression.Arguments[1]);
+            if (parameterExpression.Type == typeof(BsonDocument))
+            {
+                var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
+                if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
+                {
+                    var valueExpression = ResolveProjectionBindingExpression(projectionBindingExpression, parameterExpression.Type);
+                    _bsonDocParameter = parameterExpression;
+                    return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
+                }
+            }
 
-            return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, updatedExpression);
+            // Replace empty ProjectionBindingExpression with ValueBuffer.
+            if (parameterExpression.Type == typeof(MaterializationContext) &&
+                binaryExpression.Right is NewExpression newExpression &&
+                newExpression.Arguments[0] is ProjectionBindingExpression)
+            {
+                var updatedExpression = Expression.New(
+                    newExpression.Constructor!,
+                    Expression.Constant(ValueBuffer.Empty),
+                    newExpression.Arguments[1]);
+
+                return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, updatedExpression);
+            }
         }
 
         return base.VisitBinary(binaryExpression);
@@ -198,13 +215,16 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
         Expression.Call(null, __getArrayOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
 
     private static Expression CreateGetArrayOf(Expression bsonValueExpression, int index, Type type) =>
-        Expression.Call(null, __getArrayOfByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(index));
+        Expression.Call(null, __getArrayOfByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression,
+            Expression.Constant(index));
 
     private static Expression CreateGetEnumerableOf(Expression bsonValueExpression, string name, Type type) =>
-        Expression.Call(null, __getEnumerableOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+        Expression.Call(null, __getEnumerableOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression,
+            Expression.Constant(name));
 
     private static Expression CreateGetEnumerableOf(Expression bsonValueExpression, int index, Type type) =>
-        Expression.Call(null, __getEnumerableOfByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(index));
+        Expression.Call(null, __getEnumerableOfByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression,
+            Expression.Constant(index));
 
     private static readonly MethodInfo __getValueAsByNameMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
@@ -224,7 +244,8 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
 
     private static readonly MethodInfo __getEnumerableOfByNameMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf) && mi.GetParameters()[1].ParameterType == typeof(string));
+            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf) &&
+                          mi.GetParameters()[1].ParameterType == typeof(string));
 
     private static readonly MethodInfo __getEnumerableOfByIndexMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)

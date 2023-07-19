@@ -69,16 +69,11 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             case MemberExpression {Expression: EntityShaperExpression}:
                 {
                     var projectionMember = _projectionMembers.Peek();
-                    if (projectionMember.Last != null)
-                    {
+                    return projectionMember.Last != null ?
                         // Name based projection mapping, follow projected name
-                        return new ProjectionBindingExpression(_queryExpression, projectionMember, expression.Type);
-                    }
-                    else
-                    {
+                        new ProjectionBindingExpression(_queryExpression, projectionMember, expression.Type) :
                         // Reference to field - access via index and _v container
-                        return new ProjectionBindingExpression(_queryExpression, _bindingIndex++, expression.Type);
-                    }
+                        new ProjectionBindingExpression(_queryExpression, _bindingIndex++, expression.Type);
                 }
             default:
                 return base.Visit(expression);
@@ -92,8 +87,13 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         {
             case EntityShaperExpression entityShaperExpression:
                 {
-                    return entityShaperExpression.Update(
-                        new ProjectionBindingExpression(_queryExpression, _projectionMembers.Peek(), typeof(ValueBuffer)));
+                    var projectionMember = _projectionMembers.Peek();
+                    var projectionBindingExpression = projectionMember.Last != null ?
+                        // Name based projection mapping, follow projected name
+                        new ProjectionBindingExpression(_queryExpression, projectionMember, typeof(ValueBuffer)) :
+                        // Reference to field - access via index and _v container
+                        new ProjectionBindingExpression(_queryExpression, _bindingIndex++, typeof(ValueBuffer));
+                    return entityShaperExpression.Update(projectionBindingExpression);
                 }
 
             default:

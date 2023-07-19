@@ -147,6 +147,9 @@ internal static class BsonConverter
 
         return type switch
         {
+            // Used for nesting entities
+            not null when type == typeof(BsonDocument) => value.AsBsonDocument,
+
             // CLR reference types with a direct map
             not null when type == typeof(string) => value.AsString,
 
