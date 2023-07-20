@@ -14,6 +14,8 @@
 */
 
 using System;
+using System.Linq;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Metadata;
@@ -60,4 +62,24 @@ public static class MongoEntityTypeExtensions
     /// <returns>The default name of the collection to which the entity type would be mapped.</returns>
     public static string GetDefaultCollectionName(this IReadOnlyEntityType entityType)
         => entityType.HasSharedClrType ? entityType.ShortName() : entityType.ClrType.ShortDisplayName();
+
+    /// <summary>
+    /// Determines if an entity is a root document or whether it is an owned entity/complex type.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> to check.</param>
+    /// <returns><see langref="true"/> if the entity is a root, <see langref="false"/> if it is owned.</returns>
+    public static bool IsDocumentRoot(this IReadOnlyEntityType entityType)
+        => entityType.BaseType?.IsDocumentRoot()
+           ?? (entityType.FindOwnership() == null
+               || entityType[MongoAnnotationNames.CollectionName] != null);
+
+    /// <summary>
+    /// Get the <see cref="IProperty"/> that corresponds to the `_id` element in MongoDB.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IEntityType"/> to obtain the `_id` property for.</param>
+    /// <returns>The <see cref="IProperty"/> this entity type uses for `_id` or null if no property exists.</returns>
+    public static IProperty? GetIdProperty(this IEntityType entityType)
+    {
+        return entityType.GetProperties().FirstOrDefault(p => p.GetElementName() == "_id");
+    }
 }
