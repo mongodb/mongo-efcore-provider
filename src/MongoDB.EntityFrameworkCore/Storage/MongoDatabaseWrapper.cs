@@ -156,11 +156,14 @@ public class MongoDatabaseWrapper : Database
     /// <returns><see langref="true"/> if the entry was successfully saved, <see langref="false"/> if not.</returns>
     private bool Save(IUpdateEntry entry)
     {
-        string id = GetId(entry);
         string collectionName = entry.EntityType.GetCollectionName();
 
         var state = entry.EntityState;
-        // TODO: Consider SharedIdentityEntry
+        if (entry.SharedIdentityEntry != null)
+        {
+            if (state == EntityState.Deleted) return false;
+            if (state == EntityState.Added) state = EntityState.Modified;
+        }
 
         return state switch
         {
@@ -179,11 +182,14 @@ public class MongoDatabaseWrapper : Database
     /// <returns>A task that when resolved contains <see langref="true"/> if the entry was successfully saved, <see langref="false"/> if not.</returns>
     private async Task<bool> SaveAsync(IUpdateEntry entry, CancellationToken cancellationToken)
     {
-        string id = GetId(entry);
         string collectionName = entry.EntityType.GetCollectionName();
 
         var state = entry.EntityState;
-        // TODO: Consider SharedIdentityEntry
+        if (entry.SharedIdentityEntry != null)
+        {
+            if (state == EntityState.Deleted) return false;
+            if (state == EntityState.Added) state = EntityState.Modified;
+        }
 
         return state switch
         {
@@ -199,9 +205,9 @@ public class MongoDatabaseWrapper : Database
     /// Get the unique _id for a given <see cref="IUpdateEntry"/>.
     /// </summary>
     /// <param name="entry">The <see cref="IUpdateEntry"/> to obtain the _id for.</param>
-    /// <returns>The _id for this entry expressed as a string.</returns>
+    /// <returns>The _id for this entry expressed as an object.</returns>
     /// <exception cref="InvalidOperationException">If no property could be identified on the <see cref="IUpdateEntry"/> as holding the _id.</exception>
-    private static string GetId(IUpdateEntry entry)
+    private static object GetId(IUpdateEntry entry)
     {
         var idProperty = entry.EntityType.GetIdProperty();
         if (idProperty == null)
@@ -210,11 +216,6 @@ public class MongoDatabaseWrapper : Database
                 $"The entity type '{entry.EntityType.DisplayName()}' does not have a property mapped to the 'id' property in the database. Add a property mapped to 'id'");
         }
 
-        return entry.GetCurrentProviderValue(idProperty)! switch
-        {
-            string idAsString => idAsString,
-            ObjectId idAsObjectId => idAsObjectId.ToString(),
-            _ => throw new NotSupportedException($"Unknown type for _id property on entity type ${entry.EntityType.DisplayName()}")
-        };
+        return entry.GetCurrentProviderValue(idProperty)!;
     }
 }
