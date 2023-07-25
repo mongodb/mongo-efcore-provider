@@ -141,7 +141,7 @@ public class MongoDatabaseWrapper : Database
                 $"The entity type '{entry.EntityType.DisplayName()}' does not have a property mapped to the 'id' property in the database. Add a property mapped to 'id'");
         }
 
-        return entry.GetCurrentProviderValue(idProperty)!;
+        return entry.GetCurrentProviderValue(idProperty)!; // TODO: use _id serializer from EntitySerializer
     }
 
     private IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IEnumerable<IUpdateEntry> entries)
@@ -155,7 +155,7 @@ public class MongoDatabaseWrapper : Database
     private MongoUpdate? ConvertUpdateEntryToMongoUpdate(IUpdateEntry entry)
     {
         var collectionName = entry.EntityType.GetCollectionName();
-        var id = GetId(entry);
+        var id = (string)GetId(entry); // TODO: handle other _id types besides string
 
         return entry.EntityState switch
         {
