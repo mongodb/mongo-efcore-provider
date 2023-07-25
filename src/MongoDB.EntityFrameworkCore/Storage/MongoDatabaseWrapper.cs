@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -63,20 +64,8 @@ public class MongoDatabaseWrapper : Database
     /// <returns>Number of documents affected during saving changes.</returns>
     public override int SaveChanges(IList<IUpdateEntry> entries)
     {
-        int docsAffected = 0;
-
-        // TODO: Consider splitting the changes up by type and using the Mongo bulk APIs instead
-
-        foreach (var entry in GetAllChangedRootEntries(entries))
-        {
-            // TODO: Exception handling
-            if (Save(entry))
-            {
-                docsAffected++;
-            }
-        }
-
-        return docsAffected;
+        var updates = ConvertUpdateEntriesToMongoUpdates(entries);
+        return (int)SaveMongoUpdates(updates);
     }
 
     /// <summary>
@@ -87,20 +76,8 @@ public class MongoDatabaseWrapper : Database
     /// <returns>Task that when resolved contains the number of documents affected during saving changes.</returns>
     public override async Task<int> SaveChangesAsync(IList<IUpdateEntry> entries, CancellationToken cancellationToken = default)
     {
-        int docsAffected = 0;
-
-        // TODO: Consider splitting the changes up by type and using the Mongo bulk APIs instead
-
-        foreach (var entry in GetAllChangedRootEntries(entries))
-        {
-            // TODO: Exception handling
-            if (await SaveAsync(entry, cancellationToken))
-            {
-                docsAffected++;
-            }
-        }
-
-        return docsAffected;
+        var updates = ConvertUpdateEntriesToMongoUpdates(entries);
+        return (int)await SaveMongoUpdatesAsync(updates, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -110,7 +87,7 @@ public class MongoDatabaseWrapper : Database
     /// </summary>
     /// <param name="entries">The list of modified <see cref="IUpdateEntry"/> as determined by EF Core.</param>
     /// <returns>The actual list of changed root entities as required by MongoDB.</returns>
-    private static HashSet<IUpdateEntry> GetAllChangedRootEntries(IList<IUpdateEntry> entries)
+    private static HashSet<IUpdateEntry> GetAllChangedRootEntries(IEnumerable<IUpdateEntry> entries)
     {
         var changedRootEntries = new HashSet<IUpdateEntry>(entries);
         foreach (var entry in entries)
@@ -150,58 +127,6 @@ public class MongoDatabaseWrapper : Database
     }
 
     /// <summary>
-    /// Save an individual <see cref="IUpdateEntry"/> synchronously according to its <see cref="EntityState"/>.
-    /// </summary>
-    /// <param name="entry">The entry to save.</param>
-    /// <returns><see langref="true"/> if the entry was successfully saved, <see langref="false"/> if not.</returns>
-    private bool Save(IUpdateEntry entry)
-    {
-        string collectionName = entry.EntityType.GetCollectionName();
-
-        var state = entry.EntityState;
-        if (entry.SharedIdentityEntry != null)
-        {
-            if (state == EntityState.Deleted) return false;
-            if (state == EntityState.Added) state = EntityState.Modified;
-        }
-
-        return state switch
-        {
-            EntityState.Deleted => _mongoClient.Database.GetCollection<BsonDocument>(collectionName).DeleteOne(b => false /* TODO: Add _id filter */).IsAcknowledged,
-            EntityState.Added => throw new NotSupportedException("Adding entities not yet supported."),
-            EntityState.Modified => throw new NotSupportedException("Modifying entities not yet supported."),
-            _ => false
-        };
-    }
-
-    /// <summary>
-    /// Save an individual <see cref="IUpdateEntry"/> asynchronously according to its <see cref="EntityState"/>.
-    /// </summary>
-    /// <param name="entry">The entry to save.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the asynchronous operation.</param>
-    /// <returns>A task that when resolved contains <see langref="true"/> if the entry was successfully saved, <see langref="false"/> if not.</returns>
-    private async Task<bool> SaveAsync(IUpdateEntry entry, CancellationToken cancellationToken)
-    {
-        string collectionName = entry.EntityType.GetCollectionName();
-
-        var state = entry.EntityState;
-        if (entry.SharedIdentityEntry != null)
-        {
-            if (state == EntityState.Deleted) return false;
-            if (state == EntityState.Added) state = EntityState.Modified;
-        }
-
-        return state switch
-        {
-            EntityState.Deleted
-                => (await _mongoClient.Database.GetCollection<BsonDocument>(collectionName).DeleteOneAsync(b => false /* TODO: Add _id filter */, cancellationToken)).IsAcknowledged,
-            EntityState.Added => throw new NotSupportedException("Adding entities not yet supported."),
-            EntityState.Modified => throw new NotSupportedException("Modifying entities not yet supported."),
-            _ => false
-        };
-    }
-
-    /// <summary>
     /// Get the unique _id for a given <see cref="IUpdateEntry"/>.
     /// </summary>
     /// <param name="entry">The <see cref="IUpdateEntry"/> to obtain the _id for.</param>
@@ -217,5 +142,148 @@ public class MongoDatabaseWrapper : Database
         }
 
         return entry.GetCurrentProviderValue(idProperty)!;
+    }
+
+    private IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IEnumerable<IUpdateEntry> entries)
+    {
+        return
+            GetAllChangedRootEntries(entries)
+            .Select(ConvertUpdateEntryToMongoUpdate)
+            .OfType<MongoUpdate>();
+    }
+
+    private MongoUpdate? ConvertUpdateEntryToMongoUpdate(IUpdateEntry entry)
+    {
+        var collectionName = entry.EntityType.GetCollectionName();
+        var id = GetId(entry);
+
+        return entry.EntityState switch
+        {
+            EntityState.Added => ConvertAddedEntryToMongoUpdate(collectionName, id, entry),
+            EntityState.Deleted => ConvertDeletedEntryToMongoUpdate(collectionName, id, entry),
+            EntityState.Detached => null,
+            EntityState.Modified => ConvertModifiedEntryToMongoUpdate(collectionName, id, entry),
+            EntityState.Unchanged => null,
+            _ => throw new NotSupportedException($"Unexpected entity state: {entry.EntityState}.")
+        };
+    }
+
+    private MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    {
+        throw new NotImplementedException(); // EF-17
+    }
+
+    private MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    {
+        var filter = new BsonDocument("_id", id);
+        var model = new DeleteOneModel<BsonDocument>(filter);
+        return new MongoUpdate(collectionName, model);
+    }
+
+    private MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    {
+        throw new NotImplementedException(); // EF-15
+    }
+
+    private long SaveMongoUpdates(IEnumerable<MongoUpdate> updates)
+    {
+        var database = _mongoClient.Database;
+        var client = database.Client;
+        using var session = client.StartSession();
+        return session.WithTransaction((session, cancellationToken) => SaveMongoUpdates(session, database, updates));
+    }
+
+    private long SaveMongoUpdates(IClientSessionHandle session, IMongoDatabase database, IEnumerable<MongoUpdate> updates)
+    {
+        var documentsAffected = 0L;
+        foreach (var batch in BatchUpdatesByCollection(updates))
+        {
+            var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
+            var result = collection.BulkWrite(session, batch.Models);
+            documentsAffected += result.ModifiedCount;
+        }
+        return documentsAffected;
+    }
+
+    private async Task<long>SaveMongoUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
+    {
+        var database = _mongoClient.Database;
+        var client = database.Client;
+        using var session = await client.StartSessionAsync().ConfigureAwait(false);
+        return await session.WithTransactionAsync((session, cancellationToken) => SaveMongoUpdatesAsync(session, database, updates, cancellationToken)).ConfigureAwait(false);
+    }
+
+    private async Task<long> SaveMongoUpdatesAsync(IClientSessionHandle session, IMongoDatabase database, IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
+    {
+        var documentsAffected = 0L;
+        foreach (var batch in BatchUpdatesByCollection(updates))
+        {
+            var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
+            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken).ConfigureAwait(false);
+            documentsAffected += result.ModifiedCount;
+        }
+        return documentsAffected;
+    }
+
+    private IEnumerable<MongoUpdateBatch> BatchUpdatesByCollection(IEnumerable<MongoUpdate> updates)
+    {
+        MongoUpdateBatch? batch = null;
+        foreach (var update in updates)
+        {
+            if (batch == null)
+            {
+                batch = MongoUpdateBatch.Create(update);
+            }
+            else
+            {
+                if (batch.CollectionName == update.CollectionName)
+                {
+                    batch.Models.Add(update.Model);
+                }
+                else
+                {
+                    yield return batch;
+                    batch = MongoUpdateBatch.Create(update);
+                }
+            }
+        }
+
+        if (batch != null)
+        {
+            yield return batch;
+        }
+    }
+
+    private class MongoUpdate
+    {
+        public MongoUpdate(
+            string collectionName,
+            WriteModel<BsonDocument> model)
+        {
+            CollectionName = collectionName;
+            Model = model;
+        }
+
+        public string CollectionName { get; }
+        public WriteModel<BsonDocument> Model { get; }
+    }
+
+    private class MongoUpdateBatch
+    {
+        public static MongoUpdateBatch Create(MongoUpdate update)
+        {
+            return new MongoUpdateBatch(update.CollectionName, new List<WriteModel<BsonDocument>> { update.Model });
+        }
+
+        public MongoUpdateBatch(
+            string collectionName,
+            List<WriteModel<BsonDocument>> models)
+        {
+            CollectionName = collectionName;
+            Models = models;
+        }
+
+        public string CollectionName { get; }
+        public List<WriteModel<BsonDocument>> Models { get; }
     }
 }
