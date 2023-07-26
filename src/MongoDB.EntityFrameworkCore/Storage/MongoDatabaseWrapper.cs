@@ -87,7 +87,7 @@ public class MongoDatabaseWrapper : Database
     /// </summary>
     /// <param name="entries">The list of modified <see cref="IUpdateEntry"/> as determined by EF Core.</param>
     /// <returns>The actual list of changed root entities as required by MongoDB.</returns>
-    private static HashSet<IUpdateEntry> GetAllChangedRootEntries(IEnumerable<IUpdateEntry> entries)
+    private static HashSet<IUpdateEntry> GetAllChangedRootEntries(IList<IUpdateEntry>  entries)
     {
         var changedRootEntries = new HashSet<IUpdateEntry>(entries);
         foreach (var entry in entries)
@@ -95,7 +95,7 @@ public class MongoDatabaseWrapper : Database
             if (!entry.EntityType.IsDocumentRoot())
             {
                 var root = GetRootEntry((InternalEntityEntry)entry);
-                if (root.EntityState != EntityState.Unchanged)
+                if (root.EntityState == EntityState.Unchanged)
                 {
                     root.EntityState = EntityState.Modified;
                 }
@@ -144,7 +144,7 @@ public class MongoDatabaseWrapper : Database
         return entry.GetCurrentProviderValue(idProperty)!; // TODO: use _id serializer from EntitySerializer
     }
 
-    private IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IEnumerable<IUpdateEntry> entries)
+    private IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IList<IUpdateEntry>  entries)
     {
         return
             GetAllChangedRootEntries(entries)
@@ -190,7 +190,7 @@ public class MongoDatabaseWrapper : Database
         var database = _mongoClient.Database;
         var client = database.Client;
         using var session = client.StartSession();
-        return session.WithTransaction((session, cancellationToken) => SaveMongoUpdates(session, database, updates));
+        return session.WithTransaction((sessionHandle, cancellationToken) => SaveMongoUpdates(sessionHandle, database, updates));
     }
 
     private long SaveMongoUpdates(IClientSessionHandle session, IMongoDatabase database, IEnumerable<MongoUpdate> updates)
