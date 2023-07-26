@@ -144,7 +144,13 @@ public class MongoDatabaseWrapper : Database
         return entry.GetCurrentProviderValue(idProperty)!; // TODO: use _id serializer from EntitySerializer
     }
 
-    private IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IList<IUpdateEntry>  entries)
+    /// <summary>
+    /// Convert a list of <see cref="IUpdateEntry"/> from EF core into <see cref="MongoUpdate"/> we
+    /// can send to MongoDB.
+    /// </summary>
+    /// <param name="entries">The list of <see cref="IUpdateEntry"/> to process from EF Core.</param>
+    /// <returns>The enumerable <see cref="MongoUpdate"/> sequence that will be sent to MongoDB.</returns>
+    private IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IList<IUpdateEntry> entries)
     {
         return
             GetAllChangedRootEntries(entries)
@@ -154,8 +160,8 @@ public class MongoDatabaseWrapper : Database
 
     private MongoUpdate? ConvertUpdateEntryToMongoUpdate(IUpdateEntry entry)
     {
-        var collectionName = entry.EntityType.GetCollectionName();
-        var id = (string)GetId(entry); // TODO: handle other _id types besides string
+        string collectionName = entry.EntityType.GetCollectionName();
+        string id = (string)GetId(entry); // TODO: handle other _id types besides string
 
         return entry.EntityState switch
         {
@@ -168,19 +174,19 @@ public class MongoDatabaseWrapper : Database
         };
     }
 
-    private MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    private static MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
     {
         throw new NotImplementedException(); // EF-17
     }
 
-    private MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    private static MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
     {
         var filter = new BsonDocument("_id", id);
         var model = new DeleteOneModel<BsonDocument>(filter);
         return new MongoUpdate(collectionName, model);
     }
 
-    private MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    private static MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
     {
         throw new NotImplementedException(); // EF-15
     }
@@ -190,12 +196,15 @@ public class MongoDatabaseWrapper : Database
         var database = _mongoClient.Database;
         var client = database.Client;
         using var session = client.StartSession();
-        return session.WithTransaction((sessionHandle, cancellationToken) => SaveMongoUpdates(sessionHandle, database, updates));
+        return session.WithTransaction((sessionHandle, _) => SaveMongoUpdates(sessionHandle, database, updates));
     }
 
-    private long SaveMongoUpdates(IClientSessionHandle session, IMongoDatabase database, IEnumerable<MongoUpdate> updates)
+    private static long SaveMongoUpdates(
+        IClientSessionHandle session,
+        IMongoDatabase database,
+        IEnumerable<MongoUpdate> updates)
     {
-        var documentsAffected = 0L;
+        long documentsAffected = 0;
         foreach (var batch in BatchUpdatesByCollection(updates))
         {
             var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
@@ -210,12 +219,17 @@ public class MongoDatabaseWrapper : Database
         var database = _mongoClient.Database;
         var client = database.Client;
         using var session = await client.StartSessionAsync().ConfigureAwait(false);
-        return await session.WithTransactionAsync((session, cancellationToken) => SaveMongoUpdatesAsync(session, database, updates, cancellationToken)).ConfigureAwait(false);
+        return await session.WithTransactionAsync((sessionHandle, cancellationToken)
+            => SaveMongoUpdatesAsync(sessionHandle, database, updates, cancellationToken)).ConfigureAwait(false);
     }
 
-    private async Task<long> SaveMongoUpdatesAsync(IClientSessionHandle session, IMongoDatabase database, IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
+    private static async Task<long> SaveMongoUpdatesAsync(
+        IClientSessionHandle session,
+        IMongoDatabase database,
+        IEnumerable<MongoUpdate> updates,
+        CancellationToken cancellationToken)
     {
-        var documentsAffected = 0L;
+        long documentsAffected = 0;
         foreach (var batch in BatchUpdatesByCollection(updates))
         {
             var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
@@ -225,7 +239,7 @@ public class MongoDatabaseWrapper : Database
         return documentsAffected;
     }
 
-    private IEnumerable<MongoUpdateBatch> BatchUpdatesByCollection(IEnumerable<MongoUpdate> updates)
+    private static IEnumerable<MongoUpdateBatch> BatchUpdatesByCollection(IEnumerable<MongoUpdate> updates)
     {
         MongoUpdateBatch? batch = null;
         foreach (var update in updates)
@@ -275,7 +289,7 @@ public class MongoDatabaseWrapper : Database
             return new MongoUpdateBatch(update.CollectionName, new List<WriteModel<BsonDocument>> { update.Model });
         }
 
-        public MongoUpdateBatch(
+        private MongoUpdateBatch(
             string collectionName,
             List<WriteModel<BsonDocument>> models)
         {
