@@ -1,17 +1,17 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 using System;
 using System.Collections.Generic;
@@ -87,7 +87,7 @@ public class MongoDatabaseWrapper : Database
     /// </summary>
     /// <param name="entries">The list of modified <see cref="IUpdateEntry"/> as determined by EF Core.</param>
     /// <returns>The actual list of changed root entities as required by MongoDB.</returns>
-    private static HashSet<IUpdateEntry> GetAllChangedRootEntries(IList<IUpdateEntry>  entries)
+    private static HashSet<IUpdateEntry> GetAllChangedRootEntries(IList<IUpdateEntry> entries)
     {
         var changedRootEntries = new HashSet<IUpdateEntry>(entries);
         foreach (var entry in entries)
@@ -154,8 +154,8 @@ public class MongoDatabaseWrapper : Database
     {
         return
             GetAllChangedRootEntries(entries)
-            .Select(ConvertUpdateEntryToMongoUpdate)
-            .OfType<MongoUpdate>();
+                .Select(ConvertUpdateEntryToMongoUpdate)
+                .OfType<MongoUpdate>();
     }
 
     private MongoUpdate? ConvertUpdateEntryToMongoUpdate(IUpdateEntry entry)
@@ -163,7 +163,18 @@ public class MongoDatabaseWrapper : Database
         string collectionName = entry.EntityType.GetCollectionName();
         string id = (string)GetId(entry); // TODO: handle other _id types besides string
 
-        return entry.EntityState switch
+        var state = entry.EntityState;
+
+        // This entry may share its identity with another that it is replacing or being
+        // replaced by. If this one is the deleted side do nothing, if it is the replacement
+        // then treat it as a database update.
+        if (entry.SharedIdentityEntry != null)
+        {
+            if (state == EntityState.Deleted) return null;
+            if (state == EntityState.Added) state = EntityState.Modified;
+        }
+
+        return state switch
         {
             EntityState.Added => ConvertAddedEntryToMongoUpdate(collectionName, id, entry),
             EntityState.Deleted => ConvertDeletedEntryToMongoUpdate(collectionName, id, entry),
@@ -211,10 +222,11 @@ public class MongoDatabaseWrapper : Database
             var result = collection.BulkWrite(session, batch.Models);
             documentsAffected += result.ModifiedCount;
         }
+
         return documentsAffected;
     }
 
-    private async Task<long>SaveMongoUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
+    private async Task<long> SaveMongoUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
     {
         var database = _mongoClient.Database;
         var client = database.Client;
@@ -233,9 +245,11 @@ public class MongoDatabaseWrapper : Database
         foreach (var batch in BatchUpdatesByCollection(updates))
         {
             var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
             documentsAffected += result.ModifiedCount;
         }
+
         return documentsAffected;
     }
 
@@ -286,7 +300,7 @@ public class MongoDatabaseWrapper : Database
     {
         public static MongoUpdateBatch Create(MongoUpdate update)
         {
-            return new MongoUpdateBatch(update.CollectionName, new List<WriteModel<BsonDocument>> { update.Model });
+            return new MongoUpdateBatch(update.CollectionName, new List<WriteModel<BsonDocument>> {update.Model});
         }
 
         private MongoUpdateBatch(
