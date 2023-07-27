@@ -230,7 +230,7 @@ public class MongoDatabaseWrapper : Database
     {
         var database = _mongoClient.Database;
         var client = database.Client;
-        using var session = await client.StartSessionAsync().ConfigureAwait(false);
+        using var session = await client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         return await SaveMongoUpdatesAsync(session, database, updates, cancellationToken).ConfigureAwait(false);
     }
 
