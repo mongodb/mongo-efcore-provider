@@ -21,15 +21,24 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public static class ProjectionTests
 {
     private static readonly GuidesDbContext __db = GuidesDbContext.Create(TestServer.GetClient());
+    private static readonly IQueryable<Planet> __planets = __db.Planets.Take(10);
 
-    // TODO: Remove take 2 when projection capture fixed
-    private static readonly IQueryable<Planet> __planets = __db.Planets.Take(2);
+    [Fact]
+    public static void Select_projection_no_op()
+    {
+        var results = __planets.Select(p => p).ToArray();
+        Assert.Equal(8, results.Length);
+        Assert.All(results, r =>
+        {
+            Assert.NotNull(r.name);
+            Assert.InRange(r.orderFromSun, 1, 8);
+        });
+    }
 
     [Fact]
     public static void Select_projection_to_anonymous()
     {
-        var results = __planets.Select(p => new {Name = p.name, Order = p.orderFromSun}).ToList();
-
+        var results = __planets.Select(p => new {Name = p.name, Order = p.orderFromSun});
         Assert.All(results, r =>
         {
             Assert.NotNull(r.Name);
@@ -38,10 +47,20 @@ public static class ProjectionTests
     }
 
     [Fact]
+    public static void Select_projection_to_array()
+    {
+        var results = __planets.Select(p => new object[] {p.name, p.orderFromSun});
+        Assert.All(results, r =>
+        {
+            Assert.NotNull(r[0]);
+            Assert.InRange(Assert.IsType<int>(r[1]), 1, 8);
+        });
+    }
+
+    [Fact]
     public static void Select_projection_to_tuple()
     {
-        var results = __planets.Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings)).ToList();
-
+        var results = __planets.Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings));
         Assert.All(results, r =>
         {
             Assert.NotNull(r.Item1);
@@ -53,7 +72,6 @@ public static class ProjectionTests
     public static void Select_projection_to_constructor_params()
     {
         var results = __planets.Select(p => new NamedContainer<Planet>(p, p.name));
-
         Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
     }
 
@@ -61,7 +79,6 @@ public static class ProjectionTests
     public static void Select_projection_to_constructor_initializer()
     {
         var results = __planets.Select(p => new NamedContainer<Planet> {Name = p.name, Item = p});
-
         Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
     }
 
@@ -69,7 +86,6 @@ public static class ProjectionTests
     public static void Select_projection_to_constructor_params_and_initializer()
     {
         var results = __planets.Select(p => new NamedContainer<Planet>(p) {Name = p.name});
-
         Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
     }
 }
