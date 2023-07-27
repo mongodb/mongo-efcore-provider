@@ -207,7 +207,7 @@ public class MongoDatabaseWrapper : Database
         var database = _mongoClient.Database;
         var client = database.Client;
         using var session = client.StartSession();
-        return session.WithTransaction((sessionHandle, _) => SaveMongoUpdates(sessionHandle, database, updates));
+        return SaveMongoUpdates(session, database, updates);
     }
 
     private static long SaveMongoUpdates(
@@ -230,9 +230,8 @@ public class MongoDatabaseWrapper : Database
     {
         var database = _mongoClient.Database;
         var client = database.Client;
-        using var session = await client.StartSessionAsync().ConfigureAwait(false);
-        return await session.WithTransactionAsync((sessionHandle, cancellationToken)
-            => SaveMongoUpdatesAsync(sessionHandle, database, updates, cancellationToken)).ConfigureAwait(false);
+        using var session = await client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await SaveMongoUpdatesAsync(session, database, updates, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<long> SaveMongoUpdatesAsync(
