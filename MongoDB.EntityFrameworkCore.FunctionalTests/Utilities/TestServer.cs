@@ -20,12 +20,19 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 internal static class TestServer
 {
     private const string MongoServer = "localhost";
+
     private static readonly MongoClientSettings __mongoClientSettings = new() {Server = MongoServerAddress.Parse(MongoServer)};
     private static readonly MongoClient __mongoClient = new(__mongoClientSettings);
+    private static readonly string __prefix = DateTime.Now.ToString("s").Replace(':', '-');
+
+    private static int __count = 0;
 
     public static IMongoClient GetClient()
         => __mongoClient;
 
     public static IMongoDatabase GetDatabase(string name)
         => __mongoClient.GetDatabase(name);
+
+    public static TemporaryDatabase CreateTemporaryDatabase()
+        => new TemporaryDatabase(GetDatabase($"EFCoreTest-{__prefix}-{Interlocked.Increment(ref __count)}"));
 }
