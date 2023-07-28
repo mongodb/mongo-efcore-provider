@@ -14,7 +14,6 @@
 */
 
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
-using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 

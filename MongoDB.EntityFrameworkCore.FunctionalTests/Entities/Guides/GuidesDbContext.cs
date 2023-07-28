@@ -29,6 +29,11 @@ internal class GuidesDbContext : DbContext
             .UseMongoDB(client, "sample_guides")
             .Options);
 
+    public static GuidesDbContext Create(IMongoDatabase database) =>
+        new (new DbContextOptionsBuilder<GuidesDbContext>()
+            .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)
+            .Options);
+
     public GuidesDbContext(DbContextOptions options)
         : base(options)
     {

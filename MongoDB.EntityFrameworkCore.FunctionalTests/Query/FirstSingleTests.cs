@@ -90,5 +90,4 @@ public static class FirstSingleTests
         var ex = Assert.Throws<InvalidOperationException>(() => __db.Planets.Single(p => p.orderFromSun > 5));
         Assert.Equal("Sequence contains more than one element", ex.Message);
     }
-
 }
