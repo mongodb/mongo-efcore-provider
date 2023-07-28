@@ -14,24 +14,17 @@
 */
 
 using MongoDB.Bson;
-using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 #nullable disable
 
-internal class Planet
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides
 {
-    public ObjectId _id { get; set; }
-    public string name { get; set; }
-    public int orderFromSun { get; set; }
-    public bool hasRings { get; set; }
-    public string[] mainAtmosphere { get; set; }
-    // public MeanTemperature meanTemperature { get; set; }
-    public Moon[] moons { get; set; }
-}
-
-internal class MeanTemperature
-{
-    public double min { get; set;  }
-    public double max { get; set;  }
-    public double mean { get; set;  }
+    internal class Moon
+    {
+        public ObjectId _id { get; set; }
+        public string name { get; set; }
+        public ObjectId planetId { get; set; }
+        public double meanRadius { get; set; }
+        public double mass { get; set; }
+    }
 }
