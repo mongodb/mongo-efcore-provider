@@ -15,7 +15,7 @@
 
 using MongoDB.Driver;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests;
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 internal static class TestServer
 {
