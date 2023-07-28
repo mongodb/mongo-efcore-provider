@@ -26,7 +26,7 @@ internal class Planet
     public bool hasRings { get; set; }
     public string[] mainAtmosphere { get; set; }
     // public MeanTemperature meanTemperature { get; set; }
-    public Moon[] moons { get; set; }
+    public List<Moon> moons { get; set; }
 }
 
 internal class MeanTemperature
