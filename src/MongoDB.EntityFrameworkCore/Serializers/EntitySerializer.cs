@@ -22,6 +22,16 @@ using MongoDB.Bson.Serialization.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Serializers
 {
+    internal static class EntitySerializer
+    {
+        public static IBsonSerializer Create(IReadOnlyEntityType entityType)
+        {
+            var clrType = entityType.ClrType;
+            var serializerType = typeof(EntitySerializer<>).MakeGenericType(clrType);
+            return (IBsonSerializer)Activator.CreateInstance(serializerType, entityType)!;
+        }
+    }
+
     internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocumentSerializer
     {
         private readonly IReadOnlyEntityType _entityType;

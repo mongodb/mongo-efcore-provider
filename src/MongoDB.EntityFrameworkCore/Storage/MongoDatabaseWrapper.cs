@@ -21,11 +21,15 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using MongoDB.Bson;
+using MongoDB.Bson.IO;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -187,7 +191,41 @@ public class MongoDatabaseWrapper : Database
 
     private static MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
     {
-        throw new NotImplementedException(); // EF-17
+        var entityType = entry.EntityType;
+        var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);
+
+        var document = new BsonDocument();
+        using (var writer = new BsonDocumentWriter(document))
+        {
+            writer.WriteStartDocument();
+
+            foreach (var property in entityType.GetProperties())
+            {
+                var propertyValue = entry.GetCurrentValue(property);
+                var propertySerializationInfo = GetPropertySerializationInfo(entitySerializer, property);
+                var elementName = propertySerializationInfo.ElementName;
+                var propertySerializer = propertySerializationInfo.Serializer;                   
+                var context = BsonSerializationContext.CreateRoot(writer);
+
+                writer.WriteName(elementName);
+                propertySerializer.Serialize(context, propertyValue);
+            }
+
+            writer.WriteEndDocument();
+        }
+
+        var model = new InsertOneModel<BsonDocument>(document);
+        return new MongoUpdate(collectionName, model);
+
+        static BsonSerializationInfo GetPropertySerializationInfo(IBsonDocumentSerializer entitySerializer, IReadOnlyProperty property)
+        {
+            if (entitySerializer.TryGetMemberSerializationInfo(property.Name, out var serializationInfo))
+            {
+                return serializationInfo;
+            }
+
+            throw new InvalidOperationException($"Unable to get serialization info for property: {property.Name}.");
+        }
     }
 
     private static MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
