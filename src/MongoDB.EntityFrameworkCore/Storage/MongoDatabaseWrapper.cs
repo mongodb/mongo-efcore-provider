@@ -21,11 +21,15 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using MongoDB.Bson;
+using MongoDB.Bson.IO;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -199,7 +203,60 @@ public class MongoDatabaseWrapper : Database
 
     private static MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
     {
-        throw new NotImplementedException(); // EF-15
+        var entityType = entry.EntityType;
+        var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);
+
+        var idProperty = entityType.GetIdProperty() ?? throw new InvalidOperationException($"Type {entityType.ClrType.Name} has no Id property.");
+        var idValue = entry.GetCurrentValue(idProperty);
+        var idSerializationInfo = GetPropertySerializationInfo(entitySerializer, idProperty);
+        var idSerializer = idSerializationInfo.Serializer;
+        var serializedIdValue = SerializeValue(idSerializer, idValue);
+        var filterDefinition = Builders<BsonDocument>.Filter.Eq("_id", serializedIdValue);
+
+        var fieldValues = new BsonDocument();
+        foreach (var property in entityType.GetProperties())
+        {
+            if (entry.IsModified(property))
+            {
+                var propertyValue = entry.GetCurrentValue(property);
+                var propertySerializationInfo = GetPropertySerializationInfo(entitySerializer, property);
+                var elementName = propertySerializationInfo.ElementName;
+                var propertySerializer = propertySerializationInfo.Serializer;
+                var serializedPropertyValue = SerializeValue(propertySerializer, propertyValue);
+                fieldValues[elementName] = serializedPropertyValue;
+            }
+        }
+        var updateDocument = new BsonDocument("$set", fieldValues);
+        var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(updateDocument);
+
+        var model = new UpdateOneModel<BsonDocument>(filterDefinition, updateDefinition);
+        return new MongoUpdate(collectionName, model);
+
+        static BsonSerializationInfo GetPropertySerializationInfo(IBsonDocumentSerializer entitySerializer, IReadOnlyProperty property)
+        {
+            if (entitySerializer.TryGetMemberSerializationInfo(property.Name, out var serializationInfo))
+            {
+                return serializationInfo;
+            }
+
+            throw new InvalidOperationException($"Unable to get serialization info for property: {property.Name}.");
+        }
+
+        static BsonValue SerializeValue(IBsonSerializer serializer, object? value)
+        {
+            var document = new BsonDocument();
+            using (var writer = new BsonDocumentWriter(document))
+            {
+                var context = BsonSerializationContext.CreateRoot(writer);
+
+                writer.WriteStartDocument();
+                writer.WriteName("_v");
+                serializer.Serialize(context, value);
+                writer.WriteEndDocument();
+            }
+
+            return document["_v"];
+        }
     }
 
     private long SaveMongoUpdates(IEnumerable<MongoUpdate> updates)
