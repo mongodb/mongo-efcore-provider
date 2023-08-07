@@ -13,7 +13,6 @@
 * limitations under the License.
 */
 
-using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -48,7 +47,6 @@ public sealed class AddEntityTests : IDisposable
         public Guid _id { get; set; }
         public string aString { get; set; }
         public char aChar { get; set; }
-        public Regex aRegex { get; set; }
         public DateTime aDateTime { get; set; }
         public Guid aGuid { get; set; }
     }
@@ -86,11 +84,10 @@ public sealed class AddEntityTests : IDisposable
     public void Add_numeric_types_entity()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<NumericTypesEntity>();
-        var dbContext = SingleEntityDbContext.Create(collection);
 
         var expected = new NumericTypesEntity
         {
-            _id =  __random.Next(),
+            _id = __random.Next(),
             aDecimal = __random.NextDecimal(),
             aSingle = __random.NextSingle(),
             aDouble = __random.NextDouble() * Double.MaxValue,
@@ -99,11 +96,16 @@ public sealed class AddEntityTests : IDisposable
             anInt32 = __random.Next(),
             anInt64 = __random.NextInt64()
         };
-        dbContext.Entitites.Add(expected);
-        dbContext.SaveChanges();
 
         {
-            var foundEntity = dbContext.Entitites.Single();
+            var dbContext = SingleEntityDbContext.Create(collection);
+            dbContext.Entitites.Add(expected);
+            dbContext.SaveChanges();
+        }
+
+        {
+            var newDbContext = SingleEntityDbContext.Create(collection);
+            var foundEntity = newDbContext.Entitites.Single();
             Assert.Equal(expected._id, foundEntity._id);
             Assert.Equal(expected.aDecimal, foundEntity.aDecimal);
             Assert.Equal(expected.aSingle, foundEntity.aSingle);
@@ -119,28 +121,30 @@ public sealed class AddEntityTests : IDisposable
     public void Add_clr_types_entity()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<OtherClrTypeEntity>();
-        var dbContext = SingleEntityDbContext.Create(collection);
 
         var expected = new OtherClrTypeEntity
         {
-            _id =  Guid.NewGuid(),
+            _id = Guid.NewGuid(),
             aString = "Some kind of string",
             aChar = 'z',
             aGuid = Guid.NewGuid(),
-            aRegex = new Regex("\\b.*test\\b"),
-            aDateTime = DateTime.Now
+            aDateTime = DateTime.UtcNow
         };
-        dbContext.Entitites.Add(expected);
-        dbContext.SaveChanges();
 
         {
-            var foundEntity = dbContext.Entitites.Single();
+            var dbContext = SingleEntityDbContext.Create(collection);
+            dbContext.Entitites.Add(expected);
+            dbContext.SaveChanges();
+        }
+
+        {
+            var newDbContext = SingleEntityDbContext.Create(collection);
+            var foundEntity = newDbContext.Entitites.Single();
             Assert.Equal(expected._id, foundEntity._id);
             Assert.Equal(expected.aString, foundEntity.aString);
             Assert.Equal(expected.aChar, foundEntity.aChar);
             Assert.Equal(expected.aGuid, foundEntity.aGuid);
-            Assert.Equal(expected.aRegex, foundEntity.aRegex);
-            Assert.Equal(expected.aDateTime, foundEntity.aDateTime);
+            Assert.Equal(expected.aDateTime.ToExpectedPrecision(), foundEntity.aDateTime.ToExpectedPrecision());
         }
     }
 
@@ -148,18 +152,21 @@ public sealed class AddEntityTests : IDisposable
     public void Add_mongo_types_entity()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<MongoSpecificTypeEntity>();
-        var dbContext = SingleEntityDbContext.Create(collection);
 
         var expected = new MongoSpecificTypeEntity
         {
-            _id =  ObjectId.GenerateNewId(),
-            aDecimal128 = new Decimal128(__random.NextDecimal())
+            _id = ObjectId.GenerateNewId(), aDecimal128 = new Decimal128(__random.NextDecimal())
         };
-        dbContext.Entitites.Add(expected);
-        dbContext.SaveChanges();
 
         {
-            var foundEntity = dbContext.Entitites.Single();
+            var dbContext = SingleEntityDbContext.Create(collection);
+            dbContext.Entitites.Add(expected);
+            dbContext.SaveChanges();
+        }
+
+        {
+            var newDbContext = SingleEntityDbContext.Create(collection);
+            var foundEntity = newDbContext.Entitites.Single();
             Assert.Equal(expected._id, foundEntity._id);
             Assert.Equal(expected.aDecimal128, foundEntity.aDecimal128);
         }

@@ -95,6 +95,7 @@ namespace MongoDB.EntityFrameworkCore.Serializers
                 var t when t == typeof(ushort) => new UInt16Serializer(),
                 var t when t == typeof(uint) => new UInt32Serializer(),
                 var t when t == typeof(ulong) => new UInt64Serializer(),
+                var t when t == typeof(Decimal128) => new Decimal128Serializer(),
                 _ => throw new Exception($"Don't know how property {property.Name} of type {property.ClrType} should be serialized.")
             };
         }

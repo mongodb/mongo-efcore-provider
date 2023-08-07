@@ -165,7 +165,7 @@ internal static class BsonConverter
 
             // Non-nullable MongoDB types
             not null when type == typeof(ObjectId) => value.AsObjectId,
-            not null when type == typeof(Decimal128) => value.AsDecimal128,
+            not null when type == typeof(Decimal128) => Decimal128.Parse(value.AsString),
 
             // Non-nullable CLR types that require conversion
             not null when type == typeof(byte) => Convert.ToByte(value.AsInt32),

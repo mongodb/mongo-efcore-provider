@@ -33,4 +33,8 @@ internal static class ExtensionMethods
 
     public static short NextInt16(this Random random)
         => (short)random.Next(1, short.MaxValue);
+
+    public static string ToExpectedPrecision(this DateTime dateTime)
+        =>  dateTime.ToString("yyyy-MM-ddTHH:mm:ss.fff");
+
 }
