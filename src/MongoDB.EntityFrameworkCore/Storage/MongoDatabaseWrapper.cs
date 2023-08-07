@@ -154,7 +154,7 @@ public class MongoDatabaseWrapper : Database
     /// </summary>
     /// <param name="entries">The list of <see cref="IUpdateEntry"/> to process from EF Core.</param>
     /// <returns>The enumerable <see cref="MongoUpdate"/> sequence that will be sent to MongoDB.</returns>
-    private IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IList<IUpdateEntry> entries)
+    private static IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IList<IUpdateEntry> entries)
     {
         return
             GetAllChangedRootEntries(entries)
@@ -162,11 +162,9 @@ public class MongoDatabaseWrapper : Database
                 .OfType<MongoUpdate>();
     }
 
-    private MongoUpdate? ConvertUpdateEntryToMongoUpdate(IUpdateEntry entry)
+    private static MongoUpdate? ConvertUpdateEntryToMongoUpdate(IUpdateEntry entry)
     {
         string collectionName = entry.EntityType.GetCollectionName();
-        string id = (string)GetId(entry); // TODO: handle other _id types besides string
-
         var state = entry.EntityState;
 
         // This entry may share its identity with another that it is replacing or being
@@ -180,16 +178,16 @@ public class MongoDatabaseWrapper : Database
 
         return state switch
         {
-            EntityState.Added => ConvertAddedEntryToMongoUpdate(collectionName, id, entry),
-            EntityState.Deleted => ConvertDeletedEntryToMongoUpdate(collectionName, id, entry),
+            EntityState.Added => ConvertAddedEntryToMongoUpdate(collectionName, entry),
+            EntityState.Deleted => ConvertDeletedEntryToMongoUpdate(collectionName, GetId(entry)),
             EntityState.Detached => null,
-            EntityState.Modified => ConvertModifiedEntryToMongoUpdate(collectionName, id, entry),
+            EntityState.Modified => ConvertModifiedEntryToMongoUpdate(collectionName, entry),
             EntityState.Unchanged => null,
             _ => throw new NotSupportedException($"Unexpected entity state: {entry.EntityState}.")
         };
     }
 
-    private static MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    private static MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
     {
         var entityType = entry.EntityType;
         var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);
@@ -204,7 +202,7 @@ public class MongoDatabaseWrapper : Database
                 var propertyValue = entry.GetCurrentValue(property);
                 var propertySerializationInfo = GetPropertySerializationInfo(entitySerializer, property);
                 var elementName = propertySerializationInfo.ElementName;
-                var propertySerializer = propertySerializationInfo.Serializer;                   
+                var propertySerializer = propertySerializationInfo.Serializer;
                 var context = BsonSerializationContext.CreateRoot(writer);
 
                 writer.WriteName(elementName);
@@ -228,14 +226,14 @@ public class MongoDatabaseWrapper : Database
         }
     }
 
-    private static MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    private static MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, object id)
     {
-        var filter = new BsonDocument("_id", id);
+        var filter = Builders<BsonDocument>.Filter.Eq("_id", id);
         var model = new DeleteOneModel<BsonDocument>(filter);
         return new MongoUpdate(collectionName, model);
     }
 
-    private static MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, string id, IUpdateEntry entry)
+    private static MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
     {
         var entityType = entry.EntityType;
         var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);

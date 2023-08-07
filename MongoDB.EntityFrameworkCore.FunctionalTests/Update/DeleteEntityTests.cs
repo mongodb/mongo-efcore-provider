@@ -22,17 +22,35 @@ public sealed class DeleteEntityTests : IDisposable
     private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
     public void Dispose() => _tempDatabase.Dispose();
 
-    class SimpleEntity
+    class SimpleEntityWithStringId
     {
         public string _id { get; set; }
         public string name { get; set; }
     }
 
-    [Fact]
-    public void Entity_delete()
+    class SimpleEntityWithObjectIdId
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
-        collection.InsertOne(new SimpleEntity {_id = ObjectId.GenerateNewId().ToString(), name = "DeleteMe"});
+        public ObjectId _id { get; set; }
+        public string name { get; set; }
+    }
+
+    class SimpleEntityWithGuidId
+    {
+        public Guid _id { get; set; }
+        public string name { get; set; }
+    }
+
+    class SimpleEntityWithIntId
+    {
+        public int _id { get; set; }
+        public string name { get; set; }
+    }
+
+    [Fact]
+    public void Entity_delete_with_string_id()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithStringId>();
+        collection.InsertOne(new SimpleEntityWithStringId {_id = ObjectId.GenerateNewId().ToString(), name = "DeleteMe"});
 
         var dbContext = SingleEntityDbContext.Create(collection);
         var entity = dbContext.Entitites.Single();
@@ -42,4 +60,50 @@ public sealed class DeleteEntityTests : IDisposable
 
         Assert.Empty(dbContext.Entitites);
     }
+
+    [Fact]
+    public void Entity_delete_with_objectid_id()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithObjectIdId>();
+        collection.InsertOne(new SimpleEntityWithObjectIdId {_id = ObjectId.GenerateNewId(), name = "DeleteMe"});
+
+        var dbContext = SingleEntityDbContext.Create(collection);
+        var entity = dbContext.Entitites.Single();
+
+        dbContext.Remove(entity);
+        dbContext.SaveChanges();
+
+        Assert.Empty(dbContext.Entitites);
+    }
+
+    [Fact]
+    public void Entity_delete_with_guid_id()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithGuidId>();
+        collection.InsertOne(new SimpleEntityWithGuidId {_id = Guid.NewGuid(), name = "DeleteMe"});
+
+        var dbContext = SingleEntityDbContext.Create(collection);
+        var entity = dbContext.Entitites.Single();
+
+        dbContext.Remove(entity);
+        dbContext.SaveChanges();
+
+        Assert.Empty(dbContext.Entitites);
+    }
+
+    [Fact]
+    public void Entity_delete_with_int_id()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithIntId>();
+        collection.InsertOne(new SimpleEntityWithIntId {_id = new Random().Next(), name = "DeleteMe"});
+
+        var dbContext = SingleEntityDbContext.Create(collection);
+        var entity = dbContext.Entitites.Single();
+
+        dbContext.Remove(entity);
+        dbContext.SaveChanges();
+
+        Assert.Empty(dbContext.Entitites);
+    }
+
 }
