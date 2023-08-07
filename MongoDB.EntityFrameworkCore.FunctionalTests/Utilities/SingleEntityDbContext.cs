@@ -13,7 +13,9 @@
 * limitations under the License.
 */
 
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
@@ -21,15 +23,25 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 internal static class SingleEntityDbContext
 {
-    public static SingleEntityDbContext<T> Create<T>(IMongoDatabase database, string collectionName) where T:class =>
-        new (new DbContextOptionsBuilder<SingleEntityDbContext<T>>()
-            .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)
-            .Options, collectionName);
+    private static readonly ConcurrentDictionary<object, DbContextOptions> __collectionOptionsCache = new();
+
+    private static DbContextOptions<SingleEntityDbContext<T>> GetOrCreateOptionsBuilder<T>(IMongoCollection<T> collection) where T:class
+    {
+        if (__collectionOptionsCache.TryGetValue(collection, out var existingOptions))
+            return  (DbContextOptions<SingleEntityDbContext<T>>) existingOptions;
+
+        var newOptions = new DbContextOptionsBuilder<SingleEntityDbContext<T>>()
+            .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .Options;
+
+        __collectionOptionsCache.TryAdd(collection, newOptions);
+
+        return newOptions;
+    }
 
     public static SingleEntityDbContext<T> Create<T>(IMongoCollection<T> collection) where T:class =>
-        new (new DbContextOptionsBuilder<SingleEntityDbContext<T>>()
-            .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
-            .Options, collection.CollectionNamespace.CollectionName);
+        new (GetOrCreateOptionsBuilder(collection), collection.CollectionNamespace.CollectionName);
 }
 
 internal class SingleEntityDbContext<T> : DbContext where T:class
@@ -41,7 +53,7 @@ internal class SingleEntityDbContext<T> : DbContext where T:class
     public SingleEntityDbContext(DbContextOptions options, string collectionName)
         : base(options)
     {
-        this._collectionName = collectionName;
+        _collectionName = collectionName;
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

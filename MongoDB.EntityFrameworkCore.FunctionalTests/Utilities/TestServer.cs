@@ -25,7 +25,7 @@ internal static class TestServer
     private static readonly MongoClient __mongoClient = new(__mongoClientSettings);
     private static readonly string __prefix = DateTime.Now.ToString("s").Replace(':', '-');
 
-    private static int __count = 0;
+    private static int __count;
 
     public static IMongoClient GetClient()
         => __mongoClient;
@@ -34,5 +34,5 @@ internal static class TestServer
         => __mongoClient.GetDatabase(name);
 
     public static TemporaryDatabase CreateTemporaryDatabase()
-        => new TemporaryDatabase(GetDatabase($"EFCoreTest-{__prefix}-{Interlocked.Increment(ref __count)}"));
+        => new (GetDatabase($"EFCoreTest-{__prefix}-{Interlocked.Increment(ref __count)}"));
 }

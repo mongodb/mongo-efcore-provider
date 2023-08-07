@@ -155,7 +155,7 @@ internal static class BsonConverter
 
             // Non-nullable CLR types with direct map
             not null when type == typeof(bool) => value.AsBoolean,
-            not null when type == typeof(decimal) => value.AsDecimal,
+            not null when type == typeof(decimal) => decimal.Parse(value.AsString),
             not null when type == typeof(double) => value.AsDouble,
             not null when type == typeof(int) => value.AsInt32,
             not null when type == typeof(long) => value.AsInt64,
@@ -170,7 +170,7 @@ internal static class BsonConverter
             // Non-nullable CLR types that require conversion
             not null when type == typeof(byte) => Convert.ToByte(value.AsInt32),
             not null when type == typeof(sbyte) => Convert.ToSByte(value.AsString),
-            not null when type == typeof(char) => Convert.ToChar(value.AsString),
+            not null when type == typeof(char) => char.ConvertFromUtf32(value.AsInt32)[0],
             not null when type == typeof(float) => Convert.ToSingle(value.AsDouble),
             not null when type == typeof(short) => Convert.ToInt16(value.AsInt32),
             not null when type == typeof(ushort) => Convert.ToUInt16(value.AsInt32),
@@ -193,7 +193,7 @@ internal static class BsonConverter
             // Nullable CLR types that require conversion
             not null when type == typeof(byte?) => value.IsBsonNull ? null : Convert.ToByte(value.AsInt32),
             not null when type == typeof(sbyte?) => value.IsBsonNull ? null : Convert.ToSByte(value.AsString),
-            not null when type == typeof(char?) => value.IsBsonNull ? null : Convert.ToChar(value.AsString),
+            not null when type == typeof(char?) => value.IsBsonNull ? null : char.ConvertFromUtf32(value.AsInt32)[0],
             not null when type == typeof(float?) => value.IsBsonNull ? null : Convert.ToSingle(value.AsDouble),
             not null when type == typeof(short?) => value.IsBsonNull ? null : Convert.ToInt16(value.AsInt32),
             not null when type == typeof(ushort?) => value.IsBsonNull ? null : Convert.ToUInt16(value.AsInt32),
