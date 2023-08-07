@@ -27,4 +27,10 @@ internal static class ExtensionMethods
             random.NextInt32(),
             random.Next(2) == 1,
             (byte)random.Next(29));
+
+    public static byte NextByte(this Random random)
+        => (byte)random.Next(0, byte.MaxValue);
+
+    public static short NextInt16(this Random random)
+        => (short)random.Next(1, short.MaxValue);
 }
