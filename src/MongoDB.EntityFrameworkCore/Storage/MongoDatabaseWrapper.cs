@@ -196,16 +196,6 @@ public class MongoDatabaseWrapper : Database
 
         var model = new InsertOneModel<BsonDocument>(document);
         return new MongoUpdate(collectionName, model);
-
-        static BsonSerializationInfo GetPropertySerializationInfo(IBsonDocumentSerializer entitySerializer, IReadOnlyProperty property)
-        {
-            if (entitySerializer.TryGetMemberSerializationInfo(property.Name, out var serializationInfo))
-            {
-                return serializationInfo;
-            }
-
-            throw new InvalidOperationException($"Unable to get serialization info for property: {property.Name}.");
-        }
     }
 
     private static MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
@@ -246,12 +236,12 @@ public class MongoDatabaseWrapper : Database
         return new MongoUpdate(collectionName, model);
     }
 
-    private static FilterDefinition<BsonDocument> CreateIdFilter(IBsonDocumentSerializer serializer, IUpdateEntry entry)
+    private static FilterDefinition<BsonDocument> CreateIdFilter(
+        IBsonDocumentSerializer entitySerializer,
+        IUpdateEntry entry)
     {
-        var idProperty = entry.EntityType.GetIdProperty() ??
-                         throw new InvalidOperationException($"Type {entry.EntityType.ClrType.Name} has no Id property.");
-
-        var idSerializationInfo = GetPropertySerializationInfo(serializer, idProperty);
+        var idProperty = entry.EntityType.GetIdProperty();
+        var idSerializationInfo = GetPropertySerializationInfo(entitySerializer, idProperty);
 
         var idValue = entry.GetCurrentValue(idProperty);
         var serializedIdValue = SerializeValue(idSerializationInfo.Serializer, idValue);
@@ -259,7 +249,8 @@ public class MongoDatabaseWrapper : Database
         return Builders<BsonDocument>.Filter.Eq("_id", serializedIdValue);
     }
 
-    private static BsonSerializationInfo GetPropertySerializationInfo(IBsonDocumentSerializer entitySerializer,
+    private static BsonSerializationInfo GetPropertySerializationInfo(
+        IBsonDocumentSerializer entitySerializer,
         IReadOnlyProperty property)
     {
         if (entitySerializer.TryGetMemberSerializationInfo(property.Name, out var serializationInfo))
