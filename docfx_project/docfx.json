@@ -1,0 +1,48 @@
+{
+    "metadata": [
+        {
+            "src": [
+                {
+                    "files": ["**/*.csproj"],
+                    "exclude": ["**/bin/**", "**/obj/**"],
+                    "src": "../src"
+                }
+            ],
+            "dest": "api",
+            "includePrivateMembers": false,
+            "disableGitFeatures": false,
+            "disableDefaultFilter": false,
+            "noRestore": false,
+            "namespaceLayout": "flattened",
+            "memberLayout": "samePage",
+            "allowCompilationErrors": false
+        }
+    ],
+    "build": {
+        "content": [
+            {
+                "files": ["api/**.yml", "api/index.md"]
+            },
+            {
+                "files": ["articles/**.md", "articles/**/toc.yml", "toc.yml", "*.md"]
+            }
+        ],
+        "resource": [
+            {
+                "files": ["images/**", "images/mongodb-logo.svg"]
+            }
+        ],
+        "output": "_site",
+        "globalMetadataFiles": [],
+        "fileMetadataFiles": [],
+        "template": ["default", "modern"],
+        "postProcessors": [],
+        "keepFileLink": false,
+        "disableGitFeatures": false,
+        "globalMetadata": {
+            "_appTitle": "MongoDB EF Core Provider API Reference",
+            "_appFooter": "&copy; 2023 MongoDB, Inc.",
+            "_appLogoPath": "images/mongodb-logo.svg"
+        }
+    }
+}
