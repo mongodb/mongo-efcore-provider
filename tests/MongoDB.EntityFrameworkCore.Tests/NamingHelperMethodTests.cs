@@ -26,6 +26,8 @@ public static class NamingHelperMethodTests
     [InlineData("TESTING", "testing")]
     [InlineData("TESTING123a", "testing123A")]
     [InlineData("Η θήκη της καμήλας είναι ΚΑΛΗ", "ηΘήκηΤηςΚαμήλαςΕίναιΚαλη")]
+    [InlineData("IsJSONProperty", "isJsonProperty")]
+    [InlineData("test-THIS-Out", "testThisOut")]
     public static void ToCamelCase_finds_word_boundaries_and_camel_cases_words(string toConvert, string expected)
     {
         string actual = toConvert.ToCamelCase(CultureInfo.InvariantCulture);
@@ -39,6 +41,8 @@ public static class NamingHelperMethodTests
     [InlineData("TESTING", "Testing")]
     [InlineData("TESTING123a", "Testing123A")]
     [InlineData("Η θήκη της καμήλας είναι ΚΑΛΗ", "ΗΘήκηΤηςΚαμήλαςΕίναιΚαλη")]
+    [InlineData("IsJSONProperty", "IsJsonProperty")]
+    [InlineData("test-THIS-Out", "TestThisOut")]
     public static void ToTitleCase_finds_word_boundaries_and_title_cases_words(string toConvert, string expected)
     {
         string actual = toConvert.ToTitleCase(CultureInfo.InvariantCulture);
