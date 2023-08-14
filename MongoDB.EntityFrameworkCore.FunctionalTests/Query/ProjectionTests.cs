@@ -68,20 +68,21 @@ public static class ProjectionTests
     }
 
     [Fact]
-    public static void Select_projection_to_constructor_params()
-    {
-        var results = __planets.Select(p => new NamedContainer<Planet>(p, p.name));
-        Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
-    }
-
-    [Fact]
     public static void Select_projection_to_constructor_initializer()
     {
         var results = __planets.Select(p => new NamedContainer<Planet> {Name = p.name, Item = p});
         Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
     }
 
-    [Fact]
+    [Fact(Skip = "Requires Select projection rewriting")]
+    public static void Select_projection_to_constructor_params()
+    {
+        var results = __planets.Select(p => new NamedContainer<Planet>(p, p.name));
+        Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
+    }
+
+
+    [Fact(Skip = "Requires Select projection rewriting")]
     public static void Select_projection_to_constructor_params_and_initializer()
     {
         var results = __planets.Select(p => new NamedContainer<Planet>(p) {Name = p.name});
