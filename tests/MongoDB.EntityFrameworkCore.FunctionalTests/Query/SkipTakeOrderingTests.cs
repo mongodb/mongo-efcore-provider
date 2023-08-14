@@ -14,17 +14,24 @@
 */
 
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
+using XUnitCollection = Xunit.CollectionAttribute;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-public static class SkipTakeOrderingTests
+[XUnitCollection(nameof(SampleGuidesFixture))]
+public class SkipTakeOrderingTests
 {
-    private static readonly GuidesDbContext __db = GuidesDbContext.Create(TestServer.GetClient());
+    private readonly GuidesDbContext _db;
+
+    public SkipTakeOrderingTests(SampleGuidesFixture fixture)
+    {
+        _db = GuidesDbContext.Create(fixture.Database);
+    }
 
     [Fact]
-    public static void Take_with_constant_integer()
+    public void Take_with_constant_integer()
     {
-        var results = __db.Planets.Take(3).ToArray();
+        var results = _db.Planets.Take(3).ToArray();
 
         Assert.Equal(3, results.Length);
         Assert.All(results, r =>
@@ -35,9 +42,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void Skip_with_constant_integer()
+    public void Skip_with_constant_integer()
     {
-        var results = __db.Planets.Skip(3).ToArray();
+        var results = _db.Planets.Skip(3).ToArray();
 
         Assert.Equal(5, results.Length);
         Assert.All(results, r =>
@@ -48,9 +55,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void Skip_with_zero_integer()
+    public void Skip_with_zero_integer()
     {
-        var results = __db.Planets.Skip(0).ToArray();
+        var results = _db.Planets.Skip(0).ToArray();
 
         Assert.Equal(8, results.Length);
         Assert.All(results, r =>
@@ -61,21 +68,21 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void SkipTake_with_constant_integer()
+    public void SkipTake_with_constant_integer()
     {
         // If this test is flaky due to non-deterministic ordering
         // add an OrderBy (but would prefer it without it for isolation).
-        var skipped = __db.Planets.Take(3).ToArray();
-        var results = __db.Planets.Skip(3).Take(3).ToArray();
+        var skipped = _db.Planets.Take(3).ToArray();
+        var results = _db.Planets.Skip(3).Take(3).ToArray();
 
         Assert.Equal(3, results.Length);
         Assert.All(results, r => Assert.DoesNotContain(r, skipped));
     }
 
     [Fact]
-    public static void OrderBy_string()
+    public void OrderBy_string()
     {
-        var results = __db.Planets.OrderBy(o => o.name).ToArray();
+        var results = _db.Planets.OrderBy(o => o.name).ToArray();
 
         string previousName = "";
 
@@ -88,9 +95,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderByDescending_string()
+    public void OrderByDescending_string()
     {
-        var results = __db.Planets.OrderByDescending(o => o.name).ToArray();
+        var results = _db.Planets.OrderByDescending(o => o.name).ToArray();
 
         string previousName = "zzz";
 
@@ -103,9 +110,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderBy_integer()
+    public void OrderBy_integer()
     {
-        var results = __db.Planets.OrderBy(o => o.orderFromSun).ToArray();
+        var results = _db.Planets.OrderBy(o => o.orderFromSun).ToArray();
 
         int previousOrderFromSun = 0;
 
@@ -118,9 +125,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderByDescending_integer()
+    public void OrderByDescending_integer()
     {
-        var results = __db.Planets.OrderByDescending(o => o.orderFromSun).ToArray();
+        var results = _db.Planets.OrderByDescending(o => o.orderFromSun).ToArray();
 
         int previousOrderFromSun = 9999;
 
@@ -133,9 +140,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderBy_boolean()
+    public void OrderBy_boolean()
     {
-        var results = __db.Planets.OrderBy(o => o.hasRings).ToArray();
+        var results = _db.Planets.OrderBy(o => o.hasRings).ToArray();
 
         Assert.Equal(8, results.Length);
         Assert.False(results.First().hasRings);
@@ -154,9 +161,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderByDescending_boolean()
+    public void OrderByDescending_boolean()
     {
-        var results = __db.Planets.OrderByDescending(o => o.hasRings).ToArray();
+        var results = _db.Planets.OrderByDescending(o => o.hasRings).ToArray();
 
         Assert.Equal(8, results.Length);
         Assert.True(results.First().hasRings);
@@ -175,9 +182,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderByThenBy()
+    public void OrderByThenBy()
     {
-        var results = __db.Planets.OrderBy(o => o.hasRings).ThenBy(o => o.name).ToArray();
+        var results = _db.Planets.OrderBy(o => o.hasRings).ThenBy(o => o.name).ToArray();
 
         Assert.Equal(8, results.Length);
         Assert.False(results.First().hasRings);
@@ -202,9 +209,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderByThenByDescending()
+    public void OrderByThenByDescending()
     {
-        var results = __db.Planets.OrderBy(o => o.hasRings).ThenByDescending(o => o.name).ToArray();
+        var results = _db.Planets.OrderBy(o => o.hasRings).ThenByDescending(o => o.name).ToArray();
 
         Assert.Equal(8, results.Length);
         Assert.False(results.First().hasRings);
@@ -228,9 +235,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderByDescendingThenBy()
+    public void OrderByDescendingThenBy()
     {
-        var results = __db.Planets.OrderByDescending(o => o.hasRings).ThenBy(o => o.name).ToArray();
+        var results = _db.Planets.OrderByDescending(o => o.hasRings).ThenBy(o => o.name).ToArray();
 
         Assert.Equal(8, results.Length);
         Assert.True(results.First().hasRings);
@@ -254,9 +261,9 @@ public static class SkipTakeOrderingTests
     }
 
     [Fact]
-    public static void OrderByDescendingThenByDescending()
+    public void OrderByDescendingThenByDescending()
     {
-        var results = __db.Planets.OrderByDescending(o => o.hasRings).ThenByDescending(o => o.name).ToArray();
+        var results = _db.Planets.OrderByDescending(o => o.hasRings).ThenByDescending(o => o.name).ToArray();
 
         Assert.Equal(8, results.Length);
         Assert.True(results.First().hasRings);

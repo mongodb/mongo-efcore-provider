@@ -23,11 +23,6 @@ internal class GuidesDbContext : DbContext
 {
     public DbSet<Planet> Planets { get; init; }
 
-    public static GuidesDbContext Create(IMongoClient client) =>
-        new (new DbContextOptionsBuilder<GuidesDbContext>()
-            .UseMongoDB(client, "sample_guides")
-            .Options);
-
     public static GuidesDbContext Create(IMongoDatabase database) =>
         new (new DbContextOptionsBuilder<GuidesDbContext>()
             .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)

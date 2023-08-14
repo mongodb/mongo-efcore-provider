@@ -15,152 +15,159 @@
 
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
+using XUnitCollection = Xunit.CollectionAttribute;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-public static class WhereTests
+[XUnitCollection(nameof(SampleGuidesFixture))]
+public class WhereTests
 {
-    private static readonly GuidesDbContext __db = GuidesDbContext.Create(TestServer.GetClient());
+    private readonly GuidesDbContext _db;
+
+    public WhereTests(SampleGuidesFixture fixture)
+    {
+        _db = GuidesDbContext.Create(fixture.Database);
+    }
 
     [Fact]
-    public static void Where_string_equal()
+    public void Where_string_equal()
     {
-        var results = __db.Planets.Where(p => p.name == "Saturn").ToArray();
+        var results = _db.Planets.Where(p => p.name == "Saturn").ToArray();
         Assert.Single(results);
         Assert.Equal("Saturn", results[0].name);
     }
 
     [Fact]
-    public static void Where_string_not_equal()
+    public void Where_string_not_equal()
     {
-        var results = __db.Planets.Where(p => p.name != "Saturn").ToArray();
+        var results = _db.Planets.Where(p => p.name != "Saturn").ToArray();
         Assert.All(results, p => Assert.NotEqual("Saturn", p.name));
     }
 
     [Fact]
-    public static void Where_bool_equal_true()
+    public void Where_bool_equal_true()
     {
-        var results = __db.Planets.Where(p => p.hasRings == true).ToArray();
+        var results = _db.Planets.Where(p => p.hasRings == true).ToArray();
         Assert.All(results, p => Assert.True(p.hasRings));
     }
 
     [Fact]
-    public static void Where_bool_true()
+    public void Where_bool_true()
     {
-        var results = __db.Planets.Where(p => p.hasRings).ToArray();
+        var results = _db.Planets.Where(p => p.hasRings).ToArray();
         Assert.All(results, p => Assert.True(p.hasRings));
     }
 
     [Fact]
-    public static void Where_bool_equal_false()
+    public void Where_bool_equal_false()
     {
-        var results = __db.Planets.Where(p => p.hasRings == false).ToArray();
+        var results = _db.Planets.Where(p => p.hasRings == false).ToArray();
         Assert.Equal(4, results.Length);
         Assert.All(results, p => Assert.False(p.hasRings));
     }
 
     [Fact]
-    public static void Where_bool_false()
+    public void Where_bool_false()
     {
-        var results = __db.Planets.Where(p => !p.hasRings).ToArray();
+        var results = _db.Planets.Where(p => !p.hasRings).ToArray();
         Assert.Equal(4, results.Length);
         Assert.All(results, p => Assert.False(p.hasRings));
     }
 
     [Fact]
-    public static void Where_int_equal()
+    public void Where_int_equal()
     {
-        var results = __db.Planets.Where(p => p.orderFromSun == 1).ToArray();
+        var results = _db.Planets.Where(p => p.orderFromSun == 1).ToArray();
         Assert.Single(results);
         Assert.Equal("Mercury", results[0].name);
         Assert.Equal(1, results[0].orderFromSun);
     }
 
     [Fact]
-    public static void Where_int_not_equal()
+    public void Where_int_not_equal()
     {
-        var results = __db.Planets.Where(p => p.orderFromSun != 1).ToArray();
+        var results = _db.Planets.Where(p => p.orderFromSun != 1).ToArray();
         Assert.Equal(7, results.Length);
         Assert.All(results, p => Assert.NotEqual(1, p.orderFromSun));
     }
 
     [Fact]
-    public static void Where_int_greater_than()
+    public void Where_int_greater_than()
     {
-        var results = __db.Planets.Where(p => p.orderFromSun > 3).ToArray();
+        var results = _db.Planets.Where(p => p.orderFromSun > 3).ToArray();
         Assert.Equal(5, results.Length);
         Assert.All(results, p => Assert.True(p.orderFromSun > 3));
     }
 
     [Fact]
-    public static void Where_int_greater_or_equal()
+    public void Where_int_greater_or_equal()
     {
-        var results = __db.Planets.Where(p => p.orderFromSun >= 5).ToArray();
+        var results = _db.Planets.Where(p => p.orderFromSun >= 5).ToArray();
         Assert.Equal(4, results.Length);
         Assert.All(results, p => Assert.True(p.orderFromSun >= 5));
     }
 
     [Fact]
-    public static void Where_int_less_than()
+    public void Where_int_less_than()
     {
-        var results = __db.Planets.Where(p => p.orderFromSun < 3).ToArray();
+        var results = _db.Planets.Where(p => p.orderFromSun < 3).ToArray();
         Assert.Equal(2, results.Length);
         Assert.All(results, p => Assert.True(p.orderFromSun < 3));
     }
 
     [Fact]
-    public static void Where_int_less_or_equal()
+    public void Where_int_less_or_equal()
     {
-        var results = __db.Planets.Where(p => p.orderFromSun <= 6).ToArray();
+        var results = _db.Planets.Where(p => p.orderFromSun <= 6).ToArray();
         Assert.Equal(6, results.Length);
         Assert.All(results, p => Assert.True(p.orderFromSun <= 6));
     }
 
     [Fact]
-    public static void Where_string_array_contains()
+    public void Where_string_array_contains()
     {
-        var results = __db.Planets.Where(p => p.mainAtmosphere.Contains("H2")).ToArray();
+        var results = _db.Planets.Where(p => p.mainAtmosphere.Contains("H2")).ToArray();
         Assert.Equal(4, results.Length);
         Assert.All(results, p => Assert.Contains("H2", p.mainAtmosphere));
     }
 
     [Fact]
-    public static void Where_string_array_not_contains()
+    public void Where_string_array_not_contains()
     {
-        var results = __db.Planets.Where(p => !p.mainAtmosphere.Contains("H2")).ToArray();
+        var results = _db.Planets.Where(p => !p.mainAtmosphere.Contains("H2")).ToArray();
         Assert.Equal(4, results.Length);
         Assert.All(results, p => Assert.DoesNotContain("H2", p.mainAtmosphere));
     }
 
     [Fact]
-    public static void Where_string_array_length()
+    public void Where_string_array_length()
     {
-        var results = __db.Planets.Where(p => p.mainAtmosphere.Length == 3).ToArray();
+        var results = _db.Planets.Where(p => p.mainAtmosphere.Length == 3).ToArray();
         Assert.Equal(6, results.Length);
         Assert.All(results, p => Assert.Equal(3, p.mainAtmosphere.Length));
     }
 
     [Fact]
-    public static void Where_string_array_count()
+    public void Where_string_array_count()
     {
-        var results = __db.Planets.Where(p => p.mainAtmosphere.Count() == 2).ToArray();
+        var results = _db.Planets.Where(p => p.mainAtmosphere.Count() == 2).ToArray();
         Assert.Single(results);
         Assert.Equal(2, results[0].mainAtmosphere.Length);
     }
 
     [Fact]
-    public static void Where_string_array_any()
+    public void Where_string_array_any()
     {
-        var results = __db.Planets.Where(p => p.mainAtmosphere.Any()).ToArray();
+        var results = _db.Planets.Where(p => p.mainAtmosphere.Any()).ToArray();
         Assert.Equal(7, results.Length);
         Assert.All(results, p => Assert.NotEmpty(p.mainAtmosphere));
     }
 
     [Fact]
-    public static void Where_objectId_equal()
+    public void Where_objectId_equal()
     {
         var expectedId = new ObjectId("621ff30d2a3e781873fcb660");
-        var results = __db.Planets.Where(p => p._id == expectedId).ToArray();
+        var results = _db.Planets.Where(p => p._id == expectedId).ToArray();
         Assert.Single(results);
         Assert.Equal(expectedId, results[0]._id);
     }

@@ -14,80 +14,87 @@
 */
 
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
+using XUnitCollection = Xunit.CollectionAttribute;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-public static class FirstSingleTests
+[XUnitCollection(nameof(SampleGuidesFixture))]
+public class FirstSingleTests
 {
-    private static readonly GuidesDbContext __db = GuidesDbContext.Create(TestServer.GetClient());
+    private readonly GuidesDbContext _db;
+
+    public FirstSingleTests(SampleGuidesFixture fixture)
+    {
+        _db = GuidesDbContext.Create(fixture.Database);
+    }
 
     [Fact]
-    public static void First()
+    public void First()
     {
-        var result = __db.Planets.OrderBy(p => p.name).First();
+        var result = _db.Planets.OrderBy(p => p.name).First();
         Assert.Equal("Earth", result.name);
     }
 
     [Fact]
-    public static void First_with_no_result()
+    public void First_with_no_result()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => __db.Planets.Skip(100).First());
+        var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.Skip(100).First());
         Assert.Equal("Sequence contains no elements", ex.Message);
     }
 
     [Fact]
-    public static void First_predicate()
+    public void First_predicate()
     {
-        var result = __db.Planets.First(p => p.orderFromSun == 1);
+        var result = _db.Planets.First(p => p.orderFromSun == 1);
         Assert.Equal("Mercury", result.name);
     }
 
     [Fact]
-    public static void First_predicate_no_results()
+    public void First_predicate_no_results()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => __db.Planets.First(p => p.orderFromSun == 10));
+        var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.First(p => p.orderFromSun == 10));
         Assert.Equal("Sequence contains no elements", ex.Message);
     }
 
     [Fact]
-    public static void Single()
+    public void Single()
     {
-        var result = __db.Planets.Where(p => p.name == "Earth").Single();
+        var result = _db.Planets.Where(p => p.name == "Earth").Single();
         Assert.Equal("Earth", result.name);
     }
 
     [Fact]
-    public static void Single_with_no_results()
+    public void Single_with_no_results()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => __db.Planets.Skip(100).Single());
+        var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.Skip(100).Single());
         Assert.Equal("Sequence contains no elements", ex.Message);
     }
 
     [Fact]
-    public static void Single_with_more_than_one_result()
+    public void Single_with_more_than_one_result()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => __db.Planets.Skip(4).Single());
+        var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.Skip(4).Single());
         Assert.Equal("Sequence contains more than one element", ex.Message);
     }
 
     [Fact]
-    public static void Single_predicate()
+    public void Single_predicate()
     {
-        var result = __db.Planets.Single(p => p.orderFromSun == 1);
+        var result = _db.Planets.Single(p => p.orderFromSun == 1);
         Assert.Equal("Mercury", result.name);
     }
 
     [Fact]
-    public static void Single_predicate_no_results()
+    public void Single_predicate_no_results()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => __db.Planets.Single(p => p.orderFromSun == 10));
+        var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.Single(p => p.orderFromSun == 10));
         Assert.Equal("Sequence contains no elements", ex.Message);
     }
 
     [Fact]
-    public static void Single_predicate_with_more_than_one_result()
+    public void Single_predicate_with_more_than_one_result()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => __db.Planets.Single(p => p.orderFromSun > 5));
+        var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.Single(p => p.orderFromSun > 5));
         Assert.Equal("Sequence contains more than one element", ex.Message);
     }
 }
