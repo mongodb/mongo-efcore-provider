@@ -54,7 +54,7 @@ public class IdPrimaryKeyConvention : KeyDiscoveryConvention
 
         foreach (var candidate in candidates)
         {
-            if (MongoPropertyExtensions.GetElementName(candidate) == "_id")
+            if (candidate.GetElementName() == "_id")
             {
                 entityTypeBuilder.PrimaryKey(new[] {candidate});
                 return;
