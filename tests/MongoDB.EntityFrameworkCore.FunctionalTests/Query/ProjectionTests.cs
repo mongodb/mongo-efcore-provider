@@ -14,18 +14,25 @@
 */
 
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
+using XUnitCollection = Xunit.CollectionAttribute;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-public static class ProjectionTests
+[XUnitCollection(nameof(SampleGuidesFixture))]
+public class ProjectionTests
 {
-    private static readonly GuidesDbContext __db = GuidesDbContext.Create(TestServer.GetClient());
-    private static readonly IQueryable<Planet> __planets = __db.Planets.Take(10);
+    private readonly IQueryable<Planet> _planets;
+
+    public ProjectionTests(SampleGuidesFixture fixture)
+    {
+        var db = GuidesDbContext.Create(fixture.Database);
+        _planets = db.Planets.Take(10);
+    }
 
     [Fact]
-    public static void Select_projection_no_op()
+    public void Select_projection_no_op()
     {
-        var results = __planets.Select(p => p).ToArray();
+        var results = _planets.Select(p => p).ToArray();
         Assert.Equal(8, results.Length);
         Assert.All(results, r =>
         {
@@ -35,9 +42,9 @@ public static class ProjectionTests
     }
 
     [Fact]
-    public static void Select_projection_to_anonymous()
+    public void Select_projection_to_anonymous()
     {
-        var results = __planets.Select(p => new {Name = p.name, Order = p.orderFromSun});
+        var results = _planets.Select(p => new {Name = p.name, Order = p.orderFromSun});
         Assert.All(results, r =>
         {
             Assert.NotNull(r.Name);
@@ -46,9 +53,9 @@ public static class ProjectionTests
     }
 
     [Fact]
-    public static void Select_projection_to_array()
+    public void Select_projection_to_array()
     {
-        var results = __planets.Select(p => new object[] {p.name, p.orderFromSun});
+        var results = _planets.Select(p => new object[] {p.name, p.orderFromSun});
         Assert.All(results, r =>
         {
             Assert.NotNull(r[0]);
@@ -57,9 +64,9 @@ public static class ProjectionTests
     }
 
     [Fact]
-    public static void Select_projection_to_tuple()
+    public void Select_projection_to_tuple()
     {
-        var results = __planets.Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings));
+        var results = _planets.Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings));
         Assert.All(results, r =>
         {
             Assert.NotNull(r.Item1);
@@ -68,24 +75,24 @@ public static class ProjectionTests
     }
 
     [Fact]
-    public static void Select_projection_to_constructor_initializer()
+    public void Select_projection_to_constructor_initializer()
     {
-        var results = __planets.Select(p => new NamedContainer<Planet> {Name = p.name, Item = p});
+        var results = _planets.Select(p => new NamedContainer<Planet> {Name = p.name, Item = p});
         Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
     }
 
     [Fact(Skip = "Requires Select projection rewriting")]
-    public static void Select_projection_to_constructor_params()
+    public void Select_projection_to_constructor_params()
     {
-        var results = __planets.Select(p => new NamedContainer<Planet>(p, p.name));
+        var results = _planets.Select(p => new NamedContainer<Planet>(p, p.name));
         Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
     }
 
 
     [Fact(Skip = "Requires Select projection rewriting")]
-    public static void Select_projection_to_constructor_params_and_initializer()
+    public void Select_projection_to_constructor_params_and_initializer()
     {
-        var results = __planets.Select(p => new NamedContainer<Planet>(p) {Name = p.name});
+        var results = _planets.Select(p => new NamedContainer<Planet>(p) {Name = p.name});
         Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
     }
 }
