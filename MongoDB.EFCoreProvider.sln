@@ -5,9 +5,9 @@ VisualStudioVersion = 17.6.33606.364
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore", "src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj", "{F50A0110-A930-4876-BBD4-78B039C12D9E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.Tests", "tests\MongoDB.EntityFrameworkCore.Tests\MongoDB.EntityFrameworkCore.Tests.csproj", "{9337C5E2-A5DB-4608-9274-5C679B92ED9E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.UnitTests", "tests\MongoDB.EntityFrameworkCore.UnitTests\MongoDB.EntityFrameworkCore.UnitTests.csproj", "{9337C5E2-A5DB-4608-9274-5C679B92ED9E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.FunctionalTests", "MongoDB.EntityFrameworkCore.FunctionalTests\MongoDB.EntityFrameworkCore.FunctionalTests.csproj", "{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.FunctionalTests", "tests\MongoDB.EntityFrameworkCore.FunctionalTests\MongoDB.EntityFrameworkCore.FunctionalTests.csproj", "{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
