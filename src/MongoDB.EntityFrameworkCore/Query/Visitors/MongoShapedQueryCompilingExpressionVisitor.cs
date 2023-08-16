@@ -55,7 +55,6 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
     protected override Expression VisitShapedQuery(ShapedQueryExpression shapedQueryExpression)
     {
         var shaperLambda = CreateShaperLambda(shapedQueryExpression.ShaperExpression);
-        Console.WriteLine(new ExpressionPrinter().Print(shaperLambda));
 
         var queryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
         var rootEntityType = queryExpression.CollectionExpression.EntityType;
