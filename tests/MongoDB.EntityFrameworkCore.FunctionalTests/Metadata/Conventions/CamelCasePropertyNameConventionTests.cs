@@ -14,8 +14,13 @@
  */
 
 using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
@@ -23,6 +28,35 @@ public sealed class CamelCasePropertyNameConventionTests : IDisposable
 {
     private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
     public void Dispose() => _tempDatabase.Dispose();
+
+    class CamelCaseDbContext : DbContext
+    {
+        private readonly string _collectionName;
+
+        public DbSet<RemappedEntity> Remapped { get; init; }
+
+        public static CamelCaseDbContext Create(IMongoCollection<RemappedEntity> collection) =>
+            new(new DbContextOptionsBuilder<CamelCaseDbContext>()
+                .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
+                .Options, collection.CollectionNamespace.CollectionName);
+
+        public CamelCaseDbContext(DbContextOptions options, string collectionName)
+            : base(options)
+        {
+            _collectionName = collectionName;
+        }
+
+        protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+        {
+            configurationBuilder.Conventions.Add(serviceProvider => new CamelCasePropertyNameConvention(serviceProvider.GetRequiredService<ProviderConventionSetBuilderDependencies>()));
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<RemappedEntity>().ToCollection(_collectionName);
+        }
+    }
 
     class IntendedStorageEntity
     {
@@ -38,13 +72,14 @@ public sealed class CamelCasePropertyNameConventionTests : IDisposable
 
     class RemappedEntity
     {
+        [Column("_id")]
         public ObjectId _id { get; set; }
 
         public string unchanged { get; set; }
         public string alsoUnchanged { get; set; }
         public string LowercaseFirstWord { get; set; }
         public string remove_underscores { get; set; }
-        public string treatUPPERcase { get; set; }
+        public string treatUPPERCase { get; set; }
         public string numeric123separator { get; set; }
     }
 
@@ -62,15 +97,15 @@ public sealed class CamelCasePropertyNameConventionTests : IDisposable
         const string numericText = "Treated 123 as part of numeric and title cased word after";
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(new RemappedEntity
+            var dbContext = CamelCaseDbContext.Create(collection);
+            dbContext.Remapped.Add(new RemappedEntity
             {
                 _id = id,
                 unchanged = unchangedText,
                 alsoUnchanged = alsoUnchangedText,
                 LowercaseFirstWord = changedLowerText,
                 remove_underscores = underscoredText,
-                treatUPPERcase = treatUpperText,
+                treatUPPERCase = treatUpperText,
                 numeric123separator = numericText
             });
             dbContext.SaveChanges();
