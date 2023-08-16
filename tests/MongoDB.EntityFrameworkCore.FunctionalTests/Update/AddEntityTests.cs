@@ -18,11 +18,15 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-public sealed class AddEntityTests : IDisposable
+public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private static readonly Random __random = new();
-    private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
-    public void Dispose() => _tempDatabase.Dispose();
+    private readonly TemporaryDatabaseFixture _tempDatabase;
+
+    public AddEntityTests(TemporaryDatabaseFixture tempDatabase)
+    {
+        _tempDatabase = tempDatabase;
+    }
 
     class SimpleEntity
     {

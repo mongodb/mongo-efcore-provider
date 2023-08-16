@@ -25,7 +25,7 @@ public class SkipTakeOrderingTests
 
     public SkipTakeOrderingTests(SampleGuidesFixture fixture)
     {
-        _db = GuidesDbContext.Create(fixture.Database);
+        _db = GuidesDbContext.Create(fixture.MongoDatabase);
     }
 
     [Fact]

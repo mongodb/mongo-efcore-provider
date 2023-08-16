@@ -19,10 +19,14 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-public class ElementNameTests : IDisposable
+public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
-    public void Dispose() => _tempDatabase.Dispose();
+    private readonly TemporaryDatabaseFixture _tempDatabase;
+
+    public ElementNameTests(TemporaryDatabaseFixture tempDatabase)
+    {
+        _tempDatabase = tempDatabase;
+    }
 
     class RenamedKeyElement
     {

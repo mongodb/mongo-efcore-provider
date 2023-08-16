@@ -28,8 +28,8 @@ public class WhereTests
 
     public WhereTests(SampleGuidesFixture fixture)
     {
-        _mongoDatabase = fixture.Database;
-        _db = GuidesDbContext.Create(fixture.Database);
+        _mongoDatabase = fixture.MongoDatabase;
+        _db = GuidesDbContext.Create(fixture.MongoDatabase);
     }
 
     [Fact]

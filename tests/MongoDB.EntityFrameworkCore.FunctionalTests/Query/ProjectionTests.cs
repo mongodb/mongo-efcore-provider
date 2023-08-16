@@ -25,7 +25,7 @@ public class ProjectionTests
 
     public ProjectionTests(SampleGuidesFixture fixture)
     {
-        var db = GuidesDbContext.Create(fixture.Database);
+        var db = GuidesDbContext.Create(fixture.MongoDatabase);
         _planets = db.Planets.Take(10);
     }
 

@@ -17,11 +17,15 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-public sealed class ClrTypeMappingTests : IDisposable
+public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly Random _random = new();
-    private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
-    public void Dispose() => _tempDatabase.Dispose();
+    private readonly TemporaryDatabaseFixture _tempDatabase;
+
+    public ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
+    {
+        _tempDatabase = tempDatabase;
+    }
 
     class IdEntity
     {

@@ -24,10 +24,14 @@ using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
-public sealed class CamelCasePropertyNameConventionTests : IDisposable
+public sealed class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
-    public void Dispose() => _tempDatabase.Dispose();
+    private readonly TemporaryDatabaseFixture _tempDatabase;
+
+    public CamelCasePropertyNameConventionTests(TemporaryDatabaseFixture tempDatabase)
+    {
+        _tempDatabase = tempDatabase;
+    }
 
     class CamelCaseDbContext : DbContext
     {

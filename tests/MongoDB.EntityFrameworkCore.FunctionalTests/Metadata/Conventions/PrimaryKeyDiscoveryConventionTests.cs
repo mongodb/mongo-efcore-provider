@@ -19,11 +19,14 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
-public sealed class MongoPrimaryKeyDiscoveryConventionTests : IDisposable
+public sealed class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
+    private readonly TemporaryDatabaseFixture _tempDatabase;
 
-    public void Dispose() => _tempDatabase.Dispose();
+    public MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture tempDatabase)
+    {
+        _tempDatabase = tempDatabase;
+    }
 
     class UnderscoreIdNamedProperty
     {

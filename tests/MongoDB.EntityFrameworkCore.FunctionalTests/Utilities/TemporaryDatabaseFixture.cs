@@ -18,16 +18,24 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-internal class TemporaryDatabase : IDisposable
+public class TemporaryDatabaseFixture : IDisposable
 {
-    public TemporaryDatabase(IMongoDatabase mongoDatabase)
+    public const string TestDatabasePrefix = "EFCoreTest-";
+
+    private static readonly string __timeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+    private static int __count;
+
+    private readonly IMongoClient _mongoClient;
+
+    public TemporaryDatabaseFixture()
     {
-        MongoDatabase = mongoDatabase;
+        _mongoClient = TestServer.GetClient();
+        MongoDatabase = _mongoClient.GetDatabase($"{TestDatabasePrefix}{__timeStamp}-{Interlocked.Increment(ref __count)}");
     }
 
     public IMongoDatabase MongoDatabase { get; }
 
-    public IMongoCollection<T> CreateTemporaryCollection<T>([CallerMemberName] string? name = null)
+    public IMongoCollection<T> CreateTemporaryCollection<T>([CallerMemberName] string? name = null, params T[] items)
     {
         MongoDatabase.CreateCollection(name);
         return MongoDatabase.GetCollection<T>(name);
@@ -35,11 +43,6 @@ internal class TemporaryDatabase : IDisposable
 
     public void Dispose()
     {
-        Delete();
-    }
-
-    public void Delete()
-    {
-        MongoDatabase.Client.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
+        _mongoClient.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
     }
 }
