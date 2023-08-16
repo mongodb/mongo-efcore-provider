@@ -40,25 +40,28 @@ internal static class SingleEntityDbContext
         return newOptions;
     }
 
-    public static SingleEntityDbContext<T> Create<T>(IMongoCollection<T> collection) where T:class =>
-        new (GetOrCreateOptionsBuilder(collection), collection.CollectionNamespace.CollectionName);
+    public static SingleEntityDbContext<T> Create<T>(IMongoCollection<T> collection, Action<ModelBuilder>? modelBuilderAction = null) where T:class =>
+        new (GetOrCreateOptionsBuilder(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction);
 }
 
 internal class SingleEntityDbContext<T> : DbContext where T:class
 {
     private readonly string _collectionName;
+    private readonly Action<ModelBuilder>? _modelBuilderAction;
 
     public DbSet<T> Entitites { get; init; }
 
-    public SingleEntityDbContext(DbContextOptions options, string collectionName)
+    public SingleEntityDbContext(DbContextOptions options, string collectionName, Action<ModelBuilder>? modelBuilderAction)
         : base(options)
     {
         _collectionName = collectionName;
+        _modelBuilderAction = modelBuilderAction;
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.Entity<T>().ToCollection(_collectionName);
+        _modelBuilderAction?.Invoke(modelBuilder);
     }
 }

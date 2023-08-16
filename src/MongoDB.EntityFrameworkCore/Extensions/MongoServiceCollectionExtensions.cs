@@ -98,6 +98,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<LoggingDefinitions, MongoLoggingDefinitions>()
             .TryAdd<IDatabaseProvider, DatabaseProvider<MongoOptionsExtension>>()
             .TryAdd<IDatabase, MongoDatabaseWrapper>()
+            .TryAdd<IModelValidator, MongoModelValidator>()
             .TryAdd<IProviderConventionSetBuilder, MongoConventionSetBuilder>()
             .TryAdd<IQueryContextFactory, MongoQueryContextFactory>()
             .TryAdd<ITypeMappingSource, MongoTypeMappingSource>()
