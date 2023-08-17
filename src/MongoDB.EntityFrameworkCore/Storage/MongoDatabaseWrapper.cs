@@ -173,25 +173,15 @@ public class MongoDatabaseWrapper : Database
     {
         var entityType = entry.EntityType;
         var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);
+        var document = ToBsonDocument(entry, entitySerializer, entityType.GetProperties());
 
-        var document = new BsonDocument();
-        using (var writer = new BsonDocumentWriter(document))
+        var pk = entityType.FindPrimaryKey();
+        if (pk.Properties.Count > 1)
         {
-            writer.WriteStartDocument();
-
-            foreach (var property in entityType.GetProperties())
-            {
-                var propertyValue = entry.GetCurrentValue(property);
-                var propertySerializationInfo = GetPropertySerializationInfo(entitySerializer, property);
-                var elementName = propertySerializationInfo.ElementName;
-                var propertySerializer = propertySerializationInfo.Serializer;
-                var context = BsonSerializationContext.CreateRoot(writer);
-
-                writer.WriteName(elementName);
-                propertySerializer.Serialize(context, propertyValue);
-            }
-
-            writer.WriteEndDocument();
+            // TODO: should rework this once we are ready for proper composite key implementation
+            // Have to synthesize composite _id field
+            var pkDocument = ToBsonDocument(entry, entitySerializer, pk.Properties);
+            document["_id"] = pkDocument;
         }
 
         var model = new InsertOneModel<BsonDocument>(document);
@@ -213,20 +203,7 @@ public class MongoDatabaseWrapper : Database
         var entityType = entry.EntityType;
         var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);
 
-        var fieldValues = new BsonDocument();
-        foreach (var property in entityType.GetProperties())
-        {
-            if (entry.IsModified(property))
-            {
-                var propertyValue = entry.GetCurrentValue(property);
-                var propertySerializationInfo = GetPropertySerializationInfo(entitySerializer, property);
-                var propertySerializer = propertySerializationInfo.Serializer;
-                var serializedPropertyValue = SerializeValue(propertySerializer, propertyValue);
-
-                var elementName = propertySerializationInfo.ElementName;
-                fieldValues[elementName] = serializedPropertyValue;
-            }
-        }
+        var fieldValues = ToBsonDocument(entry, entitySerializer, entityType.GetProperties().Where(p => entry.IsModified(p)));
 
         var updateDocument = new BsonDocument("$set", fieldValues);
         var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(updateDocument);
@@ -240,18 +217,20 @@ public class MongoDatabaseWrapper : Database
         IBsonDocumentSerializer entitySerializer,
         IUpdateEntry entry)
     {
-        var idProperty = entry.EntityType.GetIdProperty();
-        var idSerializationInfo = GetPropertySerializationInfo(entitySerializer, idProperty);
+        var primaryKey = entry.EntityType.FindPrimaryKey();
+        BsonValue idValue = ToBsonDocument(entry, entitySerializer, primaryKey.Properties);
+        if (primaryKey.Properties.Count == 1)
+        {
+            // if PK consist of single field - have to unwrap it
+            idValue = idValue["_id"];
+        }
 
-        var idValue = entry.GetCurrentValue(idProperty);
-        var serializedIdValue = SerializeValue(idSerializationInfo.Serializer, idValue);
-
-        return Builders<BsonDocument>.Filter.Eq("_id", serializedIdValue);
+        return Builders<BsonDocument>.Filter.Eq("_id", idValue);
     }
 
     private static BsonSerializationInfo GetPropertySerializationInfo(
         IBsonDocumentSerializer entitySerializer,
-        IReadOnlyProperty property)
+        IPropertyBase property)
     {
         if (entitySerializer.TryGetMemberSerializationInfo(property.Name, out var serializationInfo))
         {
@@ -259,22 +238,6 @@ public class MongoDatabaseWrapper : Database
         }
 
         throw new InvalidOperationException($"Unable to get serialization info for property: {property.Name}.");
-    }
-
-    private static BsonValue SerializeValue(IBsonSerializer serializer, object? value)
-    {
-        var document = new BsonDocument();
-        using (var writer = new BsonDocumentWriter(document))
-        {
-            var context = BsonSerializationContext.CreateRoot(writer);
-
-            writer.WriteStartDocument();
-            writer.WriteName("_v");
-            serializer.Serialize(context, value);
-            writer.WriteEndDocument();
-        }
-
-        return document["_v"];
     }
 
     private long SaveMongoUpdates(IEnumerable<MongoUpdate> updates)
@@ -325,6 +288,31 @@ public class MongoDatabaseWrapper : Database
         }
 
         return documentsAffected;
+    }
+
+    private static BsonDocument ToBsonDocument(IUpdateEntry entry, IBsonDocumentSerializer entitySerializer, IEnumerable<IPropertyBase> properties)
+    {
+        var document = new BsonDocument();
+        using (var writer = new BsonDocumentWriter(document))
+        {
+            writer.WriteStartDocument();
+
+            foreach (var property in properties)
+            {
+                var propertyValue = entry.GetCurrentValue(property);
+                var propertySerializationInfo = GetPropertySerializationInfo(entitySerializer, property);
+                var elementName = propertySerializationInfo.ElementName;
+                var propertySerializer = propertySerializationInfo.Serializer;
+                var context = BsonSerializationContext.CreateRoot(writer);
+
+                writer.WriteName(elementName);
+                propertySerializer.Serialize(context, propertyValue);
+            }
+
+            writer.WriteEndDocument();
+        }
+
+        return document;
     }
 
     private static IEnumerable<MongoUpdateBatch> BatchUpdatesByCollection(IEnumerable<MongoUpdate> updates)
