@@ -31,7 +31,7 @@ public static class MongoPropertyBuilderExtensions
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="name">The element name for the property.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static PropertyBuilder ToElement(
+    public static PropertyBuilder HasElementName(
         this PropertyBuilder propertyBuilder,
         string name)
     {
@@ -47,10 +47,10 @@ public static class MongoPropertyBuilderExtensions
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="name">The element name for the property.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static PropertyBuilder<TProperty> ToElement<TProperty>(
+    public static PropertyBuilder<TProperty> HasElementName<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
         string name)
-        => (PropertyBuilder<TProperty>)ToElement((PropertyBuilder)propertyBuilder, name);
+        => (PropertyBuilder<TProperty>)HasElementName((PropertyBuilder)propertyBuilder, name);
 
 
     /// <summary>
@@ -61,12 +61,12 @@ public static class MongoPropertyBuilderExtensions
     /// <param name="name">The element name for the property.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.</returns>
-    public static IConventionPropertyBuilder? ToElement(
+    public static IConventionPropertyBuilder? HasElementName(
         this IConventionPropertyBuilder propertyBuilder,
         string? name,
         bool fromDataAnnotation = false)
     {
-        if (!CanSetField(propertyBuilder, name, fromDataAnnotation))
+        if (!CanSetElementName(propertyBuilder, name, fromDataAnnotation))
         {
             return null;
         }
@@ -82,7 +82,7 @@ public static class MongoPropertyBuilderExtensions
     /// <param name="name">The element name for the property.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns><see langword="true" /> if the field name can be set, <see langword="false"/> if not.</returns>
-    public static bool CanSetField(
+    public static bool CanSetElementName(
         this IConventionPropertyBuilder propertyBuilder,
         string? name,
         bool fromDataAnnotation = false)

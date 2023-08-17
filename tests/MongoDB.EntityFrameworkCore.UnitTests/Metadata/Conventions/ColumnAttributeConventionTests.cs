@@ -64,7 +64,7 @@ public static class ColumnAttributeConventionTests
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-            modelBuilder.Entity<Customer>().Property(c => c.Name).ToElement("fluentSpecifiedName");
+            modelBuilder.Entity<Customer>().Property(c => c.Name).HasElementName("fluentSpecifiedName");
         }
     }
 }

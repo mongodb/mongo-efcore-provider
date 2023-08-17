@@ -46,7 +46,7 @@ public class ColumnAttributeConvention : PropertyAttributeConventionBase<ColumnA
     {
         if (!string.IsNullOrWhiteSpace(attribute.Name))
         {
-            propertyBuilder.ToElement(attribute.Name, fromDataAnnotation: true);
+            propertyBuilder.HasElementName(attribute.Name, fromDataAnnotation: true);
         }
     }
 }

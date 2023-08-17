@@ -44,13 +44,13 @@ public static class MongoBuilderExtensionTest
         var typeBuilder = CreateBuilder().Entity(typeof(SampleEntity), ConfigurationSource.Convention)!;
         var propertyBuilder = typeBuilder.Property(typeof(string), "SampleString", ConfigurationSource.Convention)!;
 
-        Assert.NotNull(propertyBuilder.ToElement("First"));
+        Assert.NotNull(propertyBuilder.HasElementName("First"));
         Assert.Equal("First", propertyBuilder.Metadata.GetElementName());
 
-        Assert.NotNull(propertyBuilder.ToElement("Second", fromDataAnnotation: true));
+        Assert.NotNull(propertyBuilder.HasElementName("Second", fromDataAnnotation: true));
         Assert.Equal("Second", propertyBuilder.Metadata.GetElementName());
 
-        Assert.Null(propertyBuilder.ToElement("Third"));
+        Assert.Null(propertyBuilder.HasElementName("Third"));
         Assert.Equal("Second", propertyBuilder.Metadata.GetElementName());
     }
 

@@ -69,8 +69,8 @@ public class MongoModelValidatorTests : IDisposable
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
-            dneBuilder.Property(p => p.name1).ToElement("name");
-            dneBuilder.Property(p => p.name2).ToElement("name");
+            dneBuilder.Property(p => p.name1).HasElementName("name");
+            dneBuilder.Property(p => p.name2).HasElementName("name");
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -87,7 +87,7 @@ public class MongoModelValidatorTests : IDisposable
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
-            dneBuilder.Property(p => p.name1).ToElement("$something");
+            dneBuilder.Property(p => p.name1).HasElementName("$something");
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -103,7 +103,7 @@ public class MongoModelValidatorTests : IDisposable
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
-            dneBuilder.Property(p => p.name1).ToElement("something$");
+            dneBuilder.Property(p => p.name1).HasElementName("something$");
         });
 
         Assert.NotNull(db.Model);
@@ -116,7 +116,7 @@ public class MongoModelValidatorTests : IDisposable
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
-            dneBuilder.Property(p => p.name1).ToElement("some$thing");
+            dneBuilder.Property(p => p.name1).HasElementName("some$thing");
         });
 
         Assert.NotNull(db.Model);
@@ -129,7 +129,7 @@ public class MongoModelValidatorTests : IDisposable
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
-            dneBuilder.Property(p => p.name1).ToElement(".something");
+            dneBuilder.Property(p => p.name1).HasElementName(".something");
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -145,7 +145,7 @@ public class MongoModelValidatorTests : IDisposable
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
-            dneBuilder.Property(p => p.name1).ToElement("something.");
+            dneBuilder.Property(p => p.name1).HasElementName("something.");
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -161,7 +161,7 @@ public class MongoModelValidatorTests : IDisposable
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
-            dneBuilder.Property(p => p.name1).ToElement("some.thing");
+            dneBuilder.Property(p => p.name1).HasElementName("some.thing");
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -178,7 +178,7 @@ public class MongoModelValidatorTests : IDisposable
         {
             var dneBuilder = mb.Entity<ConfiguredIdNamedEntity>();
             dneBuilder.HasKey(e => e.ThisWillBePrimaryKey);
-            dneBuilder.Property(p => p.ThisWillBePrimaryKey).ToElement("_id");
+            dneBuilder.Property(p => p.ThisWillBePrimaryKey).HasElementName("_id");
         });
 
         Assert.NotNull(db.Model);
@@ -192,7 +192,7 @@ public class MongoModelValidatorTests : IDisposable
         {
             var dneBuilder = mb.Entity<ConfiguredIdNamedEntity>();
             dneBuilder.HasKey(e => e.ThisWillBePrimaryKey);
-            dneBuilder.Property(p => p.SomethingElse).ToElement("_id");
+            dneBuilder.Property(p => p.SomethingElse).HasElementName("_id");
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);

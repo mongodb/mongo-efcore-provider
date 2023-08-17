@@ -51,6 +51,6 @@ public class CamelCasePropertyNameConvention : IPropertyAddedConvention
     {
         if (propertyBuilder.Metadata.Name == "_id") return;
 
-        propertyBuilder.ToElement(propertyBuilder.Metadata.Name.ToCamelCase(CultureInfo.CurrentCulture));
+        propertyBuilder.HasElementName(propertyBuilder.Metadata.Name.ToCamelCase(CultureInfo.CurrentCulture));
     }
 }
