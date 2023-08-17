@@ -26,13 +26,13 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 /// <summary>
 /// A convention that identifies the primary key for entity types based on the underlying element name being "_id".
 /// </summary>
-public class IdPrimaryKeyConvention : KeyDiscoveryConvention
+public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
 {
     /// <summary>
-    /// Creates a <see cref="IdPrimaryKeyConvention"/>.
+    /// Creates a <see cref="PrimaryKeyDiscoveryConvention"/>.
     /// </summary>
     /// <param name="dependencies">The <see cref="ProviderConventionSetBuilderDependencies"/> this service relies upon.</param>
-    public IdPrimaryKeyConvention(
+    public PrimaryKeyDiscoveryConvention(
         ProviderConventionSetBuilderDependencies dependencies)
         : base(dependencies)
     {

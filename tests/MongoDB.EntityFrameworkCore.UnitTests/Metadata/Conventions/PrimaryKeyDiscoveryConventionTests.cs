@@ -18,7 +18,7 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions;
 
-public static class IdPrimaryKeyConventionTests
+public static class PrimaryKeyDiscoveryConventionTests
 {
     [Fact]
     public static void Id_fields_are_identified_as_primary_keys_when_strings()

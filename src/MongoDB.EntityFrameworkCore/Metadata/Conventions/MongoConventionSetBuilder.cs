@@ -46,7 +46,7 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         // New MongoDB-specific conventions
         conventionSet.Add(new CollectionNameFromDbSetConvention(Dependencies));
         conventionSet.Add(new CollectionAttributeConvention(Dependencies));
-        conventionSet.Add(new IdPrimaryKeyConvention(Dependencies));
+        conventionSet.Add(new PrimaryKeyDiscoveryConvention(Dependencies));
 
         // Convenience conventions for users familiar with EF
         conventionSet.Add(new TableAttributeConvention(Dependencies));
