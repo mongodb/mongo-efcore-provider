@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -165,7 +166,7 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
 
     private static Expression CreateGetValueExpression(Expression bsonDocExpression, IReadOnlyProperty property)
     {
-        return CreateGetValueExpression(bsonDocExpression, property.Name, property.GetTypeMapping().ClrType);
+        return CreateGetValueExpression(bsonDocExpression, property.GetElementName(), property.GetTypeMapping().ClrType);
     }
 
     private static Expression CreateGetValueExpression(Expression bsonDocExpression, string name, Type mappedType)
