@@ -201,4 +201,19 @@ public class MongoModelValidatorTests : IDisposable
         Assert.Contains("'ThisWillBePrimaryKey'", ex.Message);
     }
 
+    [Fact]
+    public void Validate_throws_when_entity_has_shadow_properties()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<DoubleNamedEntity>();
+        var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            var dneBuilder = mb.Entity<DoubleNamedEntity>();
+            dneBuilder.Property<DateTime>("ShadowDateTime");
+        });
+
+        var ex = Assert.Throws<NotSupportedException>(() => db.Model);
+        Assert.Contains("'DoubleNamedEntity'", ex.Message);
+        Assert.Contains("'ShadowDateTime'", ex.Message);
+    }
+
 }

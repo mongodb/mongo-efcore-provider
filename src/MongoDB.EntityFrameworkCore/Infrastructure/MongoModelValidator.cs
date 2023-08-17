@@ -49,6 +49,7 @@ public class MongoModelValidator : ModelValidator
         base.Validate(model, logger);
 
         ValidateElementNames(model, logger);
+        ValidateNoShadowProperties(model, logger);
         ValidatePrimaryKeys(model, logger);
     }
 
@@ -102,7 +103,7 @@ public class MongoModelValidator : ModelValidator
     /// </summary>
     /// <param name="model">The <see cref="IModel"/> to validate primary key correctness.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
-    /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported yet.</exception>
+    /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported.</exception>
     /// <exception cref="InvalidOperationException">Throw when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
     public void ValidateElementNames(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
@@ -140,6 +141,25 @@ public class MongoModelValidator : ModelValidator
             }
 
             elementPropertyMap[elementName] = property;
+        }
+    }
+
+    /// <summary>
+    /// Validate that no entities have shadow properties.
+    /// </summary>
+    /// <param name="model">The <see cref="IModel"/> to validate for whether shadow properties are present.</param>
+    /// <param name="logger">A logger to receive validation diagnostic information.</param>
+    /// <exception cref="NotSupportedException">Thrown when shadow properties are encountered which are not supported.</exception>
+    public void ValidateNoShadowProperties(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            var shadowProperty = entityType.GetProperties().FirstOrDefault(p => p.IsShadowProperty());
+            if (shadowProperty != null)
+            {
+                throw new NotSupportedException(
+                    $"Unsupported shadow property '{shadowProperty.Name}' identified on entity type '{entityType.DisplayName()}'.");
+            }
         }
     }
 }
