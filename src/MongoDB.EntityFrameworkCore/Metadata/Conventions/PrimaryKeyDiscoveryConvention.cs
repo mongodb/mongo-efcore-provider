@@ -43,9 +43,7 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
     protected override void TryConfigurePrimaryKey(IConventionEntityTypeBuilder entityTypeBuilder)
     {
         var entityType = entityTypeBuilder.Metadata;
-        if (entityType.BaseType != null
-            || (entityType.IsKeyless && entityType.GetIsKeylessConfigurationSource() != ConfigurationSource.Convention)
-            || !entityTypeBuilder.CanSetPrimaryKey((IReadOnlyList<IConventionProperty>?)null))
+        if (entityType.IsKeyless && entityType.GetIsKeylessConfigurationSource() != ConfigurationSource.Convention)
         {
             return;
         }
@@ -71,16 +69,10 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
                 throw new NotSupportedException("Alternate keys not supported at this time.");
             }
 
-            if (keys.Length == 1)
+            if (keys.Length == 1 && keys[0].Properties.Count == 1)
             {
-                if (keys[0].Properties.Count > 1)
-                {
-                    throw new NotSupportedException("Composite keys not supported at this time.");
-                }
-
                 keys[0].Properties[0].SetElementName("_id");
             }
         }
     }
-
 }
