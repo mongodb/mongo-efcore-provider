@@ -19,10 +19,13 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -65,6 +68,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         return Expression.Call(null,
             __translateAndExecuteQuery.MakeGenericMethod(rootEntityType.ClrType, projectedType),
             QueryCompilationContext.QueryContextParameter,
+            Expression.Constant(rootEntityType),
             Expression.Constant(queryExpression),
             Expression.Constant(shaperLambda.Compile()),
             Expression.Constant(_contextType),
@@ -89,6 +93,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
 
     private static IEnumerable<TResult> TranslateAndExecuteQuery<TSource, TResult>(
         QueryContext queryContext,
+        IEntityType entityType,
         MongoQueryExpression queryExpression,
         Func<QueryContext, BsonDocument, TResult> shaper,
         Type contextType,
@@ -98,7 +103,8 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var collectionName = queryExpression.CollectionExpression.CollectionName;
-        var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName).AsQueryable();
+        var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
+            .AsQueryable().As(new EntitySerializer<TSource>(entityType));
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
 
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);

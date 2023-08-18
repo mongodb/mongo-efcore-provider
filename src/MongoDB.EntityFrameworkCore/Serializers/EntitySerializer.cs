@@ -96,8 +96,12 @@ namespace MongoDB.EntityFrameworkCore.Serializers
                 var t when t == typeof(uint) => new UInt32Serializer(),
                 var t when t == typeof(ulong) => new UInt64Serializer(),
                 var t when t == typeof(Decimal128) => new Decimal128Serializer(),
+                {IsArray: true} a => CreateArraySerializer(a.GetElementType()),
                 _ => throw new Exception($"Don't know how property {property.Name} of type {property.ClrType} should be serialized.")
             };
         }
+
+        private static IBsonSerializer CreateArraySerializer(Type elementType)
+            => (IBsonSerializer)Activator.CreateInstance(typeof(ArraySerializer<>).MakeGenericType(elementType));
     }
 }
