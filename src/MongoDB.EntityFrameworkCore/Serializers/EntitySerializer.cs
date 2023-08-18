@@ -14,6 +14,7 @@
 */
 
 using System;
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
@@ -97,11 +98,15 @@ namespace MongoDB.EntityFrameworkCore.Serializers
                 var t when t == typeof(ulong) => new UInt64Serializer(),
                 var t when t == typeof(Decimal128) => new Decimal128Serializer(),
                 {IsArray: true} a => CreateArraySerializer(a.GetElementType()),
+                {IsGenericType:true} l => CreateListSerializer(l.TryGetItemType(typeof(IEnumerable<>))),
                 _ => throw new Exception($"Don't know how property {property.Name} of type {property.ClrType} should be serialized.")
             };
         }
 
         private static IBsonSerializer CreateArraySerializer(Type elementType)
             => (IBsonSerializer)Activator.CreateInstance(typeof(ArraySerializer<>).MakeGenericType(elementType));
+
+        private static IBsonSerializer CreateListSerializer(Type elementType)
+            => (IBsonSerializer)Activator.CreateInstance(typeof(ListSerializer<>).MakeGenericType(elementType));
     }
 }

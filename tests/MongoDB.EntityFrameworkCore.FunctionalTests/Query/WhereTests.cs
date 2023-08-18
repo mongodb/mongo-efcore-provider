@@ -14,6 +14,7 @@
 */
 
 using MongoDB.Bson;
+using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 using XUnitCollection = Xunit.CollectionAttribute;
 
@@ -22,10 +23,12 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 [XUnitCollection(nameof(SampleGuidesFixture))]
 public class WhereTests
 {
+    private readonly IMongoDatabase _mongoDatabase;
     private readonly GuidesDbContext _db;
 
     public WhereTests(SampleGuidesFixture fixture)
     {
+        _mongoDatabase = fixture.Database;
         _db = GuidesDbContext.Create(fixture.Database);
     }
 
@@ -170,5 +173,50 @@ public class WhereTests
         var results = _db.Planets.Where(p => p._id == expectedId).ToArray();
         Assert.Single(results);
         Assert.Equal(expectedId, results[0]._id);
+    }
+
+    internal class PlanetListVersion
+    {
+        public ObjectId _id { get; set; }
+        public string name { get; set; }
+        public int orderFromSun { get; set; }
+        public bool hasRings { get; set; }
+        public List<string> mainAtmosphere { get; set; }
+    }
+
+    [Fact]
+    public void Where_string_list_contains()
+    {
+        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
+        var results = db.Entitites.Where(p => p.mainAtmosphere.Contains("H2")).ToArray();
+        Assert.Equal(4, results.Length);
+        Assert.All(results, p => Assert.Contains("H2", p.mainAtmosphere));
+    }
+
+    [Fact]
+    public void Where_string_list_not_contains()
+    {
+        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
+        var results = db.Entitites.Where(p => !p.mainAtmosphere.Contains("H2")).ToArray();
+        Assert.Equal(4, results.Length);
+        Assert.All(results, p => Assert.DoesNotContain("H2", p.mainAtmosphere));
+    }
+
+    [Fact]
+    public void Where_string_list_count()
+    {
+        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
+        var results = db.Entitites.Where(p => p.mainAtmosphere.Count == 2).ToArray();
+        Assert.Single(results);
+        Assert.Equal(2, results[0].mainAtmosphere.Count);
+    }
+
+    [Fact]
+    public void Where_string_list_any()
+    {
+        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
+        var results = db.Entitites.Where(p => p.mainAtmosphere.Any()).ToArray();
+        Assert.Equal(7, results.Length);
+        Assert.All(results, p => Assert.NotEmpty(p.mainAtmosphere));
     }
 }
