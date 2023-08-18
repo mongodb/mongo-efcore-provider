@@ -63,20 +63,21 @@ namespace MongoDB.EntityFrameworkCore.Serializers
             if (property != null)
             {
                 var elementName = property.GetElementName();
-                if (property.IsPrimaryKey())
-                {
-                    // TODO: should rework this once we are ready for proper composite key implementation
-                    // Current implementation:
-                    // - remap single-field PK to be named "_id" as per MondoDB restriction
-                    // - for composite-PK: we create nested document that include all PK fields
-                    //   and also put the fields into the document itself to let LINQ provider translate expressions
-                    var pk = _entityType.FindPrimaryKey();
-
-                    if (pk.Properties.Count == 1 && pk.Properties[0] == property)
-                    {
-                        elementName = "_id";
-                    }
-                }
+                // TODO: remove this code. It should be unnecessary anymore as it moved into conventions
+                // if (property.IsPrimaryKey())
+                // {
+                //     // TODO: should rework this once we are ready for proper composite key implementation
+                //     // Current implementation:
+                //     // - remap single-field PK to be named "_id" as per MongoDB restriction
+                //     // - for composite-PK: we create nested document that include all PK fields
+                //     //   and also put the fields into the document itself to let LINQ provider translate expressions
+                //     var pk = _entityType.FindPrimaryKey();
+                //
+                //     if (pk.Properties.Count == 1 && pk.Properties[0] == property)
+                //     {
+                //         elementName = "_id";
+                //     }
+                // }
 
                 var serializer = CreatePropertySerializer(property);
                 serializationInfo = new BsonSerializationInfo(elementName, serializer, property.ClrType);
