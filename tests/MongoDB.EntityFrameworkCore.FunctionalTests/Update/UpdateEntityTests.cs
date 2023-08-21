@@ -17,9 +17,15 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-public sealed class UpdateEntityTests : IDisposable
+public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
+    private readonly TemporaryDatabaseFixture _tempDatabase;
+
+    public UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
+    {
+        _tempDatabase = tempDatabase;
+    }
+
     public void Dispose() => _tempDatabase.Dispose();
 
     class SimpleEntity

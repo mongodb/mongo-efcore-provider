@@ -24,13 +24,13 @@ public class TemporaryDatabaseCleanup
     {
         var client = TestServer.GetClient();
 
-        if (TestServer.TestDatabasePrefix.Length < 6)
+        if (TemporaryDatabaseFixture.TestDatabasePrefix.Length < 6)
             throw new InvalidOperationException("Prefix is too short, might delete non-test data");
 
         var databaseNames = await client.ListDatabaseNamesAsync();
         foreach (var databaseName in await databaseNames.ToListAsync())
         {
-            if (databaseName.StartsWith(TestServer.TestDatabasePrefix))
+            if (databaseName.StartsWith(TemporaryDatabaseFixture.TestDatabasePrefix))
                 await client.DropDatabaseAsync(databaseName);
         }
     }

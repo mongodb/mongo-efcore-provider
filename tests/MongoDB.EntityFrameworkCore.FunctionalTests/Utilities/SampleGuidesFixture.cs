@@ -27,20 +27,13 @@ public class SampleGuidesFixtureCollection : ICollectionFixture<SampleGuidesFixt
     // ICollectionFixture<> interfaces.
 }
 
-public class SampleGuidesFixture : IDisposable
+public class SampleGuidesFixture : TemporaryDatabaseFixture
 {
-    private readonly TemporaryDatabase _db;
-
     public SampleGuidesFixture()
     {
-        _db = TestServer.CreateTemporaryDatabase();
-        _db.MongoDatabase.GetCollection<Planet>("planets")
+        MongoDatabase.GetCollection<Planet>("planets")
             .BulkWrite(Data.Select(p => new InsertOneModel<Planet>(p)));
     }
-
-    public void Dispose() => _db.Dispose();
-
-    public IMongoDatabase Database => _db.MongoDatabase;
 
     private static Planet[] Data = new[]
     {

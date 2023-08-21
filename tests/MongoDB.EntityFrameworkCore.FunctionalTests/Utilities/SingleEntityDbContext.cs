@@ -16,6 +16,7 @@
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
@@ -32,6 +33,7 @@ internal static class SingleEntityDbContext
 
         var newOptions = new DbContextOptionsBuilder<SingleEntityDbContext<T>>()
             .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
+            .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;
 
@@ -42,6 +44,14 @@ internal static class SingleEntityDbContext
 
     public static SingleEntityDbContext<T> Create<T>(IMongoCollection<T> collection, Action<ModelBuilder>? modelBuilderAction = null) where T:class =>
         new (GetOrCreateOptionsBuilder(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction);
+
+    private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+    {
+        private static int __count;
+
+        public object Create(DbContext context, bool designTime)
+            => Interlocked.Increment(ref __count);
+    }
 }
 
 internal class SingleEntityDbContext<T> : DbContext where T:class

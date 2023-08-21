@@ -17,10 +17,14 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-public sealed class DeleteEntityTests : IDisposable
+public sealed class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabase _tempDatabase = TestServer.CreateTemporaryDatabase();
-    public void Dispose() => _tempDatabase.Dispose();
+    private readonly TemporaryDatabaseFixture _tempDatabase;
+
+    public DeleteEntityTests(TemporaryDatabaseFixture tempDatabase)
+    {
+        _tempDatabase = tempDatabase;
+    }
 
     class SimpleEntityWithStringId
     {

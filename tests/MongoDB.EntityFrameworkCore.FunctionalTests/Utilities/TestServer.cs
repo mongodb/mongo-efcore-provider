@@ -21,20 +21,9 @@ internal static class TestServer
 {
     private const string MongoServer = "localhost";
 
-    public const string TestDatabasePrefix = "EFCoreTest-";
-
     private static readonly MongoClientSettings __mongoClientSettings = new() {Server = MongoServerAddress.Parse(MongoServer)};
     private static readonly MongoClient __mongoClient = new(__mongoClientSettings);
-    private static readonly string __timeStamp = DateTime.Now.ToString("s").Replace(':', '-');
-
-    private static int __count;
 
     public static IMongoClient GetClient()
         => __mongoClient;
-
-    public static IMongoDatabase GetDatabase(string name)
-        => __mongoClient.GetDatabase(name);
-
-    public static TemporaryDatabase CreateTemporaryDatabase()
-        => new (GetDatabase($"{TestDatabasePrefix}-{__timeStamp}@{Interlocked.Increment(ref __count)}"));
 }

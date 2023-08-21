@@ -25,7 +25,7 @@ public class FirstSingleTests
 
     public FirstSingleTests(SampleGuidesFixture fixture)
     {
-        _db = GuidesDbContext.Create(fixture.Database);
+        _db = GuidesDbContext.Create(fixture.MongoDatabase);
     }
 
     [Fact]
