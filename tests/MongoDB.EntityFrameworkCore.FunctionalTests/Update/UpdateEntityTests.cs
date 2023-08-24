@@ -26,8 +26,6 @@ public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
         _tempDatabase = tempDatabase;
     }
 
-    public void Dispose() => _tempDatabase.Dispose();
-
     class SimpleEntity
     {
         public ObjectId _id { get; set; }
