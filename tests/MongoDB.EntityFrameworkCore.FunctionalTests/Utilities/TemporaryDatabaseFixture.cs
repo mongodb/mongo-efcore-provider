@@ -35,8 +35,12 @@ public class TemporaryDatabaseFixture : IDisposable
 
     public IMongoDatabase MongoDatabase { get; }
 
-    public IMongoCollection<T> CreateTemporaryCollection<T>([CallerMemberName] string? name = null, params T[] items)
+    public IMongoCollection<T> CreateTemporaryCollection<T>([CallerMemberName] string? name = null)
     {
+        if (name == ".ctor")
+            name = GetLastConstructorTypeNameFromStack()
+                   ?? throw new InvalidOperationException("Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
+
         MongoDatabase.CreateCollection(name);
         return MongoDatabase.GetCollection<T>(name);
     }
@@ -44,5 +48,14 @@ public class TemporaryDatabaseFixture : IDisposable
     public void Dispose()
     {
         _mongoClient.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
+    }
+
+    private static string? GetLastConstructorTypeNameFromStack()
+    {
+        return new System.Diagnostics.StackTrace()
+            .GetFrames()
+            .Select(f => f.GetMethod())
+            .FirstOrDefault(f => f?.Name == ".ctor")
+            ?.DeclaringType?.Name;
     }
 }
