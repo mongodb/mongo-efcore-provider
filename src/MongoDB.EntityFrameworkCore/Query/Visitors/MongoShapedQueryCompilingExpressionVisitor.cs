@@ -91,7 +91,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
             bsonDocParameter);
     }
 
-    private static IEnumerable<TResult> TranslateAndExecuteQuery<TSource, TResult>(
+    private static QueryingEnumerable<TResult> TranslateAndExecuteQuery<TSource, TResult>(
         QueryContext queryContext,
         IEntityType entityType,
         MongoQueryExpression queryExpression,

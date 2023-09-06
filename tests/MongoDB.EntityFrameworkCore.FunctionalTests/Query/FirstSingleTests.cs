@@ -13,6 +13,7 @@
 * limitations under the License.
 */
 
+using Microsoft.EntityFrameworkCore;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 using XUnitCollection = Xunit.CollectionAttribute;
 
@@ -32,6 +33,13 @@ public class FirstSingleTests
     public void First()
     {
         var result = _db.Planets.OrderBy(p => p.name).First();
+        Assert.Equal("Earth", result.name);
+    }
+
+    [Fact]
+    public async Task FirstAsync()
+    {
+        var result = await _db.Planets.OrderBy(p => p.name).FirstAsync();
         Assert.Equal("Earth", result.name);
     }
 
@@ -60,6 +68,13 @@ public class FirstSingleTests
     public void Single()
     {
         var result = _db.Planets.Where(p => p.name == "Earth").Single();
+        Assert.Equal("Earth", result.name);
+    }
+
+    [Fact]
+    public async Task SingleAsync()
+    {
+        var result = await _db.Planets.Where(p => p.name == "Earth").SingleAsync();
         Assert.Equal("Earth", result.name);
     }
 
