@@ -54,31 +54,6 @@ public static class BsonBinding
         return CreateGetValueAs(bsonDocExpression, name, mappedType);
     }
 
-    public static Expression CreateGetValueExpression(Expression bsonDocExpression, int index, Type mappedType)
-    {
-        if (mappedType.IsArray)
-        {
-            return CreateGetArrayOf(bsonDocExpression, index, mappedType.TryGetItemType()!);
-        }
-
-        // Support lists and variants that expose IEnumerable<T> and have a matching constructor
-        if (mappedType is {IsGenericType: true, IsGenericTypeDefinition: false})
-        {
-            var enumerableType = mappedType.TryFindIEnumerable();
-            if (enumerableType != null)
-            {
-                var constructor = mappedType.TryFindConstructorWithParameter(enumerableType);
-                if (constructor != null)
-                {
-                    return Expression.New(constructor,
-                        CreateGetEnumerableOf(bsonDocExpression, index, enumerableType.TryGetItemType()!));
-                }
-            }
-        }
-
-        return CreateGetValueAs(bsonDocExpression, index, mappedType);
-    }
-
     public static Expression ConvertTypeIfRequired(Expression expression, Type intendedType)
         => expression.Type != intendedType
             ? Expression.Convert(expression, intendedType)
@@ -87,47 +62,22 @@ public static class BsonBinding
     private static Expression CreateGetValueAs(Expression bsonValueExpression, string name, Type type) =>
         Expression.Call(null, __getValueAsByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
 
-    private static Expression CreateGetValueAs(Expression bsonValueExpression, int index, Type type) =>
-        Expression.Call(null, __getValueAsByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression,
-            Expression.Constant(index));
-
     private static Expression CreateGetArrayOf(Expression bsonValueExpression, string name, Type type) =>
         Expression.Call(null, __getArrayOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
-
-    private static Expression CreateGetArrayOf(Expression bsonValueExpression, int index, Type type) =>
-        Expression.Call(null, __getArrayOfByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression,
-            Expression.Constant(index));
 
     private static Expression CreateGetEnumerableOf(Expression bsonValueExpression, string name, Type type) =>
         Expression.Call(null, __getEnumerableOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression,
             Expression.Constant(name));
 
-    private static Expression CreateGetEnumerableOf(Expression bsonValueExpression, int index, Type type) =>
-        Expression.Call(null, __getEnumerableOfByIndexMethodInfo.MakeGenericMethod(type), bsonValueExpression,
-            Expression.Constant(index));
-
     private static readonly MethodInfo __getValueAsByNameMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetValueAs) && mi.GetParameters()[1].ParameterType == typeof(string));
-
-    private static readonly MethodInfo __getValueAsByIndexMethodInfo
-        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetValueAs) && mi.GetParameters()[1].ParameterType == typeof(int));
+            .Single(mi => mi.Name == nameof(BsonConverter.GetValueAs));
 
     private static readonly MethodInfo __getArrayOfByNameMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetArrayOf) && mi.GetParameters()[1].ParameterType == typeof(string));
-
-    private static readonly MethodInfo __getArrayOfByIndexMethodInfo
-        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetArrayOf) && mi.GetParameters()[1].ParameterType == typeof(int));
+            .Single(mi => mi.Name == nameof(BsonConverter.GetArrayOf));
 
     private static readonly MethodInfo __getEnumerableOfByNameMethodInfo
         = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf) &&
-                          mi.GetParameters()[1].ParameterType == typeof(string));
-
-    private static readonly MethodInfo __getEnumerableOfByIndexMethodInfo
-        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf) && mi.GetParameters()[1].ParameterType == typeof(int));
+            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf));
 }

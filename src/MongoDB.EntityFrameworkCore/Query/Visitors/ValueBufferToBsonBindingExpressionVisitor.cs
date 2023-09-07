@@ -151,13 +151,6 @@ internal class ValueBufferToBsonBindingExpressionVisitor : ExpressionVisitor
             return _currentParameters.Peek();
         }
 
-        if (projectionBindingExpression.Index != null)
-        {
-            return BsonBinding.CreateGetValueExpression(_currentParameters.Peek(),
-                projectionBindingExpression.Index.Value,
-                type);
-        }
-
-        throw new NotSupportedException("Unknown ProjectionBindingExpression type - neither Index nor ProjectionMember");
+        throw new NotSupportedException("Unknown ProjectionBindingExpression only ProjectionMember supported.");
     }
 }

@@ -52,7 +52,7 @@ public class ProjectionTests
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Requires Select projection rewriting")]
     public void Select_projection_to_array()
     {
         var results = _planets.Select(p => new object[] {p.name, p.orderFromSun});
@@ -63,7 +63,7 @@ public class ProjectionTests
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Requires Select projection rewriting")]
     public void Select_projection_to_tuple()
     {
         var results = _planets.Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings));
