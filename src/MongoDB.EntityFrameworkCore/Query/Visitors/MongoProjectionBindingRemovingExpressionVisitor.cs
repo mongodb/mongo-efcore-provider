@@ -15,6 +15,7 @@
 
 using System;
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
@@ -30,6 +31,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindingRemovingExpressionVisitor
 {
     private readonly MongoQueryExpression _queryExpression;
+    private readonly IEntityType _rootEntityType;
 
     /// <summary>
     /// Create a <see cref="MongoProjectionBindingRemovingExpressionVisitor"/>.
@@ -43,12 +45,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
     /// <see langref="false"/> if they are not.
     /// </param>
     public MongoProjectionBindingRemovingExpressionVisitor(
+        IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
         ParameterExpression docParameter,
         bool trackQueryResults)
         : base(docParameter, trackQueryResults)
     {
         _queryExpression = queryExpression;
+        _rootEntityType = rootEntityType;
     }
 
     /// <summary>
@@ -66,23 +70,23 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
         CoreTypeMapping? typeMapping = null)
     {
         var innerExpression = docExpression;
-        if (ProjectionBindings.TryGetValue(docExpression, out var innerVariable))
-        {
-            innerExpression = innerVariable;
-        }
-        else if (docExpression is RootReferenceExpression)
+        IEntityType entityType = _rootEntityType;
+
+        if (docExpression is RootReferenceExpression rootReferenceExpression)
         {
             innerExpression = CreateGetValueExpression(DocParameter, null, typeof(BsonDocument));
+            entityType = rootReferenceExpression.EntityType;
         }
         else if (docExpression is ObjectAccessExpression objectAccessExpression)
         {
             var innerAccessExpression = objectAccessExpression.AccessExpression;
 
             innerExpression = CreateGetValueExpression(
-                innerAccessExpression, ((IAccessExpression)innerAccessExpression).Name, typeof(BsonDocument));
+                innerAccessExpression, objectAccessExpression.Name, typeof(BsonDocument));
+            entityType = objectAccessExpression.Navigation.TargetEntityType;
         }
 
-        return BsonBinding.CreateGetValueExpression(innerExpression, storeName, typeMapping?.ClrType ?? type);
+        return BsonBinding.CreateGetValueExpression(innerExpression, storeName, typeMapping?.ClrType ?? type, entityType);
     }
 
     private int GetProjectionIndex(ProjectionBindingExpression projectionBindingExpression)

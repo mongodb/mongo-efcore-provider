@@ -59,11 +59,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
         bool trackQueryResults = QueryCompilationContext.QueryTrackingBehavior == QueryTrackingBehavior.TrackAll;
 
+        var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
+
         var shaperBody = shapedQueryExpression.ShaperExpression;
         shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
         shaperBody = InjectEntityMaterializers(shaperBody);
         shaperBody = new MongoProjectionBindingRemovingExpressionVisitor(
-                mongoQueryExpression, bsonDocParameter, trackQueryResults)
+                rootEntityType, mongoQueryExpression, bsonDocParameter, trackQueryResults)
             .Visit(shaperBody);
 
         var shaperLambda = Expression.Lambda(
@@ -72,7 +74,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             bsonDocParameter);
         var compiledShaper = shaperLambda.Compile();
 
-        var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
+
         var projectedType = shaperLambda.ReturnType;
         bool standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
                                       QueryTrackingBehavior.NoTrackingWithIdentityResolution;
@@ -124,5 +126,5 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         .GetTypeInfo()
         .DeclaredMethods
         .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
-    
+
 }

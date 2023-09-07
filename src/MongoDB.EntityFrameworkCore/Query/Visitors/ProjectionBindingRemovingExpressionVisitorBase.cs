@@ -266,8 +266,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         IProperty property,
         Type type)
     {
-        var storeName = property.GetElementName();
-        if (storeName.Length == 0)
+        if (property.IsOwnedTypeKey())
         {
             var entityType = property.DeclaringEntityType;
             if (!entityType.IsDocumentRoot())
@@ -313,7 +312,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         }
 
         return Expression.Convert(
-            CreateGetValueExpression(docExpression, storeName, type.MakeNullable(), property.GetTypeMapping()),
+            CreateGetValueExpression(docExpression, property.Name, type.MakeNullable(), property.GetTypeMapping()),
             type);
     }
 

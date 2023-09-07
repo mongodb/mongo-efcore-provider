@@ -74,16 +74,6 @@ public static class MongoEntityTypeExtensions
                || entityType[MongoAnnotationNames.CollectionName] != null);
 
     /// <summary>
-    /// Get the <see cref="IProperty"/> that corresponds to the `_id` element in MongoDB.
-    /// </summary>
-    /// <param name="entityType">The <see cref="IEntityType"/> to obtain the `_id` property for.</param>
-    /// <returns>The <see cref="IProperty"/> this entity type uses for `_id`.</returns>
-    /// <exception cref="InvalidOperationException">Thrown if no `_id` property could be found.</exception>
-    public static IProperty GetIdProperty(this IEntityType entityType)
-        => entityType.GetProperties().FirstOrDefault(p => p.GetElementName() == "_id")
-            ?? throw new InvalidOperationException($"Type {entityType.ClrType.Name} has no \"_id\" property.");
-
-    /// <summary>
     /// Get the element name where this entity type lives - namely the navigation element of the
     /// entity that contains it.
     /// </summary>

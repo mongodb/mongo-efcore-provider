@@ -17,57 +17,45 @@ using System;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
-internal static class BsonBinding
+public static class BsonBinding
 {
-    public static Expression CreateGetValueExpression(Expression bsonDocExpression, string? name, Type mappedType)
+    public static Expression CreateGetValueExpression(Expression bsonDocExpression, string? name, Type mappedType, IEntityType entityType)
     {
         if (name is null) return bsonDocExpression;
 
-        if (mappedType.IsArray)
+        var targetProperty = entityType.FindProperty(name);
+        if (targetProperty != null)
         {
-            return CreateGetArrayOf(bsonDocExpression, name, mappedType.TryGetItemType()!);
+            return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
         }
 
-        // Support lists and variants that expose IEnumerable<T> and have a matching constructor
-        if (mappedType is {IsGenericType: true, IsGenericTypeDefinition: false})
+        var navigationProperty = entityType.FindNavigation(name);
+        if (navigationProperty != null)
         {
-            var enumerableType = mappedType.TryFindIEnumerable();
-            if (enumerableType != null)
-            {
-                var constructor = mappedType.TryFindConstructorWithParameter(enumerableType);
-                if (constructor != null)
-                {
-                    return Expression.New(constructor,
-                        CreateGetEnumerableOf(bsonDocExpression, name, enumerableType.TryGetItemType()!));
-                }
-            }
+            var elementName = navigationProperty.GetElementName();
+            return CreateGetElementValue(bsonDocExpression, elementName, mappedType);
         }
 
-        return CreateGetValueAs(bsonDocExpression, name, mappedType);
+        throw new NotImplementedException();
     }
 
-    private static Expression CreateGetValueAs(Expression bsonValueExpression, string name, Type type) =>
-        Expression.Call(null, __getValueAsByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+    private static Expression CreateGetPropertyValue(Expression bsonDocExpression, Expression propertyExpression, Type resultType) =>
+        Expression.Call(null, __getPropertyValueMethodInfo.MakeGenericMethod(resultType), bsonDocExpression, propertyExpression);
 
-    private static Expression CreateGetArrayOf(Expression bsonValueExpression, string name, Type type) =>
-        Expression.Call(null, __getArrayOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));
+    private static Expression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
+        Expression.Call(null, __getElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
-    private static Expression CreateGetEnumerableOf(Expression bsonValueExpression, string name, Type type) =>
-        Expression.Call(null, __getEnumerableOfByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression,
-            Expression.Constant(name));
+    private static readonly MethodInfo __getPropertyValueMethodInfo
+        = typeof(SerializationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(SerializationHelper.GetPropertyValue));
 
-    private static readonly MethodInfo __getValueAsByNameMethodInfo
-        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetValueAs));
-
-    private static readonly MethodInfo __getArrayOfByNameMethodInfo
-        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetArrayOf));
-
-    private static readonly MethodInfo __getEnumerableOfByNameMethodInfo
-        = typeof(BsonConverter).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(BsonConverter.GetEnumerableOf));
+    private static readonly MethodInfo __getElementValueMethodInfo
+        = typeof(SerializationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(SerializationHelper.GetElementValue));
 }

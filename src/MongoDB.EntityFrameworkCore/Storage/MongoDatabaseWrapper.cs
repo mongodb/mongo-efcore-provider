@@ -21,12 +21,9 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using MongoDB.Bson;
-using MongoDB.Bson.IO;
-using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
@@ -171,28 +168,8 @@ public class MongoDatabaseWrapper : Database
 
     private static MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
     {
-        var entityType = entry.EntityType;
-        var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);
-
         var document = new BsonDocument();
-        using (var writer = new BsonDocumentWriter(document))
-        {
-            writer.WriteStartDocument();
-
-            foreach (var property in entityType.GetProperties())
-            {
-                var propertyValue = entry.GetCurrentValue(property);
-                var propertySerializationInfo = GetPropertySerializationInfo(entitySerializer, property);
-                var elementName = propertySerializationInfo.ElementName;
-                var propertySerializer = propertySerializationInfo.Serializer;
-                var context = BsonSerializationContext.CreateRoot(writer);
-
-                writer.WriteName(elementName);
-                propertySerializer.Serialize(context, propertyValue);
-            }
-
-            writer.WriteEndDocument();
-        }
+        SerializationHelper.WriteProperties(document, entry, entry.EntityType.GetProperties());
 
         var model = new InsertOneModel<BsonDocument>(document);
         return new MongoUpdate(collectionName, model);
@@ -200,81 +177,38 @@ public class MongoDatabaseWrapper : Database
 
     private static MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
     {
-        var entityType = entry.EntityType;
-        var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);
-
-        var idFilter = CreateIdFilter(entitySerializer, entry);
+        var idFilter = CreateIdFilter(entry);
         var model = new DeleteOneModel<BsonDocument>(idFilter);
         return new MongoUpdate(collectionName, model);
     }
 
     private static MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
     {
-        var entityType = entry.EntityType;
-        var entitySerializer = (IBsonDocumentSerializer)EntitySerializer.Create(entityType);
-
         var fieldValues = new BsonDocument();
-        foreach (var property in entityType.GetProperties())
-        {
-            if (entry.IsModified(property))
-            {
-                var propertyValue = entry.GetCurrentValue(property);
-                var propertySerializationInfo = GetPropertySerializationInfo(entitySerializer, property);
-                var propertySerializer = propertySerializationInfo.Serializer;
-                var serializedPropertyValue = SerializeValue(propertySerializer, propertyValue);
-
-                var elementName = propertySerializationInfo.ElementName;
-                fieldValues[elementName] = serializedPropertyValue;
-            }
-        }
+        SerializationHelper.WriteProperties(fieldValues, entry, entry.EntityType.GetProperties().Where(p => entry.IsModified(p)));
 
         var updateDocument = new BsonDocument("$set", fieldValues);
         var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(updateDocument);
 
-        var idFilter = CreateIdFilter(entitySerializer, entry);
+        var idFilter = CreateIdFilter(entry);
         var model = new UpdateOneModel<BsonDocument>(idFilter, updateDefinition);
         return new MongoUpdate(collectionName, model);
     }
 
-    private static FilterDefinition<BsonDocument> CreateIdFilter(
-        IBsonDocumentSerializer entitySerializer,
-        IUpdateEntry entry)
+    private static FilterDefinition<BsonDocument> CreateIdFilter(IUpdateEntry entry)
     {
-        var idProperty = entry.EntityType.GetIdProperty();
-        var idSerializationInfo = GetPropertySerializationInfo(entitySerializer, idProperty);
-
-        var idValue = entry.GetCurrentValue(idProperty);
-        var serializedIdValue = SerializeValue(idSerializationInfo.Serializer, idValue);
-
-        return Builders<BsonDocument>.Filter.Eq("_id", serializedIdValue);
-    }
-
-    private static BsonSerializationInfo GetPropertySerializationInfo(
-        IBsonDocumentSerializer entitySerializer,
-        IReadOnlyProperty property)
-    {
-        if (entitySerializer.TryGetMemberSerializationInfo(property.Name, out var serializationInfo))
+        var primaryKey = entry.EntityType.FindPrimaryKey();
+        if (primaryKey == null)
         {
-            return serializationInfo;
+            throw new InvalidOperationException($"Cannot find the primary key for the entity: {entry.EntityType.Name}");
         }
 
-        throw new InvalidOperationException($"Unable to get serialization info for property: {property.Name}.");
-    }
-
-    private static BsonValue SerializeValue(IBsonSerializer serializer, object? value)
-    {
         var document = new BsonDocument();
-        using (var writer = new BsonDocumentWriter(document))
-        {
-            var context = BsonSerializationContext.CreateRoot(writer);
+        SerializationHelper.WriteProperties(document, entry, primaryKey.Properties);
 
-            writer.WriteStartDocument();
-            writer.WriteName("_v");
-            serializer.Serialize(context, value);
-            writer.WriteEndDocument();
-        }
-
-        return document["_v"];
+        // MongoDB require primary key named as "_id";
+        var serializedIdValue = document["_id"];
+        return Builders<BsonDocument>.Filter.Eq("_id", serializedIdValue);
     }
 
     private long SaveMongoUpdates(IEnumerable<MongoUpdate> updates)
