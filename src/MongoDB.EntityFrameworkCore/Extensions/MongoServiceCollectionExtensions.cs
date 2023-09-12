@@ -24,7 +24,6 @@ using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Metadata.Conventions;
-using MongoDB.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Factories;
 using MongoDB.EntityFrameworkCore.Storage;
 
@@ -55,7 +54,7 @@ public static class MongoServiceCollectionExtensions
         Action<DbContextOptionsBuilder>? optionsAction = null)
         where TContext : DbContext
         => serviceCollection.AddDbContext<TContext>(
-            (serviceProvider, options) =>
+            (_, options) =>
             {
                 optionsAction?.Invoke(options);
                 options.UseMongoDB(connectionString, databaseName, mongoOptionsAction);
@@ -80,7 +79,7 @@ public static class MongoServiceCollectionExtensions
         Action<DbContextOptionsBuilder>? optionsAction = null)
         where TContext : DbContext
         => serviceCollection.AddDbContext<TContext>(
-            (serviceProvider, options) =>
+            (_, options) =>
             {
                 optionsAction?.Invoke(options);
                 options.UseMongoDB(mongoClient, databaseName, mongoOptionsAction);
@@ -89,7 +88,7 @@ public static class MongoServiceCollectionExtensions
     /// <summary>
     /// Adds the services required by the MongoDB provider for Entity Framework to an <see cref="IServiceCollection" />.
     /// </summary>
-    /// <remarks>You probably meant to use <see cref="AddMongoDB{TContext}" /> instead.</remarks>
+    /// <remarks>You probably meant to use <see cref="AddMongoDB{TContext}(Microsoft.Extensions.DependencyInjection.IServiceCollection,string,string,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder}?,System.Action{Microsoft.EntityFrameworkCore.DbContextOptionsBuilder}?)" /> instead.</remarks>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
     /// <returns>The same service collection so that multiple calls can be chained.</returns>
     public static IServiceCollection AddEntityFrameworkMongoDB(this IServiceCollection serviceCollection)
@@ -103,6 +102,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IQueryContextFactory, MongoQueryContextFactory>()
             .TryAdd<ITypeMappingSource, MongoTypeMappingSource>()
             .TryAdd<IQueryCompilationContextFactory, MongoQueryCompilationContextFactory>()
+            .TryAdd<IQueryTranslationPostprocessorFactory, MongoQueryTranslationPostprocessorFactory>()
             .TryAdd<IQueryableMethodTranslatingExpressionVisitorFactory, MongoQueryableMethodTranslatingExpressionVisitorFactory>()
             .TryAdd<IShapedQueryCompilingExpressionVisitorFactory, MongoShapedQueryCompilingExpressionVisitorFactory>()
             .TryAddProviderSpecificServices(

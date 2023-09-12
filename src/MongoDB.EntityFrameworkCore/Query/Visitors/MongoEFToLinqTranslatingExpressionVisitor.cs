@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// <summary>
 /// Visits the tree resolving any query context parameter bindings and EF references so the query can be used with the MongoDB V3 LINQ provider.
 /// </summary>
-internal class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
+internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
 {
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
@@ -80,7 +80,6 @@ internal class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
         {
             // Replace the QueryContext parameter values with constant values.
             case ParameterExpression parameterExpression:
-
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
                     == true)
                 {
@@ -88,6 +87,10 @@ internal class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
                 }
 
                 break;
+
+            // Unwrap include expressions.
+            case IncludeExpression includeExpression:
+                return includeExpression.EntityExpression;
 
             // Replace the root with the MongoDB LINQ V3 provider source.
             case EntityQueryRootExpression:

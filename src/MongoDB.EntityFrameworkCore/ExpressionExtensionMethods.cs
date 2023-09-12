@@ -24,9 +24,4 @@ internal static class ExpressionExtensionMethods
         => expression is ConstantExpression constantExpression
             ? (T)constantExpression.Value!
             : throw new InvalidOperationException();
-
-    public static LambdaExpression UnwrapLambdaFromQuote(this Expression expression)
-        => (LambdaExpression)(expression is UnaryExpression unary && expression.NodeType == ExpressionType.Quote
-            ? unary.Operand
-            : expression);
 }

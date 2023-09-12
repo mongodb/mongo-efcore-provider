@@ -1,19 +1,21 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 
 // ReSharper disable once CheckNamespace
@@ -33,7 +35,25 @@ public static class MongoPropertyExtensions
         => (string?)property[MongoAnnotationNames.ElementName]
            ?? GetDefaultElementName(property);
 
-    private static string GetDefaultElementName(IReadOnlyProperty property) => property.Name;
+    private static string GetDefaultElementName(IReadOnlyProperty property)
+    {
+        var entityType = property.DeclaringEntityType;
+        var ownership = entityType.FindOwnership();
+
+        if (ownership != null && !entityType.IsDocumentRoot())
+        {
+            var pk = property.FindContainingPrimaryKey();
+            if (pk != null
+                && (property.ClrType == typeof(int) || ownership.Properties.Contains(property))
+                && pk.Properties.Count == ownership.Properties.Count + (ownership.IsUnique ? 0 : 1)
+                && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty)))
+            {
+                return "";
+            }
+        }
+
+        return property.Name;
+    }
 
     /// <summary>
     ///  Sets the document element name that the property is mapped to when targeting MongoDB.
@@ -65,4 +85,12 @@ public static class MongoPropertyExtensions
     /// </returns>
     public static ConfigurationSource? GetElementNameConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.ElementName)?.GetConfigurationSource();
+
+    internal static bool IsOrdinalKeyProperty(this IReadOnlyProperty property)
+    {
+        return property.FindContainingPrimaryKey()
+                is {Properties.Count: > 1} && !property.IsForeignKey()
+                                           && property.ClrType == typeof(int)
+                                           && (property.ValueGenerated & ValueGenerated.OnAdd) != 0;
+    }
 }

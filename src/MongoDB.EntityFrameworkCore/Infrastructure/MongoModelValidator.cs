@@ -89,7 +89,7 @@ public class MongoModelValidator : ModelValidator
 
         // The primary key must map to "_id"
         var primaryKeyProperty = primaryKey.Properties[0];
-        var primaryKeyElementName = primaryKeyProperty.GetElementName();
+        string primaryKeyElementName = primaryKeyProperty.GetElementName();
         if (primaryKeyElementName != "_id")
         {
             throw new InvalidOperationException(
@@ -152,7 +152,7 @@ public class MongoModelValidator : ModelValidator
     /// <exception cref="NotSupportedException">Thrown when shadow properties are encountered which are not supported.</exception>
     public void ValidateNoShadowProperties(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
-        foreach (var entityType in model.GetEntityTypes())
+        foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
             var shadowProperty = entityType.GetProperties().FirstOrDefault(p => p.IsShadowProperty());
             if (shadowProperty != null)

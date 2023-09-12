@@ -30,15 +30,15 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
 /// <inheritdoc/>
-internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
+internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
 {
-    private readonly Type _contextType;
-    private readonly bool _threadSafetyChecksEnabled;
-
-    static readonly MethodInfo __translateAndExecuteQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
+    private static readonly MethodInfo __translateAndExecuteQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
         .GetTypeInfo()
         .DeclaredMethods
         .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
+
+    private readonly Type _contextType;
+    private readonly bool _threadSafetyChecksEnabled;
 
     /// <summary>
     /// Create a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
@@ -57,10 +57,27 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
     /// <inheritdoc/>
     protected override Expression VisitShapedQuery(ShapedQueryExpression shapedQueryExpression)
     {
-        var shaperLambda = CreateShaperLambda(shapedQueryExpression.ShaperExpression);
+        if (shapedQueryExpression.QueryExpression is not MongoQueryExpression mongoQueryExpression)
+            throw new NotSupportedException(
+                $" Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
 
-        var queryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
-        var rootEntityType = queryExpression.CollectionExpression.EntityType;
+        var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
+        bool trackQueryResults = QueryCompilationContext.QueryTrackingBehavior == QueryTrackingBehavior.TrackAll;
+
+        var shaperBody = shapedQueryExpression.ShaperExpression;
+        shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
+        shaperBody = InjectEntityMaterializers(shaperBody);
+        shaperBody = new MongoProjectionBindingRemovingExpressionVisitor(
+                mongoQueryExpression, bsonDocParameter, trackQueryResults)
+            .Visit(shaperBody);
+
+        var shaperLambda = Expression.Lambda(
+            shaperBody!,
+            QueryCompilationContext.QueryContextParameter,
+            bsonDocParameter);
+        var compiledShaper = shaperLambda.Compile();
+
+        var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
         var projectedType = shaperLambda.ReturnType;
         bool standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
                                       QueryTrackingBehavior.NoTrackingWithIdentityResolution;
@@ -69,31 +86,17 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
             __translateAndExecuteQuery.MakeGenericMethod(rootEntityType.ClrType, projectedType),
             QueryCompilationContext.QueryContextParameter,
             Expression.Constant(rootEntityType),
-            Expression.Constant(queryExpression),
-            Expression.Constant(shaperLambda.Compile()),
+            Expression.Constant(mongoQueryExpression),
+            Expression.Constant(compiledShaper),
             Expression.Constant(_contextType),
             Expression.Constant(standAloneStateManager),
             Expression.Constant(_threadSafetyChecksEnabled),
             Expression.Constant(shapedQueryExpression.ResultCardinality));
     }
 
-    private LambdaExpression CreateShaperLambda(Expression shaperExpression)
-    {
-        var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
-
-        var shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperExpression);
-        shaperBody = InjectEntityMaterializers(shaperBody);
-        shaperBody = new ValueBufferToBsonBindingExpressionVisitor(bsonDocParameter).Visit(shaperBody);
-
-        return Expression.Lambda(
-            shaperBody,
-            QueryCompilationContext.QueryContextParameter,
-            bsonDocParameter);
-    }
-
     private static QueryingEnumerable<TResult> TranslateAndExecuteQuery<TSource, TResult>(
         QueryContext queryContext,
-        IEntityType entityType,
+        IReadOnlyEntityType entityType,
         MongoQueryExpression queryExpression,
         Func<QueryContext, BsonDocument, TResult> shaper,
         Type contextType,
@@ -102,7 +105,7 @@ internal class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompiling
         ResultCardinality resultCardinality)
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
-        var collectionName = queryExpression.CollectionExpression.CollectionName;
+        string collectionName = queryExpression.CollectionExpression.CollectionName;
         var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
             .AsQueryable().As(new EntitySerializer<TSource>(entityType));
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);

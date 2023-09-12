@@ -17,20 +17,15 @@ using System;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
-public static class BsonBinding
+internal static class BsonBinding
 {
-    public static Expression CreateGetValueExpression(Expression bsonDocExpression, IReadOnlyProperty property)
+    public static Expression CreateGetValueExpression(Expression bsonDocExpression, string? name, Type mappedType)
     {
-        return CreateGetValueExpression(bsonDocExpression, property.GetElementName(), property.GetTypeMapping().ClrType);
-    }
+        if (name is null) return bsonDocExpression;
 
-    public static Expression CreateGetValueExpression(Expression bsonDocExpression, string name, Type mappedType)
-    {
         if (mappedType.IsArray)
         {
             return CreateGetArrayOf(bsonDocExpression, name, mappedType.TryGetItemType()!);
@@ -53,11 +48,6 @@ public static class BsonBinding
 
         return CreateGetValueAs(bsonDocExpression, name, mappedType);
     }
-
-    public static Expression ConvertTypeIfRequired(Expression expression, Type intendedType)
-        => expression.Type != intendedType
-            ? Expression.Convert(expression, intendedType)
-            : expression;
 
     private static Expression CreateGetValueAs(Expression bsonValueExpression, string name, Type type) =>
         Expression.Call(null, __getValueAsByNameMethodInfo.MakeGenericMethod(type), bsonValueExpression, Expression.Constant(name));

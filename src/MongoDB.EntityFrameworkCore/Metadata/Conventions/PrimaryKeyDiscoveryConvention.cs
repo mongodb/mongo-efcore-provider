@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
@@ -50,6 +51,10 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
             return;
         }
 
+        // Ignore owned entities - we don't want to map owned shadow prop keys
+        var owner = entityType.FindOwnership();
+        if (owner != null) return;
+
         // Look for anything mapped to element "_id" or property named as "_id"
         var entityProperties = entityType.GetProperties().ToArray();
         var underscoreIdElementProperty = entityProperties.FirstOrDefault(p => p.GetElementName() == "_id") ??
@@ -82,5 +87,4 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
             }
         }
     }
-
 }
