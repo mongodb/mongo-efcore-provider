@@ -45,13 +45,7 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
             throw new InvalidOperationException($"Unable to bind 'property' '{property.Name}' to an entity projection of '{EntityType.DisplayName()}'.");
         }
 
-        if (!_propertyExpressionsMap.TryGetValue(property, out var expression))
-        {
-            // expression = new KeyAccessExpression(property, AccessExpression);
-            // _propertyExpressionsMap[property] = expression;
-        }
-
-        return (Expression)expression;
+        return null!;
     }
 
     public Expression BindNavigation(INavigation navigation)

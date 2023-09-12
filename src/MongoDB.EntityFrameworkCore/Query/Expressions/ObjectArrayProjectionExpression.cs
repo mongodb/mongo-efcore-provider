@@ -1,6 +1,8 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+// Originally from EFCore.Cosmos ObjectArrayProjectionExpression
+
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
@@ -20,11 +22,8 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
         var targetType = navigation.TargetEntityType;
         Type = typeof(IEnumerable<>).MakeGenericType(targetType.ClrType);
 
-        Name = targetType.GetContainingElementName();
-        if (Name == null)
-        {
-            throw new InvalidOperationException($"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
-        }
+        Name = targetType.GetContainingElementName()
+            ?? throw new InvalidOperationException($"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
 
         Navigation = navigation;
         AccessExpression = accessExpression;

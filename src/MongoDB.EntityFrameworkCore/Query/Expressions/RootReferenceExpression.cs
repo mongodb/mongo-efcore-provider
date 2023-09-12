@@ -37,5 +37,5 @@ internal sealed class RootReferenceExpression : EntityTypedExpression, IAccessEx
         => this;
 
     public override string ToString()
-        => "{root reference}";
+        => "bsonDoc";
 }
