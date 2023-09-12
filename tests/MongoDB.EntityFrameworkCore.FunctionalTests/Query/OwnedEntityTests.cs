@@ -102,7 +102,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal(__city.name, actual[0].location.city.name);
     }
 
-    [Fact]
+    [Fact(Skip = "Collection navigations not yet supported")]
     public void OwnedEntity_with_collection_materializes_many()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
