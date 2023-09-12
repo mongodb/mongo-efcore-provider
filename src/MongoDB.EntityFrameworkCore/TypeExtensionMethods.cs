@@ -120,7 +120,7 @@ internal static class TypeExtensions
     public static bool IsNullableType(this Type type)
         => !type.IsValueType || type.IsNullableValueType();
 
-    private static bool IsNullableValueType(this Type type)
+    public static bool IsNullableValueType(this Type type)
         => type.IsConstructedGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>);
 
     /// <summary>

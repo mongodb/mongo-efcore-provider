@@ -1,18 +1,19 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+using System.Reflection;
 using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
@@ -25,6 +26,12 @@ public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture
     public ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
     {
         _tempDatabase = tempDatabase;
+    }
+
+    class Entity<TValue>
+    {
+        public ObjectId _id { get; set; }
+        public TValue Value { get; set; }
     }
 
     class IdEntity
@@ -410,5 +417,39 @@ public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aDouble);
+    }
+
+    [Theory]
+    [InlineData(typeof(short), (short)0)]
+    [InlineData(typeof(short), (short)-15)]
+    [InlineData(typeof(short), (short)42)]
+    [InlineData(typeof(short?), null)]
+    [InlineData(typeof(short?), (short)0)]
+    [InlineData(typeof(short?), (short)-15)]
+    [InlineData(typeof(short?), (short)42)]
+    [InlineData(typeof(int), 0)]
+    [InlineData(typeof(int), -15)]
+    [InlineData(typeof(int), 42)]
+    [InlineData(typeof(int?), null)]
+    [InlineData(typeof(int?), 0)]
+    [InlineData(typeof(int?), -15)]
+    [InlineData(typeof(int?), 42)]
+    public void ClrTypeMappingTest(Type valueType, object value)
+    {
+        var methodInfo = this.GetType().GetMethod(nameof(ClrTypeMappingTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
+        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { value });
+    }
+
+    private void ClrTypeMappingTestImpl<TValue>(TValue value)
+    {
+        var collectionName = $"ClrTypeMapping_{typeof(TValue)}+{value}";
+        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>(collectionName);
+        collection.InsertOne(new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = value});
+
+        var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entitites.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(value, actual.Value);
     }
 }

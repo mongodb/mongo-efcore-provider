@@ -32,6 +32,11 @@ public static class BsonBinding
         var targetProperty = entityType.FindProperty(name);
         if (targetProperty != null)
         {
+            if (targetProperty.IsNullable)
+            {
+                mappedType = mappedType.MakeNullable();
+            }
+
             return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
         }
 
