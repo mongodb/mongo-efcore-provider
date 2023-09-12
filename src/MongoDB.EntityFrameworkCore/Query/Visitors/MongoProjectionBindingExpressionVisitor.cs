@@ -49,7 +49,9 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> the expression being translated belongs to.</param>
     /// <param name="expression">The <see cref="Expression"/> being translated.</param>
     /// <returns>The translated expression tree.</returns>
-    public Expression Translate(MongoQueryExpression queryExpression, Expression expression)
+    public Expression Translate(
+        MongoQueryExpression queryExpression,
+        Expression expression)
     {
         _queryExpression = queryExpression;
         _projectionMembers.Push(new ProjectionMember());
@@ -100,9 +102,10 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 return expression;
 
             case MemberExpression memberExpression:
-                _projectionMapping[_projectionMembers.Peek()] = memberExpression;
+                var currentProjectionMember = GetCurrentProjectionMember();
+                _projectionMapping[currentProjectionMember] = memberExpression;
 
-                return new ProjectionBindingExpression(_queryExpression, _projectionMembers.Peek(), expression.Type.MakeNullable());
+                return new ProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type.MakeNullable());
 
             default:
                 return base.Visit(expression);
@@ -141,11 +144,8 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                     }
 
                     _includedNavigations.Push(includableNavigation);
-
                     var newIncludeExpression = base.VisitExtension(includeExpression);
-
                     _includedNavigations.Pop();
-
                     return newIncludeExpression;
                 }
             default:
@@ -156,7 +156,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     /// <inheritdoc />
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
-        if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))
+        if (methodCallExpression.TryGetEFPropertyArguments(out var source, out string memberName))
         {
             var visitedSource = Visit(source);
 
@@ -235,19 +235,20 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                         nullable: true);
 
                 case ObjectArrayProjectionExpression objectArrayProjectionExpression:
-                {
-                    var innerShaperExpression = new EntityShaperExpression(
-                        navigation.TargetEntityType,
-                        Expression.Convert(
-                            Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)), typeof(ValueBuffer)),
-                        nullable: true);
+                    {
+                        var innerShaperExpression = new EntityShaperExpression(
+                            navigation.TargetEntityType,
+                            Expression.Convert(
+                                Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)),
+                                typeof(ValueBuffer)),
+                            nullable: true);
 
-                    return new CollectionShaperExpression(
-                        objectArrayProjectionExpression,
-                        innerShaperExpression,
-                        navigation,
-                        innerShaperExpression.EntityType.ClrType);
-                }
+                        return new CollectionShaperExpression(
+                            objectArrayProjectionExpression,
+                            innerShaperExpression,
+                            navigation,
+                            innerShaperExpression.EntityType.ClrType);
+                    }
 
                 default:
                     throw new InvalidOperationException(CoreStrings.TranslationFailed(methodCallExpression.Print()));
@@ -342,7 +343,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         }
 
         var newBindings = new MemberBinding[memberInitExpression.Bindings.Count];
-        for (var i = 0; i < newBindings.Length; i++)
+        for (int i = 0; i < newBindings.Length; i++)
         {
             if (memberInitExpression.Bindings[i].BindingType != MemberBindingType.Assignment)
             {
@@ -419,19 +420,20 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                     nullable: true);
 
             case ObjectArrayProjectionExpression objectArrayProjectionExpression:
-            {
-                var innerShaperExpression = new EntityShaperExpression(
-                    navigation.TargetEntityType,
-                    Expression.Convert(
-                        Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)), typeof(ValueBuffer)),
-                    nullable: true);
+                {
+                    var innerShaperExpression = new EntityShaperExpression(
+                        navigation.TargetEntityType,
+                        Expression.Convert(
+                            Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)),
+                            typeof(ValueBuffer)),
+                        nullable: true);
 
-                return new CollectionShaperExpression(
-                    objectArrayProjectionExpression,
-                    innerShaperExpression,
-                    navigation,
-                    innerShaperExpression.EntityType.ClrType);
-            }
+                    return new CollectionShaperExpression(
+                        objectArrayProjectionExpression,
+                        innerShaperExpression,
+                        navigation,
+                        innerShaperExpression.EntityType.ClrType);
+                }
 
             default:
                 throw new InvalidOperationException(CoreStrings.TranslationFailed(memberExpression.Print()));
@@ -478,8 +480,10 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     private void ExitProjectionMember()
         => _projectionMembers.Pop();
 
-    private static Expression MatchTypes(Expression expression, Type targetType) =>
-        targetType != expression.Type && targetType.TryGetItemType() == null
+    private static Expression MatchTypes(
+        Expression expression,
+        Type targetType)
+        => targetType != expression.Type && targetType.TryGetItemType() == null
             ? Expression.Convert(expression, targetType)
             : expression;
 
@@ -487,6 +491,8 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         = typeof(MongoProjectionBindingExpressionVisitor)
             .GetTypeInfo().GetDeclaredMethod(nameof(GetParameterValue));
 
-    private static T GetParameterValue<T>(QueryContext queryContext, string parameterName)
+    private static T GetParameterValue<T>(
+        QueryContext queryContext,
+        string parameterName)
         => (T)queryContext.ParameterValues[parameterName];
 }

@@ -262,7 +262,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     }
 
     private Expression CreateGetValueExpression(
-        Expression jObjectExpression,
+        Expression docExpression,
         IProperty property,
         Type type)
     {
@@ -276,7 +276,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                 if (!ownership.IsUnique
                     && property.IsOrdinalKeyProperty())
                 {
-                    var readExpression = _ordinalParameterBindings[jObjectExpression];
+                    var readExpression = _ordinalParameterBindings[docExpression];
                     if (readExpression.Type != type)
                     {
                         readExpression = Expression.Convert(readExpression, type);
@@ -289,15 +289,15 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                 if (principalProperty != null)
                 {
                     Expression ownerBsonDocExpression = null;
-                    if (_ownerMappings.TryGetValue(jObjectExpression, out var ownerInfo))
+                    if (_ownerMappings.TryGetValue(docExpression, out var ownerInfo))
                     {
                         ownerBsonDocExpression = ownerInfo.BsonDocExpression;
                     }
-                    else if (jObjectExpression is RootReferenceExpression rootReferenceExpression)
+                    else if (docExpression is RootReferenceExpression rootReferenceExpression)
                     {
                         ownerBsonDocExpression = rootReferenceExpression;
                     }
-                    else if (jObjectExpression is ObjectAccessExpression objectAccessExpression)
+                    else if (docExpression is ObjectAccessExpression objectAccessExpression)
                     {
                         ownerBsonDocExpression = objectAccessExpression.AccessExpression;
                     }
@@ -313,7 +313,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         }
 
         return Expression.Convert(
-            CreateGetValueExpression(jObjectExpression, storeName, type.MakeNullable(), property.GetTypeMapping()),
+            CreateGetValueExpression(docExpression, storeName, type.MakeNullable(), property.GetTypeMapping()),
             type);
     }
 

@@ -51,13 +51,13 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
 
     public override bool Equals(object? obj)
         => obj != null
-            && (ReferenceEquals(this, obj)
-                || obj is ObjectAccessExpression objectAccessExpression
-                && Equals(objectAccessExpression));
+           && (ReferenceEquals(this, obj)
+               || obj is ObjectAccessExpression objectAccessExpression
+               && Equals(objectAccessExpression));
 
     private bool Equals(ObjectAccessExpression objectAccessExpression)
         => Navigation == objectAccessExpression.Navigation
-            && AccessExpression.Equals(objectAccessExpression.AccessExpression);
+           && AccessExpression.Equals(objectAccessExpression.AccessExpression);
 
     public override int GetHashCode()
         => HashCode.Combine(Navigation, AccessExpression);

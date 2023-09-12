@@ -88,7 +88,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <inheritdoc />
-    protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector)
+    protected override ShapedQueryExpression TranslateSelect(
+        ShapedQueryExpression source,
+        LambdaExpression selector)
     {
         // Handle .Select(p => p) no-op/pass-thru
         if (selector.Body == selector.Parameters[0])

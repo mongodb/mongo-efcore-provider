@@ -37,7 +37,8 @@ internal sealed class MongoQueryExpression : Expression
     public MongoQueryExpression(IEntityType entityType)
     {
         CollectionExpression = new MongoCollectionExpression(entityType);
-        _projectionMapping[new ProjectionMember()] = new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType));
+        _projectionMapping[new ProjectionMember()] =
+            new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType));
     }
 
     /// <summary>

@@ -37,6 +37,5 @@ public class MongoDbContextOptionsBuilder : IMongoDbContextOptionsBuilderInfrast
     /// <returns>The cloned configuration.</returns>
     protected virtual DbContextOptionsBuilder OptionsBuilder { get; }
 
-    /// <inheritdoc />
     DbContextOptionsBuilder IMongoDbContextOptionsBuilderInfrastructure.OptionsBuilder => OptionsBuilder;
 }

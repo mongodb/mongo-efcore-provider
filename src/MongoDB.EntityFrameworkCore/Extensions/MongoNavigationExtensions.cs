@@ -17,9 +17,20 @@ using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Extensions;
 
+/// <summary>
+/// MongoDB-specific extension methods for <see cref="IReadOnlyNavigation" />.
+/// </summary>
 public static class MongoNavigationExtensions
 {
-    internal static bool IsEmbedded(this IReadOnlyNavigation navigation)
+    /// <summary>
+    /// Determine whether a navigation is embedded or not.
+    /// </summary>
+    /// <param name="navigation">The <see cref="IReadOnlyNavigation"/> to consider.</param>
+    /// <returns>
+    /// <see langref="true"/> if the navigation is embedded,
+    /// <see langref="false"/> if it is not.
+    /// </returns>
+    public static bool IsEmbedded(this IReadOnlyNavigation navigation)
         => !navigation.IsOnDependent
            && !navigation.ForeignKey.DeclaringEntityType.IsDocumentRoot();
 }

@@ -32,11 +32,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// <inheritdoc/>
 internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
 {
-    private static readonly MethodInfo __translateAndExecuteQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
-        .GetTypeInfo()
-        .DeclaredMethods
-        .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
-
     private readonly Type _contextType;
     private readonly bool _threadSafetyChecksEnabled;
 
@@ -124,4 +119,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             standAloneStateManager,
             threadSafetyChecksEnabled);
     }
+
+    private static readonly MethodInfo __translateAndExecuteQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
+        .GetTypeInfo()
+        .DeclaredMethods
+        .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
+    
 }

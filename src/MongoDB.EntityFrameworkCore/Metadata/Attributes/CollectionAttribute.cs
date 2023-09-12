@@ -27,7 +27,7 @@ public class CollectionAttribute : Attribute
     /// <summary>
     /// Creates a <see cref="CollectionAttribute"/> with the required collection name.
     /// </summary>
-    /// <param name="name">Name of the collection to map the attributed class to.</param>
+    /// <param name="name">Name of the collection to map the attributed type to.</param>
     public CollectionAttribute(string name)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -40,7 +40,7 @@ public class CollectionAttribute : Attribute
     }
 
     /// <summary>
-    /// The name of the collection the class is mapped to.
+    /// The name of the collection the type is mapped to.
     /// </summary>
     public string Name { get; }
 }

@@ -69,6 +69,23 @@ public class MongoModelValidator : ModelValidator
         }
     }
 
+    /// <summary>
+    /// Validate that element names meet the requirements of MongoDB and that there
+    /// are no element names duplicated for an entity.
+    /// </summary>
+    /// <param name="model">The <see cref="IModel"/> to validate primary key correctness.</param>
+    /// <param name="logger">A logger to receive validation diagnostic information.</param>
+    /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported.</exception>
+    /// <exception cref="InvalidOperationException">Throw when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
+    public void ValidateElementNames(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            ValidateEntityElementNames(entityType);
+        }
+    }
+
+
     private static void ValidateEntityPrimaryKey(IEntityType entityType)
     {
         // We must have a primary key on root documents
@@ -86,7 +103,6 @@ public class MongoModelValidator : ModelValidator
                 $"The entity type '{entityType.DisplayName()}' has a compound (multi-property) key. This is not supported in the MongoDB EF Core provider at this time.");
         }
 
-
         // The primary key must map to "_id"
         var primaryKeyProperty = primaryKey.Properties[0];
         string primaryKeyElementName = primaryKeyProperty.GetElementName();
@@ -94,22 +110,6 @@ public class MongoModelValidator : ModelValidator
         {
             throw new InvalidOperationException(
                 $"The entity type '{entityType.DisplayName()}' primary key property '{primaryKeyProperty.Name}' must be mapped to element '_id'.");
-        }
-    }
-
-    /// <summary>
-    /// Validate that element names meet the requirements of MongoDB and that there
-    /// are no element names duplicated for an entity.
-    /// </summary>
-    /// <param name="model">The <see cref="IModel"/> to validate primary key correctness.</param>
-    /// <param name="logger">A logger to receive validation diagnostic information.</param>
-    /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported.</exception>
-    /// <exception cref="InvalidOperationException">Throw when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
-    public void ValidateElementNames(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
-    {
-        foreach (var entityType in model.GetEntityTypes())
-        {
-            ValidateEntityElementNames(entityType);
         }
     }
 

@@ -90,5 +90,4 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
             ? _queryExpression.GetMappedProjection(projectionBindingExpression.ProjectionMember).GetConstantValue<int>()
             : projectionBindingExpression.Index
               ?? throw new InvalidOperationException("");
-
 }

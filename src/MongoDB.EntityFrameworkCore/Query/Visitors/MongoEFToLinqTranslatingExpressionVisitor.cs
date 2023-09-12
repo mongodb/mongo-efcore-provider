@@ -32,13 +32,17 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
 
-    internal MongoEFToLinqTranslatingExpressionVisitor(QueryContext queryContext, Expression source)
+    internal MongoEFToLinqTranslatingExpressionVisitor(
+        QueryContext queryContext,
+        Expression source)
     {
         _queryContext = queryContext;
         _source = source;
     }
 
-    public MethodCallExpression Translate(Expression? efQueryExpression, ResultCardinality resultCardinality)
+    public MethodCallExpression Translate(
+        Expression? efQueryExpression,
+        ResultCardinality resultCardinality)
     {
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
         {
@@ -60,7 +64,9 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
             documentQueryableSource);
     }
 
-    private static MethodCallExpression InjectAsBsonDocumentMethod(Expression query, BsonDocumentSerializer resultSerializer)
+    private static MethodCallExpression InjectAsBsonDocumentMethod(
+        Expression query,
+        BsonDocumentSerializer resultSerializer)
     {
         var asMethodInfo = __asMethodInfo.MakeGenericMethod(query.Type.GenericTypeArguments[0], typeof(BsonDocument));
         var cast = Expression.Convert(query, typeof(IMongoQueryable<>).MakeGenericType(query.Type.GenericTypeArguments[0]));

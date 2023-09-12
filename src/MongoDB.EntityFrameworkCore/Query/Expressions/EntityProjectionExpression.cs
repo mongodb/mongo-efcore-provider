@@ -42,7 +42,8 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         if (!EntityType.IsAssignableFrom(property.DeclaringEntityType)
             && !property.DeclaringEntityType.IsAssignableFrom(EntityType))
         {
-            throw new InvalidOperationException($"Unable to bind 'property' '{property.Name}' to an entity projection of '{EntityType.DisplayName()}'.");
+            throw new InvalidOperationException(
+                $"Unable to bind 'property' '{property.Name}' to an entity projection of '{EntityType.DisplayName()}'.");
         }
 
         return null!;
@@ -53,7 +54,8 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         if (!EntityType.IsAssignableFrom(navigation.DeclaringEntityType)
             && !navigation.DeclaringEntityType.IsAssignableFrom(EntityType))
         {
-            throw new InvalidOperationException($"Unable to bind 'navigation' '{navigation.Name}' to an entity projection of '{EntityType.DisplayName()}'.");
+            throw new InvalidOperationException(
+                $"Unable to bind 'navigation' '{navigation.Name}' to an entity projection of '{EntityType.DisplayName()}'.");
         }
 
         if (!_navigationExpressionsMap.TryGetValue(navigation, out var expression))
@@ -119,13 +121,13 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
 
     public override bool Equals(object? obj)
         => obj != null
-            && (ReferenceEquals(this, obj)
-                || obj is EntityProjectionExpression entityProjectionExpression
-                && Equals(entityProjectionExpression));
+           && (ReferenceEquals(this, obj)
+               || obj is EntityProjectionExpression entityProjectionExpression
+               && Equals(entityProjectionExpression));
 
     private bool Equals(EntityProjectionExpression entityProjectionExpression)
         => Equals(EntityType, entityProjectionExpression.EntityType)
-            && AccessExpression.Equals(entityProjectionExpression.AccessExpression);
+           && AccessExpression.Equals(entityProjectionExpression.AccessExpression);
 
     public override int GetHashCode()
         => HashCode.Combine(EntityType, AccessExpression);

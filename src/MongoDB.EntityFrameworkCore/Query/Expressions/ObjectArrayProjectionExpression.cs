@@ -23,14 +23,15 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
         Type = typeof(IEnumerable<>).MakeGenericType(targetType.ClrType);
 
         Name = targetType.GetContainingElementName()
-            ?? throw new InvalidOperationException($"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
+               ?? throw new InvalidOperationException(
+                   $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
 
         Navigation = navigation;
         AccessExpression = accessExpression;
         InnerProjection = innerProjection
-            ?? new EntityProjectionExpression(
-                targetType,
-                new RootReferenceExpression(targetType));
+                          ?? new EntityProjectionExpression(
+                              targetType,
+                              new RootReferenceExpression(targetType));
     }
 
     public override ExpressionType NodeType
@@ -69,13 +70,13 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
 
     public override bool Equals(object? obj)
         => obj != null
-            && (ReferenceEquals(this, obj)
-                || obj is ObjectArrayProjectionExpression arrayProjectionExpression
-                && Equals(arrayProjectionExpression));
+           && (ReferenceEquals(this, obj)
+               || obj is ObjectArrayProjectionExpression arrayProjectionExpression
+               && Equals(arrayProjectionExpression));
 
     private bool Equals(ObjectArrayProjectionExpression objectArrayProjectionExpression)
         => AccessExpression.Equals(objectArrayProjectionExpression.AccessExpression)
-            && InnerProjection.Equals(objectArrayProjectionExpression.InnerProjection);
+           && InnerProjection.Equals(objectArrayProjectionExpression.InnerProjection);
 
     public override int GetHashCode()
         => HashCode.Combine(AccessExpression, InnerProjection);
