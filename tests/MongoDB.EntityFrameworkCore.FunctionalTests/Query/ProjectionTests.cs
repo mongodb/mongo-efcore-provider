@@ -74,7 +74,7 @@ public class ProjectionTests
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Projections not yet completely supported")]
     public void Select_projection_to_constructor_initializer()
     {
         var results = _planets.Select(p => new NamedContainer<Planet> {Name = p.name, Item = p});

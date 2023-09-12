@@ -13,15 +13,29 @@
  * limitations under the License.
  */
 
-using System;
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Metadata;
 
-namespace MongoDB.EntityFrameworkCore;
+namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-internal static class ExpressionExtensionMethods
+/// <summary>
+/// Represents a reference to the root of the query from within a query expression tree.
+/// </summary>
+internal sealed class RootReferenceExpression : EntityTypedExpression, IAccessExpression
 {
-    internal static T GetConstantValue<T>(this Expression expression)
-        => expression is ConstantExpression constantExpression
-            ? (T)constantExpression.Value!
-            : throw new InvalidOperationException();
+    public RootReferenceExpression(IEntityType entityType)
+        : base(entityType)
+    {
+    }
+
+    public string? Name
+    {
+        get { return null; }
+    }
+
+    protected override Expression VisitChildren(ExpressionVisitor visitor)
+        => this;
+
+    public override string ToString()
+        => "bsonDoc";
 }

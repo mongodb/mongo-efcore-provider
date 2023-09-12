@@ -31,7 +31,9 @@ public static partial class NamingHelperMethods
     /// <returns>The cleaned camel-cased string.</returns>
     /// <remarks>Word boundaries are considered spaces, non-alphanumeric, a transition from
     /// lower to upper, and a transition from number to non-number.</remarks>
-    public static string ToCamelCase(this string input, CultureInfo culture)
+    public static string ToCamelCase(
+        this string input,
+        CultureInfo culture)
     {
         if (string.IsNullOrEmpty(input)) return input;
 
@@ -53,6 +55,7 @@ public static partial class NamingHelperMethods
             {
                 result[outIndex] = char.ToUpper(w[0], culture);
             }
+
             w.ToLower(culture).CopyTo(1, result, outIndex + 1, w.Length - 1);
 
             outIndex += w.Length;
@@ -69,7 +72,9 @@ public static partial class NamingHelperMethods
     /// <returns>The cleaned title-cased string.</returns>
     /// <remarks>Word boundaries are considered spaces, non-alphanumeric, a transition from
     /// lower to upper, and a transition from number to non-number.</remarks>
-    public static string ToTitleCase(this string input, CultureInfo culture)
+    public static string ToTitleCase(
+        this string input,
+        CultureInfo culture)
     {
         if (string.IsNullOrEmpty(input)) return input;
 

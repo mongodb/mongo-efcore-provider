@@ -27,18 +27,22 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// <summary>
 /// Visits the tree resolving any query context parameter bindings and EF references so the query can be used with the MongoDB V3 LINQ provider.
 /// </summary>
-internal class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
+internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
 {
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
 
-    internal MongoEFToLinqTranslatingExpressionVisitor(QueryContext queryContext, Expression source)
+    internal MongoEFToLinqTranslatingExpressionVisitor(
+        QueryContext queryContext,
+        Expression source)
     {
         _queryContext = queryContext;
         _source = source;
     }
 
-    public MethodCallExpression Translate(Expression? efQueryExpression, ResultCardinality resultCardinality)
+    public MethodCallExpression Translate(
+        Expression? efQueryExpression,
+        ResultCardinality resultCardinality)
     {
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
         {
@@ -60,7 +64,9 @@ internal class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
             documentQueryableSource);
     }
 
-    private static MethodCallExpression InjectAsBsonDocumentMethod(Expression query, BsonDocumentSerializer resultSerializer)
+    private static MethodCallExpression InjectAsBsonDocumentMethod(
+        Expression query,
+        BsonDocumentSerializer resultSerializer)
     {
         var asMethodInfo = __asMethodInfo.MakeGenericMethod(query.Type.GenericTypeArguments[0], typeof(BsonDocument));
         var cast = Expression.Convert(query, typeof(IMongoQueryable<>).MakeGenericType(query.Type.GenericTypeArguments[0]));
@@ -80,7 +86,6 @@ internal class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
         {
             // Replace the QueryContext parameter values with constant values.
             case ParameterExpression parameterExpression:
-
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
                     == true)
                 {
@@ -88,6 +93,10 @@ internal class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisitor
                 }
 
                 break;
+
+            // Unwrap include expressions.
+            case IncludeExpression includeExpression:
+                return includeExpression.EntityExpression;
 
             // Replace the root with the MongoDB LINQ V3 provider source.
             case EntityQueryRootExpression:

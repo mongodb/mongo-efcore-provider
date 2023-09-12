@@ -34,5 +34,5 @@ public static class MongoAnnotationNames
     /// <summary>
     /// The key for document element name annotations.
     /// </summary>
-    public const string ElementName = Prefix + "FieldName";
+    public const string ElementName = Prefix + "ElementName";
 }

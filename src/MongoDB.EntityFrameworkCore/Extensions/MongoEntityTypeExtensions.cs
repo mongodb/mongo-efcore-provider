@@ -80,8 +80,21 @@ public static class MongoEntityTypeExtensions
     /// <returns>The <see cref="IProperty"/> this entity type uses for `_id`.</returns>
     /// <exception cref="InvalidOperationException">Thrown if no `_id` property could be found.</exception>
     public static IProperty GetIdProperty(this IEntityType entityType)
-    {
-        return entityType.GetProperties().FirstOrDefault(p => p.GetElementName() == "_id")
+        => entityType.GetProperties().FirstOrDefault(p => p.GetElementName() == "_id")
             ?? throw new InvalidOperationException($"Type {entityType.ClrType.Name} has no \"_id\" property.");
-    }
+
+    /// <summary>
+    /// Get the element name where this entity type lives - namely the navigation element of the
+    /// entity that contains it.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> to obtain the property name for.</param>
+    /// <returns>The string name of the property that owns this.</returns>
+    public static string? GetContainingElementName(this IReadOnlyEntityType entityType)
+        => entityType[MongoAnnotationNames.ElementName] as string
+           ?? GetDefaultContainingElementName(entityType);
+
+    private static string? GetDefaultContainingElementName(IReadOnlyEntityType entityType)
+        => entityType.FindOwnership() is IReadOnlyForeignKey ownership
+            ? ownership.PrincipalToDependent!.Name
+            : null;
 }

@@ -13,15 +13,9 @@
  * limitations under the License.
  */
 
-using System;
-using System.Linq.Expressions;
+namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-namespace MongoDB.EntityFrameworkCore;
-
-internal static class ExpressionExtensionMethods
+internal interface IAccessExpression
 {
-    internal static T GetConstantValue<T>(this Expression expression)
-        => expression is ConstantExpression constantExpression
-            ? (T)constantExpression.Value!
-            : throw new InvalidOperationException();
+    string? Name { get; }
 }

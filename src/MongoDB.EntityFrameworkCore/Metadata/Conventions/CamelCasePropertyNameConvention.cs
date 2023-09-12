@@ -46,7 +46,8 @@ public class CamelCasePropertyNameConvention : IPropertyAddedConvention
     /// </summary>
     /// <param name="propertyBuilder"></param>
     /// <param name="context"></param>
-    public void ProcessPropertyAdded(IConventionPropertyBuilder propertyBuilder,
+    public void ProcessPropertyAdded(
+        IConventionPropertyBuilder propertyBuilder,
         IConventionContext<IConventionPropertyBuilder> context)
     {
         if (propertyBuilder.Metadata.Name == "_id") return;

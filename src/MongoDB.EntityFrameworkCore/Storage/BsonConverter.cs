@@ -22,7 +22,7 @@ using MongoDB.EntityFrameworkCore.Query.Visitors;
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Provides conversion functions from BSON used by the EF shaper via <see cref="ValueBufferToBsonBindingExpressionVisitor" />.
+/// Provides conversion functions from BSON used by the EF shaper via <see cref="MongoProjectionBindingRemovingExpressionVisitor" />.
 /// </summary>
 internal static class BsonConverter
 {

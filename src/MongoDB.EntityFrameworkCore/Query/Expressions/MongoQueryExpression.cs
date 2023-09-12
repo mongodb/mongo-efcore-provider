@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -26,6 +27,9 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoQueryExpression : Expression
 {
+    private IDictionary<ProjectionMember, Expression> _projectionMapping = new Dictionary<ProjectionMember, Expression>();
+    private readonly List<ProjectionExpression> _projection = new();
+
     /// <summary>
     /// Create a <see cref="MongoQueryExpression"/> for the given entity type.
     /// </summary>
@@ -33,6 +37,8 @@ internal sealed class MongoQueryExpression : Expression
     public MongoQueryExpression(IEntityType entityType)
     {
         CollectionExpression = new MongoCollectionExpression(entityType);
+        _projectionMapping[new ProjectionMember()] =
+            new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType));
     }
 
     /// <summary>
@@ -52,4 +58,60 @@ internal sealed class MongoQueryExpression : Expression
     /// <inheritdoc />
     public override ExpressionType NodeType
         => ExpressionType.Extension;
+
+    public int AddToProjection(Expression expression, string? alias = null)
+    {
+        int existingIndex = _projection.FindIndex(pe => pe.Expression.Equals(expression));
+        if (existingIndex != -1)
+        {
+            return existingIndex;
+        }
+
+        string? baseAlias = alias ?? (expression as IAccessExpression)?.Name;
+
+        string? currentAlias = baseAlias;
+        int counter = 0;
+        while (_projection.Any(pe => string.Equals(pe.Alias, currentAlias, StringComparison.OrdinalIgnoreCase)))
+        {
+            currentAlias = $"{baseAlias}{counter++}";
+        }
+
+        _projection.Add(new ProjectionExpression(expression, currentAlias));
+
+        return _projection.Count - 1;
+    }
+
+    public Expression GetMappedProjection(ProjectionMember projectionMember)
+        => _projectionMapping[projectionMember];
+
+    public IReadOnlyList<ProjectionExpression> Projection
+        => _projection;
+
+    public void ApplyProjection()
+    {
+        if (Projection.Any())
+        {
+            return;
+        }
+
+        var result = new Dictionary<ProjectionMember, Expression>();
+        foreach (var (projectionMember, expression) in _projectionMapping)
+        {
+            result[projectionMember] = Constant(
+                AddToProjection(
+                    expression,
+                    projectionMember.Last?.Name));
+        }
+
+        _projectionMapping = result;
+    }
+
+    public void ReplaceProjectionMapping(IDictionary<ProjectionMember, Expression> projectionMapping)
+    {
+        _projectionMapping.Clear();
+        foreach (var (projectionMember, expression) in projectionMapping)
+        {
+            _projectionMapping[projectionMember] = expression;
+        }
+    }
 }
