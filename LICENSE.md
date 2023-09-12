@@ -2,6 +2,8 @@ The bulk of this project is Copyright MongoDB Inc. and licenced under the Apache
 
 Some portions required to integrate with Entity Framework Core are copyright .NET Foundation via the MIT licence.
 
+Each file clearly indicates which licence applies at the top of the file.
+
 ---
 
 Apache License
