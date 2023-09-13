@@ -1,17 +1,17 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+* http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -31,28 +31,29 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the element name for.</param>
     /// <returns>Returns the element name that the property is mapped to.</returns>
-    public static string GetElementName(this IReadOnlyProperty property)
+    public static string GetElementName(this IReadOnlyPropertyBase property)
         => (string?)property[MongoAnnotationNames.ElementName]
-           ?? GetDefaultElementName(property);
+           ?? property.Name;
 
-    private static string GetDefaultElementName(IReadOnlyProperty property)
+    public static bool IsOwnedTypeKey(this IProperty property)
     {
         var entityType = property.DeclaringEntityType;
-        var ownership = entityType.FindOwnership();
-
-        if (ownership != null && !entityType.IsDocumentRoot())
+        if (entityType.IsDocumentRoot())
         {
-            var pk = property.FindContainingPrimaryKey();
-            if (pk != null
-                && (property.ClrType == typeof(int) || ownership.Properties.Contains(property))
-                && pk.Properties.Count == ownership.Properties.Count + (ownership.IsUnique ? 0 : 1)
-                && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty)))
-            {
-                return "";
-            }
+            return false;
         }
 
-        return property.Name;
+        var ownership = entityType.FindOwnership();
+        if (ownership == null)
+        {
+            return false;
+        }
+
+        var pk = property.FindContainingPrimaryKey();
+        return pk != null
+               && (property.ClrType == typeof(int) || ownership.Properties.Contains(property))
+               && pk.Properties.Count == ownership.Properties.Count + (ownership.IsUnique ? 0 : 1)
+               && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty));
     }
 
     /// <summary>

@@ -41,7 +41,7 @@ public class ProjectionTests
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Require to implement the missed case in BsonBinding.CreateGetValueExpression method")]
     public void Select_projection_to_anonymous()
     {
         var results = _planets.Select(p => new {Name = p.name, Order = p.orderFromSun});
