@@ -188,7 +188,7 @@ public class MongoModelValidatorTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
-    public void Validate_throws_when_primary_key_conflicts_with_different_underscore_id_mapped_property()
+    public void Validate_throws_when_primary_key_conflicts_with_different_id_mapped_property()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<ConfiguredIdNamedEntity>();
         var db = SingleEntityDbContext.Create(collection, mb =>

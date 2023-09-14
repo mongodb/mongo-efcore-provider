@@ -222,8 +222,7 @@ public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     private void EntityAddTestImpl<TValue>(TValue value)
     {
-        var collectionName = $"EntityAddTestImpl_{typeof(TValue)}+{value}";
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>(collectionName);
+        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityAddTestImpl", typeof(TValue), value);
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
