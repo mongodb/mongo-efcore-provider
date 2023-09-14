@@ -439,13 +439,24 @@ public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture
     [InlineData(typeof(TestEnum?), null)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue0)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
-    public void ClrTypeMappingTest(Type valueType, object value)
+    [InlineData(typeof(TestByteEnum), TestByteEnum.EnumValue0)]
+    [InlineData(typeof(TestByteEnum), TestByteEnum.EnumValue1)]
+    [InlineData(typeof(TestByteEnum?), null)]
+    [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue0)]
+    [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue1)]
+    public void Type_mapping_test(Type valueType, object value)
     {
         var methodInfo = this.GetType().GetMethod(nameof(ClrTypeMappingTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
         methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { value });
     }
 
     private enum TestEnum
+    {
+        EnumValue0 = 0,
+        EnumValue1 = 1
+    }
+
+    private enum TestByteEnum : byte
     {
         EnumValue0 = 0,
         EnumValue1 = 1
