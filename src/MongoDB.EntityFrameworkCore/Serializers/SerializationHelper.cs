@@ -66,7 +66,13 @@ internal static class SerializationHelper
 
     private static IBsonSerializer CreateTypeSerializer(Type type)
     {
-        return type switch
+        var isNullable = type.IsNullableValueType();
+        if (isNullable)
+        {
+            type = Nullable.GetUnderlyingType(type);
+        }
+
+        var serializer = type switch
         {
             var t when t == typeof(bool) => BooleanSerializer.Instance,
             var t when t == typeof(byte) => new ByteSerializer(),
@@ -95,6 +101,13 @@ internal static class SerializationHelper
             var t when t == typeof(BsonDocument) => BsonDocumentSerializer.Instance,
             _ => throw new NotSupportedException($"Cannot resolve Serializer for '{type.FullName}' type."),
         };
+
+        if (isNullable)
+        {
+            serializer = NullableSerializer.Create(serializer);
+        }
+
+        return serializer;
     }
 
     private static IBsonSerializer CreateArraySerializer(Type elementType)
@@ -108,7 +121,6 @@ internal static class SerializationHelper
         // TODO: decide what to do with non-existing elements
         // TODO: support ElementPath here
         var value = document.GetValue(elementSerializationInfo.ElementName);
-
         return (T)elementSerializationInfo.DeserializeValue(value);
     }
 }
