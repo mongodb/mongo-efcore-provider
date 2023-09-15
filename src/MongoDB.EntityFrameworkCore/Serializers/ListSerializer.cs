@@ -20,7 +20,7 @@ using MongoDB.Bson.Serialization.Serializers;
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
 internal class ListSerializer<TItem> :
-    EnumerableSerializerBase<List<TItem>, TItem>,
+    EnumerableSerializerBase<IReadOnlyList<TItem>, TItem>,
     IChildSerializerConfigurable
 {
     public ListSerializer()
@@ -52,7 +52,7 @@ internal class ListSerializer<TItem> :
         return new List<TItem>();
     }
 
-    protected override IEnumerable<TItem> EnumerateItemsInSerializationOrder(List<TItem> value)
+    protected override IEnumerable<TItem> EnumerateItemsInSerializationOrder(IReadOnlyList<TItem> value)
     {
         return value;
     }
