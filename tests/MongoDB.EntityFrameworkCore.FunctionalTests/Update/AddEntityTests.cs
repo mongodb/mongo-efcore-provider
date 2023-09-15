@@ -189,8 +189,27 @@ public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [InlineData(typeof(TestEnum?), null)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue0)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
-    public void Entity_add_tests(Type valueType, object value)
+
+    [InlineData(typeof(int[]), null)]
+    [InlineData(typeof(int[]), new[] { -5, 0, 128, 10 })]
+    // TODO: investigate and fix IEnumerable property support
+    // [InlineData(typeof(IEnumerable<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(IList<int>), null)]
+    [InlineData(typeof(IList<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(ICollection<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(IReadOnlyList<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(List<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(string[]), null)]
+    [InlineData(typeof(string[]), new[] { "one", "two" })]
+    [InlineData(typeof(IList<string>), null)]
+    [InlineData(typeof(List<string>), new[] { "one", "two" })]
+    public void Entity_add_tests(Type valueType, object? value)
     {
+        if (value != null && !value.GetType().IsAssignableTo(valueType))
+        {
+            value = Activator.CreateInstance(valueType, value);
+        }
+
         var methodInfo = this.GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
         methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { value });
     }

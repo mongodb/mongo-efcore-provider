@@ -444,8 +444,26 @@ public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture
     [InlineData(typeof(TestByteEnum?), null)]
     [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue0)]
     [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue1)]
-    public void Type_mapping_test(Type valueType, object value)
+    [InlineData(typeof(int[]), null)]
+    [InlineData(typeof(int[]), new[] { -5, 0, 128, 10 })]
+    // TODO: investigate and fix IEnumerable property support
+    // [InlineData(typeof(IEnumerable<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(IList<int>), null)]
+    [InlineData(typeof(IList<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(ICollection<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(IReadOnlyList<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(List<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(string[]), null)]
+    [InlineData(typeof(string[]), new[] { "one", "two" })]
+    [InlineData(typeof(IList<string>), null)]
+    [InlineData(typeof(List<string>), new[] { "one", "two" })]
+    public void Type_mapping_test(Type valueType, object? value)
     {
+        if (value != null && !value.GetType().IsAssignableTo(valueType))
+        {
+            value = Activator.CreateInstance(valueType, value);
+        }
+
         var methodInfo = this.GetType().GetMethod(nameof(ClrTypeMappingTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
         methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { value });
     }
