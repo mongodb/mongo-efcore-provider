@@ -1,18 +1,19 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+using System.Reflection;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -26,6 +27,12 @@ public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public AddEntityTests(TemporaryDatabaseFixture tempDatabase)
     {
         _tempDatabase = tempDatabase;
+    }
+
+    class Entity<TValue>
+    {
+        public ObjectId _id { get; set; }
+        public TValue Value { get; set; }
     }
 
     class SimpleEntity
@@ -173,6 +180,46 @@ public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
             var foundEntity = newDbContext.Entitites.Single();
             Assert.Equal(expected._id, foundEntity._id);
             Assert.Equal(expected.aDecimal128, foundEntity.aDecimal128);
+        }
+    }
+
+    [Theory]
+    [InlineData(typeof(TestEnum), TestEnum.EnumValue0)]
+    [InlineData(typeof(TestEnum), TestEnum.EnumValue1)]
+    [InlineData(typeof(TestEnum?), null)]
+    [InlineData(typeof(TestEnum?), TestEnum.EnumValue0)]
+    [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
+    public void Entity_add_tests(Type valueType, object value)
+    {
+        var methodInfo = this.GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
+        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { value });
+    }
+
+    private enum TestEnum
+    {
+        EnumValue0 = 0,
+        EnumValue1 = 1
+    }
+
+    private void EntityAddTestImpl<TValue>(TValue value)
+    {
+        var collectionName = $"EntityAddTestImpl_{typeof(TValue)}+{value}";
+        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>(collectionName);
+
+        {
+            var dbContext = SingleEntityDbContext.Create(collection);
+            dbContext.Entitites.Add(new Entity<TValue>
+            {
+                _id = ObjectId.GenerateNewId(),
+                Value = value
+            });
+            dbContext.SaveChanges();
+        }
+
+        {
+            var newDbContext = SingleEntityDbContext.Create(collection);
+            var foundEntity = newDbContext.Entitites.Single();
+            Assert.Equal(value, foundEntity.Value);
         }
     }
 }

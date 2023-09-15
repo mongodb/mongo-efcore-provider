@@ -1,18 +1,19 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+using System.Reflection;
 using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
@@ -24,6 +25,12 @@ public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     {
         _tempDatabase = tempDatabase;
+    }
+
+    class Entity<TValue>
+    {
+        public ObjectId _id { get; set; }
+        public TValue Value { get; set; }
     }
 
     class SimpleEntity
@@ -89,5 +96,44 @@ public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal(entity.session, foundEntity.session);
         Assert.Equal(entity.lastCount, foundEntity.lastCount);
         Assert.Equal(entity.lastModified.ToExpectedPrecision(), foundEntity.lastModified.ToExpectedPrecision());
+    }
+
+    [Theory]
+    [InlineData(typeof(TestEnum), TestEnum.EnumValue0, TestEnum.EnumValue1)]
+    [InlineData(typeof(TestEnum), TestEnum.EnumValue1, TestEnum.EnumValue0)]
+    [InlineData(typeof(TestEnum?), null, TestEnum.EnumValue1)]
+    [InlineData(typeof(TestEnum?), TestEnum.EnumValue1, null)]
+    [InlineData(typeof(TestEnum?), TestEnum.EnumValue0, TestEnum.EnumValue1)]
+    public void Entity_update_tests(Type valueType, object initialValue, object updatedValue)
+    {
+        var methodInfo = this.GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
+        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { initialValue, updatedValue });
+    }
+
+    private enum TestEnum
+    {
+        EnumValue0 = 0,
+        EnumValue1 = 1
+    }
+
+    private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
+    {
+        var collectionName = $"EntityUpdateTestImpl_{typeof(TValue)}+{initialValue}->{updatedValue}";
+        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>(collectionName);
+
+        {
+            var dbContext = SingleEntityDbContext.Create(collection);
+            var entity = new Entity<TValue> { _id = ObjectId.GenerateNewId(), Value = initialValue };
+            dbContext.Entitites.Add(entity);
+            dbContext.SaveChanges();
+            entity.Value = updatedValue;
+            dbContext.SaveChanges();
+        }
+
+        {
+            var newDbContext = SingleEntityDbContext.Create(collection);
+            var foundEntity = newDbContext.Entitites.Single();
+            Assert.Equal(updatedValue, foundEntity.Value);
+        }
     }
 }

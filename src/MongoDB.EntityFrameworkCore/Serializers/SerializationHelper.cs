@@ -95,6 +95,7 @@ internal static class SerializationHelper
             var t when t == typeof(uint) => new UInt32Serializer(),
             var t when t == typeof(ulong) => new UInt64Serializer(),
             var t when t == typeof(Decimal128) => new Decimal128Serializer(),
+            var t when t.IsEnum => EnumSerializer.Create(t),
             {IsArray: true} a => CreateArraySerializer(a.GetElementType()),
             {IsGenericType:true} l => CreateListSerializer(l.TryGetItemType(typeof(IEnumerable<>))),
             // TODO: doubt if having BsonDocumentSerializer here is a good idea or not, needed when we have projection that involves sub-documents
