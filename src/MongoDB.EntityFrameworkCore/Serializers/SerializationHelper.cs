@@ -40,22 +40,25 @@ internal static class SerializationHelper
         return ReadElementValue<T>(document, serializationInfo);
     }
 
-    public static void WriteProperties(BsonDocument document, IUpdateEntry entry, IEnumerable<IProperty> properties)
+    public static void WriteProperties(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
     {
-        using var writer = new BsonDocumentWriter(document);
-        writer.WriteStartDocument();
+        var properties = entry.EntityType.GetProperties().Where(p => !p.IsShadowProperty());
+        if (propertyFilter != null)
+        {
+            properties = properties.Where(propertyFilter);
+        }
 
         // Write PK first, including all primary key properties in case of composite key
         if (properties.Any(p => p.IsPrimaryKey()))
         {
-            var pk = entry.EntityType.FindPrimaryKey();
-            if (pk.Properties.Count > 1)
+            var pkProperties = entry.EntityType.FindPrimaryKey().Properties.Where(p => !p.IsShadowProperty()).ToArray();
+            if (pkProperties.Length > 1)
             {
                 writer.WriteName("_id");
                 writer.WriteStartDocument();
             }
 
-            foreach (var property in pk.Properties)
+            foreach (var property in pkProperties)
             {
                 var propertyValue = entry.GetCurrentValue(property);
                 var serializationInfo = GetPropertySerializationInfo(property);
@@ -63,7 +66,7 @@ internal static class SerializationHelper
                 WriteProperty(writer, elementName, propertyValue, serializationInfo.Serializer);
             }
 
-            if (pk.Properties.Count > 1)
+            if (pkProperties.Length > 1)
             {
                 writer.WriteEndDocument();
             }
@@ -81,7 +84,6 @@ internal static class SerializationHelper
             WriteProperty(writer, serializationInfo.ElementName, propertyValue, serializationInfo.Serializer);
         }
 
-        writer.WriteEndDocument();
         return;
 
         void WriteProperty(IBsonWriter writer, string elementName, object value, IBsonSerializer serializer)
