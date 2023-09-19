@@ -17,6 +17,7 @@ using System.Collections.Generic;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -54,6 +55,32 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
 
                     return Expression.Block(
                         shaperExpression.Type,
+                        variables,
+                        expressions);
+                }
+
+            case CollectionShaperExpression collectionShaperExpression:
+                {
+                    _currentEntityIndex++;
+
+                    var arrayVariable = Expression.Variable(typeof(BsonArray), "bsonArray" + _currentEntityIndex);
+                    var variables = new List<ParameterExpression> { arrayVariable };
+
+                    var expressions = new List<Expression>
+                    {
+                        Expression.Assign(
+                            arrayVariable,
+                            Expression.TypeAs(
+                                collectionShaperExpression.Projection,
+                                typeof(BsonArray))),
+                        Expression.Condition(
+                            Expression.Equal(arrayVariable, Expression.Constant(null, arrayVariable.Type)),
+                            Expression.Constant(null, collectionShaperExpression.Type),
+                            collectionShaperExpression)
+                    };
+
+                    return Expression.Block(
+                        collectionShaperExpression.Type,
                         variables,
                         expressions);
                 }

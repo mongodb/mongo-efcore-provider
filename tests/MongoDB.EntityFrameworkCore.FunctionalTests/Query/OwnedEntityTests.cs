@@ -30,8 +30,12 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     private static readonly Location __location1 = new() {latitude = 32.715736m, longitude = -117.161087m};
     private static readonly PersonWithLocation[] __peopleWithLocation = {new() {name = "Carmen", location = __location1}};
 
-    private static readonly Location __location2 = new() {latitude = 49.45981m, longitude =  -2.53527m};
-    private static readonly PersonWithMultipleLocations[] __peopleWithLocations = {new() {name = "Damien", locations = new() {__location2, __location1}}};
+    private static readonly Location __location2 = new() {latitude = 49.45981m, longitude = -2.53527m};
+
+    private static readonly PersonWithMultipleLocations[] __peopleWithLocations =
+    {
+        new() {name = "Damien", locations = new List<Location> {__location2, __location1}}
+    };
 
     private readonly TemporaryDatabaseFixture _tempDatabase;
 
@@ -70,6 +74,59 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal(__location1.longitude, actual[0].location.longitude);
     }
 
+    [Fact(Skip = "We do not yet support updating owned types")]
+    public void OwnedEntity_nested_one_level_creates()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var expected = new PersonWithLocation {name = "Charlie", location = new() {latitude = 1.234m, longitude = 1.567m}};
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(expected);
+            db.SaveChanges();
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entitites.First(p => p.name == "Charlie");
+
+            Assert.Equal(expected.name, actual.name);
+            Assert.Equal(expected.location.latitude, actual.location.latitude);
+            Assert.Equal(expected.location.longitude, actual.location.longitude);
+        }
+    }
+
+    [Fact(Skip = "We do not yet support updating owned types")]
+    public void OwnedEntity_nested_collection_creates()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var expected = new PersonWithMultipleLocations
+        {
+            name = "Alfred",
+            locations = new List<Location>
+            {
+                new() {latitude = 1.234m, longitude = 1.567m}, new() {latitude = 5.1m, longitude = 3.9m}
+            }
+        };
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(expected);
+            db.SaveChanges();
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entitites.First(p => p.name == "Charlie");
+
+            Assert.Equal(expected.name, actual.name);
+            Assert.Equal(expected.locations[0].latitude, actual.locations[0].latitude);
+            Assert.Equal(expected.locations[0].longitude, actual.locations[0].longitude);
+            Assert.Equal(expected.locations[1].latitude, actual.locations[1].latitude);
+            Assert.Equal(expected.locations[1].longitude, actual.locations[1].longitude);
+        }
+    }
+
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_single()
     {
@@ -102,7 +159,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal(__city.name, actual[0].location.city.name);
     }
 
-    [Fact(Skip = "Collection navigations not yet supported")]
+    [Fact]
     public void OwnedEntity_with_collection_materializes_many()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();

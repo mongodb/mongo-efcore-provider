@@ -69,22 +69,26 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
         Type type,
         CoreTypeMapping? typeMapping = null)
     {
+        var entityType = docExpression switch
+        {
+            RootReferenceExpression rootReferenceExpression => rootReferenceExpression.EntityType,
+            ObjectAccessExpression objectAccessExpression => objectAccessExpression.Navigation.TargetEntityType,
+            _ => _rootEntityType
+        };
+
         var innerExpression = docExpression;
-        IEntityType entityType = _rootEntityType;
-
-        if (docExpression is RootReferenceExpression rootReferenceExpression)
+        if (ProjectionBindings.TryGetValue(docExpression, out var innerVariable))
         {
-            innerExpression = CreateGetValueExpression(DocParameter, null, typeof(BsonDocument));
-            entityType = rootReferenceExpression.EntityType;
+            innerExpression = innerVariable;
         }
-        else if (docExpression is ObjectAccessExpression objectAccessExpression)
-        {
-            var innerAccessExpression = objectAccessExpression.AccessExpression;
-
-            innerExpression = CreateGetValueExpression(
-                innerAccessExpression, objectAccessExpression.Name, typeof(BsonDocument));
-            entityType = objectAccessExpression.Navigation.TargetEntityType;
-        }
+        else
+            innerExpression = docExpression switch
+            {
+                RootReferenceExpression => CreateGetValueExpression(DocParameter, null, typeof(BsonDocument)),
+                ObjectAccessExpression objectAccessExpression => CreateGetValueExpression(objectAccessExpression.AccessExpression,
+                    objectAccessExpression.Name, typeof(BsonDocument)),
+                _ => innerExpression
+            };
 
         return BsonBinding.CreateGetValueExpression(innerExpression, storeName, typeMapping?.ClrType ?? type, entityType);
     }
