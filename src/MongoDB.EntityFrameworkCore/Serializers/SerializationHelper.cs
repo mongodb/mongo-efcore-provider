@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Update;
@@ -27,7 +28,7 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 
 internal static class SerializationHelper
 {
-    public static T GetPropertyValue<T>(BsonDocument document, IReadOnlyPropertyBase property)
+    public static T GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
     {
         var serializationInfo = GetPropertySerializationInfo(property);
         return ReadElementValue<T>(document, serializationInfo);
@@ -44,25 +45,63 @@ internal static class SerializationHelper
         using var writer = new BsonDocumentWriter(document);
         writer.WriteStartDocument();
 
+        // Write PK first, including all primary key properties in case of composite key
+        if (properties.Any(p => p.IsPrimaryKey()))
+        {
+            var pk = entry.EntityType.FindPrimaryKey();
+            if (pk.Properties.Count > 1)
+            {
+                writer.WriteName("_id");
+                writer.WriteStartDocument();
+            }
+
+            foreach (var property in pk.Properties)
+            {
+                var propertyValue = entry.GetCurrentValue(property);
+                var serializationInfo = GetPropertySerializationInfo(property);
+                var elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
+                WriteProperty(writer, elementName, propertyValue, serializationInfo.Serializer);
+            }
+
+            if (pk.Properties.Count > 1)
+            {
+                writer.WriteEndDocument();
+            }
+        }
+
         foreach (var property in properties)
         {
-            var propertyValue = entry.GetCurrentValue(property);
-            var propertySerializationInfo = GetPropertySerializationInfo(property);
-            // TODO: Add ElementPath support here
-            var elementName = propertySerializationInfo.ElementName;
-            writer.WriteName(elementName);
+            if (property.IsPrimaryKey())
+            {
+                continue;
+            }
 
-            var propertySerializer = propertySerializationInfo.Serializer;
-            var context = BsonSerializationContext.CreateRoot(writer);
-            propertySerializer.Serialize(context, propertyValue);
+            var propertyValue = entry.GetCurrentValue(property);
+            var serializationInfo = GetPropertySerializationInfo(property);
+            WriteProperty(writer, serializationInfo.ElementName, propertyValue, serializationInfo.Serializer);
         }
 
         writer.WriteEndDocument();
+        return;
+
+        void WriteProperty(IBsonWriter writer, string elementName, object value, IBsonSerializer serializer)
+        {
+            writer.WriteName(elementName);
+            var context = BsonSerializationContext.CreateRoot(writer);
+            serializer.Serialize(context, value);
+        }
     }
 
-    public static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyPropertyBase property)
-        // TODO: extend this method with primary key composition logic
-        => new BsonSerializationInfo(property.GetElementName(), CreateTypeSerializer(property.ClrType), property.ClrType);
+    public static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
+    {
+        var serializer = CreateTypeSerializer(property.ClrType);
+        if (property.IsPrimaryKey() && property.DeclaringEntityType.FindPrimaryKey()?.Properties.Count > 1)
+        {
+            return BsonSerializationInfo.CreateWithPath(new[] { "_id", property.GetElementName()}, serializer, property.ClrType);
+        }
+
+        return new BsonSerializationInfo(property.GetElementName(), CreateTypeSerializer(property.ClrType), property.ClrType);
+    }
 
     private static IBsonSerializer CreateTypeSerializer(Type type)
     {
@@ -115,11 +154,27 @@ internal static class SerializationHelper
     private static IBsonSerializer CreateListSerializer(Type elementType)
         => (IBsonSerializer)Activator.CreateInstance(typeof(ListSerializer<>).MakeGenericType(elementType));
 
-    private static T ReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo)
+    private static T? ReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo)
     {
         // TODO: decide what to do with non-existing elements
-        // TODO: support ElementPath here
-        var value = document.GetValue(elementSerializationInfo.ElementName);
-        return (T)elementSerializationInfo.DeserializeValue(value);
+        BsonValue rawValue;
+        if (elementSerializationInfo.ElementPath == null)
+        {
+            rawValue = document.GetValue(elementSerializationInfo.ElementName);
+        }
+        else
+        {
+            rawValue = document;
+            foreach (var node in elementSerializationInfo.ElementPath)
+            {
+                rawValue = ((BsonDocument)rawValue)[node];
+                if (rawValue == null)
+                {
+                    return default;
+                }
+            }
+        }
+
+        return (T)elementSerializationInfo.DeserializeValue(rawValue);
     }
 }

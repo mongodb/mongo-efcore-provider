@@ -96,20 +96,16 @@ public class MongoModelValidator : ModelValidator
                 $"The entity type '{entityType.DisplayName()}' is a root document but does not have a primary key set.");
         }
 
-        // TODO: Handle compound keys
-        if (primaryKey.Properties.Count > 1)
+        if (primaryKey.Properties.Count == 1)
         {
-            throw new NotSupportedException(
-                $"The entity type '{entityType.DisplayName()}' has a compound (multi-property) key. This is not supported in the MongoDB EF Core provider at this time.");
-        }
-
-        // The primary key must map to "_id"
-        var primaryKeyProperty = primaryKey.Properties[0];
-        string primaryKeyElementName = primaryKeyProperty.GetElementName();
-        if (primaryKeyElementName != "_id")
-        {
-            throw new InvalidOperationException(
-                $"The entity type '{entityType.DisplayName()}' primary key property '{primaryKeyProperty.Name}' must be mapped to element '_id'.");
+            // The primary key must map to "_id"
+            var primaryKeyProperty = primaryKey.Properties[0];
+            string primaryKeyElementName = primaryKeyProperty.GetElementName();
+            if (primaryKeyElementName != "_id")
+            {
+                throw new InvalidOperationException(
+                    $"The entity type '{entityType.DisplayName()}' primary key property '{primaryKeyProperty.Name}' must be mapped to element '_id'.");
+            }
         }
     }
 
