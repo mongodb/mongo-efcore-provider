@@ -98,8 +98,6 @@ internal static class SerializationHelper
             var t when t.IsEnum => EnumSerializer.Create(t),
             {IsArray: true} a => CreateArraySerializer(a.GetElementType()),
             {IsGenericType:true} l => CreateListSerializer(l.TryGetItemType(typeof(IEnumerable<>))),
-            // TODO: doubt if having BsonDocumentSerializer here is a good idea or not, needed when we have projection that involves sub-documents
-            var t when t == typeof(BsonDocument) => BsonDocumentSerializer.Instance,
             _ => throw new NotSupportedException($"Cannot resolve Serializer for '{type.FullName}' type."),
         };
 

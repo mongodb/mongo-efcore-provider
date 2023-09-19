@@ -148,7 +148,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     {
         if (binaryExpression.NodeType == ExpressionType.Assign && binaryExpression.Left is ParameterExpression parameterExpression)
         {
-            if (parameterExpression.Type == typeof(BsonDocument))
+            if (parameterExpression.Type == typeof(BsonDocument) || parameterExpression.Type == typeof(BsonArray))
             {
                 string storeName = null;
 
