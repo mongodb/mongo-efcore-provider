@@ -146,15 +146,6 @@ public class MongoDatabaseWrapper : Database
         string collectionName = entry.EntityType.GetCollectionName();
         var state = entry.EntityState;
 
-        // This entry may share its identity with another that it is replacing or being
-        // replaced by. If this one is the deleted side do nothing, if it is the replacement
-        // then treat it as a database update.
-        if (entry.SharedIdentityEntry != null)
-        {
-            if (state == EntityState.Deleted) return null;
-            if (state == EntityState.Added) state = EntityState.Modified;
-        }
-
         return state switch
         {
             EntityState.Added => ConvertAddedEntryToMongoUpdate(collectionName, entry),
