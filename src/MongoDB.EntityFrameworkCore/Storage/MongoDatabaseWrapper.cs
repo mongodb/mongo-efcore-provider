@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -21,9 +22,11 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using MongoDB.Bson;
+using MongoDB.Bson.IO;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
@@ -160,7 +163,10 @@ public class MongoDatabaseWrapper : Database
     private static MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
     {
         var document = new BsonDocument();
-        SerializationHelper.WriteProperties(document, entry, entry.EntityType.GetProperties());
+        using (var writer = new BsonDocumentWriter(document))
+        {
+            WriteEntity(writer, entry);
+        }
 
         var model = new InsertOneModel<BsonDocument>(document);
         return new MongoUpdate(collectionName, model);
@@ -175,15 +181,66 @@ public class MongoDatabaseWrapper : Database
 
     private static MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
     {
-        var fieldValues = new BsonDocument();
-        SerializationHelper.WriteProperties(fieldValues, entry, entry.EntityType.GetProperties().Where(p => entry.IsModified(p)));
+        var document = new BsonDocument();
+        using (var writer = new BsonDocumentWriter(document))
+        {
+            WriteEntity(writer, entry);
+        }
 
-        var updateDocument = new BsonDocument("$set", fieldValues);
+        var updateDocument = new BsonDocument("$set", document);
         var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(updateDocument);
 
         var idFilter = CreateIdFilter(entry);
         var model = new UpdateOneModel<BsonDocument>(idFilter, updateDefinition);
         return new MongoUpdate(collectionName, model);
+    }
+
+    private static void WriteEntity(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
+    {
+        if (propertyFilter == null && entry.EntityState == EntityState.Modified)
+        {
+            propertyFilter = entry.IsModified;
+        }
+
+        writer.WriteStartDocument();
+        SerializationHelper.WriteProperties(writer, entry, propertyFilter);
+
+        foreach (var navigation in entry.EntityType.GetNavigations())
+        {
+            if (!navigation.IsEmbedded())
+            {
+                continue;
+            }
+
+            writer.WriteName(navigation.GetElementName());
+            var embeddedValue = entry.GetCurrentValue(navigation);
+
+            if (embeddedValue == null)
+            {
+                writer.WriteNull();
+            }
+            else
+            {
+                if (navigation.IsCollection)
+                {
+                    // TODO: Need to optimize to get updated items only
+                    writer.WriteStartArray();
+                    foreach (var dependent in (IEnumerable)embeddedValue)
+                    {
+                        var embeddedEntry =  ((InternalEntityEntry)entry).StateManager.TryGetEntry(dependent, navigation.ForeignKey.DeclaringEntityType)!;
+                        WriteEntity(writer, embeddedEntry, p => true);
+                    }
+                    writer.WriteEndArray();
+                }
+                else
+                {
+                    var embeddedEntry = ((InternalEntityEntry)entry).StateManager.TryGetEntry(embeddedValue, navigation.ForeignKey.DeclaringEntityType)!;
+                    WriteEntity(writer, embeddedEntry, p => true);
+                }
+            }
+        }
+
+        writer.WriteEndDocument();
     }
 
     private static FilterDefinition<BsonDocument> CreateIdFilter(IUpdateEntry entry)
@@ -195,7 +252,10 @@ public class MongoDatabaseWrapper : Database
         }
 
         var document = new BsonDocument();
-        SerializationHelper.WriteProperties(document, entry, primaryKey.Properties);
+        using (var writer = new BsonDocumentWriter(document))
+        {
+            WriteEntity(writer, entry, p => p.IsPrimaryKey());
+        }
 
         // MongoDB require primary key named as "_id";
         var serializedIdValue = document["_id"];
