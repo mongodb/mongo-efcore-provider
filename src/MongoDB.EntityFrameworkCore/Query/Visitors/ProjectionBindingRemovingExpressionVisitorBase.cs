@@ -272,8 +272,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             if (!entityType.IsDocumentRoot())
             {
                 var ownership = entityType.FindOwnership();
-                if (!ownership.IsUnique
-                    && property.IsOrdinalKeyProperty())
+                if (ownership?.IsUnique == false && property.IsOwnedCollectionShadowKey())
                 {
                     var readExpression = _ordinalParameterBindings[docExpression];
                     if (readExpression.Type != type)

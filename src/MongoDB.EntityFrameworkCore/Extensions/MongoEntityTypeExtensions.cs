@@ -1,21 +1,20 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 using System;
-using System.Linq;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Metadata;
@@ -87,4 +86,43 @@ public static class MongoEntityTypeExtensions
         => entityType.FindOwnership() is IReadOnlyForeignKey ownership
             ? ownership.PrincipalToDependent!.Name
             : null;
+
+    /// <summary>
+    /// Sets the name of the parent element to which the entity type is mapped.
+    /// </summary>
+    /// <param name="entityType">The entity type to set the containing element name for.</param>
+    /// <param name="name">The name to set.</param>
+    public static void SetContainingElementName(this IMutableEntityType entityType, string? name)
+    {
+        if (name is not null && name.Trim().Length == 0)
+            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(nameof(name)));
+
+        entityType.SetOrRemoveAnnotation(MongoAnnotationNames.ElementName, name);
+    }
+
+    /// <summary>
+    /// Sets the name of the parent element to which the entity type is mapped.
+    /// </summary>
+    /// <param name="entityType">The entity type to set the containing element name for.</param>
+    /// <param name="name">The name to set.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    public static string? SetContainingElementName(
+        this IConventionEntityType entityType,
+        string? name,
+        bool fromDataAnnotation = false)
+    {
+        if (name is not null && name.Trim().Length == 0)
+            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(nameof(name)));
+
+        return (string?)entityType.SetOrRemoveAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation)?.Value;
+    }
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> for the parent element to which the entity type is mapped.
+    /// </summary>
+    /// <param name="entityType">The entity type to find configuration source for.</param>
+    /// <returns>The <see cref="ConfigurationSource" /> for the parent element to which the entity type is mapped.</returns>
+    public static ConfigurationSource? GetContainingElementNameConfigurationSource(this IConventionEntityType entityType)
+        => entityType.FindAnnotation(MongoAnnotationNames.ElementName)
+            ?.GetConfigurationSource();
 }

@@ -74,7 +74,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal(__location1.longitude, actual[0].location.longitude);
     }
 
-    [Fact(Skip = "We do not yet support updating owned types")]
+    [Fact]
     public void OwnedEntity_nested_one_level_creates()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
@@ -96,12 +96,14 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         }
     }
 
-    [Fact(Skip = "We do not yet support updating owned types")]
-    public void OwnedEntity_nested_collection_creates()
+    [Fact]
+    public void OwnedEntity_collection_creates()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+
         var expected = new PersonWithMultipleLocations
         {
+            _id = ObjectId.GenerateNewId(),
             name = "Alfred",
             locations = new List<Location>
             {
@@ -117,7 +119,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var actual = db.Entitites.First(p => p.name == "Charlie");
+            var actual = db.Entitites.First(p => p.name == "Alfred");
 
             Assert.Equal(expected.name, actual.name);
             Assert.Equal(expected.locations[0].latitude, actual.locations[0].latitude);

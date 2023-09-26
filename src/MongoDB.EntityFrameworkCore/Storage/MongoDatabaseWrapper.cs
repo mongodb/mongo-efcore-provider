@@ -172,6 +172,15 @@ public class MongoDatabaseWrapper : Database
         return new MongoUpdate(collectionName, model);
     }
 
+    private static void AcceptTemporaryValues(IUpdateEntry entry)
+    {
+        foreach (var property in entry.EntityType.GetProperties())
+        {
+            if (entry.HasTemporaryValue(property))
+                entry.SetStoreGeneratedValue(property, entry.GetCurrentValue(property));
+        }
+    }
+
     private static MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
     {
         var idFilter = CreateIdFilter(entry);
@@ -195,12 +204,15 @@ public class MongoDatabaseWrapper : Database
         return new MongoUpdate(collectionName, model);
     }
 
-    private static void WriteEntity(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
+    private static void WriteEntity(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null,
+        int? collectionIndex = null)
     {
         if (propertyFilter == null && entry.EntityState == EntityState.Modified)
         {
             propertyFilter = entry.IsModified;
         }
+
+        AcceptTemporaryValues(entry);
 
         writer.WriteStartDocument();
 
@@ -214,8 +226,8 @@ public class MongoDatabaseWrapper : Database
                 continue;
             }
 
-            writer.WriteName(navigation.GetElementName());
-            var embeddedValue = entry.GetCurrentValue(navigation);
+            writer.WriteName(navigation.TargetEntityType.GetContainingElementName());
+            object? embeddedValue = entry.GetCurrentValue(navigation);
 
             if (embeddedValue == null)
             {
@@ -225,19 +237,23 @@ public class MongoDatabaseWrapper : Database
             {
                 if (navigation.IsCollection)
                 {
-                    // TODO: Need to optimize to get updated items only
                     writer.WriteStartArray();
-                    foreach (var dependent in (IEnumerable)embeddedValue)
+                    foreach (object dependent in (IEnumerable)embeddedValue)
                     {
-                        var embeddedEntry =  ((InternalEntityEntry)entry).StateManager.TryGetEntry(dependent, navigation.ForeignKey.DeclaringEntityType)!;
-                        WriteEntity(writer, embeddedEntry, p => true);
+                        var embeddedEntry =
+                            ((InternalEntityEntry)entry).StateManager.TryGetEntry(dependent,
+                                navigation.ForeignKey.DeclaringEntityType)!;
+                        WriteEntity(writer, embeddedEntry, _ => true);
                     }
+
                     writer.WriteEndArray();
                 }
                 else
                 {
-                    var embeddedEntry = ((InternalEntityEntry)entry).StateManager.TryGetEntry(embeddedValue, navigation.ForeignKey.DeclaringEntityType)!;
-                    WriteEntity(writer, embeddedEntry, p => true);
+                    var embeddedEntry =
+                        ((InternalEntityEntry)entry).StateManager.TryGetEntry(embeddedValue,
+                            navigation.ForeignKey.DeclaringEntityType)!;
+                    WriteEntity(writer, embeddedEntry, _ => true);
                 }
             }
         }

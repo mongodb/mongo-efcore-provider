@@ -1,19 +1,20 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 using System;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using MongoDB.EntityFrameworkCore.Metadata;
@@ -114,5 +115,78 @@ public static class MongoEntityTypeBuilderExtensions
             throw new ArgumentException(ArgumentNameCannotBeEmptyExceptionMessage);
 
         return entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.CollectionName, name, fromDataAnnotation);
+    }
+
+    /// <summary>
+    /// Configures the element name that the entity is mapped to when stored as an embedded document.
+    /// </summary>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="name">The name of the parent element.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static OwnedNavigationBuilder SetElementName(
+        this OwnedNavigationBuilder entityTypeBuilder,
+        string? name)
+    {
+        entityTypeBuilder.OwnedEntityType.SetContainingElementName(name);
+
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    /// Configures the element name that the entity is mapped to when stored as an embedded document.
+    /// </summary>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="name">The name of the parent element.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> SetElementName<TOwnerEntity, TDependentEntity>(
+        this OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> entityTypeBuilder,
+        string? name)
+        where TOwnerEntity : class
+        where TDependentEntity : class
+    {
+        entityTypeBuilder.OwnedEntityType.SetContainingElementName(name);
+
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    /// Configures the element name that the entity is mapped to when stored as an embedded document.
+    /// </summary>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="name">The name of the parent element.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.</returns>
+    public static IConventionEntityTypeBuilder? SetElementName(
+        this IConventionEntityTypeBuilder entityTypeBuilder,
+        string? name,
+        bool fromDataAnnotation = false)
+    {
+        if (!entityTypeBuilder.CanSetElementName(name, fromDataAnnotation))
+        {
+            return null;
+        }
+
+        entityTypeBuilder.Metadata.SetContainingElementName(name, fromDataAnnotation);
+
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    /// Returns a value indicating whether the parent element name to which the entity type is mapped to can be set
+    /// from the current configuration source.
+    /// </summary>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="name">The name of the element property.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns><see langword="true" /> if the configuration can be applied.</returns>
+    public static bool CanSetElementName(
+        this IConventionEntityTypeBuilder entityTypeBuilder,
+        string? name,
+        bool fromDataAnnotation = false)
+    {
+        if (name is not null && name.Trim().Length == 0)
+            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(nameof(name)));
+
+        return entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
     }
 }
