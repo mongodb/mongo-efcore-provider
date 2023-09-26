@@ -50,6 +50,7 @@ public class MongoModelValidator : ModelValidator
 
         ValidateElementNames(model, logger);
         ValidateNoShadowProperties(model, logger);
+        ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model, logger);
     }
 
@@ -61,7 +62,9 @@ public class MongoModelValidator : ModelValidator
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported yet.</exception>
     /// <exception cref="InvalidOperationException">Throw when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
-    public void ValidatePrimaryKeys(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    protected void ValidatePrimaryKeys(
+        IModel model,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
         foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
@@ -77,7 +80,9 @@ public class MongoModelValidator : ModelValidator
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported.</exception>
     /// <exception cref="InvalidOperationException">Throw when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
-    public void ValidateElementNames(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    protected void ValidateElementNames(
+        IModel model,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
         foreach (var entityType in model.GetEntityTypes())
         {
@@ -146,7 +151,9 @@ public class MongoModelValidator : ModelValidator
     /// <param name="model">The <see cref="IModel"/> to validate for whether shadow properties are present.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="NotSupportedException">Thrown when shadow properties are encountered which are not supported.</exception>
-    public void ValidateNoShadowProperties(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    protected void ValidateNoShadowProperties(
+        IModel model,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
         foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
@@ -155,6 +162,28 @@ public class MongoModelValidator : ModelValidator
             {
                 throw new NotSupportedException(
                     $"Unsupported shadow property '{shadowProperty.Name}' identified on entity type '{entityType.DisplayName()}'.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validates that the only keys that can actually be changed are shadow keys used by owned entities.
+    /// </summary>
+    /// <param name="model">The model to validate.</param>
+    /// <param name="logger">The logger to use.</param>
+    protected override void ValidateNoMutableKeys(
+        IModel model,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            foreach (var key in entityType.GetDeclaredKeys())
+            {
+                var mutableProperty = key.Properties.FirstOrDefault(p => p.ValueGenerated.HasFlag(ValueGenerated.OnUpdate));
+                if (mutableProperty != null && !mutableProperty.IsCollectionIndexShadowKey())
+                {
+                    throw new InvalidOperationException(CoreStrings.MutableKeyProperty(mutableProperty.Name));
+                }
             }
         }
     }
