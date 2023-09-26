@@ -203,7 +203,9 @@ public class MongoDatabaseWrapper : Database
         }
 
         writer.WriteStartDocument();
-        SerializationHelper.WriteProperties(writer, entry, propertyFilter);
+
+        SerializationHelper.WriteKeyProperties(writer, entry);
+        SerializationHelper.WriteNonKeyProperties(writer, entry, propertyFilter);
 
         foreach (var navigation in entry.EntityType.GetNavigations())
         {

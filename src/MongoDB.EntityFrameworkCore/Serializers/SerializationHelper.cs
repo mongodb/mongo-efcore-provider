@@ -40,61 +40,58 @@ internal static class SerializationHelper
         return ReadElementValue<T>(document, serializationInfo);
     }
 
-    public static void WriteProperties(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
+    internal static void WriteKeyProperties(IBsonWriter writer, IUpdateEntry entry)
     {
-        var properties = entry.EntityType.GetProperties().Where(p => !p.IsShadowProperty());
-        if (propertyFilter != null)
+        var keyProperties = entry.EntityType.FindPrimaryKey()
+            .Properties
+            .Where(p => !p.IsShadowProperty() && p.GetElementName() != "").ToArray();
+
+        if (!keyProperties.Any()) return;
+
+        bool compoundKey = keyProperties.Length > 1;
+        if (compoundKey)
         {
-            properties = properties.Where(propertyFilter);
+            writer.WriteName("_id");
+            writer.WriteStartDocument();
         }
 
-        // Write PK first, including all primary key properties in case of composite key
-        if (properties.Any(p => p.IsPrimaryKey()))
+        foreach (var property in keyProperties)
         {
-            var pkProperties = entry.EntityType.FindPrimaryKey().Properties.Where(p => !p.IsShadowProperty()).ToArray();
-            if (pkProperties.Length > 1)
-            {
-                writer.WriteName("_id");
-                writer.WriteStartDocument();
-            }
-
-            foreach (var property in pkProperties)
-            {
-                var propertyValue = entry.GetCurrentValue(property);
-                var serializationInfo = GetPropertySerializationInfo(property);
-                var elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
-                WriteProperty(writer, elementName, propertyValue, serializationInfo.Serializer);
-            }
-
-            if (pkProperties.Length > 1)
-            {
-                writer.WriteEndDocument();
-            }
+            object? propertyValue = entry.GetCurrentValue(property);
+            var serializationInfo = GetPropertySerializationInfo(property);
+            string? elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
+            WriteProperty(writer, elementName, propertyValue, serializationInfo.Serializer);
         }
+
+        if (compoundKey)
+        {
+            writer.WriteEndDocument();
+        }
+    }
+
+    internal static void WriteNonKeyProperties(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
+    {
+        var properties = entry.EntityType.GetProperties()
+            .Where(p => !p.IsShadowProperty() && !p.IsPrimaryKey() && p.GetElementName() != "")
+            .Where(p => propertyFilter == null || propertyFilter(p))
+            .ToArray();
 
         foreach (var property in properties)
         {
-            if (property.IsPrimaryKey())
-            {
-                continue;
-            }
-
             var propertyValue = entry.GetCurrentValue(property);
             var serializationInfo = GetPropertySerializationInfo(property);
             WriteProperty(writer, serializationInfo.ElementName, propertyValue, serializationInfo.Serializer);
         }
-
-        return;
-
-        void WriteProperty(IBsonWriter writer, string elementName, object value, IBsonSerializer serializer)
-        {
-            writer.WriteName(elementName);
-            var context = BsonSerializationContext.CreateRoot(writer);
-            serializer.Serialize(context, value);
-        }
     }
 
-    public static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
+    private static void WriteProperty(IBsonWriter writer, string elementName, object value, IBsonSerializer serializer)
+    {
+        writer.WriteName(elementName);
+        var context = BsonSerializationContext.CreateRoot(writer);
+        serializer.Serialize(context, value);
+    }
+
+    internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
     {
         var serializer = CreateTypeSerializer(property.ClrType);
         if (property.IsPrimaryKey() && property.DeclaringEntityType.FindPrimaryKey()?.Properties.Count > 1)
