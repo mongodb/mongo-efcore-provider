@@ -482,8 +482,7 @@ public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture
 
     private void ClrTypeMappingTestImpl<TValue>(TValue value)
     {
-        var collectionName = $"ClrTypeMapping_{typeof(TValue)}+{value}";
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>(collectionName);
+        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("ClrTypeMapping", typeof(TValue), value);
         collection.InsertOne(new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = value});
 
         var db = SingleEntityDbContext.Create(collection);

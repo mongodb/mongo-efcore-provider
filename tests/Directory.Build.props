@@ -1,0 +1,5 @@
+<Project>
+  <ItemGroup>
+    <PackageReference Include="JunitXml.TestLogger" Version="2.1.81" />
+  </ItemGroup>
+</Project>

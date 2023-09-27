@@ -99,11 +99,11 @@ public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Theory]
-    [InlineData(typeof(TestEnum), TestEnum.EnumValue0, TestEnum.EnumValue1)]
-    [InlineData(typeof(TestEnum), TestEnum.EnumValue1, TestEnum.EnumValue0)]
-    [InlineData(typeof(TestEnum?), null, TestEnum.EnumValue1)]
-    [InlineData(typeof(TestEnum?), TestEnum.EnumValue1, null)]
-    [InlineData(typeof(TestEnum?), TestEnum.EnumValue0, TestEnum.EnumValue1)]
+    [InlineData(typeof(TestEnum), TestEnum.Value0, TestEnum.Value1)]
+    [InlineData(typeof(TestEnum), TestEnum.Value1, TestEnum.Value0)]
+    [InlineData(typeof(TestEnum?), null, TestEnum.Value1)]
+    [InlineData(typeof(TestEnum?), TestEnum.Value1, null)]
+    [InlineData(typeof(TestEnum?), TestEnum.Value0, TestEnum.Value1)]
     public void Entity_update_tests(Type valueType, object initialValue, object updatedValue)
     {
         var methodInfo = this.GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
@@ -112,14 +112,13 @@ public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     private enum TestEnum
     {
-        EnumValue0 = 0,
-        EnumValue1 = 1
+        Value0 = 0,
+        Value1 = 1
     }
 
     private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
     {
-        var collectionName = $"EntityUpdateTestImpl_{typeof(TValue)}+{initialValue}->{updatedValue}";
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>(collectionName);
+        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
