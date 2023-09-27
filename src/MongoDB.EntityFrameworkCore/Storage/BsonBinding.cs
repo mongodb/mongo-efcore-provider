@@ -17,16 +17,56 @@ using System;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 internal static class BsonBinding
 {
+    /// <summary>
+    /// Create the expression which will obtain the value or intermediate value required by the shaper.
+    /// </summary>
+    /// <param name="bsonDocExpression">The expression to obtain the current <see cref="BsonDocument"/>.</param>
+    /// <param name="name">The name of the value to obtain from the document.</param>
+    /// <param name="mappedType">What <see cref="Type"/> to obtain the the value as.</param>
+    /// <param name="entityType">The <see cref="IEntityType"/> the value will belong to for obtaining additional metadata.</param>
+    /// <returns>A compilable expression the shaper can use to obtain this value from a <see cref="BsonDocument"/>.</returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    public static Expression CreateGetValueExpression(
+        Expression bsonDocExpression,
+        string? name,
+        Type mappedType,
+        IEntityType entityType)
+    {
+        if (name is null) return bsonDocExpression;
+        if (mappedType == typeof(BsonArray)) return CreateGetBsonArray(bsonDocExpression, name);
+        if (mappedType == typeof(BsonDocument)) return CreateGetBsonDocument(bsonDocExpression, name);
+
+        var targetProperty = entityType.FindProperty(name);
+        if (targetProperty != null)
+        {
+            if (targetProperty.IsNullable)
+            {
+                mappedType = mappedType.MakeNullable();
+            }
+
+            return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
+        }
+
+        var navigationProperty = entityType.FindNavigation(name);
+        if (navigationProperty != null)
+        {
+            var elementName = navigationProperty.TargetEntityType.GetContainingElementName();
+            return CreateGetElementValue(bsonDocExpression, elementName, mappedType);
+        }
+
+        throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
+    }
+
     private static Expression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, __getBsonArray, bsonDocExpression, Expression.Constant(name));
 
@@ -47,34 +87,8 @@ internal static class BsonBinding
     private static BsonDocument GetBsonDocument(BsonDocument document, string name)
         => document[name].AsBsonDocument;
 
-    public static Expression CreateGetValueExpression(Expression bsonDocExpression, string? name, Type mappedType, IEntityType entityType)
-    {
-        if (name is null) return bsonDocExpression;
-        if (mappedType == typeof(BsonArray)) return CreateGetBsonArray(bsonDocExpression, name);
-        if (mappedType == typeof(BsonDocument)) return CreateGetBsonDocument(bsonDocExpression, name);
-
-        var targetProperty = entityType.FindProperty(name);
-        if (targetProperty != null)
-        {
-            if (targetProperty.IsNullable)
-            {
-                mappedType = mappedType.MakeNullable();
-            }
-
-            return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
-        }
-
-        var navigationProperty = entityType.FindNavigation(name);
-        if (navigationProperty != null)
-        {
-            var elementName = navigationProperty.GetElementName();
-            return CreateGetElementValue(bsonDocExpression, elementName, mappedType);
-        }
-
-        throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
-    }
-
-    private static Expression CreateGetPropertyValue(Expression bsonDocExpression, Expression propertyExpression, Type resultType) =>
+    private static Expression
+        CreateGetPropertyValue(Expression bsonDocExpression, Expression propertyExpression, Type resultType) =>
         Expression.Call(null, __getPropertyValueMethodInfo.MakeGenericMethod(resultType), bsonDocExpression, propertyExpression);
 
     private static Expression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>

@@ -51,9 +51,28 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
             return;
         }
 
-        // Ignore owned entities - we don't want to map owned shadow prop keys
-        var owner = entityType.FindOwnership();
-        if (owner != null) return;
+        // Owned entities don't have real keys but need non-persisted shadow properties synthesized from their parent
+        var ownership = entityType.FindOwnership();
+        if (ownership != null)
+        {
+            if (entityType.FindPrimaryKey() == null)
+            {
+                var keyProperties = ownership.Properties.ToList();
+
+                // Ones in a collection need their parent Id + an index
+                if (!ownership.IsUnique)
+                {
+                    var uniqueShadowKeyProperty = entityTypeBuilder
+                        .CreateUniqueProperty(typeof(int), "_unique", required: true)!
+                        .Metadata;
+                    keyProperties.Add(uniqueShadowKeyProperty);
+                }
+
+                entityTypeBuilder.PrimaryKey(keyProperties);
+            }
+
+            return;
+        }
 
         // Look for anything mapped to element "_id" or property named as "_id"
         var entityProperties = entityType.GetProperties().ToArray();
@@ -68,23 +87,14 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
         // Try the standard provider to look for "Id", "EntityId" etc.
         base.TryConfigurePrimaryKey(entityTypeBuilder);
 
-        if (!entityTypeBuilder.Metadata.IsKeyless)
+        var keys = entityType.GetKeys().ToArray();
+        switch (keys.Length)
         {
-            var keys = entityType.GetKeys().ToArray();
-            if (keys.Length > 1)
-            {
+            case > 1:
                 throw new NotSupportedException("Alternate keys not supported at this time.");
-            }
-
-            if (keys.Length == 1)
-            {
-                if (keys[0].Properties.Count > 1)
-                {
-                    throw new NotSupportedException("Composite keys not supported at this time.");
-                }
-
+            case 1:
                 keys[0].Properties[0].SetElementName("_id");
-            }
+                break;
         }
     }
 }
