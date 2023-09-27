@@ -235,6 +235,7 @@ pre:
   - func: install-dependencies
 
 post:
+  - func: upload-test-results
   - func: upload-mo-artifacts
   - func: cleanup
 
@@ -244,7 +245,6 @@ tasks:
       - func: bootstrap-mongo-orchestration
       - func: set-github-auth
       - func: run-tests
-      - func: upload-test-results
 
 axes:
   - id: version
