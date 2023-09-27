@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.ValueGeneration;
 using MongoDB.Bson;
@@ -23,27 +22,26 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.ValueGeneration;
 
 public class MongoValueGeneratorSelectorTests
 {
-    private readonly IModel __model;
-    private readonly IValueGeneratorSelector __valueGeneratorSelector;
-    private readonly IEntityType __entityType;
+    private readonly IValueGeneratorSelector _valueGeneratorSelector;
+    private readonly IEntityType _entityType;
 
     public MongoValueGeneratorSelectorTests()
     {
         var instance = MongoTestHelpers.Instance;
         var builder = instance.CreateConventionBuilder();
-        var e = builder.Entity<RootEntity>();
+        builder.Entity<RootEntity>();
 
         builder.FinalizeModel();
-        __model = (IModel)builder.Model;
+        IModel model = (IModel)builder.Model;
         var serviceProvider = instance.CreateServiceProvider();
-        __valueGeneratorSelector = (IValueGeneratorSelector)serviceProvider.GetService(typeof(IValueGeneratorSelector))!;
-        __entityType = __model.FindEntityType(typeof(EntityWithDifferentTypes))!;
+        _valueGeneratorSelector = (IValueGeneratorSelector)serviceProvider.GetService(typeof(IValueGeneratorSelector))!;
+        _entityType = model.FindEntityType(typeof(EntityWithDifferentTypes))!;
     }
 
     [Fact]
     public void Create_returns_OwnedEntityIndexValueGenerator_for_mapped_int()
     {
-        var generator = __valueGeneratorSelector.Select(__entityType.FindProperty("_unique")!, __entityType);
+        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("_unique")!, _entityType);
         Assert.IsType<OwnedEntityIndexValueGenerator>(generator);
     }
 
@@ -51,13 +49,13 @@ public class MongoValueGeneratorSelectorTests
     public void Create_throws_NotSupportedException_for_int()
     {
         Assert.Throws<NotSupportedException>(() =>
-            __valueGeneratorSelector.Select(__entityType.FindProperty("someInt")!, __entityType));
+            _valueGeneratorSelector.Select(_entityType.FindProperty("someInt")!, _entityType));
     }
 
     [Fact]
     public void Create_throws_NotSupportedException_for_guid()
     {
-        var generator = __valueGeneratorSelector.Select(__entityType.FindProperty("someGuid")!, __entityType);
+        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("someGuid")!, _entityType);
         Assert.IsType<GuidValueGenerator>(generator);
     }
 

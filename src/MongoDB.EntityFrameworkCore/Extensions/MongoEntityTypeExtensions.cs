@@ -106,6 +106,7 @@ public static class MongoEntityTypeExtensions
     /// <param name="entityType">The entity type to set the containing element name for.</param>
     /// <param name="name">The name to set.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The new annotation or <see langword="null" /> if it was removed.</returns>
     public static string? SetContainingElementName(
         this IConventionEntityType entityType,
         string? name,
