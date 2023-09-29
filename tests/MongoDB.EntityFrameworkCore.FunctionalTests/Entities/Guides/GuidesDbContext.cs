@@ -21,6 +21,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 internal class GuidesDbContext : DbContext
 {
+    public DbSet<Moon> Moons { get; init; }
     public DbSet<Planet> Planets { get; init; }
 
     public static GuidesDbContext Create(IMongoDatabase database) =>
@@ -36,7 +37,9 @@ internal class GuidesDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-
+        modelBuilder.Entity<Moon>()
+            .ToCollection("moons")
+            .HasKey(nameof(Moon.planetId), nameof(Moon.label));
         modelBuilder.Entity<Planet>().ToCollection("planets");
     }
 }
