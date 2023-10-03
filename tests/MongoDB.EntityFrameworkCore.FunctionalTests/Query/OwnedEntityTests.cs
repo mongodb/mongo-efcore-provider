@@ -166,18 +166,43 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_with_two_owned_entities_materializes()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
+        var expected = __personWithTwoLocations[0];
         collection.WriteTestDocs(__personWithTwoLocations);
         var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.FirstOrDefault();
 
         Assert.NotNull(actual);
-        Assert.Equal("Henry", actual.name);
+        Assert.Equal(expected.name, actual.name);
+        Assert.Equal(expected.first.latitude, actual.first.latitude);
+        Assert.Equal(expected.first.longitude, actual.first.longitude);
+        Assert.Equal(expected.second.latitude, actual.second.latitude);
+        Assert.Equal(expected.second.longitude, actual.second.longitude);
+    }
 
-        Assert.Equal(actual.first.latitude, __location1.latitude);
-        Assert.Equal(actual.first.longitude, __location1.longitude);
-        Assert.Equal(actual.second.latitude, __location2.latitude);
-        Assert.Equal(actual.second.longitude, __location2.longitude);
+    [Fact]
+    public void OwnedEntity_with_two_owned_entities_creates()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
+        var expected = new PersonWithTwoLocations { name = "Elizabeth", first = __location2, second = __location1};
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(expected);
+            db.SaveChanges();
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entitites.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(expected.name, actual.name);
+            Assert.Equal(expected.first.latitude, actual.first.latitude);
+            Assert.Equal(expected.first.longitude, actual.first.longitude);
+            Assert.Equal(expected.second.latitude, actual.second.latitude);
+            Assert.Equal(expected.second.longitude, actual.second.longitude);
+        }
     }
 
     class Person
