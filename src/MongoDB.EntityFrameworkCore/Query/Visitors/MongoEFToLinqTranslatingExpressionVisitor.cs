@@ -120,7 +120,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
 
             // Unwrap include expressions.
             case IncludeExpression includeExpression:
-                return includeExpression.EntityExpression;
+                return Visit(includeExpression.EntityExpression);
 
             // Replace the root with the MongoDB LINQ V3 provider source.
             case EntityQueryRootExpression:
