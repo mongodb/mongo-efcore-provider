@@ -69,11 +69,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             .Visit(shaperBody);
 
         var shaperLambda = Expression.Lambda(
-            shaperBody!,
+            shaperBody,
             QueryCompilationContext.QueryContextParameter,
             bsonDocParameter);
         var compiledShaper = shaperLambda.Compile();
-
 
         var projectedType = shaperLambda.ReturnType;
         bool standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
@@ -126,5 +125,4 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         .GetTypeInfo()
         .DeclaredMethods
         .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
-
 }

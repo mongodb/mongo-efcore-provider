@@ -26,12 +26,11 @@ internal class Planet
     public int orderFromSun { get; set; }
     public bool hasRings { get; set; }
     public string[] mainAtmosphere { get; set; }
-    // public MeanTemperature meanTemperature { get; set; }
 }
 
-internal class MeanTemperature
+internal class Moon
 {
-    public double min { get; set;  }
-    public double max { get; set;  }
-    public double mean { get; set;  }
+    public ObjectId planetId { get; set; }
+    public string label { get; set; }
+    public string name { get; set; }
 }
