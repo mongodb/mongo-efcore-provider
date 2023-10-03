@@ -57,14 +57,11 @@ internal static class BsonBinding
             return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
         }
 
-        var navigationProperty = entityType.FindNavigation(name);
-        if (navigationProperty != null)
-        {
-            var elementName = navigationProperty.TargetEntityType.GetContainingElementName();
-            return CreateGetElementValue(bsonDocExpression, elementName, mappedType);
-        }
+        var navigationProperty = entityType.FindNavigation(name) ??
+                                 throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
 
-        throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
+        string elementName = navigationProperty.TargetEntityType.GetContainingElementName()!;
+        return CreateGetElementValue(bsonDocExpression, elementName, mappedType);
     }
 
     private static Expression CreateGetBsonArray(Expression bsonDocExpression, string name)
