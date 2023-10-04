@@ -308,8 +308,16 @@ axes:
 
 buildvariants:
 - matrix_name: "tests"
-  matrix_spec: { version: "*", os: ["windows-64", "ubuntu-2004"], driver: "*" }
+  matrix_spec: { version: ["4.4", "5.0", "6.0", "7.0", "latest"], os: "*", driver: "*" }
   display_name: "${driver} Driver on ${os} with ${version} Server"
+  tags: ["tests-variant"]
+  tasks:
+    - name: test-net70
+
+- matrix_name: "tests-ubuntu1804"
+  matrix_spec: { version: ["4.2"], driver: "*" }
+  display_name: "${driver} Driver on ubuntu-1804 with ${version} Server"
+  run_on: ubuntu1804-small
   tags: ["tests-variant"]
   tasks:
     - name: test-net70
