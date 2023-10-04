@@ -50,6 +50,17 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.All(result, e => Assert.Equal(3, e.Key2));
     }
 
+    [Fact]
+    public void Should_query_by_key_component_with_gt()
+    {
+        var dbContext = CreateContext();
+
+        var result = dbContext.Entitites.Where(e => e.Key2 > 2).ToList();
+
+        Assert.Single(result);
+        Assert.All(result, e => Assert.True(e.Key2 > 2));
+    }
+
     private SingleEntityDbContext<Entity> CreateContext([CallerMemberName] string? name = null)
     {
         var collection = _temporaryDatabase.CreateTemporaryCollection<Entity>(name);

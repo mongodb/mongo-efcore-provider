@@ -287,11 +287,11 @@ axes:
         variables:
           OS: "windows-64"
         run_on: windows-64-vs2017-test
-      - id: "ubuntu-1804"
-        display_name: "Ubuntu 18.04"
+      - id: "ubuntu-2004"
+        display_name: "Ubuntu 20.04"
         variables:
-          OS: "ubuntu-1804"
-        run_on: ubuntu1804-test
+          OS: "ubuntu-2004"
+        run_on: ubuntu2004-small
       - id: "macos-1100"
         display_name: "macOS 11.00"
         variables:
@@ -308,7 +308,7 @@ axes:
 
 buildvariants:
 - matrix_name: "tests"
-  matrix_spec: { version: "*", os: ["windows-64", "ubuntu-1804"], driver: "*" }
+  matrix_spec: { version: "*", os: ["windows-64", "ubuntu-2004"], driver: "*" }
   display_name: "${driver} Driver on ${os} with ${version} Server"
   tags: ["tests-variant"]
   tasks:
