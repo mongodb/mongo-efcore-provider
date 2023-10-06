@@ -38,7 +38,7 @@ public class MongoQueryTranslationPostprocessorFactory : IQueryTranslationPostpr
     protected virtual QueryTranslationPostprocessorDependencies Dependencies { get; }
 
     /// <summary>
-    /// Create a new <see cref="MongoQueryCompilationContext"/> with the necessary dependencies.
+    /// Create a new <see cref="MongoQueryTranslationPostprocessor"/> with the necessary dependencies.
     /// </summary>
     /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> to pass to the new <see cref="MongoQueryTranslationPostprocessorFactory"/>.</param>
     /// <returns>The newly created <see cref="MongoQueryTranslationPostprocessorFactory"/>.</returns>

@@ -69,18 +69,30 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             if (source is ShapedQueryExpression shapedQueryExpression)
             {
                 var genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
+
+                var visitedShapedQuery = shapedQueryExpression;
                 switch (method.Name)
                 {
                     case nameof(Queryable.Select) when genericMethod == QueryableMethods.Select:
-                        return base.VisitMethodCall(methodCallExpression);
+                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
+                        break;
+                    case nameof(Queryable.Count) when genericMethod == QueryableMethods.CountWithoutPredicate:
+                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
+                        break;
+                    case nameof(Queryable.LongCount) when genericMethod == QueryableMethods.LongCountWithoutPredicate:
+                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
+                        break;
+                    case nameof(Queryable.Any) when genericMethod == QueryableMethods.AnyWithoutPredicate:
+                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
+                        break;
                 }
 
                 var newCardinality = GetResultCardinality(method);
-                if (newCardinality != shapedQueryExpression.ResultCardinality)
-                    shapedQueryExpression = shapedQueryExpression.UpdateResultCardinality(newCardinality);
+                if (newCardinality != visitedShapedQuery.ResultCardinality)
+                    visitedShapedQuery = visitedShapedQuery.UpdateResultCardinality(newCardinality);
 
-                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).CapturedExpression = _finalExpression;
-                return shapedQueryExpression;
+                ((MongoQueryExpression)visitedShapedQuery.QueryExpression).CapturedExpression = _finalExpression;
+                return visitedShapedQuery;
             }
         }
 
@@ -105,6 +117,43 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return source.UpdateShaperExpression(newShaper);
     }
+
+    /// <inheritdoc />
+    protected override ShapedQueryExpression TranslateCount(
+        ShapedQueryExpression source,
+        LambdaExpression? predicate)
+    {
+        return source.UpdateShaperExpression(
+            Expression.Convert(
+                new ProjectionBindingExpression(source.QueryExpression, new ProjectionMember(), typeof(int?)),
+                typeof(int)));
+    }
+
+    /// <inheritdoc />
+    protected override ShapedQueryExpression TranslateLongCount(
+        ShapedQueryExpression source,
+        LambdaExpression? predicate)
+    {
+        return source.UpdateShaperExpression(
+            Expression.Convert(
+                new ProjectionBindingExpression(source.QueryExpression, new ProjectionMember(), typeof(long?)),
+                typeof(long)));
+    }
+
+    /// <inheritdoc />
+    protected override ShapedQueryExpression TranslateAny(
+        ShapedQueryExpression source,
+        LambdaExpression? predicate)
+    {
+        return source.UpdateShaperExpression(
+            Expression.Convert(
+                new ProjectionBindingExpression(source.QueryExpression, new ProjectionMember(), typeof(bool?)),
+                typeof(bool)));
+    }
+
+    /// <inheritdoc />
+    protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate) =>
+        throw new NotImplementedException();
 
     /// <inheritdoc />
     protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
@@ -185,12 +234,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor() =>
         throw new NotImplementedException();
 
-    protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateAny(ShapedQueryExpression source, LambdaExpression? predicate) =>
-        throw new NotImplementedException();
-
     protected override ShapedQueryExpression TranslateAverage(ShapedQueryExpression source, LambdaExpression? selector,
         Type resultType) => throw new NotImplementedException();
 
@@ -201,9 +244,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         throw new NotImplementedException();
 
     protected override ShapedQueryExpression TranslateContains(ShapedQueryExpression source, Expression item) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateCount(ShapedQueryExpression source, LambdaExpression? predicate) =>
         throw new NotImplementedException();
 
     protected override ShapedQueryExpression TranslateDefaultIfEmpty(ShapedQueryExpression source, Expression? defaultValue) =>
@@ -246,9 +286,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override ShapedQueryExpression TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
         Type returnType,
         bool returnDefault) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateLongCount(ShapedQueryExpression source, LambdaExpression? predicate) =>
         throw new NotImplementedException();
 
     protected override ShapedQueryExpression TranslateMax(ShapedQueryExpression source, LambdaExpression? selector,
@@ -298,7 +335,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         throw new NotImplementedException();
 
     protected override ShapedQueryExpression TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate) =>
-        throw new NotImplementedException();
+        throw new NotSupportedException();
 
     #endregion
 }
