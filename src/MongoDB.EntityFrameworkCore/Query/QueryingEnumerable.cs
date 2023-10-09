@@ -26,19 +26,19 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
-internal sealed class QueryingEnumerable<T> : IAsyncEnumerable<T>, IEnumerable<T>
+internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TTarget>, IEnumerable<TTarget>
 {
     private readonly MongoQueryContext _queryContext;
-    private readonly IEnumerable<BsonDocument> _serverEnumerable;
-    private readonly Func<MongoQueryContext, BsonDocument, T> _shaper;
+    private readonly IEnumerable<TSource> _serverEnumerable;
+    private readonly Func<MongoQueryContext, TSource, TTarget> _shaper;
     private readonly Type _contextType;
     private readonly bool _standAloneStateManager;
     private readonly bool _threadSafetyChecksEnabled;
 
     public QueryingEnumerable(
         MongoQueryContext queryContext,
-        IEnumerable<BsonDocument> serverEnumerable,
-        Func<MongoQueryContext, BsonDocument, T> shaper,
+        IEnumerable<TSource> serverEnumerable,
+        Func<MongoQueryContext, TSource, TTarget> shaper,
         Type contextType,
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled)
@@ -51,30 +51,30 @@ internal sealed class QueryingEnumerable<T> : IAsyncEnumerable<T>, IEnumerable<T
         _threadSafetyChecksEnabled = threadSafetyChecksEnabled;
     }
 
-    public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+    public IAsyncEnumerator<TTarget> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         => new Enumerator(this, cancellationToken);
 
-    public IEnumerator<T> GetEnumerator()
+    public IEnumerator<TTarget> GetEnumerator()
         => new Enumerator(this);
 
     IEnumerator IEnumerable.GetEnumerator()
         => GetEnumerator();
 
-    private sealed class Enumerator : IEnumerator<T>, IAsyncEnumerator<T>
+    private sealed class Enumerator : IEnumerator<TTarget>, IAsyncEnumerator<TTarget>
     {
         private readonly MongoQueryContext _queryContext;
-        private readonly Func<MongoQueryContext, BsonDocument, T> _shaper;
+        private readonly Func<MongoQueryContext, TSource, TTarget> _shaper;
         private readonly Type _contextType;
         private readonly IDiagnosticsLogger<DbLoggerCategory.Query> _queryLogger;
         private readonly bool _standAloneStateManager;
         private readonly CancellationToken _cancellationToken;
         private readonly IConcurrencyDetector? _concurrencyDetector;
         private readonly IExceptionDetector _exceptionDetector;
-        private readonly IEnumerable<BsonDocument> _serverEnumerable;
+        private readonly IEnumerable<TSource> _serverEnumerable;
 
-        private IEnumerator<BsonDocument>? _enumerator;
+        private IEnumerator<TSource>? _enumerator;
 
-        public Enumerator(QueryingEnumerable<T> queryingEnumerable, CancellationToken cancellationToken = default)
+        public Enumerator(QueryingEnumerable<TSource, TTarget> queryingEnumerable, CancellationToken cancellationToken = default)
         {
             _queryContext = queryingEnumerable._queryContext;
             _serverEnumerable = queryingEnumerable._serverEnumerable;
@@ -91,7 +91,7 @@ internal sealed class QueryingEnumerable<T> : IAsyncEnumerable<T>, IEnumerable<T
                 : null;
         }
 
-        public T Current { get; private set; }
+        public TTarget Current { get; private set; }
 
         object IEnumerator.Current => Current!;
 

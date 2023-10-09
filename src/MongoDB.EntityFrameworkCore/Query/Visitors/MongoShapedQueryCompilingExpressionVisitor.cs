@@ -56,10 +56,28 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             throw new NotSupportedException(
                 $" Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
 
+        var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
+        var projectedEntityType = QueryCompilationContext.Model.FindEntityType(
+            shapedQueryExpression.ResultCardinality == ResultCardinality.Enumerable
+                ? shapedQueryExpression.Type.TryGetItemType()!
+                : shapedQueryExpression.Type);
+
+        // TODO: Handle select expressions and non-EF shapers more comprehensively
+        if (projectedEntityType == null)
+        {
+            // We are relying on raw/scalar values coming back from LINQ V3 provider for now - no shaper required
+            return Expression.Call(null,
+                __translateAndExecuteUnshapedQuery.MakeGenericMethod(rootEntityType.ClrType, shapedQueryExpression.Type),
+                QueryCompilationContext.QueryContextParameter,
+                Expression.Constant(rootEntityType),
+                Expression.Constant(mongoQueryExpression),
+                Expression.Constant(_contextType),
+                Expression.Constant(_threadSafetyChecksEnabled),
+                Expression.Constant(shapedQueryExpression.ResultCardinality));
+        }
+
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
         bool trackQueryResults = QueryCompilationContext.QueryTrackingBehavior == QueryTrackingBehavior.TrackAll;
-
-        var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
 
         var shaperBody = shapedQueryExpression.ShaperExpression;
         shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
@@ -90,7 +108,36 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             Expression.Constant(shapedQueryExpression.ResultCardinality));
     }
 
-    private static QueryingEnumerable<TResult> TranslateAndExecuteQuery<TSource, TResult>(
+    private static QueryingEnumerable<TDocument, TDocument> TranslateAndExecuteUnshapedQuery<TSource, TDocument>(
+        QueryContext queryContext,
+        IReadOnlyEntityType entityType,
+        MongoQueryExpression queryExpression,
+        Type contextType,
+        bool threadSafetyChecksEnabled,
+        ResultCardinality resultCardinality)
+    {
+        var mongoQueryContext = (MongoQueryContext)queryContext;
+        string collectionName = queryExpression.CollectionExpression.CollectionName;
+        var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
+            .AsQueryable().As(new EntitySerializer<TSource>(entityType));
+
+        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
+        var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
+
+        IEnumerable<TDocument> documents = resultCardinality == ResultCardinality.Enumerable
+            ? source.Provider.CreateQuery<TDocument>(translatedQuery)
+            : new[] {source.Provider.Execute<TDocument>(translatedQuery)};
+
+        return new QueryingEnumerable<TDocument, TDocument>(
+            mongoQueryContext,
+            documents,
+            (_, e) => e,
+            contextType,
+            false,
+            threadSafetyChecksEnabled);
+    }
+
+    private static QueryingEnumerable<BsonDocument, TResult> TranslateAndExecuteQuery<TSource, TResult>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
         MongoQueryExpression queryExpression,
@@ -104,15 +151,15 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         string collectionName = queryExpression.CollectionExpression.CollectionName;
         var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
             .AsQueryable().As(new EntitySerializer<TSource>(entityType));
-        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
 
+        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
 
         IEnumerable<BsonDocument> documents = resultCardinality == ResultCardinality.Enumerable
             ? source.Provider.CreateQuery<BsonDocument>(translatedQuery)
             : new[] {source.Provider.Execute<BsonDocument>(translatedQuery)};
 
-        return new QueryingEnumerable<TResult>(
+        return new QueryingEnumerable<BsonDocument, TResult>(
             mongoQueryContext,
             documents,
             shaper,
@@ -125,4 +172,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         .GetTypeInfo()
         .DeclaredMethods
         .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
+
+    private static readonly MethodInfo __translateAndExecuteUnshapedQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
+        .GetTypeInfo()
+        .DeclaredMethods
+        .Single(m => m.Name == nameof(TranslateAndExecuteUnshapedQuery));
 }

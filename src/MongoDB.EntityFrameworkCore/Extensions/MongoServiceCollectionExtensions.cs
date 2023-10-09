@@ -104,6 +104,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IValueGeneratorSelector, MongoValueGeneratorSelector>()
             .TryAdd<IQueryContextFactory, MongoQueryContextFactory>()
             .TryAdd<ITypeMappingSource, MongoTypeMappingSource>()
+            .TryAdd<IQueryTranslationPreprocessorFactory, MongoQueryTranslationPreprocessorFactory>()
             .TryAdd<IQueryCompilationContextFactory, MongoQueryCompilationContextFactory>()
             .TryAdd<IQueryTranslationPostprocessorFactory, MongoQueryTranslationPostprocessorFactory>()
             .TryAdd<IQueryableMethodTranslatingExpressionVisitorFactory, MongoQueryableMethodTranslatingExpressionVisitorFactory>()
