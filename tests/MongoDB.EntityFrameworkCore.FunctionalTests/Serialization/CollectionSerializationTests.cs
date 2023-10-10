@@ -84,12 +84,12 @@ public class CollectionSerializationTests : BaseSerializationTests
     [Fact]
     public void Missing_string_array_defaults_to_null()
     {
-        var collection = SetupIdOnlyCollection<IntArrayEntity>();
+        var collection = SetupIdOnlyCollection<StringArrayEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
         var result = db.Entitites.FirstOrDefault();
         Assert.NotNull(result);
-        Assert.Null(result.anIntArray);
+        Assert.Null(result.aStringArray);
     }
 
     class StringArrayEntity : BaseIdEntity

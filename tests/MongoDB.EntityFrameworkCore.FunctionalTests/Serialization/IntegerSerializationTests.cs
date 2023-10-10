@@ -287,12 +287,12 @@ public class IntegerSerializationTests : BaseSerializationTests
     [Theory]
     [InlineData(0)]
     [InlineData(67)]
-    [InlineData(-67)]
-    [InlineData(128)]
+    [InlineData(-128)]
+    [InlineData(127)]
     [InlineData(null)]
     public void Nullable_sbyte_round_trips(int? expectedInt)
     {
-        sbyte? expected = expectedInt == null ? null : (sbyte)expectedInt;
+        sbyte? expected = expectedInt == null ? null : Convert.ToSByte(expectedInt);
         var collection = TempDatabase.CreateTemporaryCollection<NullableSByteEntity>(nameof(Nullable_sbyte_round_trips) + expected);
 
         {

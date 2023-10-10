@@ -27,6 +27,7 @@ public class GuidSerializationTests : BaseSerializationTests
     [InlineData("305b397d-98d3-4f4e-aff6-5e4693d59f6a")]
     [InlineData("d04381cb-2988-50f0-8bca-43fbc99146ad")]
     [InlineData("00ccebbc-13e0-7000-8b18-6150ad2d0c01")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
     public void Guid_round_trips(string expectedString)
     {
         Guid expected = Guid.Parse(expectedString);
@@ -65,6 +66,7 @@ public class GuidSerializationTests : BaseSerializationTests
     [InlineData("305b397d-98d3-4f4e-aff6-5e4693d59f6a")]
     [InlineData("d04381cb-2988-50f0-8bca-43fbc99146ad")]
     [InlineData("00ccebbc-13e0-7000-8b18-6150ad2d0c01")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
     [InlineData(null)]
     public void Nullable_guid_round_trips(string? expectedString)
     {

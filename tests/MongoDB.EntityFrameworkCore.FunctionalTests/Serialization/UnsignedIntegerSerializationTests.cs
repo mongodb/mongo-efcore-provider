@@ -205,11 +205,10 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
 
     [Theory]
     [InlineData(7890)]
-    [InlineData(-123)]
     [InlineData(0)]
     public void Nullable_ushort_round_trips(int? expectedInt)
     {
-        ushort? expected = expectedInt == null ? null : (ushort)expectedInt;
+        ushort? expected = expectedInt == null ? null : Convert.ToUInt16(expectedInt);
         var collection =
             TempDatabase.CreateTemporaryCollection<NullableShortEntity>(nameof(Nullable_ushort_round_trips) + expected);
 
@@ -286,7 +285,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_byte_round_trips(int? expectedInt)
     {
-        byte? expected = expectedInt == null ? null : (byte)expectedInt;
+        byte? expected = expectedInt == null ? null : Convert.ToByte(expectedInt);
         var collection = TempDatabase.CreateTemporaryCollection<NullableByteEntity>(nameof(Nullable_byte_round_trips) + expected);
 
         {

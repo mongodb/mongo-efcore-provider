@@ -20,7 +20,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 public class StringSerializationTests : BaseSerializationTests
 {
     private static long __collectionCounter;
-    private static readonly object __collectionCounterLock = new();
 
     public StringSerializationTests(TemporaryDatabaseFixture tempDatabase)
         : base(tempDatabase)
@@ -35,9 +34,9 @@ public class StringSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void String_round_trips(string? expected)
     {
-        IMongoCollection<StringEntity> collection;
-        lock (__collectionCounterLock)
-            collection = TempDatabase.CreateTemporaryCollection<StringEntity>(nameof(String_round_trips) + __collectionCounter++);
+        long counter = Interlocked.Increment(ref __collectionCounter);
+        IMongoCollection<StringEntity> collection =
+            TempDatabase.CreateTemporaryCollection<StringEntity>(nameof(String_round_trips) + counter);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
