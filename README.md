@@ -1,3 +1,105 @@
-# MongoDB Entity Framework Core Provider
+# MongoDB Entity Framework Core Provider Preview
 
-This project is currently under active development and is not suitable for any scenarios yet.
+This project is currently in preview and not recommended for production use yet.
+
+## Getting Started
+
+Setup a DbContext with your desired entities and configuration
+
+```csharp
+internal class PlanetDbContext : DbContext
+{
+    public DbSet<Planet> Planets { get; init; }
+
+    public static PlanetDbContext Create(IMongoDatabase database) =>
+        new(new DbContextOptionsBuilder<PlanetDbContext>()
+            .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)
+            .Options);
+
+    public PlanetDbContext(DbContextOptions options)
+        : base(options)
+    {
+    }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<Planet>().ToCollection("planets");
+    }
+}
+```
+
+And then to get going with the DbContext
+
+```csharp
+var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI");
+var mongoClient = new MongoClient(mongoConnectionString);
+var db = PlanetDbContext.Create(mongoClient.GetDatabase("planets"));
+```
+
+## Limitations & roadmap
+
+This preview has a number of limitations at this time. Please consider the following support matrix.
+
+### Supported in Preview 1
+
+- Querying with Where, Find, First, Single, OrderBy, ThenBy, Skip, Take
+- Top-level aggregates of Any, Count, LongCount
+- Mapping properties to BSON Element Names using `[Column]` attribute or `HasElementName("name")` method
+- Mapping entities to collections using `[Table("name")]` attribute or `ToCollection("name")` method
+- Composite keys
+- Properties with typical CLR types (int, string, Guid, decimal), Mongo types (ObjectId, Decimal128) and "value" objects
+- Properties containing arrays and lists of simple CLR types as well as "value" objects
+
+### Not supported but considering for next release
+
+- Select projections
+- Sum, Average, Min, Max etc.
+- Value converters
+- Type discriminators
+- Logging
+- Transactions
+- Mapping configuration options
+
+### Not supported but considering for future releases
+
+- GroupBy operations
+- Properties with dictionary type
+- Binary/byte array properties
+- Keyless entity types
+- Additional CLR types (DateOnly, TimeOnly etc).
+- EF shadow properties
+
+### Not supported out-of-scope features
+
+- Schema migrations
+- Database-first & model-first
+- Foreign keys and navigation traversal
+- Joins
+- Alternate keys
+- Document (table) splitting
+- Temporal tables
+- Spacial data
+- Timeseries
+- Atlas search
+
+## Documentation
+
+- [MongoDB](https://www.mongodb.com/docs)
+- Documentation
+
+## Questions/Bug Reports
+
+- [Forums](https://www.mongodb.com/community/forums/)
+- [Jira](https://jira.mongodb.org/projects/EF/)
+
+If you’ve identified a security vulnerability in a driver or any other MongoDB project, please report it according to the [instructions here](https://www.mongodb.com/docs/manual/tutorial/create-a-vulnerability-report).
+
+## Contributing
+
+Please see our [guidelines](CONTRIBUTING.md) for contributing to the driver.
+
+### Maintainers:
+* Damien Guard              damien.guard@mongodb.com
+* Oleksandr Poliakov        oleksandr.poliakov@mongodb.com
+* Robert Stam               robert@mongodb.com
