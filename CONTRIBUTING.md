@@ -1,4 +1,4 @@
-## Contributing to the EF Core provider
+## Contributing to the Mongo EF Core Provider
 
 ### Bugfixes
 
