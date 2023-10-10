@@ -18,7 +18,8 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
+[XUnitCollection("UpdateTests")]
+public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly TemporaryDatabaseFixture _tempDatabase;
 
@@ -107,7 +108,7 @@ public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void Entity_update_tests(Type valueType, object initialValue, object updatedValue)
     {
         var methodInfo = this.GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
-        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { initialValue, updatedValue });
+        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] {initialValue, updatedValue});
     }
 
     private enum TestEnum
@@ -118,11 +119,12 @@ public sealed class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
+        var collection =
+            _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            var entity = new Entity<TValue> { _id = ObjectId.GenerateNewId(), Value = initialValue };
+            var entity = new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = initialValue};
             dbContext.Entitites.Add(entity);
             dbContext.SaveChanges();
             entity.Value = updatedValue;

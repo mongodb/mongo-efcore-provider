@@ -18,7 +18,8 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture>
+[XUnitCollection("MappingTests")]
+public class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly Random _random = new();
     private readonly TemporaryDatabaseFixture _tempDatabase;
@@ -445,18 +446,18 @@ public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture
     [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue0)]
     [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue1)]
     [InlineData(typeof(int[]), null)]
-    [InlineData(typeof(int[]), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(int[]), new[] {-5, 0, 128, 10})]
     // TODO: investigate and fix IEnumerable property support
     // [InlineData(typeof(IEnumerable<int>), new[] { -5, 0, 128, 10 })]
     [InlineData(typeof(IList<int>), null)]
-    [InlineData(typeof(IList<int>), new[] { -5, 0, 128, 10 })]
-    [InlineData(typeof(ICollection<int>), new[] { -5, 0, 128, 10 })]
-    [InlineData(typeof(IReadOnlyList<int>), new[] { -5, 0, 128, 10 })]
-    [InlineData(typeof(List<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(IList<int>), new[] {-5, 0, 128, 10})]
+    [InlineData(typeof(ICollection<int>), new[] {-5, 0, 128, 10})]
+    [InlineData(typeof(IReadOnlyList<int>), new[] {-5, 0, 128, 10})]
+    [InlineData(typeof(List<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(string[]), null)]
-    [InlineData(typeof(string[]), new[] { "one", "two" })]
+    [InlineData(typeof(string[]), new[] {"one", "two"})]
     [InlineData(typeof(IList<string>), null)]
-    [InlineData(typeof(List<string>), new[] { "one", "two" })]
+    [InlineData(typeof(List<string>), new[] {"one", "two"})]
     public void Type_mapping_test(Type valueType, object? value)
     {
         if (value != null && !value.GetType().IsAssignableTo(valueType))
@@ -465,7 +466,7 @@ public sealed class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture
         }
 
         var methodInfo = this.GetType().GetMethod(nameof(ClrTypeMappingTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
-        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { value });
+        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] {value});
     }
 
     private enum TestEnum

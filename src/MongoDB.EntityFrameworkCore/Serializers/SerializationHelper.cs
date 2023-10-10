@@ -1,17 +1,17 @@
 /* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 using System;
 using System.Collections.Generic;
@@ -96,7 +96,7 @@ internal static class SerializationHelper
         var serializer = CreateTypeSerializer(property.ClrType);
         if (property.IsPrimaryKey() && property.DeclaringEntityType.FindPrimaryKey()?.Properties.Count > 1)
         {
-            return BsonSerializationInfo.CreateWithPath(new[] { "_id", property.GetElementName()}, serializer, property.ClrType);
+            return BsonSerializationInfo.CreateWithPath(new[] {"_id", property.GetElementName()}, serializer, property.ClrType);
         }
 
         return new BsonSerializationInfo(property.GetElementName(), CreateTypeSerializer(property.ClrType), property.ClrType);
@@ -104,7 +104,7 @@ internal static class SerializationHelper
 
     private static IBsonSerializer CreateTypeSerializer(Type type)
     {
-        var isNullable = type.IsNullableValueType();
+        bool isNullable = type.IsNullableValueType();
         if (isNullable)
         {
             type = Nullable.GetUnderlyingType(type);
@@ -126,6 +126,7 @@ internal static class SerializationHelper
             var t when t == typeof(int) => Int32Serializer.Instance,
             var t when t == typeof(long) => Int64Serializer.Instance,
             var t when t == typeof(ObjectId) => ObjectIdSerializer.Instance,
+            var t when t == typeof(TimeSpan) => new TimeSpanSerializer(),
             var t when t == typeof(sbyte) => new SByteSerializer(),
             var t when t == typeof(float) => new SingleSerializer(),
             var t when t == typeof(string) => new StringSerializer(),
@@ -135,7 +136,7 @@ internal static class SerializationHelper
             var t when t == typeof(Decimal128) => new Decimal128Serializer(),
             var t when t.IsEnum => EnumSerializer.Create(t),
             {IsArray: true} a => CreateArraySerializer(a.GetElementType()),
-            {IsGenericType:true} l => CreateListSerializer(l.TryGetItemType(typeof(IEnumerable<>))),
+            {IsGenericType: true} l => CreateListSerializer(l.TryGetItemType(typeof(IEnumerable<>))),
             _ => throw new NotSupportedException($"Cannot resolve Serializer for '{type.FullName}' type."),
         };
 
@@ -155,16 +156,21 @@ internal static class SerializationHelper
 
     private static T? ReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo)
     {
-        // TODO: decide what to do with non-existing elements
         BsonValue rawValue;
         if (elementSerializationInfo.ElementPath == null)
         {
-            rawValue = document.GetValue(elementSerializationInfo.ElementName);
+            if (!document.TryGetValue(elementSerializationInfo.ElementName, out rawValue))
+            {
+                if (!typeof(T).IsNullableType())
+                    throw new KeyNotFoundException();
+
+                return default; // Default missing values if they are nullable
+            }
         }
         else
         {
             rawValue = document;
-            foreach (var node in elementSerializationInfo.ElementPath)
+            foreach (string? node in elementSerializationInfo.ElementPath)
             {
                 rawValue = ((BsonDocument)rawValue)[node];
                 if (rawValue == null)

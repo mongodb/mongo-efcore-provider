@@ -18,6 +18,7 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
+[XUnitCollection(nameof(SampleGuidesFixture))]
 public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly TemporaryDatabaseFixture _tempDatabase;
@@ -184,7 +185,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_with_two_owned_entities_creates()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
-        var expected = new PersonWithTwoLocations { name = "Elizabeth", first = __location2, second = __location1};
+        var expected = new PersonWithTwoLocations {name = "Elizabeth", first = __location2, second = __location1};
 
         {
             var db = SingleEntityDbContext.Create(collection);
