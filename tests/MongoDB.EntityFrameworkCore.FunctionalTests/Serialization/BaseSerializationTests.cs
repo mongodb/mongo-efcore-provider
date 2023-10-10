@@ -19,6 +19,7 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
+[XUnitCollection("SerializationTests")]
 public abstract class BaseSerializationTests : IClassFixture<TemporaryDatabaseFixture>
 {
     protected readonly TemporaryDatabaseFixture TempDatabase;

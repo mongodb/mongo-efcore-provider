@@ -24,7 +24,8 @@ using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
-public sealed class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatabaseFixture>
+[XUnitCollection("ConventionsTests")]
+public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly TemporaryDatabaseFixture _tempDatabase;
 
@@ -52,7 +53,9 @@ public sealed class CamelCasePropertyNameConventionTests : IClassFixture<Tempora
 
         protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
         {
-            configurationBuilder.Conventions.Add(serviceProvider => new CamelCasePropertyNameConvention(serviceProvider.GetRequiredService<ProviderConventionSetBuilderDependencies>()));
+            configurationBuilder.Conventions.Add(serviceProvider =>
+                new CamelCasePropertyNameConvention(serviceProvider
+                    .GetRequiredService<ProviderConventionSetBuilderDependencies>()));
         }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -76,8 +79,7 @@ public sealed class CamelCasePropertyNameConventionTests : IClassFixture<Tempora
 
     class RemappedEntity
     {
-        [Column("_id")]
-        public ObjectId _id { get; set; }
+        [Column("_id")] public ObjectId _id { get; set; }
 
         public string unchanged { get; set; }
         public string alsoUnchanged { get; set; }

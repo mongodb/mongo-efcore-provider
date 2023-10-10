@@ -19,7 +19,8 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
+[XUnitCollection("UpdateTests")]
+public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private static readonly Random __random = new();
     private readonly TemporaryDatabaseFixture _tempDatabase;
@@ -189,20 +190,19 @@ public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [InlineData(typeof(TestEnum?), null)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue0)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
-
     [InlineData(typeof(int[]), null)]
-    [InlineData(typeof(int[]), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(int[]), new[] {-5, 0, 128, 10})]
     // TODO: investigate and fix IEnumerable property support
     // [InlineData(typeof(IEnumerable<int>), new[] { -5, 0, 128, 10 })]
     [InlineData(typeof(IList<int>), null)]
-    [InlineData(typeof(IList<int>), new[] { -5, 0, 128, 10 })]
-    [InlineData(typeof(ICollection<int>), new[] { -5, 0, 128, 10 })]
-    [InlineData(typeof(IReadOnlyList<int>), new[] { -5, 0, 128, 10 })]
-    [InlineData(typeof(List<int>), new[] { -5, 0, 128, 10 })]
+    [InlineData(typeof(IList<int>), new[] {-5, 0, 128, 10})]
+    [InlineData(typeof(ICollection<int>), new[] {-5, 0, 128, 10})]
+    [InlineData(typeof(IReadOnlyList<int>), new[] {-5, 0, 128, 10})]
+    [InlineData(typeof(List<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(string[]), null)]
-    [InlineData(typeof(string[]), new[] { "one", "two" })]
+    [InlineData(typeof(string[]), new[] {"one", "two"})]
     [InlineData(typeof(IList<string>), null)]
-    [InlineData(typeof(List<string>), new[] { "one", "two" })]
+    [InlineData(typeof(List<string>), new[] {"one", "two"})]
     public void Entity_add_tests(Type valueType, object? value)
     {
         if (value != null && !value.GetType().IsAssignableTo(valueType))
@@ -211,7 +211,7 @@ public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
         }
 
         var methodInfo = this.GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
-        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] { value });
+        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] {value});
     }
 
     private enum TestEnum
@@ -226,11 +226,7 @@ public sealed class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(new Entity<TValue>
-            {
-                _id = ObjectId.GenerateNewId(),
-                Value = value
-            });
+            dbContext.Entitites.Add(new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = value});
             dbContext.SaveChanges();
         }
 

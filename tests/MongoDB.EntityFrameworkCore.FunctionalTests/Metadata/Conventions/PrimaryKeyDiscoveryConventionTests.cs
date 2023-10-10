@@ -19,7 +19,8 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
-public sealed class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDatabaseFixture>
+[XUnitCollection("ConventionsTests")]
+public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly TemporaryDatabaseFixture _tempDatabase;
 
@@ -44,8 +45,7 @@ public sealed class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<Temp
 
     class ColumnAttributedIdProperty
     {
-        [Column("_id")]
-        public ObjectId MyPrimaryKey { get; set; }
+        [Column("_id")] public ObjectId MyPrimaryKey { get; set; }
 
         public string name { get; set; }
     }
@@ -65,7 +65,6 @@ public sealed class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<Temp
     [Fact]
     public void PrimaryKeyDiscovery_discovers_underscore_id_named_property()
     {
-
         var collection = _tempDatabase.CreateTemporaryCollection<UnderscoreIdNamedProperty>();
 
         var id = ObjectId.GenerateNewId();
@@ -77,13 +76,16 @@ public sealed class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<Temp
             dbContext.SaveChanges();
         }
 
-        { // Find with CSharpDriver
-            var actual = collection.Database.GetCollection<UnderscoreIdNamedProperty>(collection.CollectionNamespace.CollectionName);
+        {
+            // Find with CSharpDriver
+            var actual = collection.Database.GetCollection<UnderscoreIdNamedProperty>(collection.CollectionNamespace
+                .CollectionName);
             var directFound = actual.Find(f => f._id == id).Single();
             Assert.Equal(name, directFound.name);
         }
 
-        { // Find with EF
+        {
+            // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection);
             var found = dbContext.Entitites.Single(f => f._id == id);
             Assert.Equal(name, found.name);
@@ -104,13 +106,15 @@ public sealed class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<Temp
             dbContext.SaveChanges();
         }
 
-        { // Find with CSharpDriver
+        {
+            // Find with CSharpDriver
             var actual = collection.Database.GetCollection<IdNamedProperty>(collection.CollectionNamespace.CollectionName);
             var directFound = actual.Find(f => f.Id == id).Single();
             Assert.Equal(name, directFound.name);
         }
 
-        { // Find with EF
+        {
+            // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection);
             var found = dbContext.Entitites.Single(f => f.Id == id);
             Assert.Equal(name, found.name);
@@ -132,13 +136,16 @@ public sealed class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<Temp
             dbContext.SaveChanges();
         }
 
-        { // Find with CSharpDriver
-            var actual = collection.Database.GetCollection<UnderscoreIdNamedProperty>(collection.CollectionNamespace.CollectionName);
+        {
+            // Find with CSharpDriver
+            var actual = collection.Database.GetCollection<UnderscoreIdNamedProperty>(collection.CollectionNamespace
+                .CollectionName);
             var found = actual.Find(f => f._id == id).Single();
             Assert.Equal(name, found.name);
         }
 
-        { // Find with EF
+        {
+            // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection);
             var found = dbContext.Entitites.Single(f => f.MyPrimaryKey == id);
             Assert.Equal(name, found.name);
@@ -160,13 +167,15 @@ public sealed class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<Temp
             dbContext.SaveChanges();
         }
 
-        { // Find with CSharpDriver
+        {
+            // Find with CSharpDriver
             var actual = collection.Database.GetCollection<StoredProduct>(collection.CollectionNamespace.CollectionName);
             var found = actual.Find(f => f._id == id).Single();
             Assert.Equal(name, found.name);
         }
 
-        { // Find with EF
+        {
+            // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection);
             var found = dbContext.Entitites.Single(f => f.ProductId == id);
             Assert.Equal(name, found.name);

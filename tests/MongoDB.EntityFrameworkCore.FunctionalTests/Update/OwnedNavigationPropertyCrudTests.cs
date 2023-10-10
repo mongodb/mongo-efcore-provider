@@ -18,6 +18,7 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
+[XUnitCollection("UpdateTests")]
 public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly TemporaryDatabaseFixture _tempDatabase;
@@ -34,7 +35,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity { Id = 1, Name = "John" };
+            var person = new PersonWithCity {Id = 1, Name = "John"};
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -58,14 +59,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {
-                Id = 1,
-                Name = "John",
-                City = new City
-                {
-                    Id = 1,
-                    Name = "New York"
-                }};
+            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -89,14 +83,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {
-                Id = 1,
-                Name = "John",
-                City = new City
-                {
-                    Id = 1,
-                    Name = "New York"
-                }};
+            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -123,19 +110,12 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {
-                Id = 1,
-                Name = "John",
-                City = new City
-                {
-                    Id = 1,
-                    Name = "New York"
-                }};
+            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
 
             db.Entitites.Add(person);
             db.SaveChanges();
 
-            person.City = new City { Id = 2, Name = "Washington"};
+            person.City = new City {Id = 2, Name = "Washington"};
             db.SaveChanges();
         }
 
@@ -157,14 +137,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {
-                Id = 1,
-                Name = "John",
-                City = new City
-                {
-                    Id = 1,
-                    Name = "New York"
-                }};
+            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -191,7 +164,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCities { Id = 1, Name = "John" };
+            var person = new PersonWithCities {Id = 1, Name = "John"};
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -215,21 +188,12 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCities {
+            var person = new PersonWithCities
+            {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {
-                    new City
-                    {
-                        Id = 1,
-                        Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2,
-                        Name = "Washington"
-                    }
-                }};
+                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -241,7 +205,9 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Project(Builders<PersonWithCities>.Projection.As<BsonDocument>())
                 .Single();
 
-            var expected = BsonDocument.Parse("{ _id : 1, Name: 'John', Cities: [{ Id: 1, Name: 'New York' }, { Id: 2, Name: 'Washington' }] }");
+            var expected =
+                BsonDocument.Parse(
+                    "{ _id : 1, Name: 'John', Cities: [{ Id: 1, Name: 'New York' }, { Id: 2, Name: 'Washington' }] }");
             Assert.Equivalent(expected, actual);
         }
     }
@@ -253,21 +219,12 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCities {
+            var person = new PersonWithCities
+            {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {
-                    new City
-                    {
-                        Id = 1,
-                        Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2,
-                        Name = "Washington"
-                    }
-                }};
+                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+            };
 
 
             db.Entitites.Add(person);
@@ -295,26 +252,17 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCities {
+            var person = new PersonWithCities
+            {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {
-                    new City
-                    {
-                        Id = 1,
-                        Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2,
-                        Name = "Washington"
-                    }
-                }};
+                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
 
-            person.Cities = person.Cities.Concat(new List<City> { new City { Id = 3, Name = "Denver" } }).ToList();
+            person.Cities = person.Cities.Concat(new List<City> {new City {Id = 3, Name = "Denver"}}).ToList();
             db.SaveChanges();
         }
 
@@ -324,7 +272,9 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Project(Builders<PersonWithCities>.Projection.As<BsonDocument>())
                 .Single();
 
-            var expected = BsonDocument.Parse("{ _id : 1, Name: 'John',  Cities: [{ Id: 1, Name: 'New York' }, { Id: 2, Name: 'Washington' }, { Id: 3, Name: 'Denver' }] }");
+            var expected =
+                BsonDocument.Parse(
+                    "{ _id : 1, Name: 'John',  Cities: [{ Id: 1, Name: 'New York' }, { Id: 2, Name: 'Washington' }, { Id: 3, Name: 'Denver' }] }");
             Assert.Equivalent(expected, actual);
         }
     }
@@ -336,21 +286,12 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCities {
+            var person = new PersonWithCities
+            {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {
-                    new City
-                    {
-                        Id = 1,
-                        Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2,
-                        Name = "Washington"
-                    }
-                }};
+                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -377,21 +318,12 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCities {
+            var person = new PersonWithCities
+            {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {
-                    new City
-                    {
-                        Id = 1,
-                        Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2,
-                        Name = "Washington"
-                    }
-                }};
+                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -406,7 +338,9 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Project(Builders<PersonWithCities>.Projection.As<BsonDocument>())
                 .Single();
 
-            var expected = BsonDocument.Parse("{ _id : 1, Name: 'John',  Cities: [{ Id: 1, Name: 'Denver' }, { Id: 2, Name: 'Washington' }] }");
+            var expected =
+                BsonDocument.Parse(
+                    "{ _id : 1, Name: 'John',  Cities: [{ Id: 1, Name: 'Denver' }, { Id: 2, Name: 'Washington' }] }");
             Assert.Equivalent(expected, actual);
         }
     }

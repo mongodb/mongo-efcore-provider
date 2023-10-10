@@ -19,6 +19,7 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
+[XUnitCollection("MappingTests")]
 public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly TemporaryDatabaseFixture _tempDatabase;
@@ -76,13 +77,15 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
             dbContext.SaveChanges();
         }
 
-        { // Find with CSharpDriver
+        {
+            // Find with CSharpDriver
             var actual = collection.Database.GetCollection<StoredKeyElement>(collection.CollectionNamespace.CollectionName);
             var found = actual.Find(f => f._id == id).Single();
             Assert.Equal(expectedName, found.Name);
         }
 
-        { // Find with EF
+        {
+            // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
             var found = dbContext.Entitites.Single(f => f.PrimaryKey == id);
             Assert.Equal(expectedName, found.Name);
@@ -111,14 +114,16 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
             dbContext.SaveChanges();
         }
 
-        { // Find with CSharpDriver
+        {
+            // Find with CSharpDriver
             var actual = collection.Database.GetCollection<StoredNonKeyElements>(collection.CollectionNamespace.CollectionName);
             var found = actual.Find(f => f._id == id).Single();
             Assert.Equal(expectedFirstName, found.forename);
             Assert.Equal(expectedLastName, found.surname);
         }
 
-        { // Find with EF
+        {
+            // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
             var found = dbContext.Entitites.Single(f => f._id == id);
             Assert.Equal(expectedFirstName, found.FirstName);

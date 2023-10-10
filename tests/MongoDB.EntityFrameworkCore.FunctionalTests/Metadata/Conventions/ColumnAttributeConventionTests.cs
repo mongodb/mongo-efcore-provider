@@ -19,7 +19,8 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
-public sealed class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFixture>
+[XUnitCollection("ConventionsTests")]
+public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFixture>
 {
     private readonly TemporaryDatabaseFixture _tempDatabase;
 
@@ -39,14 +40,12 @@ public sealed class ColumnAttributeConventionTests : IClassFixture<TemporaryData
     {
         public ObjectId _id { get; set; }
 
-        [Column("name")]
-        public string RemapThisToName { get; set; }
+        [Column("name")] public string RemapThisToName { get; set; }
     }
 
     class KeyRemappingEntity
     {
-        [Column("_id")]
-        public ObjectId _id { get; set; }
+        [Column("_id")] public ObjectId _id { get; set; }
 
         public string name { get; set; }
     }

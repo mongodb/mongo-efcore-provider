@@ -16,7 +16,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
-using XUnitCollection = Xunit.CollectionAttribute;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
