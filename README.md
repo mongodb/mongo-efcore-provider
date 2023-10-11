@@ -88,7 +88,7 @@ This preview has a number of limitations at this time. Please consider the follo
 ## Documentation
 
 - [MongoDB](https://www.mongodb.com/docs)
-- Documentation
+- [Documentation](https://www.mongodb.com/docs/entity-framework/current/)
 
 ## Questions/Bug Reports
 
