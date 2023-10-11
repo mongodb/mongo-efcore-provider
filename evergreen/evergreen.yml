@@ -235,7 +235,7 @@ functions:
   packages-pack:
     - command: shell.exec
       params:
-        working_dir: mongo-csharp-driver
+        working_dir: mongo-efcore-provider
         script: |
           ${PREPARE_SHELL}
           . ./evergreen/packages-pack.sh
@@ -243,7 +243,7 @@ functions:
   packages-push:
     - command: shell.exec
       params:
-        working_dir: mongo-csharp-driver
+        working_dir: mongo-efcore-provider
         env:
           PACKAGES_SOURCE: ${PACKAGES_SOURCE}
           PACKAGES_SOURCE_KEY: ${PACKAGES_SOURCE_KEY}
