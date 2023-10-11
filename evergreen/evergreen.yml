@@ -384,6 +384,20 @@ axes:
         variables:
           DRIVER_VERSION: "2.22.0-dev1"
 
+task_groups:
+  - name: package-release
+    setup_task:
+      - func: fetch-source
+        vars:
+          PACKAGE_TARGET: "release"
+      - func: prepare-resources
+      - func: fix-absolute-paths
+      - func: make-files-executable
+      - func: install-dependencies
+    tasks:
+      - packages-create
+      - packages-push
+
 buildvariants:
 - matrix_name: "tests"
   matrix_spec: { version: ["4.4", "5.0", "6.0", "7.0", "latest"], os: "*", driver: "*" }
@@ -406,5 +420,4 @@ buildvariants:
   run_on: ubuntu1804-small
   tags: ["package-release"]
   tasks:
-    - name: packages-create
-    - name: packages-push
+    - name: package-release
