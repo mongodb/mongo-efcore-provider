@@ -45,6 +45,10 @@ functions:
             CURRENT_VERSION=latest
           fi
 
+          if [ "${PACKAGE_TARGET}" != "" ]; then
+              PACKAGE_VERSION=$(PACKAGE_TARGET="${PACKAGE_TARGET}" sh ./evergreen/packages-version.sh)
+           fi
+
           export DRIVERS_TOOLS="$(pwd)/../drivers-tools"
           export DOTNET_SDK_PATH="$(pwd)/../.dotnet"
 
@@ -66,6 +70,7 @@ functions:
           MONGO_ORCHESTRATION_HOME: "$MONGO_ORCHESTRATION_HOME"
           MONGODB_BINARIES: "$MONGODB_BINARIES"
           PROJECT_DIRECTORY: "$PROJECT_DIRECTORY"
+          PACKAGE_VERSION: "$PACKAGE_VERSION"
           DOTNET_SDK_PATH: "$DOTNET_SDK_PATH"
           PREPARE_SHELL: |
             set -o errexit
@@ -74,6 +79,7 @@ functions:
             export MONGO_ORCHESTRATION_HOME="$MONGO_ORCHESTRATION_HOME"
             export MONGODB_BINARIES="$MONGODB_BINARIES"
             export PROJECT_DIRECTORY="$PROJECT_DIRECTORY"
+            export PACKAGE_VERSION="$PACKAGE_VERSION"
             export DOTNET_SDK_PATH="$DOTNET_SDK_PATH"
             export TMPDIR="$MONGO_ORCHESTRATION_HOME/db"
             export PATH="$DOTNET_SDK_PATH:$MONGODB_BINARIES:$PATH"
@@ -226,6 +232,61 @@ functions:
             chmod +x $i
           done
 
+  packages-pack:
+    - command: shell.exec
+      params:
+        working_dir: mongo-csharp-driver
+        script: |
+          ${PREPARE_SHELL}
+          . ./evergreen/packages-pack.sh
+
+  packages-push:
+    - command: shell.exec
+      params:
+        working_dir: mongo-csharp-driver
+        env:
+          PACKAGES_SOURCE: ${PACKAGES_SOURCE}
+          PACKAGES_SOURCE_KEY: ${PACKAGES_SOURCE_KEY}
+        script: |
+          ${PREPARE_SHELL}
+          . ./evergreen/packages-push.sh
+
+  upload-package:
+    - command: s3.put
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        local_file: ${PROJECT_DIRECTORY}/build/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
+        remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
+        bucket: ${aws_upload_bucket}
+        permissions: public-read
+        content_type: ${content_type|application/octet-stream}
+    - command: s3.put
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        local_file: ${PROJECT_DIRECTORY}/build/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
+        remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
+        bucket: ${aws_upload_bucket}
+        permissions: public-read
+        content_type: ${content_type|application/octet-stream}
+
+  download-package:
+    - command: s3.get
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        local_file: ${PROJECT_DIRECTORY}/build/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
+        remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
+        bucket: ${aws_upload_bucket}
+    - command: s3.get
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        local_file: ${PROJECT_DIRECTORY}/build/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
+        remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
+        bucket: ${aws_upload_bucket}
+
 pre:
   - func: fetch-source
   - func: prepare-resources
@@ -245,6 +306,23 @@ tasks:
       - func: bootstrap-mongo-orchestration
       - func: set-github-auth
       - func: run-tests
+
+  - name: packages-create
+    commands:
+      - func: packages-pack
+      - func: upload-package
+        vars:
+          PACKAGE_ID: "MongoDB.EntityFrameworkCore"
+
+  - name: packages-push
+    commands:
+      - func: download-package
+        vars:
+          PACKAGE_ID: "MongoDB.EntityFrameworkCore"
+      - func: packages-push
+        vars:
+          PACKAGES_SOURCE: "https://api.nuget.org/v3/index.json"
+          PACKAGES_SOURCE_KEY: ${nuget_api_key}
 
 axes:
   - id: version
@@ -321,3 +399,12 @@ buildvariants:
   tags: ["tests-variant"]
   tasks:
     - name: test-net70
+
+- name: package-pack
+  git_tag_only: true
+  display_name: "Package Release"
+  run_on: ubuntu1804-small
+  tags: ["package-release"]
+  tasks:
+    - name: packages-create
+    - name: packages-push
