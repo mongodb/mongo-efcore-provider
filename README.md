@@ -37,12 +37,13 @@ var mongoClient = new MongoClient(mongoConnectionString);
 var db = PlanetDbContext.Create(mongoClient.GetDatabase("planets"));
 ```
 
-## Limitations & roadmap
+## Limitations & Roadmap
 
 This preview has a number of limitations at this time. Please consider the following support matrix.
 
 ### Supported in Preview 1
 
+- Entity Framework Core 7 & .NET 6 or later
 - Querying with Where, Find, First, Single, OrderBy, ThenBy, Skip, Take
 - Top-level aggregates of Any, Count, LongCount
 - Mapping properties to BSON Element Names using `[Column]` attribute or `HasElementName("name")` method
@@ -63,6 +64,7 @@ This preview has a number of limitations at this time. Please consider the follo
 
 ### Not supported but considering for future releases
 
+- Entity Framework Core 8
 - GroupBy operations
 - Properties with dictionary type
 - Binary/byte array properties
