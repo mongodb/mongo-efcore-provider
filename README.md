@@ -43,7 +43,7 @@ This preview has a number of limitations at this time. Please consider the follo
 
 ### Supported in Preview 1
 
-- Entity Framework Core 7 & .NET 6 or later
+- Entity Framework Core 7 & .NET 7 or later
 - Querying with Where, Find, First, Single, OrderBy, ThenBy, Skip, Take
 - Top-level aggregates of Any, Count, LongCount
 - Mapping properties to BSON Element Names using `[Column]` attribute or `HasElementName("name")` method
