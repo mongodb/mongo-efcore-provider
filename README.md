@@ -64,13 +64,13 @@ This preview has a number of limitations at this time. Please consider the follo
 
 ### Not supported but considering for future releases
 
-- Entity Framework Core 8
-- GroupBy operations
 - Properties with dictionary type
 - Binary/byte array properties
 - Keyless entity types
+- Entity Framework Core 8
 - Additional CLR types (DateOnly, TimeOnly etc).
 - EF shadow properties
+- GroupBy operations
 - Joins/includes
 
 ### Not supported out-of-scope features
