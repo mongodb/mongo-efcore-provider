@@ -71,13 +71,13 @@ This preview has a number of limitations at this time. Please consider the follo
 - Keyless entity types
 - Additional CLR types (DateOnly, TimeOnly etc).
 - EF shadow properties
+- Joins/includes
 
 ### Not supported out-of-scope features
 
 - Schema migrations
 - Database-first & model-first
 - Foreign keys and navigation traversal
-- Joins
 - Alternate keys
 - Document (table) splitting
 - Temporal tables
