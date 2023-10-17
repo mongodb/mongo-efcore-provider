@@ -38,6 +38,7 @@ functions:
         shell: bash
         working_dir: mongo-efcore-provider
         script: |
+          echo "${BUILD_TARGET}"
           # Get the current unique version of this checkout
           if [ "${is_patch}" = "true" ]; then
             CURRENT_VERSION=$(git describe)-patch-${version_id}
@@ -45,8 +46,8 @@ functions:
             CURRENT_VERSION=latest
           fi
 
-          if [ "${PACKAGE_TARGET}" != "" ]; then
-              PACKAGE_VERSION=$(PACKAGE_TARGET="${PACKAGE_TARGET}" sh ./evergreen/packages-version.sh)
+          if [ "${BUILD_TARGET}" != "tests" ]; then
+              PACKAGE_VERSION=$(BUILD_TARGET="${BUILD_TARGET}" sh ./evergreen/packages-version.sh)
            fi
 
           export DRIVERS_TOOLS="$(pwd)/../drivers-tools"
@@ -145,7 +146,7 @@ functions:
   upload-test-results:
     - command: attach.xunit_results
       params:
-        file: ./mongo-efcore-provider/build/test-results/TEST*.xml
+        file: ./mongo-efcore-provider/artifacts/test-results/TEST*.xml
 
   bootstrap-mongo-orchestration:
     - command: shell.exec
@@ -161,17 +162,6 @@ functions:
       params:
         file: mo-expansion.yml
 
-  set-github-auth:
-    - command: shell.exec
-      params:
-        working_dir: mongo-efcore-provider
-        env:
-          GITHUB_USER: ${github_user}
-          GITHUB_APIKEY: ${github_apikey}
-        script: |
-          ${PREPARE_SHELL}
-          . ./evergreen/set-github-auth.sh
-
   run-tests:
     - command: shell.exec
       type: test
@@ -182,7 +172,8 @@ functions:
           DRIVER_VERSION=${DRIVER_VERSION} \
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
-            evergreen/run-tests.sh
+          TARGET_RUNTIME="${TARGET_RUNTIME}" \
+            ./evergreen/run-tests.sh
 
   cleanup:
     - command: shell.exec
@@ -232,15 +223,27 @@ functions:
             chmod +x $i
           done
 
-  packages-pack:
+  pack-packages:
     - command: shell.exec
       params:
         working_dir: mongo-efcore-provider
         script: |
           ${PREPARE_SHELL}
-          . ./evergreen/packages-pack.sh
+          . ./evergreen/pack-packages.sh
 
-  packages-push:
+  packages-smoke-tests:
+    - command: shell.exec
+      params:
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          DRIVER_VERSION=${DRIVER_VERSION} \
+          MONGODB_URI="${MONGODB_URI}" \
+          TARGET_RUNTIME="${TARGET_RUNTIME}" \
+          PACKAGE_VERSION="${PACKAGE_VERSION}" \
+          . ./evergreen/run-smoke-tests.sh
+
+  push-packages:
     - command: shell.exec
       params:
         working_dir: mongo-efcore-provider
@@ -249,14 +252,14 @@ functions:
           PACKAGES_SOURCE_KEY: ${PACKAGES_SOURCE_KEY}
         script: |
           ${PREPARE_SHELL}
-          . ./evergreen/packages-push.sh
+          . ./evergreen/push-packages.sh
 
   upload-package:
     - command: s3.put
       params:
         aws_key: ${aws_key}
         aws_secret: ${aws_secret}
-        local_file: ${PROJECT_DIRECTORY}/build/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
+        local_file: ./mongo-efcore-provider/artifacts/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
         remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
         bucket: ${aws_upload_bucket}
         permissions: public-read
@@ -265,7 +268,7 @@ functions:
       params:
         aws_key: ${aws_key}
         aws_secret: ${aws_secret}
-        local_file: ${PROJECT_DIRECTORY}/build/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
+        local_file: ./mongo-efcore-provider/artifacts/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
         remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
         bucket: ${aws_upload_bucket}
         permissions: public-read
@@ -276,14 +279,14 @@ functions:
       params:
         aws_key: ${aws_key}
         aws_secret: ${aws_secret}
-        local_file: ${PROJECT_DIRECTORY}/build/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
+        local_file: ./mongo-efcore-provider/artifacts/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
         remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg
         bucket: ${aws_upload_bucket}
     - command: s3.get
       params:
         aws_key: ${aws_key}
         aws_secret: ${aws_secret}
-        local_file: ${PROJECT_DIRECTORY}/build/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
+        local_file: ./mongo-efcore-provider/artifacts/nuget/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
         remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
         bucket: ${aws_upload_bucket}
 
@@ -301,25 +304,32 @@ post:
   - func: cleanup
 
 tasks:
-  - name: test-net70
+  - name: main-tests
     commands:
       - func: bootstrap-mongo-orchestration
-      - func: set-github-auth
       - func: run-tests
 
-  - name: packages-create
+  - name: pack-packages
     commands:
-      - func: packages-pack
+      - func: pack-packages
       - func: upload-package
         vars:
           PACKAGE_ID: "MongoDB.EntityFrameworkCore"
 
-  - name: packages-push
+  - name: packages-tests
+    commands:
+      - func: bootstrap-mongo-orchestration
+      - func: download-package
+        vars:
+          PACKAGE_ID: "MongoDB.EntityFrameworkCore"
+      - func: packages-smoke-tests
+
+  - name: push-packages
     commands:
       - func: download-package
         vars:
           PACKAGE_ID: "MongoDB.EntityFrameworkCore"
-      - func: packages-push
+      - func: push-packages
         vars:
           PACKAGES_SOURCE: "https://api.nuget.org/v3/index.json"
           PACKAGES_SOURCE_KEY: ${nuget_api_key}
@@ -379,45 +389,106 @@ axes:
   - id: driver
     display_name: MongoDB.Driver Version
     values:
-      - id: "2.22.0-dev1"
-        display_name: "2.22.0-dev1"
+      - id: "2.22.0"
+        display_name: "2.22.0"
         variables:
-          DRIVER_VERSION: "2.22.0-dev1"
+          DRIVER_VERSION: "2.22.0"
+      - id: "latest"
+        display_name: "Latest"
+        variables:
+          DRIVER_VERSION: "latest"
 
-task_groups:
-  - name: package-release
-    setup_task:
-      - func: fetch-source
-        vars:
-          PACKAGE_TARGET: "release"
-      - func: prepare-resources
-      - func: fix-absolute-paths
-      - func: make-files-executable
-      - func: install-dependencies
-    tasks:
-      - packages-create
-      - packages-push
+  - id: target_runtime
+    display_name: Target .net runtime
+    values:
+      - id: "net60"
+        display_name: "net 6.0"
+        variables:
+          TARGET_RUNTIME: "net60"
+      - id: "net70"
+        display_name: "net 7.0"
+        variables:
+          TARGET_RUNTIME: "net70"
+
+  - id: build-target
+    display_name: CI build target
+    values:
+      - id: "tests"
+        display_name: "tests"
+        variables:
+          BUILD_TARGET: "tests"
+      - id: "package"
+        display_name: "package"
+        variables:
+          BUILD_TARGET: "package"
 
 buildvariants:
-- matrix_name: "tests"
-  matrix_spec: { version: ["4.4", "5.0", "6.0", "7.0", "latest"], os: "*", driver: "*" }
-  display_name: "${driver} Driver on ${os} with ${version} Server"
+- matrix_name: main-tests
+  matrix_spec:
+    version: ["4.4", "5.0", "6.0", "7.0", "latest"]
+    os: "*"
+    driver: "*"
+    target_runtime: "*"
+    build-target: "tests"
+  display_name: "${target_runtime} ${driver} Driver on ${os} with ${version} Server"
   tags: ["tests-variant"]
+  expansions:
+    BUILD_TARGET: "tests"
   tasks:
-    - name: test-net70
+    - name: main-tests
 
-- matrix_name: "tests-ubuntu1804"
-  matrix_spec: { version: ["4.2"], driver: "*" }
-  display_name: "${driver} Driver on ubuntu-1804 with ${version} Server"
+- matrix_name: main-tests-ubuntu1804"
+  matrix_spec:
+    version: ["4.2"]
+    driver: "*"
+    target_runtime: "*"
+    build-target: "tests"
+  display_name: "${target_runtime} ${driver} Driver on Ubuntu-1804 with ${version} Server"
   run_on: ubuntu1804-small
   tags: ["tests-variant"]
+  expansions:
+    BUILD_TARGET: "tests"
   tasks:
-    - name: test-net70
+    - name: main-tests
 
-- name: package-pack
-  git_tag_only: true
-  display_name: "Package Release"
-  run_on: ubuntu1804-small
-  tags: ["package-release"]
+- matrix_name: pack-packages
+  matrix_spec:
+    build-target: "package"
+  display_name: "Package Pack"
+  run_on: ubuntu2004-small
+  tags: ["pack-packages", "release_tag"]
   tasks:
-    - name: package-release
+    - name: pack-packages
+      git_tag_only: true
+
+- matrix_name: test-packages
+  matrix_spec:
+    version: "latest"
+    os: "*"
+    driver: "latest"
+    target_runtime: "*"
+    build-target: "package"
+  display_name: "${target_runtime} smoke tests on ${os}"
+  tags: ["package-tests", "release_tag"]
+  tasks:
+    - name: packages-tests
+      git_tag_only: true
+      depends_on:
+        - name: pack-packages
+          variant: .pack-packages
+
+
+- matrix_name: push-packages
+  matrix_spec:
+    build-target: "package"
+  display_name: "Package Push"
+  run_on: ubuntu2004-small
+  tags: ["push-packages", "release_tag"]
+  tasks:
+    - name: push-packages
+      git_tag_only: true
+      depends_on:
+        - name: pack-packages
+          variant: .pack-packages
+        - name: packages-tests
+          variant: .package-tests
