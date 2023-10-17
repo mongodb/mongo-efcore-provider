@@ -46,8 +46,8 @@ functions:
             CURRENT_VERSION=latest
           fi
 
-          if [ "${PACKAGE_TARGET}" != "" ]; then
-              PACKAGE_VERSION=$(PACKAGE_TARGET="${PACKAGE_TARGET}" sh ./evergreen/packages-version.sh)
+          if [ "${BUILD_TARGET}" != "tests" ]; then
+              PACKAGE_VERSION=$(BUILD_TARGET="${BUILD_TARGET}" sh ./evergreen/packages-version.sh)
            fi
 
           export DRIVERS_TOOLS="$(pwd)/../drivers-tools"
@@ -230,6 +230,14 @@ functions:
           ${PREPARE_SHELL}
           . ./evergreen/packages-pack.sh
 
+  packages-smoke-tests:
+    - command: shell.exec
+      params:
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          . ./evergreen/packages-smoke-tests.sh
+
   packages-push:
     - command: shell.exec
       params:
@@ -241,7 +249,7 @@ functions:
           ${PREPARE_SHELL}
           . ./evergreen/packages-push.sh
 
-  upload-package:
+  package-upload:
     - command: s3.put
       params:
         aws_key: ${aws_key}
@@ -261,7 +269,7 @@ functions:
         permissions: public-read
         content_type: ${content_type|application/octet-stream}
 
-  download-package:
+  package-download:
     - command: s3.get
       params:
         aws_key: ${aws_key}
@@ -291,21 +299,29 @@ post:
   - func: cleanup
 
 tasks:
-  - name: test-net70
+  - name: main-tests
     commands:
       - func: bootstrap-mongo-orchestration
       - func: run-tests
 
-  - name: packages-create
+  - name: packages-pack
     commands:
       - func: packages-pack
-      - func: upload-package
+      - func: package-upload
         vars:
           PACKAGE_ID: "MongoDB.EntityFrameworkCore"
 
+  - name: package-tests
+    commands:
+      - func: bootstrap-mongo-orchestration
+      - func: package-download
+        vars:
+          PACKAGE_ID: "MongoDB.EntityFrameworkCore"
+      - func: package-smoke-tests
+
   - name: packages-push
     commands:
-      - func: download-package
+      - func: package-download
         vars:
           PACKAGE_ID: "MongoDB.EntityFrameworkCore"
       - func: packages-push
@@ -396,33 +412,13 @@ axes:
         display_name: "tests"
         variables:
           BUILD_TARGET: "tests"
-
-task_groups:
-#  - name: package-pack
-#    setup_task:
-#      - func: fetch-source
-#        vars:
-#          PACKAGE_TARGET: "release"
-#      - func: fix-absolute-paths
-#      - func: make-files-executable
-#      - func: install-dependencies
-#    tasks:
-#      - packages-create
-
-  - name: package-pack
-    setup_task:
-      - func: fetch-source
-        vars:
-          PACKAGE_TARGET: "release"
-      - func: prepare-resources
-      - func: fix-absolute-paths
-      - func: make-files-executable
-      - func: install-dependencies
-    tasks:
-      - packages-create
+      - id: "package"
+        display_name: "package"
+        variables:
+          BUILD_TARGET: "package"
 
 buildvariants:
-- matrix_name: "main branch tests"
+- matrix_name: main-tests
   matrix_spec:
     version: ["4.4", "5.0", "6.0", "7.0", "latest"]
     os: "*"
@@ -434,9 +430,9 @@ buildvariants:
   expansions:
     BUILD_TARGET: "tests"
   tasks:
-    - name: test-net70
+    - name: main-tests
 
-- matrix_name: "main branch tests-ubuntu1804"
+- matrix_name: main-tests-ubuntu1804"
   matrix_spec:
     version: ["4.2"]
     driver: "*"
@@ -448,22 +444,32 @@ buildvariants:
   expansions:
     BUILD_TARGET: "tests"
   tasks:
-    - name: test-net70
+    - name: main-tests
 
-#- name: package-pack
-#  git_tag_only: true
-#  display_name: "Package Pack"
-#  run_on: ubuntu1804-small
-#  tasks:
-#    - name: package-pack
-#
-#- matrix_name: package-tests
-#  git_tag_only: true
-#  matrix_spec: { version: "latest", os: "*", driver: "latest", target_runtime: "*" }
-#  display_name: "Smoke tests on ${os}"
-#  tags: ["package-tests"]
-#  tasks:
-#    - name: package-smoke-tests
+- matrix_name: packages-pack
+  git_tag_only: true
+  matrix_spec:
+    build-target: "package"
+  display_name: "Package Pack"
+  run_on: ubuntu2004-small
+  tasks:
+    - name: packages-pack
+
+- matrix_name: package-tests
+  git_tag_only: true
+  matrix_spec:
+    version: "latest"
+    os: "*"
+    driver: "latest"
+    target_runtime: "*"
+    build-target: "package"
+  display_name: "Smoke tests on ${os}"
+  tags: ["package-tests"]
+  tasks:
+    - name: package-smoke-tests
+      depends_on:
+        - name: packages-pack
+          variant: packages-pack
 #
 #- name: package-push
 #  git_tag_only: true
