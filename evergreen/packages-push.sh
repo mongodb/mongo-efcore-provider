@@ -17,4 +17,5 @@ if [ -z "$PACKAGE_VERSION" ]; then
   exit 1
 fi
 
-dotnet nuget push --source "$PACKAGES_SOURCE" --api-key "$PACKAGES_SOURCE_KEY" ./build/nuget/MongoDB.EntityFrameworkCore."$PACKAGE_VERSION".nupkg
+# Disable package pushing for debugging purposes. DO NOT MERGE THE CHANGE INTO THE MASTER
+# dotnet nuget push --source "$PACKAGES_SOURCE" --api-key "$PACKAGES_SOURCE_KEY" ./build/nuget/MongoDB.EntityFrameworkCore."$PACKAGE_VERSION".nupkg

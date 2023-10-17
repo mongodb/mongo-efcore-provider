@@ -38,6 +38,7 @@ functions:
         shell: bash
         working_dir: mongo-efcore-provider
         script: |
+          echo "${BUILD_TARGET}"
           # Get the current unique version of this checkout
           if [ "${is_patch}" = "true" ]; then
             CURRENT_VERSION=$(git describe)-patch-${version_id}
@@ -160,17 +161,6 @@ functions:
     - command: expansions.update
       params:
         file: mo-expansion.yml
-
-  set-github-auth:
-    - command: shell.exec
-      params:
-        working_dir: mongo-efcore-provider
-        env:
-          GITHUB_USER: ${github_user}
-          GITHUB_APIKEY: ${github_apikey}
-        script: |
-          ${PREPARE_SHELL}
-          . ./evergreen/set-github-auth.sh
 
   run-tests:
     - command: shell.exec
@@ -304,7 +294,6 @@ tasks:
   - name: test-net70
     commands:
       - func: bootstrap-mongo-orchestration
-      - func: set-github-auth
       - func: run-tests
 
   - name: packages-create
@@ -379,13 +368,40 @@ axes:
   - id: driver
     display_name: MongoDB.Driver Version
     values:
-      - id: "2.22.0-dev1"
-        display_name: "2.22.0-dev1"
+      - id: "2.22.0"
+        display_name: "2.22.0"
         variables:
-          DRIVER_VERSION: "2.22.0-dev1"
+          DRIVER_VERSION: "2.22.0"
+      - id: "latest"
+        display_name: "latest"
+        variables:
+          DRIVER_VERSION: "latest"
+
+  - id: target_runtime
+    display_name: Target .net runtime
+    values:
+      - id: "net60"
+        display_name: "net 6.0"
+        variables:
+          TARGET_RUNTIME: "net60"
+      - id: "net70"
+        display_name: "net 7.0"
+        variables:
+          TARGET_RUNTIME: "net70"
 
 task_groups:
-  - name: package-release
+#  - name: package-pack
+#    setup_task:
+#      - func: fetch-source
+#        vars:
+#          PACKAGE_TARGET: "release"
+#      - func: fix-absolute-paths
+#      - func: make-files-executable
+#      - func: install-dependencies
+#    tasks:
+#      - packages-create
+
+  - name: package-pack
     setup_task:
       - func: fetch-source
         vars:
@@ -396,28 +412,45 @@ task_groups:
       - func: install-dependencies
     tasks:
       - packages-create
-      - packages-push
 
 buildvariants:
-- matrix_name: "tests"
-  matrix_spec: { version: ["4.4", "5.0", "6.0", "7.0", "latest"], os: "*", driver: "*" }
+- matrix_name: "main branch tests"
+  matrix_spec: { version: ["4.4", "5.0", "6.0", "7.0", "latest"], os: "*", driver: "*", target_runtime: "*" }
   display_name: "${driver} Driver on ${os} with ${version} Server"
-  tags: ["tests-variant"]
+  tags: ["main-tests"]
+  expansions:
+    BUILD_TARGET: "tests"
   tasks:
     - name: test-net70
 
-- matrix_name: "tests-ubuntu1804"
-  matrix_spec: { version: ["4.2"], driver: "*" }
-  display_name: "${driver} Driver on ubuntu-1804 with ${version} Server"
+- matrix_name: "main branch tests-ubuntu1804"
+  matrix_spec: { version: ["4.2"], driver: "*", target_runtime: "*" }
+  display_name: "${driver} Driver on Ubuntu-1804 with ${version} Server"
   run_on: ubuntu1804-small
-  tags: ["tests-variant"]
+  tags: ["main-tests"]
+  expansions:
+    BUILD_TARGET: "tests"
   tasks:
     - name: test-net70
 
-- name: package-pack
-  git_tag_only: true
-  display_name: "Package Release"
-  run_on: ubuntu1804-small
-  tags: ["package-release"]
-  tasks:
-    - name: package-release
+#- name: package-pack
+#  git_tag_only: true
+#  display_name: "Package Pack"
+#  run_on: ubuntu1804-small
+#  tasks:
+#    - name: package-pack
+#
+#- matrix_name: package-tests
+#  git_tag_only: true
+#  matrix_spec: { version: "latest", os: "*", driver: "latest", target_runtime: "*" }
+#  display_name: "Smoke tests on ${os}"
+#  tags: ["package-tests"]
+#  tasks:
+#    - name: package-smoke-tests
+#
+#- name: package-push
+#  git_tag_only: true
+#  display_name: "Package Push"
+#  run_on: ubuntu1804-small
+#  tasks:
+#    - name: package-push
