@@ -466,7 +466,7 @@ buildvariants:
   display_name: "Smoke tests on ${os}"
   tags: ["package-tests"]
   tasks:
-    - name: package-smoke-tests
+    - name: packages-smoke-tests
       depends_on:
         - name: packages-pack
           variant: packages-pack
