@@ -279,8 +279,6 @@ functions:
 
 pre:
   - func: fetch-source
-    vars:
-      BUILD_TARGET: ${BUILD_TARGET}
   - func: prepare-resources
   - func: windows-fix
   - func: fix-absolute-paths
@@ -391,6 +389,14 @@ axes:
         variables:
           TARGET_RUNTIME: "net70"
 
+  - id: build-target
+    display_name: CI build target
+    values:
+      - id: "tests"
+        display_name: "tests"
+        variables:
+          BUILD_TARGET: "tests"
+
 task_groups:
 #  - name: package-pack
 #    setup_task:
@@ -417,7 +423,12 @@ task_groups:
 
 buildvariants:
 - matrix_name: "main branch tests"
-  matrix_spec: { version: ["4.4", "5.0", "6.0", "7.0", "latest"], os: "*", driver: "*", target_runtime: "*" }
+  matrix_spec:
+    version: ["4.4", "5.0", "6.0", "7.0", "latest"]
+    os: "*"
+    driver: "*"
+    target_runtime: "*"
+    build-target: "tests"
   display_name: "${driver} Driver on ${os} with ${version} Server"
   tags: ["tests-variant"]
   expansions:
@@ -426,7 +437,11 @@ buildvariants:
     - name: test-net70
 
 - matrix_name: "main branch tests-ubuntu1804"
-  matrix_spec: { version: ["4.2"], driver: "*", target_runtime: "*" }
+  matrix_spec:
+    version: ["4.2"]
+    driver: "*"
+    target_runtime: "*"
+    build-target: "tests"
   display_name: "${driver} Driver on Ubuntu-1804 with ${version} Server"
   run_on: ubuntu1804-small
   tags: ["tests-variant"]
