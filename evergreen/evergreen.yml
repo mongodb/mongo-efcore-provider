@@ -279,6 +279,8 @@ functions:
 
 pre:
   - func: fetch-source
+    vars:
+      BUILD_TARGET: ${BUILD_TARGET}
   - func: prepare-resources
   - func: windows-fix
   - func: fix-absolute-paths
@@ -373,7 +375,7 @@ axes:
         variables:
           DRIVER_VERSION: "2.22.0"
       - id: "latest"
-        display_name: "latest"
+        display_name: "Latest"
         variables:
           DRIVER_VERSION: "latest"
 
