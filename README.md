@@ -71,7 +71,7 @@ This preview has a number of limitations at this time. Please consider the follo
 - Additional CLR types (DateOnly, TimeOnly etc).
 - EF shadow properties
 - GroupBy operations
-- Joins/includes
+- Joins/includes/non-embedded relationships
 
 ### Not supported out-of-scope features
 
