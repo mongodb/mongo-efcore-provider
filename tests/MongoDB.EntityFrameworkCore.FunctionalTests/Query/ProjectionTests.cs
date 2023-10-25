@@ -40,7 +40,7 @@ public class ProjectionTests
         });
     }
 
-    [Fact(Skip = "Require to implement the missed case in BsonBinding.CreateGetValueExpression method")]
+    [Fact]
     public void Select_projection_to_anonymous()
     {
         var results = _planets.Select(p => new {Name = p.name, Order = p.orderFromSun});
@@ -62,7 +62,7 @@ public class ProjectionTests
         });
     }
 
-    [Fact(Skip = "Requires Select projection rewriting")]
+    [Fact]
     public void Select_projection_to_tuple()
     {
         var results = _planets.Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings));
@@ -86,7 +86,6 @@ public class ProjectionTests
         var results = _planets.Select(p => new NamedContainer<Planet>(p, p.name));
         Assert.All(results, r => { Assert.Equal(r.Name, r?.Item?.name); });
     }
-
 
     [Fact(Skip = "Requires Select projection rewriting")]
     public void Select_projection_to_constructor_params_and_initializer()
