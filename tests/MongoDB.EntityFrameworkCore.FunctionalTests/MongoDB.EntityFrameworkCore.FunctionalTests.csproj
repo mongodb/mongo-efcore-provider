@@ -22,7 +22,6 @@
         </PackageReference>
     </ItemGroup>
 
-
     <ItemGroup>
       <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
     </ItemGroup>
