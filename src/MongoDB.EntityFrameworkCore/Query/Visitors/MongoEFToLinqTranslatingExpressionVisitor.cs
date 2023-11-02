@@ -90,7 +90,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
                     == true)
                 {
-                    return Expression.Constant(_queryContext.ParameterValues[parameterExpression.Name]);
+                    return ConvertIfRequired(Expression.Constant(_queryContext.ParameterValues[parameterExpression.Name]), expression.Type);
                 }
 
                 break;

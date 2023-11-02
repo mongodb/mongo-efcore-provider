@@ -126,6 +126,38 @@ public class WhereTests
     }
 
     [Fact]
+    public void Where_int_eq_with_param()
+    {
+        int? prm = 1655;
+        var results = _db.Moons.Where(m => m.yearOfDiscovery == prm).ToArray();
+        Assert.Single(results);
+    }
+
+    [Fact]
+    public void Where_int_eq_with_param_null()
+    {
+        int? prm = null;
+        var results = _db.Moons.Where(m => m.yearOfDiscovery == prm).ToArray();
+        Assert.Single(results);
+    }
+
+    [Fact]
+    public void Where_string_eq_with_param()
+    {
+        string prm = "Earth";
+        var results = _db.Planets.Where(p => p.name == prm).ToArray();
+        Assert.Single(results);
+    }
+
+    [Fact]
+    public void Where_string_eq_with_param_null()
+    {
+        string prm = null;
+        var results = _db.Planets.Where(p => p.name == prm).ToArray();
+        Assert.Empty(results);
+    }
+
+    [Fact]
     public void Where_string_array_contains()
     {
         var results = _db.Planets.Where(p => p.mainAtmosphere.Contains("H2")).ToArray();
