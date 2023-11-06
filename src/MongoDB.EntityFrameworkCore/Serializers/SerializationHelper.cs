@@ -93,16 +93,16 @@ internal static class SerializationHelper
 
     internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
     {
-        var serializer = CreateTypeSerializer(property.ClrType);
+        var serializer = CreateTypeSerializer(property.ClrType, property);
         if (property.IsPrimaryKey() && property.DeclaringEntityType.FindPrimaryKey()?.Properties.Count > 1)
         {
             return BsonSerializationInfo.CreateWithPath(new[] {"_id", property.GetElementName()}, serializer, property.ClrType);
         }
 
-        return new BsonSerializationInfo(property.GetElementName(), CreateTypeSerializer(property.ClrType), property.ClrType);
+        return new BsonSerializationInfo(property.GetElementName(), serializer, property.ClrType);
     }
 
-    private static IBsonSerializer CreateTypeSerializer(Type type)
+    private static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty? property = null)
     {
         bool isNullable = type.IsNullableValueType();
         if (isNullable)
@@ -115,7 +115,7 @@ internal static class SerializationHelper
             var t when t == typeof(bool) => BooleanSerializer.Instance,
             var t when t == typeof(byte) => new ByteSerializer(),
             var t when t == typeof(char) => new CharSerializer(),
-            var t when t == typeof(DateTime) => new DateTimeSerializer(),
+            var t when t == typeof(DateTime) => CreateDateTimeSerializer(property),
             var t when t == typeof(DateTimeOffset) => new DateTimeOffsetSerializer(),
             var t when t == typeof(decimal) => new DecimalSerializer(),
             var t when t == typeof(double) => DoubleSerializer.Instance,
@@ -146,6 +146,22 @@ internal static class SerializationHelper
         }
 
         return serializer;
+    }
+
+    private static IBsonSerializer CreateDateTimeSerializer(IReadOnlyProperty? property)
+    {
+        var dateTimeKind = DateTimeKind.Unspecified;
+        if (property != null)
+        {
+            dateTimeKind = property.GetDateTimeKind();
+        }
+
+        if (dateTimeKind == DateTimeKind.Unspecified)
+        {
+            return new DateTimeSerializer();
+        }
+
+        return new DateTimeSerializer(dateTimeKind);
     }
 
     private static IBsonSerializer CreateArraySerializer(Type elementType)

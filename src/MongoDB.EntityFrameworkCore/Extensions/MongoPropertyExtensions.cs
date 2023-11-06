@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -107,6 +108,48 @@ public static class MongoPropertyExtensions
     public static ConfigurationSource? GetElementNameConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.ElementName)?.GetConfigurationSource();
 
+
+    /// <summary>
+    /// Sets the DateTimeKind of the DateTime property is mapped to when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the DateTimeKind for.</param>
+    /// <param name="dateTimeKind">The DateTimeKind that should be used.</param>
+    /// <exception cref="InvalidOperationException"></exception>
+    public static void SetDateTimeKind(this IMutableProperty property, DateTimeKind dateTimeKind)
+    {
+        if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
+        {
+            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {property.DeclaringEntityType.Name} entity.");
+        }
+
+        property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind);
+    }
+
+    /// <summary>
+    /// Sets the DateTimeKind of the DateTime property is mapped to when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the DateTimeKind for.</param>
+    /// <param name="dateTimeKind">The DateTimeKind that should be used.</param>
+    /// <exception cref="InvalidOperationException"></exception>
+    public static void SetDateTimeKind(this IConventionProperty property, DateTimeKind dateTimeKind)
+    {
+        if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
+        {
+            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {property.DeclaringEntityType.Name} entity.");
+        }
+
+        property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind);
+    }
+
+    /// <summary>
+    /// Gets the DateTimeKind of the DateTime property is mapped to when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the DateTimeKind for.</param>
+    public static DateTimeKind GetDateTimeKind(this IReadOnlyProperty property)
+    {
+        var dateTimeKindAnnotation = property.FindAnnotation(MongoAnnotationNames.DateTimeKind);
+        return dateTimeKindAnnotation?.Value == null ? DateTimeKind.Unspecified : (DateTimeKind)dateTimeKindAnnotation.Value;
+    }
     internal static bool IsOwnedCollectionShadowKey(this IReadOnlyProperty property)
     {
         return property.FindContainingPrimaryKey()
