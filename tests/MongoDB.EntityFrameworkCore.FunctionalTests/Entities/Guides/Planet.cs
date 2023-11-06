@@ -33,4 +33,5 @@ internal class Moon
     public ObjectId planetId { get; set; }
     public string label { get; set; }
     public string name { get; set; }
+    public int? yearOfDiscovery { get; set; }
 }
