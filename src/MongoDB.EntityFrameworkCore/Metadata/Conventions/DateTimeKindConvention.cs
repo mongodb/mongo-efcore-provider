@@ -21,26 +21,26 @@ using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
-/// A convention that set DateTimeKind for DateTime properties.
+/// A convention that set <see cref="DateTimeKind"/> for <see cref="DateTime"/> properties.
 /// </summary>
 public class DateTimeKindConvention : IPropertyAddedConvention
 {
     /// <summary>
     /// Creates a <see cref="DateTimeKindConvention"/>.
     /// </summary>
-    /// <param name="dateTimeKind">DateTimeKind to use</param>
-    public DateTimeKindConvention(DateTimeKind dateTimeKind = DateTimeKind.Utc)
+    /// <param name="dateTimeKind"><see cref="DateTimeKind"/> to use</param>
+    public DateTimeKindConvention(DateTimeKind dateTimeKind)
     {
         DateTimeKind = dateTimeKind;
     }
 
     /// <summary>
-    /// DateTimeKind to use.
+    /// <see cref="DateTimeKind"/> to use.
     /// </summary>
     protected DateTimeKind DateTimeKind { get; }
 
     /// <summary>
-    /// For every property of DateTime type that is added to the model set the configured DateTimeKind.
+    /// For every property of <see cref="DateTime"/> type that is added to the model set the configured <see cref="DateTimeKind"/>.
     /// </summary>
     /// <param name="propertyBuilder"></param>
     /// <param name="context"></param>

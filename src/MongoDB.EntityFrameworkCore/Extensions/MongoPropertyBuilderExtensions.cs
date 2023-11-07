@@ -53,10 +53,10 @@ public static class MongoPropertyBuilderExtensions
         => (PropertyBuilder<TProperty>)HasElementName((PropertyBuilder)propertyBuilder, name);
 
     /// <summary>
-    /// Configures the DateTimeKind for the property.
+    /// Configures the <see cref="DateTimeKind"/> for the property.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="dateTimeKind">The DateTimeKind to use for the property.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder HasDateTimeKind(
         this PropertyBuilder propertyBuilder,
@@ -67,10 +67,10 @@ public static class MongoPropertyBuilderExtensions
     }
 
     /// <summary>
-    /// Configures the DateTimeKind for the property.
+    /// Configures the <see cref="DateTimeKind"/> for the property.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="dateTimeKind">The DateTimeKind to use for the property.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static IConventionPropertyBuilder HasDateTimeKind(
         this IConventionPropertyBuilder propertyBuilder,

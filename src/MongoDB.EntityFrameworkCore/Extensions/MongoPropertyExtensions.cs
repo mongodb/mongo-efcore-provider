@@ -110,10 +110,10 @@ public static class MongoPropertyExtensions
 
 
     /// <summary>
-    /// Sets the DateTimeKind of the DateTime property is mapped to when targeting MongoDB.
+    /// Sets the <see cref="DateTimeKind"/> of the DateTime property is mapped to when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IMutableProperty"/> to set the DateTimeKind for.</param>
-    /// <param name="dateTimeKind">The DateTimeKind that should be used.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> that should be used.</param>
     /// <exception cref="InvalidOperationException"></exception>
     public static void SetDateTimeKind(this IMutableProperty property, DateTimeKind dateTimeKind)
     {
@@ -126,10 +126,10 @@ public static class MongoPropertyExtensions
     }
 
     /// <summary>
-    /// Sets the DateTimeKind of the DateTime property is mapped to when targeting MongoDB.
+    /// Sets the <see cref="DateTimeKind"/> of the <see cref="DateTime"/> property is mapped to when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the DateTimeKind for.</param>
-    /// <param name="dateTimeKind">The DateTimeKind that should be used.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> that should be used.</param>
     /// <exception cref="InvalidOperationException"></exception>
     public static void SetDateTimeKind(this IConventionProperty property, DateTimeKind dateTimeKind)
     {
@@ -142,9 +142,9 @@ public static class MongoPropertyExtensions
     }
 
     /// <summary>
-    /// Gets the DateTimeKind of the DateTime property is mapped to when targeting MongoDB.
+    /// Gets the <see cref="DateTimeKind"/> of the <see cref="DateTime"/> property is mapped to when targeting MongoDB.
     /// </summary>
-    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the DateTimeKind for.</param>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the <see cref="DateTimeKind"/> for.</param>
     public static DateTimeKind GetDateTimeKind(this IReadOnlyProperty property)
     {
         var dateTimeKindAnnotation = property.FindAnnotation(MongoAnnotationNames.DateTimeKind);

@@ -150,12 +150,7 @@ internal static class SerializationHelper
 
     private static IBsonSerializer CreateDateTimeSerializer(IReadOnlyProperty? property)
     {
-        var dateTimeKind = DateTimeKind.Unspecified;
-        if (property != null)
-        {
-            dateTimeKind = property.GetDateTimeKind();
-        }
-
+        var dateTimeKind = property?.GetDateTimeKind() ?? DateTimeKind.Unspecified;
         if (dateTimeKind == DateTimeKind.Unspecified)
         {
             return new DateTimeSerializer();
