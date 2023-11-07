@@ -13,8 +13,10 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -32,7 +34,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_one_level_materializes_single()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        collection.WriteTestDocs(__peopleWithLocation);
+        collection.WriteTestDocs(__personWithLocation);
         var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.Single();
@@ -46,7 +48,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_one_level_materializes_many()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        collection.WriteTestDocs(__peopleWithLocation);
+        collection.WriteTestDocs(__personWithLocation);
         var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.Where(p => p.name != "bob").ToList();
@@ -117,7 +119,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_two_levels_materializes_single()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
-        collection.WriteTestDocs(__peopleWithCity);
+        collection.WriteTestDocs(__personWithCity);
         var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.Single();
@@ -132,7 +134,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_two_levels_materializes_many()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
-        collection.WriteTestDocs(__peopleWithCity);
+        collection.WriteTestDocs(__personWithCity);
         var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.Where(p => p.name != "bob").ToList();
@@ -149,7 +151,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_with_collection_materializes_many()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
-        collection.WriteTestDocs(__peopleWithLocations);
+        collection.WriteTestDocs(__personWithLocations);
         var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.Where(p => p.name != "bob").ToList();
@@ -206,6 +208,23 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         }
     }
 
+    [Fact]
+    public void OwnedEntity_can_have_element_name_set()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var expected = __personWithLocation[0];
+        collection.WriteTestDocs(__personWithLocation);
+        var db = SingleEntityDbContext.Create(collection,
+            mb => { mb.Entity<PersonWithLocation>().OwnsOne(p => p.location, r => r.HasElementName("location")); });
+
+        var actual = db.Entitites.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected.name, actual.name);
+        Assert.Equal(expected.location.latitude, actual.location.latitude);
+        Assert.Equal(expected.location.longitude, actual.location.longitude);
+    }
+
     class Person
     {
         public ObjectId _id { get; set; }
@@ -254,14 +273,14 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     private static readonly LocationWithCity __locationWithCity =
         new() {latitude = 32.715736m, longitude = -117.161087m, city = __city};
 
-    private static readonly PersonWithCity[] __peopleWithCity = {new() {name = "Carmen", location = __locationWithCity}};
+    private static readonly PersonWithCity[] __personWithCity = {new() {name = "Carmen", location = __locationWithCity}};
 
     private static readonly Location __location1 = new() {latitude = 32.715736m, longitude = -117.161087m};
-    private static readonly PersonWithLocation[] __peopleWithLocation = {new() {name = "Carmen", location = __location1}};
+    private static readonly PersonWithLocation[] __personWithLocation = {new() {name = "Carmen", location = __location1}};
 
     private static readonly Location __location2 = new() {latitude = 49.45981m, longitude = -2.53527m};
 
-    private static readonly PersonWithMultipleLocations[] __peopleWithLocations =
+    private static readonly PersonWithMultipleLocations[] __personWithLocations =
     {
         new() {name = "Damien", locations = new List<Location> {__location2, __location1}}
     };

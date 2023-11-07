@@ -21,6 +21,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
@@ -126,22 +127,58 @@ public class MongoModelValidator : ModelValidator
             if (elementName.StartsWith("$"))
             {
                 throw new InvalidOperationException(
-                    $"Property '{property.Name}' on entity type '{entityType.DisplayName()}' may not map to '{elementName}' as it starts with the reserved character '$'.");
+                    $"Property '{property.Name}' on entity type '{entityType.DisplayName()}' may not map to element '{elementName}' as it starts with the reserved character '$'.");
             }
 
             if (elementName.Contains('.'))
             {
                 throw new InvalidOperationException(
-                    $"Property '{property.Name}' on entity type '{entityType.DisplayName()}' may not map to '{elementName}' as it contains the reserved character '.'.");
+                    $"Property '{property.Name}' on entity type '{entityType.DisplayName()}' may not map to element '{elementName}' as it contains the reserved character '.'.");
             }
 
             if (elementPropertyMap.TryGetValue(elementName, out var otherProperty))
             {
                 throw new InvalidOperationException(
-                    $"Both properties '{property.Name}' and '{otherProperty.Name}' on entity type '{entityType.DisplayName()}' are mapped to '{elementName}'. Map one of the properties to a different BSON element.");
+                    $"Properties '{property.Name}' and '{otherProperty.Name}' on entity type '{entityType.DisplayName()}' are mapped to element '{elementName}'. Map one of them to a different BSON element.");
             }
 
             elementPropertyMap[elementName] = property;
+        }
+
+
+        var elementNavigationMap = new Dictionary<string, INavigation>();
+
+        foreach (var navigation in entityType.GetNavigations().Where(n => n.IsEmbedded()))
+        {
+            string? elementName = navigation.TargetEntityType.GetContainingElementName();
+            if (elementName != null)
+            {
+                if (elementName.StartsWith("$"))
+                {
+                    throw new InvalidOperationException(
+                        $"Property '{navigation.Name}' on entity type '{entityType.DisplayName()}' may not map to element '{elementName}' as it starts with the reserved character '$'.");
+                }
+
+                if (elementName.Contains('.'))
+                {
+                    throw new InvalidOperationException(
+                        $"Property '{navigation.Name}' on entity type '{entityType.DisplayName()}' may not map to element '{elementName}' as it contains the reserved character '.'.");
+                }
+
+                if (elementPropertyMap.TryGetValue(elementName, out var otherProperty))
+                {
+                    throw new InvalidOperationException(
+                        $"Navigation '{navigation.Name}' and Property '{otherProperty.Name}' on entity type '{entityType.DisplayName()}' are mapped to element '{elementName}'. Map one of them to a different BSON element.");
+                }
+
+                if (elementNavigationMap.TryGetValue(elementName, out var otherNavigation))
+                {
+                    throw new InvalidOperationException(
+                        $"Navigations '{navigation.Name}' and '{otherNavigation.Name}' on entity type '{entityType.DisplayName()}' are mapped to element '{elementName}'. Map one of them to a different BSON element.");
+                }
+
+                elementNavigationMap[elementName] = navigation;
+            }
         }
     }
 

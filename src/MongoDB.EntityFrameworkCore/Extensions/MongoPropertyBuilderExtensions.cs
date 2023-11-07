@@ -52,7 +52,6 @@ public static class MongoPropertyBuilderExtensions
         string name)
         => (PropertyBuilder<TProperty>)HasElementName((PropertyBuilder)propertyBuilder, name);
 
-
     /// <summary>
     /// Configures the document element that the property is mapped to when targeting MongoDB.
     /// If an empty string is supplied then the property will not be persisted.
