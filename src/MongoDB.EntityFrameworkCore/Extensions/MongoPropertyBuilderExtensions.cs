@@ -52,6 +52,33 @@ public static class MongoPropertyBuilderExtensions
         string name)
         => (PropertyBuilder<TProperty>)HasElementName((PropertyBuilder)propertyBuilder, name);
 
+    /// <summary>
+    /// Configures the <see cref="DateTimeKind"/> for the property.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder HasDateTimeKind(
+        this PropertyBuilder propertyBuilder,
+        DateTimeKind dateTimeKind)
+    {
+        propertyBuilder.Metadata.SetDateTimeKind(dateTimeKind);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the <see cref="DateTimeKind"/> for the property.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static IConventionPropertyBuilder HasDateTimeKind(
+        this IConventionPropertyBuilder propertyBuilder,
+        DateTimeKind dateTimeKind)
+    {
+        propertyBuilder.Metadata.SetDateTimeKind(dateTimeKind);
+        return propertyBuilder;
+    }
 
     /// <summary>
     /// Configures the document element that the property is mapped to when targeting MongoDB.

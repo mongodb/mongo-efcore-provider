@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
 public class DateAndTimeSerializationTests : BaseSerializationTests
@@ -36,6 +38,28 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entitites.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equal(expected.ToExpectedPrecision(), result.aDateTime.ToExpectedPrecision());
+        }
+    }
+
+    [Fact]
+    public void DateTime_round_trips_as_local()
+    {
+        DateTime expected = DateTime.Now;
+        var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection,
+                model => model.Entity<DateTimeEntity>().Property(e => e.aDateTime).HasDateTimeKind(DateTimeKind.Local));
+            db.Entitites.Add(new DateTimeEntity {aDateTime = expected});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection,
+                model => model.Entity<DateTimeEntity>().Property(e => e.aDateTime).HasDateTimeKind(DateTimeKind.Local));
             var result = db.Entitites.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected.ToExpectedPrecision(), result.aDateTime.ToExpectedPrecision());

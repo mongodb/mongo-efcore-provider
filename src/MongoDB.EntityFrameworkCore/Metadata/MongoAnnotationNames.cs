@@ -35,4 +35,9 @@ public static class MongoAnnotationNames
     /// The key for document element name annotations.
     /// </summary>
     public const string ElementName = Prefix + "ElementName";
+
+    /// <summary>
+    /// The key for DateTimeKind name annotations.
+    /// </summary>
+    public const string DateTimeKind = Prefix + "DateTimeKind";
 }
