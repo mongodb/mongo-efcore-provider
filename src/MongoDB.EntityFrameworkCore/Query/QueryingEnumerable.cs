@@ -22,7 +22,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
-using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 

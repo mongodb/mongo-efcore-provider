@@ -67,4 +67,3 @@ artifacts
 packages
 /tools
 /evergreen/krb5.conf.empty
-/build

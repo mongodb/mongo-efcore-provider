@@ -67,7 +67,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         {
             // We are relying on raw/scalar values coming back from LINQ V3 provider for now - no shaper required
             return Expression.Call(null,
-                __translateAndExecuteUnshapedQuery.MakeGenericMethod(rootEntityType.ClrType, shapedQueryExpression.Type),
+                __translateAndExecuteUnshapedQuery.MakeGenericMethod(rootEntityType.ClrType, shapedQueryExpression.ShaperExpression.Type),
                 QueryCompilationContext.QueryContextParameter,
                 Expression.Constant(rootEntityType),
                 Expression.Constant(mongoQueryExpression),
@@ -108,7 +108,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             Expression.Constant(shapedQueryExpression.ResultCardinality));
     }
 
-    private static QueryingEnumerable<TDocument, TDocument> TranslateAndExecuteUnshapedQuery<TSource, TDocument>(
+    private static QueryingEnumerable<TResult, TResult> TranslateAndExecuteUnshapedQuery<TSource, TResult>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
         MongoQueryExpression queryExpression,
@@ -122,13 +122,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             .AsQueryable().As(new EntitySerializer<TSource>(entityType));
 
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
-        var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
+        var translatedQuery = queryTranslator.Visit(queryExpression.CapturedExpression)!;
 
-        IEnumerable<TDocument> documents = resultCardinality == ResultCardinality.Enumerable
-            ? source.Provider.CreateQuery<TDocument>(translatedQuery)
-            : new[] {source.Provider.Execute<TDocument>(translatedQuery)};
+        IEnumerable<TResult> documents = resultCardinality == ResultCardinality.Enumerable
+            ? source.Provider.CreateQuery<TResult>(translatedQuery)
+            : new[] {source.Provider.Execute<TResult>(translatedQuery)};
 
-        return new QueryingEnumerable<TDocument, TDocument>(
+        return new QueryingEnumerable<TResult, TResult>(
             mongoQueryContext,
             documents,
             (_, e) => e,
