@@ -31,13 +31,23 @@ internal static class SerializationHelper
     public static T GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
     {
         var serializationInfo = GetPropertySerializationInfo(property);
-        return ReadElementValue<T>(document, serializationInfo);
+        if(TryReadElementValue(document, serializationInfo, out T value) || property.IsNullable)
+        {
+            return value;
+        }
+
+        throw new KeyNotFoundException($"Document does not contain value for non-nullable field '{property.Name}'.");
     }
 
     public static T GetElementValue<T>(BsonDocument document, string elementName)
     {
         var serializationInfo = new BsonSerializationInfo(elementName, CreateTypeSerializer(typeof(T)), typeof(T));
-        return ReadElementValue<T>(document, serializationInfo);
+        if(TryReadElementValue(document, serializationInfo, out T value) || typeof(T).IsNullableType())
+        {
+            return value;
+        }
+
+        throw new KeyNotFoundException($"Document does not contain value for non-nullable field '{elementName}'.");
     }
 
     internal static void WriteKeyProperties(IBsonWriter writer, IUpdateEntry entry)
@@ -165,32 +175,34 @@ internal static class SerializationHelper
     private static IBsonSerializer CreateListSerializer(Type elementType)
         => (IBsonSerializer)Activator.CreateInstance(typeof(ListSerializer<>).MakeGenericType(elementType));
 
-    private static T? ReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo)
+    private static bool TryReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo, out T value)
     {
-        BsonValue rawValue;
+        BsonValue? rawValue;
         if (elementSerializationInfo.ElementPath == null)
         {
-            if (!document.TryGetValue(elementSerializationInfo.ElementName, out rawValue))
-            {
-                if (!typeof(T).IsNullableType())
-                    throw new KeyNotFoundException();
-
-                return default; // Default missing values if they are nullable
-            }
+            document.TryGetValue(elementSerializationInfo.ElementName, out rawValue);
         }
         else
         {
             rawValue = document;
             foreach (string? node in elementSerializationInfo.ElementPath)
             {
-                rawValue = ((BsonDocument)rawValue)[node];
-                if (rawValue == null)
+                var doc = (BsonDocument)rawValue;
+                if (!doc.TryGetValue(node, out rawValue))
                 {
-                    return default;
+                    rawValue = null;
+                    break;
                 }
             }
         }
 
-        return (T)elementSerializationInfo.DeserializeValue(rawValue);
+        if (rawValue != null)
+        {
+            value = (T)elementSerializationInfo.DeserializeValue(rawValue);
+            return true;
+        }
+
+        value = default;
+        return false;
     }
 }
