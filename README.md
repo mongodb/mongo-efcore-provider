@@ -73,12 +73,12 @@ This preview has a number of limitations at this time. Please consider the follo
 - GroupBy operations
 - Relationships between entities
 - Includes/joins
+- Foreign keys and navigation traversal
   
 ### Not supported out-of-scope features
 
 - Schema migrations
 - Database-first & model-first
-- Foreign keys and navigation traversal
 - Alternate keys
 - Document (table) splitting
 - Temporal tables
