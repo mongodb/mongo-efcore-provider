@@ -123,7 +123,7 @@ public static class MongoEntityTypeBuilderExtensions
     /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
     /// <param name="name">The name of the parent element.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static OwnedNavigationBuilder SetElementName(
+    public static OwnedNavigationBuilder HasElementName(
         this OwnedNavigationBuilder entityTypeBuilder,
         string? name)
     {
@@ -138,7 +138,7 @@ public static class MongoEntityTypeBuilderExtensions
     /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
     /// <param name="name">The name of the parent element.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> SetElementName<TOwnerEntity, TDependentEntity>(
+    public static OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> HasElementName<TOwnerEntity, TDependentEntity>(
         this OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> entityTypeBuilder,
         string? name)
         where TOwnerEntity : class
@@ -156,7 +156,7 @@ public static class MongoEntityTypeBuilderExtensions
     /// <param name="name">The name of the parent element.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.</returns>
-    public static IConventionEntityTypeBuilder? SetElementName(
+    public static IConventionEntityTypeBuilder? HasElementName(
         this IConventionEntityTypeBuilder entityTypeBuilder,
         string? name,
         bool fromDataAnnotation = false)

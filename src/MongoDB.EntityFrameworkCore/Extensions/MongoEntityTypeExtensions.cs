@@ -73,8 +73,7 @@ public static class MongoEntityTypeExtensions
                || entityType[MongoAnnotationNames.CollectionName] != null);
 
     /// <summary>
-    /// Get the element name where this entity type lives - namely the navigation element of the
-    /// entity that contains it.
+    /// Get the name of the parent element to which the entity type is mapped.
     /// </summary>
     /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> to obtain the property name for.</param>
     /// <returns>The string name of the property that owns this.</returns>
