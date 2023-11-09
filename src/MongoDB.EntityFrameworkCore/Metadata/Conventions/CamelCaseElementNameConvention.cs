@@ -18,19 +18,20 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
-/// A convention that configures the element name for entity properties by using the camelcase naming convention.
+/// A convention that configures the element name for entity properties by using a camel-case naming convention.
 /// </summary>
-public class CamelCasePropertyNameConvention : IPropertyAddedConvention
+public class CamelCaseElementNameConvention : IPropertyAddedConvention, IEntityTypeAddedConvention
 {
     /// <summary>
-    /// Creates a <see cref="CamelCasePropertyNameConvention" />.
+    /// Creates a <see cref="CamelCaseElementNameConvention" />.
     /// </summary>
     /// <param name="dependencies">Parameter object containing dependencies for this convention.</param>
-    public CamelCasePropertyNameConvention(ProviderConventionSetBuilderDependencies dependencies)
+    public CamelCaseElementNameConvention(ProviderConventionSetBuilderDependencies dependencies)
     {
         Dependencies = dependencies;
     }
@@ -44,8 +45,8 @@ public class CamelCasePropertyNameConvention : IPropertyAddedConvention
     /// For every property that is added to the model set the element name to be the camel case
     /// version of the property name with symbols being removed and considered word separators.
     /// </summary>
-    /// <param name="propertyBuilder"></param>
-    /// <param name="context"></param>
+    /// <param name="propertyBuilder">The builder for the property.</param>
+    /// <param name="context">Additional information associated with convention execution.</param>
     public void ProcessPropertyAdded(
         IConventionPropertyBuilder propertyBuilder,
         IConventionContext<IConventionPropertyBuilder> context)
@@ -53,5 +54,21 @@ public class CamelCasePropertyNameConvention : IPropertyAddedConvention
         if (propertyBuilder.Metadata.Name == "_id") return;
 
         propertyBuilder.HasElementName(propertyBuilder.Metadata.Name.ToCamelCase(CultureInfo.CurrentCulture));
+    }
+
+    /// <summary>
+    /// For every owned entity that is added to the model set the element name to be the camel case
+    /// version of the owning properties name.
+    /// </summary>
+    /// <param name="entityTypeBuilder">The builder for the entity.</param>
+    /// <param name="context">Additional information associated with convention execution.</param>
+    public void ProcessEntityTypeAdded(
+        IConventionEntityTypeBuilder entityTypeBuilder,
+        IConventionContext<IConventionEntityTypeBuilder> context)
+    {
+        if (!entityTypeBuilder.Metadata.IsOwned()) return;
+
+        entityTypeBuilder.Metadata.SetContainingElementName(
+            entityTypeBuilder.Metadata.ShortName().ToCamelCase(CultureInfo.CurrentCulture));
     }
 }
