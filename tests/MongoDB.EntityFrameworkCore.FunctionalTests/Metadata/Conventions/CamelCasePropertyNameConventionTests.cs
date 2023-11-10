@@ -54,7 +54,7 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
         {
             configurationBuilder.Conventions.Add(serviceProvider =>
-                new CamelCasePropertyNameConvention(serviceProvider
+                new CamelCaseElementNameConvention(serviceProvider
                     .GetRequiredService<ProviderConventionSetBuilderDependencies>()));
         }
 
@@ -75,6 +75,13 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         public string removeUnderscores { get; set; }
         public string treatUpperCase { get; set; }
         public string numeric123Separator { get; set; }
+        public IntendedStoragesSubDoc ownedEntity { get; set; }
+    }
+
+    class IntendedStoragesSubDoc
+    {
+        public string subUnchanged { get; set; }
+        public string subChanged { get; set; }
     }
 
     class RemappedEntity
@@ -87,6 +94,13 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         public string remove_underscores { get; set; }
         public string treatUPPERCase { get; set; }
         public string numeric123separator { get; set; }
+        public OwnedEntity OwnedEntity { get; set; }
+    }
+
+    class OwnedEntity
+    {
+        public string subUnchanged { get; set; }
+        public string SubChanged { get; set; }
     }
 
     [Fact]
@@ -101,6 +115,8 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         const string underscoredText = "Changed as underscores need removing and second word capitalizing";
         const string treatUpperText = "Treated UPPER as a separate word and title cased it";
         const string numericText = "Treated 123 as part of numeric and title cased word after";
+        const string subUnchanged = "Unchanged as is already fully camel cased inside an owned entity";
+        const string subChangedText = "Changed as first word needs to be lower cased inside an owned entity";
 
         {
             var dbContext = CamelCaseDbContext.Create(collection);
@@ -112,7 +128,8 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
                 LowercaseFirstWord = changedLowerText,
                 remove_underscores = underscoredText,
                 treatUPPERCase = treatUpperText,
-                numeric123separator = numericText
+                numeric123separator = numericText,
+                OwnedEntity = new OwnedEntity {subUnchanged = subUnchanged, SubChanged = subChangedText}
             });
             dbContext.SaveChanges();
         }
@@ -126,6 +143,8 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
             Assert.Equal(underscoredText, directFound.removeUnderscores);
             Assert.Equal(treatUpperText, directFound.treatUpperCase);
             Assert.Equal(numericText, directFound.numeric123Separator);
+            Assert.Equal(subUnchanged, directFound.ownedEntity.subUnchanged);
+            Assert.Equal(subChangedText, directFound.ownedEntity.subChanged);
         }
     }
 }
