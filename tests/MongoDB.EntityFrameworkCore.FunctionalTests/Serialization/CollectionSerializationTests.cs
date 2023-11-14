@@ -23,8 +23,8 @@ public class CollectionSerializationTests : BaseSerializationTests
     }
 
     [Theory]
-    [InlineData(2, 4, 8, 16, 32, 64)]
     [InlineData]
+    [InlineData(2, 4, 8, 16, 32, 64)]
     public void Int_array_round_trips(params int[] expected)
     {
         var collection = TempDatabase.CreateTemporaryCollection<IntArrayEntity>(nameof(Int_array_round_trips) + expected.Length);
@@ -44,14 +44,12 @@ public class CollectionSerializationTests : BaseSerializationTests
     }
 
     [Fact]
-    public void Missing_int_array_defaults_to_null()
+    public void Missing_int_array_throws()
     {
         var collection = SetupIdOnlyCollection<IntArrayEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
-        Assert.NotNull(result);
-        Assert.Null(result.anIntArray);
+        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
     }
 
     class IntArrayEntity : BaseIdEntity
@@ -59,9 +57,48 @@ public class CollectionSerializationTests : BaseSerializationTests
         public int[] anIntArray { get; set; }
     }
 
+
     [Theory]
-    [InlineData("abc", "def", "ghi", "and the rest")]
     [InlineData]
+    [InlineData(2, 4, 8, 16, 32, 64)]
+    public void Nullable_int_array_round_trips(params int[] expected)
+    {
+        var collection = TempDatabase.CreateTemporaryCollection<NullableIntArrayEntity>(nameof(Nullable_int_array_round_trips) + expected.Length);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(new NullableIntArrayEntity {anIntArray = expected});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entitites.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equal(expected, result.anIntArray);
+        }
+    }
+
+    [Fact]
+    public void Missing_nullable_int_array_defaults_to_null()
+    {
+        var collection = SetupIdOnlyCollection<NullableIntArrayEntity>();
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var result = db.Entitites.FirstOrDefault();
+        Assert.NotNull(result);
+        Assert.Null(result.anIntArray);
+    }
+
+    class NullableIntArrayEntity : BaseIdEntity
+    {
+        public int[]? anIntArray { get; set; }
+    }
+
+
+    [Theory]
+    [InlineData]
+    [InlineData("abc", "def", "ghi", "and the rest")]
     public void String_array_round_trips(params string[] expected)
     {
         var collection =
@@ -82,14 +119,12 @@ public class CollectionSerializationTests : BaseSerializationTests
     }
 
     [Fact]
-    public void Missing_string_array_defaults_to_null()
+    public void Missing_string_array_throws()
     {
         var collection = SetupIdOnlyCollection<StringArrayEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
-        Assert.NotNull(result);
-        Assert.Null(result.aStringArray);
+        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
     }
 
     class StringArrayEntity : BaseIdEntity
@@ -97,10 +132,107 @@ public class CollectionSerializationTests : BaseSerializationTests
         public string[] aStringArray { get; set; }
     }
 
+
+    [Theory]
+    [InlineData]
+    [InlineData("abc", "def", "ghi", "and the rest")]
+    public void Nullable_string_array_round_trips(params string[] expected)
+    {
+        var collection =
+            TempDatabase.CreateTemporaryCollection<NullableStringArrayEntity>(nameof(Nullable_string_array_round_trips) + expected.Length);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(new NullableStringArrayEntity {aStringArray = expected});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entitites.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equal(expected, result.aStringArray);
+        }
+    }
+
     [Fact]
-    public void Missing_list_defaults_to_null()
+    public void Missing_nullable_string_array_defaults_to_null()
+    {
+        var collection = SetupIdOnlyCollection<NullableStringArrayEntity>();
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var result = db.Entitites.FirstOrDefault();
+        Assert.NotNull(result);
+        Assert.Null(result.aStringArray);
+    }
+
+    class NullableStringArrayEntity : BaseIdEntity
+    {
+        public string[]? aStringArray { get; set; }
+    }
+
+    [Theory]
+    [InlineData]
+    [InlineData(1, 2, 3, 4)]
+    public void List_round_trips(params int[] expected)
+    {
+        var collection =
+            TempDatabase.CreateTemporaryCollection<ListEntity>(nameof(List_round_trips) + expected.Length);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(new ListEntity {aList = new List<int>(expected)});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entitites.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equivalent(expected, result.aList);
+        }
+    }
+
+    [Fact]
+    public void Missing_list_throws()
     {
         var collection = SetupIdOnlyCollection<ListEntity>();
+        using var db = SingleEntityDbContext.Create(collection);
+
+        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+    }
+
+    class ListEntity : BaseIdEntity
+    {
+        public List<int> aList { get; set; }
+    }
+
+    [Theory]
+    [InlineData]
+    [InlineData(1, 2, 3, 4)]
+    public void Nullable_list_round_trips(params int[] expected)
+    {
+        var collection =
+            TempDatabase.CreateTemporaryCollection<NullableListEntity>(nameof(Nullable_list_round_trips) + expected.Length);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(new NullableListEntity {aList = new List<int>(expected)});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entitites.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equivalent(expected, result.aList);
+        }
+    }
+
+    [Fact]
+    public void Missing_nullable_list_default_to_null()
+    {
+        var collection = SetupIdOnlyCollection<NullableListEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
         var result = db.Entitites.FirstOrDefault();
@@ -108,8 +240,8 @@ public class CollectionSerializationTests : BaseSerializationTests
         Assert.Null(result.aList);
     }
 
-    class ListEntity : BaseIdEntity
+    class NullableListEntity : BaseIdEntity
     {
-        public List<decimal> aList { get; set; }
+        public List<int>? aList { get; set; }
     }
 }
