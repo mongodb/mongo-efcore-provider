@@ -1,6 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="130"
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
   viewBox="0 -3 130 42"
-  height="42">
+  height="50"
+  width="150">
   <path
     d="M14 12.68C12.33 5.32 8.85 3.36 7.97 1.97 7.6 1.36 7.28.73 7 .08c-.05.65-.13 1.07-.69 1.56C5.19 2.63.45 6.49.05 14.86c-.37 7.8 5.73 12.61 6.54 13.1.62.31 1.38.01 1.74-.27 2.94-2.02 6.96-7.4 5.67-15.01"
     fill="#10aa50" />

@@ -38,7 +38,6 @@ functions:
         shell: bash
         working_dir: mongo-efcore-provider
         script: |
-          echo "${BUILD_TARGET}"
           # Get the current unique version of this checkout
           if [ "${is_patch}" = "true" ]; then
             CURRENT_VERSION=$(git describe)-patch-${version_id}
@@ -46,9 +45,9 @@ functions:
             CURRENT_VERSION=latest
           fi
 
-          if [ "${BUILD_TARGET}" != "tests" ]; then
-              PACKAGE_VERSION=$(BUILD_TARGET="${BUILD_TARGET}" sh ./evergreen/packages-version.sh)
-           fi
+          if [ "${BUILD_TARGET}" = "release" ]; then
+            PACKAGE_VERSION=$(BUILD_TARGET="${BUILD_TARGET}" sh ./evergreen/generate-version.sh)
+          fi
 
           export DRIVERS_TOOLS="$(pwd)/../drivers-tools"
           export DOTNET_SDK_PATH="$(pwd)/../.dotnet"
@@ -290,6 +289,35 @@ functions:
         remote_file: ${revision}/${PACKAGE_ID}.${PACKAGE_VERSION}.snupkg
         bucket: ${aws_upload_bucket}
 
+  build-apidocs:
+    - command: shell.exec
+      params:
+        shell: bash
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          if ! [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "Skip api docs generating for the patch release"
+            exit 0
+          fi
+          ./evergreen/build-apidocs.sh
+
+  upload-apidocs:
+    - command: shell.exec
+      params:
+        shell: bash
+        working_dir: mongo-efcore-provider
+        env:
+          GITHUB_USER: ${github_user}
+          GITHUB_APIKEY: ${github_apikey}
+        script: |
+          ${PREPARE_SHELL}
+          if ! [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "Skip api docs generating for the patch release"
+            exit 0
+          fi
+          ./evergreen/upload-apidocs.sh
+
 pre:
   - func: fetch-source
   - func: prepare-resources
@@ -323,6 +351,11 @@ tasks:
         vars:
           PACKAGE_ID: "MongoDB.EntityFrameworkCore"
       - func: packages-smoke-tests
+
+  - name: generate-apidocs
+    commands:
+      - func: build-apidocs
+      - func: upload-apidocs
 
   - name: push-packages
     commands:
@@ -417,10 +450,10 @@ axes:
         display_name: "tests"
         variables:
           BUILD_TARGET: "tests"
-      - id: "package"
-        display_name: "package"
+      - id: "release"
+        display_name: "release"
         variables:
-          BUILD_TARGET: "package"
+          BUILD_TARGET: "release"
 
 buildvariants:
 - matrix_name: main-tests
@@ -453,7 +486,7 @@ buildvariants:
 
 - matrix_name: pack-packages
   matrix_spec:
-    build-target: "package"
+    build-target: "release"
   display_name: "Package Pack"
   run_on: ubuntu2004-small
   tags: ["pack-packages", "release_tag"]
@@ -467,7 +500,7 @@ buildvariants:
     os: "*"
     driver: "latest"
     target_runtime: "*"
-    build-target: "package"
+    build-target: "release"
   display_name: "${target_runtime} smoke tests on ${os}"
   tags: ["package-tests", "release_tag"]
   tasks:
@@ -477,10 +510,22 @@ buildvariants:
         - name: pack-packages
           variant: .pack-packages
 
+- matrix_name: generate-apidocs
+  matrix_spec:
+    build-target: "release"
+  display_name: "Generate API Documentation"
+  run_on: ubuntu2004-small
+  tags: ["generate-apidocs", "release_tag"]
+  tasks:
+    - name: generate-apidocs
+      git_tag_only: true
+      depends_on:
+        - name: packages-tests
+          variant: .package-tests
 
 - matrix_name: push-packages
   matrix_spec:
-    build-target: "package"
+    build-target: "release"
   display_name: "Package Push"
   run_on: ubuntu2004-small
   tags: ["push-packages", "release_tag"]
@@ -492,3 +537,5 @@ buildvariants:
           variant: .pack-packages
         - name: packages-tests
           variant: .package-tests
+        - name: generate-apidocs
+          variant: .generate-apidocs

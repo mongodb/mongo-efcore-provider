@@ -21,28 +21,28 @@
     "build": {
         "content": [
             {
-                "files": ["api/**.yml", "api/index.md"]
+                "files": ["api/**.yml", "api/index.md", "api/MongoDB.md"]
             },
             {
-                "files": ["articles/**.md", "articles/**/toc.yml", "toc.yml", "*.md"]
+                "files": ["*.md"]
             }
         ],
         "resource": [
             {
-                "files": ["images/**", "images/mongodb-logo.svg"]
+                "files": ["images/**"]
             }
         ],
-        "output": "_site",
         "globalMetadataFiles": [],
         "fileMetadataFiles": [],
-        "template": ["default", "modern"],
+        "template": ["default", "modern", "mongo-apidocs"],
         "postProcessors": [],
         "keepFileLink": false,
         "disableGitFeatures": false,
         "globalMetadata": {
             "_appTitle": "MongoDB EF Core Provider API Reference",
             "_appFooter": "&copy; 2023 MongoDB, Inc.",
-            "_appLogoPath": "images/mongodb-logo.svg"
+            "_appLogoPath": "images/mongodb-logo.svg",
+            "_disableContribution": "true"
         }
     }
 }
