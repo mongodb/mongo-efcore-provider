@@ -37,7 +37,6 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 {
     private readonly Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly Stack<ProjectionMember> _projectionMembers = new();
-    private readonly Dictionary<ParameterExpression, CollectionShaperExpression> _collectionShaperMapping = new();
     private readonly Stack<INavigation> _includedNavigations = new();
 
     private MongoQueryExpression _queryExpression;
@@ -82,11 +81,6 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 return base.Visit(expression);
 
             case ParameterExpression parameterExpression:
-                if (_collectionShaperMapping.ContainsKey(parameterExpression))
-                {
-                    return parameterExpression;
-                }
-
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
                     == true)
                 {
@@ -105,7 +99,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 var currentProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[currentProjectionMember] = memberExpression;
 
-                return new ProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type.MakeNullable());
+                return new ProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
 
             default:
                 return base.Visit(expression);
@@ -169,21 +163,11 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
                 case UnaryExpression unaryExpression:
                     shaperExpression = unaryExpression.Operand as EntityShaperExpression;
-                    if (shaperExpression == null
-                        || unaryExpression.NodeType != ExpressionType.Convert)
+                    if (shaperExpression == null || unaryExpression.NodeType != ExpressionType.Convert)
                     {
                         return null;
                     }
 
-                    break;
-
-                case ParameterExpression parameterExpression:
-                    if (!_collectionShaperMapping.TryGetValue(parameterExpression, out var collectionShaper))
-                    {
-                        return null;
-                    }
-
-                    shaperExpression = (EntityShaperExpression)collectionShaper.InnerShaper;
                     break;
 
                 default:
@@ -210,11 +194,8 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             var navigation = _includedNavigations.FirstOrDefault(n => n.Name == memberName);
             if (navigation == null)
             {
-                navigationProjection = innerEntityProjection.BindMember(
-                    memberName, visitedSource.Type, out var propertyBase);
-
-                if (!(propertyBase is INavigation projectedNavigation)
-                    || !projectedNavigation.IsEmbedded())
+                navigationProjection = innerEntityProjection.BindMember(memberName, visitedSource.Type, out var propertyBase);
+                if (propertyBase is not INavigation projectedNavigation || !projectedNavigation.IsEmbedded())
                 {
                     return null;
                 }
