@@ -51,7 +51,7 @@ public class ProjectionTests
         });
     }
 
-    [Fact(Skip = "Requires Select projection rewriting")]
+    [Fact]
     public void Select_projection_to_array()
     {
         var results = _planets.Select(p => new object[] {p.name, p.orderFromSun});
