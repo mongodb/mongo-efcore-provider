@@ -116,7 +116,8 @@ public static class MongoServiceCollectionExtensions
             .TryAddProviderSpecificServices(
                 b => b
                     .TryAddScoped<IMongoClientWrapper, MongoClientWrapper>()
-                    .TryAddScoped<MongoShapedQueryCompilingExpressionVisitorDependencies, MongoShapedQueryCompilingExpressionVisitorDependencies>()
+                    .TryAddSingleton<MongoShapedQueryCompilingExpressionVisitorDependencies,
+                        MongoShapedQueryCompilingExpressionVisitorDependencies>()
                     .TryAddSingleton(new EntitySerializerCache())
             )
             .TryAddCoreServices();
