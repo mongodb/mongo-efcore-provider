@@ -16,17 +16,27 @@
 using System;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson.Serialization;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Serializers
 {
+    /// <summary>
+    /// Provides the interface between the EFCore <see cref="IReadOnlyEntityType"/> metadata
+    /// and the MongoDB LINQ provider's <see cref="IBsonDocumentSerializer"/> interface.
+    /// </summary>
+    /// <typeparam name="TValue">The underlying CLR type being handled by this serializer.</typeparam>
     internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocumentSerializer
     {
         private readonly IReadOnlyEntityType _entityType;
+        private readonly EntitySerializerCache _entitySerializerCache;
 
-        public EntitySerializer(IReadOnlyEntityType entityType)
+        public EntitySerializer(IReadOnlyEntityType entityType, EntitySerializerCache entitySerializerCache)
         {
             ArgumentNullException.ThrowIfNull(entityType);
+            ArgumentNullException.ThrowIfNull(entitySerializerCache);
+
             _entityType = entityType;
+            _entitySerializerCache = entitySerializerCache;
         }
 
         public Type ValueType => typeof(TValue);
@@ -52,7 +62,18 @@ namespace MongoDB.EntityFrameworkCore.Serializers
                 return true;
             }
 
-            // TODO: handle navigation properties also?
+            var navigation = _entityType.FindNavigation(memberName);
+            if (navigation != null)
+            {
+                var entityType = navigation.TargetEntityType;
+                var serializer = _entitySerializerCache.GetOrCreateSerializer(entityType);
+                string? elementName = entityType.GetContainingElementName();
+                if (elementName != null)
+                {
+                    serializationInfo = new BsonSerializationInfo(elementName, serializer, entityType.ClrType);
+                    return true;
+                }
+            }
 
             serializationInfo = default;
             return false;

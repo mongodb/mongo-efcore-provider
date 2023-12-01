@@ -13,9 +13,7 @@
  * limitations under the License.
  */
 
-using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -38,6 +36,34 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.Single();
+
+        Assert.Equal("Carmen", actual.name);
+        Assert.Equal(__location1.latitude, actual.location.latitude);
+        Assert.Equal(__location1.longitude, actual.location.longitude);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_allows_nested_where()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        collection.WriteTestDocs(__personWithLocation);
+        var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entitites.First(e => e.location.latitude > 0.00m);
+
+        Assert.Equal("Carmen", actual.name);
+        Assert.Equal(__location1.latitude, actual.location.latitude);
+        Assert.Equal(__location1.longitude, actual.location.longitude);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_two_levels_allows_nested_where()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        collection.WriteTestDocs(__personWithCity);
+        var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entitites.First(e => e.location.city.name == "San Diego");
 
         Assert.Equal("Carmen", actual.name);
         Assert.Equal(__location1.latitude, actual.location.latitude);

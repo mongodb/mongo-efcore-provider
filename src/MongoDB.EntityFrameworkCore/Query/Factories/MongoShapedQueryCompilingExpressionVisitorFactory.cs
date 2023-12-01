@@ -15,6 +15,7 @@
 
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Visitors;
+using MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies;
 
 namespace MongoDB.EntityFrameworkCore.Query.Factories;
 
@@ -27,10 +28,13 @@ public class MongoShapedQueryCompilingExpressionVisitorFactory : IShapedQueryCom
     /// Create a <see cref="MongoShapedQueryCompilingExpressionVisitorFactory"/>.
     /// </summary>
     /// <param name="dependencies">The <see cref="ShapedQueryCompilingExpressionVisitorDependencies"/> passed to each created <see cref="MongoShapedQueryCompilingExpressionVisitor" /> instance.</param>
+    /// <param name="mongoDependencies">The <see cref="MongoShapedQueryCompilingExpressionVisitorDependencies"/> passed to each created <see cref="MongoShapedQueryCompilingExpressionVisitor" /> instance.</param>
     public MongoShapedQueryCompilingExpressionVisitorFactory(
-        ShapedQueryCompilingExpressionVisitorDependencies dependencies)
+        ShapedQueryCompilingExpressionVisitorDependencies dependencies,
+        MongoShapedQueryCompilingExpressionVisitorDependencies mongoDependencies)
     {
         Dependencies = dependencies;
+        MongoDependencies = mongoDependencies;
     }
 
     /// <summary>
@@ -39,10 +43,18 @@ public class MongoShapedQueryCompilingExpressionVisitorFactory : IShapedQueryCom
     protected virtual ShapedQueryCompilingExpressionVisitorDependencies Dependencies { get; }
 
     /// <summary>
+    /// The <see cref="MongoShapedQueryCompilingExpressionVisitorDependencies"/> passed to each <see cref="MongoShapedQueryCompilingExpressionVisitor"/> created by this factory.
+    /// </summary>
+    protected virtual MongoShapedQueryCompilingExpressionVisitorDependencies MongoDependencies { get; }
+
+    /// <summary>
     /// Create a new <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with necessary dependencies.
     /// </summary>
     /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> passed to each newly created <see cref="MongoShapedQueryCompilingExpressionVisitor"/>.</param>
     /// <returns>The newly created <see cref="MongoShapedQueryCompilingExpressionVisitor"/>.</returns>
     public virtual ShapedQueryCompilingExpressionVisitor Create(QueryCompilationContext queryCompilationContext) =>
-        new MongoShapedQueryCompilingExpressionVisitor(Dependencies, (MongoQueryCompilationContext)queryCompilationContext);
+        new MongoShapedQueryCompilingExpressionVisitor(
+            Dependencies,
+            MongoDependencies,
+            (MongoQueryCompilationContext)queryCompilationContext);
 }
