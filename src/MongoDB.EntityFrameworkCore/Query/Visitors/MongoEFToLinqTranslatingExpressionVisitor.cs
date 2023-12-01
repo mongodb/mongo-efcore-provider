@@ -87,8 +87,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
         {
             // Replace the QueryContext parameter values with constant values for this execution.
             case ParameterExpression parameterExpression:
-                if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
-                    == true)
+                if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal) == true)
                 {
                     return ConvertIfRequired(Expression.Constant(_queryContext.ParameterValues[parameterExpression.Name]), expression.Type);
                 }
@@ -116,7 +115,6 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
 
                 return methodCallExpression.Method.ReturnType != property.PropertyType
                     ? Expression.Convert(propertyExpression, methodCallExpression.Method.ReturnType)
-                    : propertyExpression;
 
             // Unwrap include expressions.
             case IncludeExpression includeExpression:
@@ -130,16 +128,26 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
         return base.Visit(expression);
     }
 
+    protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
+    {
+        switch (methodCallExpression)
+        {
+            // Replace EF-generated Property(p, "propName") with p.propName.
+            case not null when methodCallExpression.Method.IsEFPropertyMethod()
+                               && methodCallExpression.Arguments[1] is ConstantExpression propertyNameExpression:
+                var source = methodCallExpression.Arguments[0];
+                string propertyName = propertyNameExpression.GetConstantValue<string>();
+                var property = source.Type.GetProperties().First(prop => prop.Name == propertyName);
+                return ConvertIfRequired(Expression.Property(source, property), methodCallExpression.Method.ReturnType);
+        }
+
+        return base.VisitMethodCall(methodCallExpression!);
+    }
+
     private static Expression ConvertIfRequired(Expression expression, Type targetType) =>
         expression.Type == targetType ? expression : Expression.Convert(expression, targetType);
 
-    private static Expression RemoveObjectConvert(Expression expression)
-        => expression is UnaryExpression {NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked} unaryExpression
-           && unaryExpression.Type == typeof(object)
-            ? unaryExpression.Operand
-            : expression;
-
     private static readonly MethodInfo __asMethodInfo = typeof(MongoQueryable)
         .GetMethods()
-        .First(mi => mi is {Name: nameof(MongoQueryable.As), IsPublic: true, IsStatic: true} && mi.GetParameters().Length == 2);
+        .First(mi => mi is { Name: nameof(MongoQueryable.As), IsPublic: true, IsStatic: true } && mi.GetParameters().Length == 2);
 }

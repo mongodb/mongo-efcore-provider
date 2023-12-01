@@ -56,6 +56,16 @@ public class FindTests
     }
 
     [Fact]
+    public async Task FindAsync_with_primitive_nullable_constant_key_found()
+    {
+        await using var db = GuidesDbContext.Create(_mongoDatabase);
+        ObjectId? key = ObjectId.Parse("621ff30d2a3e781873fcb661");
+        var result = await db.Planets.FindAsync(key);
+        Assert.NotNull(result);
+        Assert.Equal("Earth", result.name);
+    }
+
+    [Fact]
     public async Task FindAsync_with_primitive_key_not_found()
     {
         await using var db = GuidesDbContext.Create(_mongoDatabase);
@@ -103,6 +113,16 @@ public class FindTests
         using var db = GuidesDbContext.Create(_mongoDatabase);
         // Just ensures underling LINQ provider accepting translation
         var result = db.Planets.First(p => Equals(p._id, ObjectId.Parse("621ff30d2a3e781873fcb661")));
+        Assert.NotNull(result);
+        Assert.Equal("Earth", result.name);
+    }
+
+    [Fact]
+    public void Find_equivalent_in_LINQ_v3_works_when_constant_nullable()
+    {
+        using var db = GuidesDbContext.Create(_mongoDatabase);
+        ObjectId? key = ObjectId.Parse("621ff30d2a3e781873fcb661");
+        var result = db.Planets.First(p => Equals(p._id, key));
         Assert.NotNull(result);
         Assert.Equal("Earth", result.name);
     }
