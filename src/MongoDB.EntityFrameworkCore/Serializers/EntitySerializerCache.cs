@@ -25,10 +25,11 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 /// Provides a cache of <see cref="EntitySerializer{TValue}"/> objects that can be re-used as required when serializing
 /// <see cref="EntityType"/> to Bson documents.
 /// </summary>
-public class EntitySerializerCache
+public sealed class EntitySerializerCache
 {
     private readonly ConcurrentDictionary<IReadOnlyEntityType, IBsonSerializer> _cache = new();
 
     public IBsonSerializer GetOrCreateSerializer(IReadOnlyEntityType entityType) =>
-        _cache.GetOrAdd(entityType, key => (IBsonSerializer) Activator.CreateInstance(typeof(EntitySerializer<>).MakeGenericType(key.ClrType), key, this)!);
+        _cache.GetOrAdd(entityType,
+            key => (IBsonSerializer)Activator.CreateInstance(typeof(EntitySerializer<>).MakeGenericType(key.ClrType), key, this)!);
 }
