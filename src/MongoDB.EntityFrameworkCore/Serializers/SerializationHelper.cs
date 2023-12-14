@@ -23,7 +23,7 @@ using MongoDB.Bson.Serialization.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
-internal static class BsonBinding
+internal static class SerializationHelper
 {
     internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
     {

@@ -222,7 +222,7 @@ public class MongoDatabaseWrapper : Database
         foreach (var property in keyProperties)
         {
             object? propertyValue = entry.GetCurrentValue(property);
-            var serializationInfo = Serializers.BsonBinding.GetPropertySerializationInfo(property);
+            var serializationInfo = Serializers.SerializationHelper.GetPropertySerializationInfo(property);
             string? elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
             WriteProperty(writer, elementName, propertyValue, serializationInfo.Serializer);
         }
@@ -244,7 +244,7 @@ public class MongoDatabaseWrapper : Database
         foreach (var property in properties)
         {
             var propertyValue = entry.GetCurrentValue(property);
-            var serializationInfo = Serializers.BsonBinding.GetPropertySerializationInfo(property);
+            var serializationInfo = Serializers.SerializationHelper.GetPropertySerializationInfo(property);
             WriteProperty(writer, serializationInfo.ElementName, propertyValue, serializationInfo.Serializer);
         }
     }

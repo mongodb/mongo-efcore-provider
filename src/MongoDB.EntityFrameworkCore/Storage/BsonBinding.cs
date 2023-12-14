@@ -103,7 +103,7 @@ internal static class BsonBinding
     public static T GetElementValue<T>(BsonDocument document, string elementName)
     {
         var serializationInfo =
-            new BsonSerializationInfo(elementName, Serializers.BsonBinding.CreateTypeSerializer(typeof(T)), typeof(T));
+            new BsonSerializationInfo(elementName, Serializers.SerializationHelper.CreateTypeSerializer(typeof(T)), typeof(T));
         if (TryReadElementValue(document, serializationInfo, out T value) || typeof(T).IsNullableType())
         {
             return value;
@@ -115,7 +115,7 @@ internal static class BsonBinding
 
     public static T GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
     {
-        var serializationInfo = Serializers.BsonBinding.GetPropertySerializationInfo(property);
+        var serializationInfo = Serializers.SerializationHelper.GetPropertySerializationInfo(property);
         if (TryReadElementValue(document, serializationInfo, out T value) || property.IsNullable)
         {
             return value;

@@ -20,7 +20,7 @@ using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Serializers;
 
-public class BsonBindingTests
+public class SerializationHelperTests
 {
     [Fact]
     public void Read_element_returns_value()
