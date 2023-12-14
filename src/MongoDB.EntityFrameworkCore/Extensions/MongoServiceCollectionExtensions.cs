@@ -26,8 +26,6 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 using MongoDB.EntityFrameworkCore.Query.Factories;
-using MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies;
-using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
 using MongoDB.EntityFrameworkCore.ValueGeneration;
 
@@ -116,9 +114,6 @@ public static class MongoServiceCollectionExtensions
             .TryAddProviderSpecificServices(
                 b => b
                     .TryAddScoped<IMongoClientWrapper, MongoClientWrapper>()
-                    .TryAddSingleton<MongoShapedQueryCompilingExpressionVisitorDependencies,
-                        MongoShapedQueryCompilingExpressionVisitorDependencies>()
-                    .TryAddSingleton(new EntitySerializerCache())
             )
             .TryAddCoreServices();
 

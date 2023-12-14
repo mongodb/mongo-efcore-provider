@@ -26,7 +26,6 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
-using MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies;
 using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -36,23 +35,19 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 {
     private readonly Type _contextType;
     private readonly bool _threadSafetyChecksEnabled;
-    private readonly EntitySerializerCache _entitySerializerCache;
 
     /// <summary>
     /// Create a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
     /// </summary>
     /// <param name="dependencies">The <see cref="ShapedQueryCompilingExpressionVisitorDependencies"/> used by this visitor.</param>
-    /// <param name="mongoDependencies">MongoDB-specific dependencies used by this visitor.</param>
     /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> for this specific query.</param>
     public MongoShapedQueryCompilingExpressionVisitor(
         ShapedQueryCompilingExpressionVisitorDependencies dependencies,
-        MongoShapedQueryCompilingExpressionVisitorDependencies mongoDependencies,
         MongoQueryCompilationContext queryCompilationContext)
         : base(dependencies, queryCompilationContext)
     {
         _contextType = queryCompilationContext.ContextType;
         _threadSafetyChecksEnabled = dependencies.CoreSingletonOptions.AreThreadSafetyChecksEnabled;
-        _entitySerializerCache = mongoDependencies.EntitySerializerCache;
     }
 
     /// <inheritdoc/>
@@ -73,10 +68,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         {
             // We are relying on raw/scalar values coming back from LINQ V3 provider for now - no shaper required
             return Expression.Call(null,
-                __translateAndExecuteUnshapedQuery.MakeGenericMethod(rootEntityType.ClrType, shapedQueryExpression.ShaperExpression.Type),
+                __translateAndExecuteUnshapedQuery.MakeGenericMethod(rootEntityType.ClrType,
+                    shapedQueryExpression.ShaperExpression.Type),
                 QueryCompilationContext.QueryContextParameter,
                 Expression.Constant(rootEntityType),
-                Expression.Constant(_entitySerializerCache),
                 Expression.Constant(mongoQueryExpression),
                 Expression.Constant(_contextType),
                 Expression.Constant(_threadSafetyChecksEnabled),
@@ -107,7 +102,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             __translateAndExecuteQuery.MakeGenericMethod(rootEntityType.ClrType, projectedType),
             QueryCompilationContext.QueryContextParameter,
             Expression.Constant(rootEntityType),
-            Expression.Constant(_entitySerializerCache),
             Expression.Constant(mongoQueryExpression),
             Expression.Constant(compiledShaper),
             Expression.Constant(_contextType),
@@ -119,7 +113,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     private static QueryingEnumerable<TResult, TResult> TranslateAndExecuteUnshapedQuery<TSource, TResult>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
-        EntitySerializerCache entitySerializerCache,
         MongoQueryExpression queryExpression,
         Type contextType,
         bool threadSafetyChecksEnabled,
@@ -128,7 +121,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var mongoQueryContext = (MongoQueryContext)queryContext;
         string collectionName = queryExpression.CollectionExpression.CollectionName;
         var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
-            .AsQueryable().As((IBsonSerializer<TSource>)entitySerializerCache.GetOrCreateSerializer(entityType));
+            .AsQueryable().As((IBsonSerializer<TSource>)EntitySerializer.Create(entityType));
 
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
         var translatedQuery = queryTranslator.Visit(queryExpression.CapturedExpression)!;
@@ -149,7 +142,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     private static QueryingEnumerable<BsonDocument, TResult> TranslateAndExecuteQuery<TSource, TResult>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
-        EntitySerializerCache entitySerializerCache,
         MongoQueryExpression queryExpression,
         Func<QueryContext, BsonDocument, TResult> shaper,
         Type contextType,
@@ -160,7 +152,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var mongoQueryContext = (MongoQueryContext)queryContext;
         string collectionName = queryExpression.CollectionExpression.CollectionName;
         var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
-            .AsQueryable().As((IBsonSerializer<TSource>)entitySerializerCache.GetOrCreateSerializer(entityType));
+            .AsQueryable().As((IBsonSerializer<TSource>)EntitySerializer.Create(entityType));
 
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
