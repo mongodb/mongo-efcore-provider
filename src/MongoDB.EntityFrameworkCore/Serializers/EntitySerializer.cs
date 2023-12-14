@@ -56,7 +56,7 @@ namespace MongoDB.EntityFrameworkCore.Serializers
             var property = _entityType.FindProperty(memberName);
             if (property != null)
             {
-                serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
+                serializationInfo = BsonBinding.GetPropertySerializationInfo(property);
                 return true;
             }
 

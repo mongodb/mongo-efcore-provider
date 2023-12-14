@@ -14,14 +14,15 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.EntityFrameworkCore.Extensions;
-using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -92,10 +93,65 @@ internal static class BsonBinding
         Expression.Call(null, __getElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
     private static readonly MethodInfo __getPropertyValueMethodInfo
-        = typeof(SerializationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(SerializationHelper.GetPropertyValue));
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(GetPropertyValue));
 
     private static readonly MethodInfo __getElementValueMethodInfo
-        = typeof(SerializationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(SerializationHelper.GetElementValue));
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .Single(mi => mi.Name == nameof(GetElementValue));
+
+    public static T GetElementValue<T>(BsonDocument document, string elementName)
+    {
+        var serializationInfo =
+            new BsonSerializationInfo(elementName, Serializers.BsonBinding.CreateTypeSerializer(typeof(T)), typeof(T));
+        if (TryReadElementValue(document, serializationInfo, out T value) || typeof(T).IsNullableType())
+        {
+            return value;
+        }
+
+        throw new KeyNotFoundException($"Document does not contain value for non-nullable field '{elementName}'.");
+    }
+
+
+    public static T GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
+    {
+        var serializationInfo = Serializers.BsonBinding.GetPropertySerializationInfo(property);
+        if (TryReadElementValue(document, serializationInfo, out T value) || property.IsNullable)
+        {
+            return value;
+        }
+
+        throw new KeyNotFoundException($"Document does not contain value for non-nullable field '{property.Name}'.");
+    }
+
+    private static bool TryReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo, out T value)
+    {
+        BsonValue? rawValue;
+        if (elementSerializationInfo.ElementPath == null)
+        {
+            document.TryGetValue(elementSerializationInfo.ElementName, out rawValue);
+        }
+        else
+        {
+            rawValue = document;
+            foreach (string? node in elementSerializationInfo.ElementPath)
+            {
+                var doc = (BsonDocument)rawValue;
+                if (!doc.TryGetValue(node, out rawValue))
+                {
+                    rawValue = null;
+                    break;
+                }
+            }
+        }
+
+        if (rawValue != null)
+        {
+            value = (T)elementSerializationInfo.DeserializeValue(rawValue);
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
 }

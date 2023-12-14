@@ -27,9 +27,9 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
-using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -204,8 +204,59 @@ public class MongoDatabaseWrapper : Database
         return new MongoUpdate(collectionName, model);
     }
 
-    private static void WriteEntity(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null,
-        int? collectionIndex = null)
+    internal static void WriteKeyProperties(IBsonWriter writer, IUpdateEntry entry)
+    {
+        var keyProperties = entry.EntityType.FindPrimaryKey()
+            .Properties
+            .Where(p => !p.IsShadowProperty() && p.GetElementName() != "").ToArray();
+
+        if (!keyProperties.Any()) return;
+
+        bool compoundKey = keyProperties.Length > 1;
+        if (compoundKey)
+        {
+            writer.WriteName("_id");
+            writer.WriteStartDocument();
+        }
+
+        foreach (var property in keyProperties)
+        {
+            object? propertyValue = entry.GetCurrentValue(property);
+            var serializationInfo = Serializers.BsonBinding.GetPropertySerializationInfo(property);
+            string? elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
+            WriteProperty(writer, elementName, propertyValue, serializationInfo.Serializer);
+        }
+
+        if (compoundKey)
+        {
+            writer.WriteEndDocument();
+        }
+    }
+
+
+    internal static void WriteNonKeyProperties(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
+    {
+        var properties = entry.EntityType.GetProperties()
+            .Where(p => !p.IsShadowProperty() && !p.IsPrimaryKey() && p.GetElementName() != "")
+            .Where(p => propertyFilter == null || propertyFilter(p))
+            .ToArray();
+
+        foreach (var property in properties)
+        {
+            var propertyValue = entry.GetCurrentValue(property);
+            var serializationInfo = Serializers.BsonBinding.GetPropertySerializationInfo(property);
+            WriteProperty(writer, serializationInfo.ElementName, propertyValue, serializationInfo.Serializer);
+        }
+    }
+
+    private static void WriteProperty(IBsonWriter writer, string elementName, object value, IBsonSerializer serializer)
+    {
+        writer.WriteName(elementName);
+        var context = BsonSerializationContext.CreateRoot(writer);
+        serializer.Serialize(context, value);
+    }
+
+    private static void WriteEntity(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
     {
         if (propertyFilter == null && entry.EntityState == EntityState.Modified)
         {
@@ -216,8 +267,8 @@ public class MongoDatabaseWrapper : Database
 
         writer.WriteStartDocument();
 
-        SerializationHelper.WriteKeyProperties(writer, entry);
-        SerializationHelper.WriteNonKeyProperties(writer, entry, propertyFilter);
+        WriteKeyProperties(writer, entry);
+        WriteNonKeyProperties(writer, entry, propertyFilter);
 
         foreach (var navigation in entry.EntityType.GetNavigations())
         {

@@ -465,8 +465,9 @@ public class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture>
             value = Activator.CreateInstance(valueType, value);
         }
 
-        var methodInfo = this.GetType().GetMethod(nameof(ClrTypeMappingTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
-        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] {value});
+        GetType()
+            .GetMethod(nameof(ClrTypeMappingTestImpl), BindingFlags.Instance | BindingFlags.NonPublic)
+            .MakeGenericMethod(valueType).Invoke(this, new[] {value});
     }
 
     private enum TestEnum
