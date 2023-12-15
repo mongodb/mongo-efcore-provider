@@ -29,12 +29,15 @@ namespace MongoDB.EntityFrameworkCore.Serializers
     internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocumentSerializer
     {
         private readonly IReadOnlyEntityType _entityType;
+        private readonly EntitySerializerCache _entitySerializerCache;
 
-        public EntitySerializer(IReadOnlyEntityType entityType)
+        public EntitySerializer(IReadOnlyEntityType entityType, EntitySerializerCache entitySerializerCache)
         {
             ArgumentNullException.ThrowIfNull(entityType);
+            ArgumentNullException.ThrowIfNull(entitySerializerCache);
 
             _entityType = entityType;
+            _entitySerializerCache = entitySerializerCache;
         }
 
         public Type ValueType => typeof(TValue);
@@ -57,7 +60,7 @@ namespace MongoDB.EntityFrameworkCore.Serializers
                 {
                     var serializer = navigation.IsCollection
                         ? SerializationHelper.CreateListSerializer(navigation.ClrType.TryGetItemType(typeof(IEnumerable<>)))
-                        : EntitySerializer.Create(navigation.TargetEntityType);
+                        : _entitySerializerCache.GetOrCreateSerializer(navigation.TargetEntityType);
                     serializationInfo = new BsonSerializationInfo(elementName, serializer, navigation.ClrType);
                     return true;
                 }
@@ -80,12 +83,5 @@ namespace MongoDB.EntityFrameworkCore.Serializers
 
         void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
             => throw new NotImplementedException();
-    }
-
-    internal static class EntitySerializer
-    {
-        public static IBsonSerializer Create(IReadOnlyEntityType entityType)
-            => (IBsonSerializer)Activator.CreateInstance(typeof(EntitySerializer<>).MakeGenericType(entityType.ClrType),
-                entityType)!;
     }
 }
