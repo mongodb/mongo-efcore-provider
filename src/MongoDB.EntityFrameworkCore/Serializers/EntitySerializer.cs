@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson.Serialization;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -29,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.Serializers
     {
         private readonly IReadOnlyEntityType _entityType;
 
-
         public EntitySerializer(IReadOnlyEntityType entityType)
         {
             ArgumentNullException.ThrowIfNull(entityType);
@@ -38,18 +38,6 @@ namespace MongoDB.EntityFrameworkCore.Serializers
         }
 
         public Type ValueType => typeof(TValue);
-
-        public TValue Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
-            => throw new NotImplementedException();
-
-        object? IBsonSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
-            => Deserialize(context, args);
-
-        public void Serialize(BsonSerializationContext context, BsonSerializationArgs args, TValue value)
-            => throw new NotImplementedException();
-
-        void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
-            => Serialize(context, args, (TValue)value);
 
         public bool TryGetMemberSerializationInfo(string memberName, out BsonSerializationInfo? serializationInfo)
         {
@@ -64,11 +52,13 @@ namespace MongoDB.EntityFrameworkCore.Serializers
             if (navigation != null)
             {
                 var entityType = navigation.TargetEntityType;
-                var serializer = EntitySerializer.Create(entityType);
                 string? elementName = entityType.GetContainingElementName();
                 if (elementName != null)
                 {
-                    serializationInfo = new BsonSerializationInfo(elementName, serializer, entityType.ClrType);
+                    var serializer = navigation.IsCollection
+                        ? SerializationHelper.CreateListSerializer(navigation.ClrType.TryGetItemType(typeof(IEnumerable<>)))
+                        : EntitySerializer.Create(navigation.TargetEntityType);
+                    serializationInfo = new BsonSerializationInfo(elementName, serializer, navigation.ClrType);
                     return true;
                 }
             }
@@ -76,12 +66,26 @@ namespace MongoDB.EntityFrameworkCore.Serializers
             serializationInfo = default;
             return false;
         }
+
+        // We don't use these as we deserialize to BsonDocument at the end instead
+
+        public TValue Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+            => throw new NotImplementedException();
+
+        object IBsonSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+            => throw new NotImplementedException();
+
+        public void Serialize(BsonSerializationContext context, BsonSerializationArgs args, TValue value)
+            => throw new NotImplementedException();
+
+        void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
+            => throw new NotImplementedException();
     }
 
-    static class EntitySerializer
+    internal static class EntitySerializer
     {
         public static IBsonSerializer Create(IReadOnlyEntityType entityType)
             => (IBsonSerializer)Activator.CreateInstance(typeof(EntitySerializer<>).MakeGenericType(entityType.ClrType),
-                entityType);
+                entityType)!;
     }
 }

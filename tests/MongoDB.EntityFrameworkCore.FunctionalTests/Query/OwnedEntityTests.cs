@@ -71,6 +71,20 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
+    public void OwnedEntity_nested_one_level_allows_list_nested_where()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        collection.WriteTestDocs(__personWithLocations);
+        var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entitites.First(e => e.locations.Any(l => l.latitude == 40.1m && l.longitude != 0m));
+
+        Assert.Equal("Carmen", actual.name);
+        Assert.Equal(__location3.latitude, actual.locations[0].latitude);
+        Assert.Equal(__location3.longitude, actual.locations[0].longitude);
+    }
+
+    [Fact]
     public void OwnedEntity_nested_one_level_materializes_many()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
@@ -306,9 +320,11 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     private static readonly Location __location2 = new() {latitude = 49.45981m, longitude = -2.53527m};
 
+    private static readonly Location __location3 = new() {latitude = 40.1m, longitude = -1.1m};
     private static readonly PersonWithMultipleLocations[] __personWithLocations =
     {
-        new() {name = "Damien", locations = new List<Location> {__location2, __location1}}
+        new() {name = "Damien", locations = new List<Location> {__location2, __location1}},
+        new() {name = "Carmen", locations = new List<Location> {__location3}}
     };
 
     private static readonly PersonWithTwoLocations[] __personWithTwoLocations =

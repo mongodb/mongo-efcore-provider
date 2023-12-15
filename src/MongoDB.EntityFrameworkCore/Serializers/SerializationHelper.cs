@@ -41,7 +41,9 @@ internal static class SerializationHelper
         ArgumentNullException.ThrowIfNull(type);
 
         if (type.IsNullableValueType())
+        {
             return NullableSerializer.Create(CreateTypeSerializer(Nullable.GetUnderlyingType(type), property));
+        }
 
         return type switch
         {
@@ -81,6 +83,6 @@ internal static class SerializationHelper
     private static IBsonSerializer CreateArraySerializer(Type elementType)
         => (IBsonSerializer)Activator.CreateInstance(typeof(ArraySerializer<>).MakeGenericType(elementType));
 
-    private static IBsonSerializer CreateListSerializer(Type elementType)
+    internal static IBsonSerializer CreateListSerializer(Type elementType)
         => (IBsonSerializer)Activator.CreateInstance(typeof(ListSerializer<>).MakeGenericType(elementType));
 }

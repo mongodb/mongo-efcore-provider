@@ -151,16 +151,21 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
         string collectionName = queryExpression.CollectionExpression.CollectionName;
+
+        // Create a new LINQ v3 query source (collection)
         var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
             .AsQueryable().As((IBsonSerializer<TSource>)EntitySerializer.Create(entityType));
 
+        // Rewrite and re-target the EF LINQ query to the LINQ v3 provider
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
 
+        // Fire the query off against LINQ v3 query provider
         IEnumerable<BsonDocument> documents = resultCardinality == ResultCardinality.Enumerable
             ? source.Provider.CreateQuery<BsonDocument>(translatedQuery)
             : new[] {source.Provider.Execute<BsonDocument>(translatedQuery)};
 
+        // Wrap the LINQ v3 query enumerable with something that deals with EF/shaping/async etc.
         return new QueryingEnumerable<BsonDocument, TResult>(
             mongoQueryContext,
             documents,
