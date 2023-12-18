@@ -188,6 +188,19 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
+    public void OwnedEntity_nested_multiple_times_can_by_queried_with_where_on_a_list()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<TopLevelNestedPerson>();
+        collection.WriteTestDocs(__nestedPersons);
+        var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entitites.Where(p => p.children.Any(c => c.children.Any(d => d.name == "Third"))).ToList();
+
+        Assert.Single(actual);
+        Assert.Single(actual, s => __nestedPersons[0].name == s.name);
+    }
+
+    [Fact]
     public void OwnedEntity_with_collection_materializes_many()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
@@ -302,6 +315,20 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         public List<Location> locations { get; set; }
     }
 
+    class TopLevelNestedPerson
+    {
+        public ObjectId _id { get; set; }
+        public string name { get; set; }
+        public List<NestedPerson> children { get; set; }
+    }
+
+    class NestedPerson
+    {
+        public string name { get; set; }
+        public List<NestedPerson> children { get; set; }
+        public Location location { get; set; }
+    }
+
     class PersonWithTwoLocations : Person
     {
         public Location first { get; set; }
@@ -321,6 +348,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     private static readonly Location __location2 = new() {latitude = 49.45981m, longitude = -2.53527m};
 
     private static readonly Location __location3 = new() {latitude = 40.1m, longitude = -1.1m};
+
     private static readonly PersonWithMultipleLocations[] __personWithLocations =
     {
         new() {name = "Damien", locations = new List<Location> {__location2, __location1}},
@@ -330,5 +358,23 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     private static readonly PersonWithTwoLocations[] __personWithTwoLocations =
     {
         new() {name = "Henry", first = __location1, second = __location2}
+    };
+
+
+    private static readonly TopLevelNestedPerson[] __nestedPersons =
+    {
+        new()
+        {
+            name = "First",
+            children = new List<NestedPerson>
+            {
+                new()
+                {
+                    name = "Second",
+                    children = new List<NestedPerson> {new() {name = "Third", location = __location3}}
+                }
+            },
+        },
+        new() {name = "Something Else", children = new List<NestedPerson>()}
     };
 }
