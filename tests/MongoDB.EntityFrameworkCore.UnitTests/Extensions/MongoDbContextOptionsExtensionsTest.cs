@@ -1,17 +1,17 @@
 /* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -25,6 +25,7 @@ public static class MongoDbContextOptionsExtensionsTest
 {
     [Theory]
     [InlineData("mongodb://localhost:1234", "myDatabaseName")]
+    [InlineData("mongodb://localhost:1234,localhost:27017", "replicaSet")]
     public static void Can_configure_connection_string_and_database_name(string connectionString, string databaseName)
     {
         var serviceCollection = new ServiceCollection();
@@ -78,5 +79,21 @@ public static class MongoDbContextOptionsExtensionsTest
         Assert.Contains(
             "Only a single database provider can be registered",
             Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+    }
+
+    [Fact]
+    public static void LogFragment_does_not_contain_password()
+    {
+        var optionsBuilder = new DbContextOptionsBuilder()
+            .UseMongoDB(
+                "mongodb://myDbUsr:NotActuallyAP%40ssw0rd@m0.example.com:27017,m2.example.com:27017,m2.example.com:27017/?authSource=admin",
+                "db");
+
+        var extension = optionsBuilder.Options.FindExtension<MongoOptionsExtension>();
+        string? logFragment = extension?.Info.LogFragment;
+
+        Assert.DoesNotContain("NotActuallyA", logFragment);
+        Assert.Contains("myDbUsr:redacted@", logFragment);
+        Assert.Contains("?authSource=admin", logFragment);
     }
 }
