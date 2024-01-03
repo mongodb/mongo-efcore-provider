@@ -25,7 +25,7 @@ public static class MongoDbContextOptionsExtensionsTest
 {
     [Theory]
     [InlineData("mongodb://localhost:1234", "myDatabaseName")]
-    [InlineData("mongodb://localhost:1234,localhost:27017", "clusters")]
+    [InlineData("mongodb://localhost:1234,localhost:27017", "replicaSet")]
     public static void Can_configure_connection_string_and_database_name(string connectionString, string databaseName)
     {
         var serviceCollection = new ServiceCollection();
@@ -79,5 +79,21 @@ public static class MongoDbContextOptionsExtensionsTest
         Assert.Contains(
             "Only a single database provider can be registered",
             Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+    }
+
+    [Fact]
+    public static void LogFragment_does_not_contain_password()
+    {
+        var optionsBuilder = new DbContextOptionsBuilder()
+            .UseMongoDB(
+                "mongodb://myDbUsr:NotActuallyAP%40ssw0rd@m0.example.com:27017,m2.example.com:27017,m2.example.com:27017/?authSource=admin",
+                "db");
+
+        var extension = optionsBuilder.Options.FindExtension<MongoOptionsExtension>();
+        string? logFragment = extension?.Info.LogFragment;
+
+        Assert.DoesNotContain("NotActuallyA", logFragment);
+        Assert.Contains("myDbUsr:redacted@", logFragment);
+        Assert.Contains("?authSource=admin", logFragment);
     }
 }
