@@ -161,7 +161,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var queryExpression = new MongoQueryExpression(entityType);
         return new ShapedQueryExpression(
             queryExpression,
-            new EntityShaperExpression(
+            shaperExpression: new StructuralTypeShaperExpression(
                 entityType,
                 new ProjectionBindingExpression(queryExpression, new ProjectionMember(), typeof(ValueBuffer)),
                 false));

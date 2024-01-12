@@ -36,21 +36,20 @@ public class MongoValueGeneratorSelector : ValueGeneratorSelector
     }
 
     /// <inheritdoc />
-    protected override ValueGenerator? FindForType(IProperty property, IEntityType entityType, Type clrType)
+    protected override ValueGenerator? FindForType(IProperty property, ITypeBase typeBase, Type clrType)
     {
+        // Required to ensure we generate unique IDs for owned entity collections
+        if (typeBase.ContainingEntityType.IsOwned() && clrType == typeof(int) && property.IsShadowProperty())
+        {
+            return new OwnedEntityIndexValueGenerator();
+        }
+
         // Allow ObjectId's to be automatically generated
         if (clrType == typeof(ObjectId))
         {
             return new ObjectIdValueGenerator();
         }
 
-        // Generated unique integer identifiers for owned entities internal index
-        if (entityType.IsOwned() && clrType == typeof(int) && property.IsShadowProperty())
-        {
-            return new OwnedEntityIndexValueGenerator();
-        }
-
-        // Base class generates Guid even if stored as string or binary
-        return base.FindForType(property, entityType, clrType);
+        return base.FindForType(property, typeBase, clrType);
     }
 }

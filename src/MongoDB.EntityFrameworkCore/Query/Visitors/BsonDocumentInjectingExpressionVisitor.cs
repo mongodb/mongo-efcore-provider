@@ -29,7 +29,7 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
     {
         switch (extensionExpression)
         {
-            case EntityShaperExpression shaperExpression:
+            case StructuralTypeShaperExpression shaperExpression:
                 {
                     _currentEntityIndex++;
 
@@ -64,7 +64,7 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
                     _currentEntityIndex++;
 
                     var arrayVariable = Expression.Variable(typeof(BsonArray), "bsonArray" + _currentEntityIndex);
-                    var variables = new List<ParameterExpression> { arrayVariable };
+                    var variables = new List<ParameterExpression> {arrayVariable};
 
                     var expressions = new List<Expression>
                     {

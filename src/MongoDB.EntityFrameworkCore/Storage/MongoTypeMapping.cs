@@ -1,21 +1,22 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 using System;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.Json;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -46,6 +47,19 @@ public class MongoTypeMapping : CoreTypeMapping
     }
 
     /// <inheritdoc/>
-    public override CoreTypeMapping Clone(ValueConverter? converter)
-        => new MongoTypeMapping(Parameters.WithComposedConverter(converter));
+    public override CoreTypeMapping Clone(in TypeMappingInfo? mappingInfo = null, Type? clrType = null,
+        ValueConverter? converter = null, ValueComparer? comparer = null, ValueComparer? keyComparer = null,
+        ValueComparer? providerValueComparer = null, CoreTypeMapping? elementMapping = null,
+        JsonValueReaderWriter? jsonValueReaderWriter = null)
+        => new MongoTypeMapping(Parameters.WithComposedConverter(converter, comparer, keyComparer, elementMapping,
+            jsonValueReaderWriter));
+
+    public override CoreTypeMapping WithComposedConverter(ValueConverter? converter, ValueComparer? comparer = null,
+        ValueComparer? keyComparer = null, CoreTypeMapping? elementMapping = null,
+        JsonValueReaderWriter? jsonValueReaderWriter = null)
+        => new MongoTypeMapping(Parameters.WithComposedConverter(converter, comparer, keyComparer, elementMapping,
+            jsonValueReaderWriter));
+
+    protected override CoreTypeMapping Clone(CoreTypeMappingParameters parameters)
+        => new MongoTypeMapping(parameters);
 }

@@ -73,7 +73,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         {
             // We are relying on raw/scalar values coming back from LINQ V3 provider for now - no shaper required
             return Expression.Call(null,
-                __translateAndExecuteUnshapedQuery.MakeGenericMethod(rootEntityType.ClrType, shapedQueryExpression.ShaperExpression.Type),
+                __translateAndExecuteUnshapedQuery.MakeGenericMethod(rootEntityType.ClrType,
+                    shapedQueryExpression.ShaperExpression.Type),
                 QueryCompilationContext.QueryContextParameter,
                 Expression.Constant(rootEntityType),
                 Expression.Constant(_entitySerializerCache),
