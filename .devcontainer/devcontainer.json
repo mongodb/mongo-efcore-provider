@@ -1,0 +1,26 @@
+{
+  "name": "Mongo-Efcore-Provider",
+  "hostRequirements": {
+      "cpus": 4
+  },
+  "onCreateCommand": "wget https://download.visualstudio.microsoft.com/download/pr/9454f7dc-b98e-4a64-a96d-4eb08c7b6e66/da76f9c6bc4276332b587b771243ae34/dotnet-sdk-8.0.101-linux-x64.tar.gz -O $HOME/dotnet.tar.gz && export DOTNET_ROOT=$HOME/.dotnet && mkdir -p \"$DOTNET_ROOT\" && tar zxf $HOME/dotnet.tar.gz -C \"$DOTNET_ROOT\" && export PATH=$DOTNET_ROOT:$DOTNET_ROOT/tools:$PATH && sudo dotnet workload restore && dotnet dev-certs https --trust && dotnet build",
+  "waitFor": "onCreateCommand",
+  "customizations": {
+      "codespaces": {
+          "openFiles": [
+              "CONTRIBUTING.md"
+          ]
+      },
+      "vscode": {
+          "extensions": [
+              "ms-dotnettools.vscode-dotnet-runtime",
+              "kevin-chatham.aspnetcorerazor-html-css-class-completion",
+              "ms-dotnettools.csharp",
+              "glenn2223.live-sass"
+          ]
+      }
+  },
+  "remoteEnv": {
+      "ASPNETCORE_ENVIRONMENT": "Development"
+  }
+}
