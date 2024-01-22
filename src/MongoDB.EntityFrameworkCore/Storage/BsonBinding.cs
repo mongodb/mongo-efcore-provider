@@ -25,43 +25,49 @@ using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
+/// <summary>
+/// Helpers used by the shapers to access contents of the <see cref="BsonDocument"/> results.
+/// </summary>
 internal static class BsonBinding
 {
     /// <summary>
     /// Create the expression which will obtain the value or intermediate value required by the shaper.
     /// </summary>
     /// <param name="bsonDocExpression">The expression to obtain the current <see cref="BsonDocument"/>.</param>
-    /// <param name="name">The name of the value to obtain from the document.</param>
-    /// <param name="mappedType">What <see cref="Type"/> to obtain the the value as.</param>
-    /// <param name="entityType">The <see cref="IEntityType"/> the value will belong to for obtaining additional metadata.</param>
+    /// <param name="name">The name of the field in the document that contains the desired value.</param>
+    /// <param name="required">
+    /// <see langref="true"/> if the field is required to be present in the document,
+    /// <see langref="false"/> if it is optional.
+    /// </param>
+    /// <param name="mappedType">What <see cref="Type"/> to the value is to be treated as.</param>
+    /// <param name="entityType">The <see cref="IEntityType"/> the value will belong to in order to obtaining additional metadata.</param>
     /// <returns>A compilable expression the shaper can use to obtain this value from a <see cref="BsonDocument"/>.</returns>
     /// <exception cref="InvalidOperationException"></exception>
     public static Expression CreateGetValueExpression(
         Expression bsonDocExpression,
         string? name,
+        bool required,
         Type mappedType,
         IEntityType entityType)
     {
         if (name is null) return bsonDocExpression;
-        if (mappedType == typeof(BsonArray)) return CreateGetBsonArray(bsonDocExpression, name);
-        if (mappedType == typeof(BsonDocument)) return CreateGetBsonDocument(bsonDocExpression, name);
 
-        var targetProperty = entityType.FindProperty(name);
+        if (mappedType == typeof(BsonArray)) return CreateGetBsonArray(bsonDocExpression, name);
+        if (mappedType == typeof(BsonDocument)) return CreateGetBsonDocument(bsonDocExpression, name, required, entityType);
+
+        IProperty? targetProperty = entityType.FindProperty(name);
         if (targetProperty != null)
         {
-            if (targetProperty.IsNullable)
-            {
-                mappedType = mappedType.MakeNullable();
-            }
-
+            mappedType = targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType;
             return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
         }
 
-        var navigationProperty = entityType.FindNavigation(name) ??
-                                 throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
+        INavigation navigationProperty = entityType.FindNavigation(name) ??
+                                         throw new InvalidOperationException(
+                                             CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
 
-        string elementName = navigationProperty.TargetEntityType.GetContainingElementName()!;
-        return CreateGetElementValue(bsonDocExpression, elementName, mappedType);
+        string fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
+        return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
     }
 
     private static Expression CreateGetBsonArray(Expression bsonDocExpression, string name)
@@ -74,15 +80,27 @@ internal static class BsonBinding
     private static BsonArray GetBsonArray(BsonDocument document, string name)
         => document[name].AsBsonArray;
 
-    private static Expression CreateGetBsonDocument(Expression bsonDocExpression, string name)
-        => Expression.Call(null, __getBsonDocument, bsonDocExpression, Expression.Constant(name));
+    private static Expression CreateGetBsonDocument(Expression bsonDocExpression, string name, bool required,
+        IEntityType entityType)
+        => Expression.Call(null, __getBsonDocument, bsonDocExpression, Expression.Constant(name), Expression.Constant(required),
+            Expression.Constant(entityType));
 
     private static readonly MethodInfo __getBsonDocument
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetBsonDocument));
 
-    private static BsonDocument GetBsonDocument(BsonDocument document, string name)
-        => document[name].AsBsonDocument;
+    private static BsonDocument? GetBsonDocument(BsonValue parent, string name, bool required, IEntityType entityType)
+    {
+        BsonValue? value = parent[name];
+
+        if (value == BsonNull.Value && required)
+        {
+            throw new InvalidOperationException(
+                $"Field '{name}' required but not present in BsonDocument for a '{entityType.DisplayName()}'.");
+        }
+
+        return value == BsonNull.Value ? null : value.AsBsonDocument;
+    }
 
     private static Expression
         CreateGetPropertyValue(Expression bsonDocExpression, Expression propertyExpression, Type resultType) =>
