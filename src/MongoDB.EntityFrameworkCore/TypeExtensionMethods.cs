@@ -16,7 +16,6 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Reflection;
 
 // ReSharper disable once CheckNamespace
 namespace System;
@@ -80,29 +79,6 @@ internal static class TypeExtensions
     }
 
     /// <summary>
-    /// Try to find a constructor for the <paramref name="sequenceType"/> that takes an parameter of
-    /// <paramref name="parameterType"/>.
-    /// </summary>
-    /// <param name="sequenceType">The sequence type being examined.</param>
-    /// <param name="parameterType">The parameter the constructor must support.</param>
-    /// <returns>The <see cref="ConstructorInfo"/> if a matching constructor is found, otherwise <seealso langref="null"/>.</returns>
-    public static ConstructorInfo? TryFindConstructorWithParameter(
-        this Type sequenceType,
-        Type parameterType)
-    {
-        foreach (var constructor in sequenceType.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
-        {
-            var parameters = constructor.GetParameters();
-            if (parameters.Length == 1 && parameters[0].ParameterType.IsAssignableFrom(parameterType))
-            {
-                return constructor;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
     /// Create a nullable version of a <see cref="Type"/>.
     /// </summary>
     /// <param name="type">The <see cref="Type"/> to be made nullable.</param>
@@ -122,35 +98,6 @@ internal static class TypeExtensions
 
     public static bool IsNullableValueType(this Type type)
         => type.IsConstructedGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>);
-
-    /// <summary>
-    /// Find the <see cref="IEnumerable{T}"/> interface on a given <paramref name="sequenceType"/>.
-    /// </summary>
-    /// <param name="sequenceType">The sequence type to examine.</param>
-    /// <returns>The <see cref="Type"/> of <see cref="IEnumerable{T}"/> found on the <paramref name="sequenceType"/>
-    /// or <see langref="null"/> if none could be found.</returns>
-    public static Type? TryFindIEnumerable(this Type sequenceType)
-    {
-        var itemType = sequenceType.TryGetItemType();
-        if (itemType == null || sequenceType == typeof(string))
-        {
-            return null;
-        }
-
-        if (sequenceType.IsArray)
-        {
-            return typeof(IEnumerable<>).MakeGenericType(itemType);
-        }
-
-        var findIEnumerable = typeof(IEnumerable<>).MakeGenericType(itemType);
-        foreach (var candidateInterface in sequenceType.GetInterfaces())
-        {
-            if (candidateInterface.IsAssignableFrom(sequenceType))
-                return findIEnumerable;
-        }
-
-        return null;
-    }
 
     private static IEnumerable<Type> GetBaseTypes(this Type type)
     {
