@@ -27,7 +27,7 @@ public class OwnedEntityIndexValueGeneratorTests
         var values = new HashSet<int>(loops);
 
         for (int i = 0; i < loops; i++)
-            values.Add(generator.Next(null));
+            values.Add(generator.Next(null!));
 
         Assert.Equal(loops, values.Count);
     }

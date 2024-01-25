@@ -20,8 +20,9 @@ using Microsoft.EntityFrameworkCore.ValueGeneration;
 namespace MongoDB.EntityFrameworkCore.ValueGeneration;
 
 /// <summary>
-/// Creates an auto-incrementing number used by owned entity collections to ensure
-/// key uniqueness within EF tracking.
+/// Generates a unique auto-incrementing <see cref="int"/> used by owned entity
+/// collections to ensure key uniqueness within EF tracking. The values are not
+/// persisted.
 /// </summary>
 internal class OwnedEntityIndexValueGenerator : ValueGenerator<int>
 {
