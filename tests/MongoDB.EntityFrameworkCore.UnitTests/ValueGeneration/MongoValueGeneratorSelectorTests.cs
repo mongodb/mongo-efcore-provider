@@ -39,10 +39,17 @@ public class MongoValueGeneratorSelectorTests
     }
 
     [Fact]
-    public void Create_returns_OwnedEntityIndexValueGenerator_for_internal_int_index()
+    public void Create_returns_OwnedEntityIndexValueGenerator_for_mapped_int()
     {
         var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("_unique")!, _entityType);
         Assert.IsType<OwnedEntityIndexValueGenerator>(generator);
+    }
+
+    [Fact]
+    public void Create_returns_ObjectIdValueGenerator_for_mapped_ObjectId()
+    {
+        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("_id")!, _entityType);
+        Assert.IsType<ObjectIdValueGenerator>(generator);
     }
 
     [Fact]
@@ -53,17 +60,10 @@ public class MongoValueGeneratorSelectorTests
     }
 
     [Fact]
-    public void Create_returns_GuidValueGenerator_for_mapped_Guid()
+    public void Create_throws_NotSupportedException_for_guid()
     {
         var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("someGuid")!, _entityType);
         Assert.IsType<GuidValueGenerator>(generator);
-    }
-
-    [Fact]
-    public void Create_returns_GuidValueGenerator_for_mapped_string()
-    {
-        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("someString")!, _entityType);
-        Assert.IsType<StringValueGenerator>(generator);
     }
 
     class RootEntity
@@ -77,6 +77,5 @@ public class MongoValueGeneratorSelectorTests
         public ObjectId _id { get; set; }
         public int someInt { get; set; }
         public Guid someGuid { get; set; }
-        public string someString { get; set; }
     }
 }

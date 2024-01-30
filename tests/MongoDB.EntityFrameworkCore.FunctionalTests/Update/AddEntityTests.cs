@@ -70,26 +70,57 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
-    public void Add_simple_entity()
+    public void Add_simple_entity_with_generated_ObjectId()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
         var dbContext = SingleEntityDbContext.Create(collection);
 
-        var expected = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "AddMe"};
+        var expected = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "Generated"};
         dbContext.Entitites.Add(expected);
         dbContext.SaveChanges();
 
-        {
-            var foundEntity = dbContext.Entitites.Single();
-            Assert.Equal(expected._id, foundEntity._id);
-            Assert.Equal(expected.name, foundEntity.name);
-        }
+        Assert.Same(expected, dbContext.Entitites.First());
 
-        {
-            var directFound = collection.Find(f => f._id == expected._id).Single();
-            Assert.Equal(expected._id, directFound._id);
-            Assert.Equal(expected.name, directFound.name);
-        }
+        // Check with C# Driver for second opinion
+        var directFound = collection.Find(f => f._id == expected._id).Single();
+        Assert.Equal(expected._id, directFound._id);
+        Assert.Equal(expected.name, directFound.name);
+    }
+
+    [Fact]
+    public void Add_simple_entity_with_unset_ObjectId()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var dbContext = SingleEntityDbContext.Create(collection);
+
+        var expected = new SimpleEntity {name = "Not Set"};
+        dbContext.Entitites.Add(expected);
+        dbContext.SaveChanges();
+
+        Assert.Same(expected, dbContext.Entitites.First());
+
+        // Check with C# Driver for second opinion
+        var directFound = collection.Find(f => f._id == expected._id).Single();
+        Assert.Equal(expected._id, directFound._id);
+        Assert.Equal(expected.name, directFound.name);
+    }
+
+    [Fact]
+    public void Add_simple_entity_with_empty_ObjectId()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var dbContext = SingleEntityDbContext.Create(collection);
+
+        var expected = new SimpleEntity {_id = ObjectId.Empty, name = "Empty"};
+        dbContext.Entitites.Add(expected);
+        dbContext.SaveChanges();
+
+        Assert.Same(expected, dbContext.Entitites.First());
+
+        // Check with C# Driver for second opinion
+        var directFound = collection.Find(f => f._id == expected._id).Single();
+        Assert.Equal(expected._id, directFound._id);
+        Assert.Equal(expected.name, directFound.name);
     }
 
     [Fact]

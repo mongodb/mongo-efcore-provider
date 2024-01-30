@@ -46,13 +46,14 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         // New MongoDB-specific conventions
         conventionSet.Add(new CollectionNameFromDbSetConvention(Dependencies));
         conventionSet.Add(new CollectionAttributeConvention(Dependencies));
-        conventionSet.Replace<KeyDiscoveryConvention>(new PrimaryKeyDiscoveryConvention(Dependencies));
 
         // Convenience conventions for users familiar with EF
         conventionSet.Add(new TableAttributeConvention(Dependencies));
         conventionSet.Add(new ColumnAttributeConvention(Dependencies));
 
         // Replace default conventions with MongoDB-specific ones
+        conventionSet.Replace<KeyDiscoveryConvention>(new PrimaryKeyDiscoveryConvention(Dependencies));
+        conventionSet.Replace<ValueGenerationConvention>(new MongoValueGenerationConvention(Dependencies));
         conventionSet.Replace<RelationshipDiscoveryConvention>(new MongoRelationshipDiscoveryConvention(Dependencies));
 
         return conventionSet;

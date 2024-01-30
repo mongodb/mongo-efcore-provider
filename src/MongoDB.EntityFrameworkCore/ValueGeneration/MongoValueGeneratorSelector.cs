@@ -16,6 +16,7 @@
 using System;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.ValueGeneration;
+using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.ValueGeneration;
 
@@ -37,6 +38,12 @@ public class MongoValueGeneratorSelector : ValueGeneratorSelector
     /// <inheritdoc />
     protected override ValueGenerator? FindForType(IProperty property, IEntityType entityType, Type clrType)
     {
+        // Allow ObjectId's to be automatically generated
+        if (clrType == typeof(ObjectId))
+        {
+            return new ObjectIdValueGenerator();
+        }
+
         // Generated unique integer identifiers for owned entities internal index
         if (entityType.IsOwned() && clrType == typeof(int) && property.IsShadowProperty())
         {
