@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Description>Official MongoDB supported driver for MongoDB. See https://www.mongodb.com/docs/drivers/csharp/ for more details.</Description>
     <IsPackable>true</IsPackable>
     <PackageId>MongoDB.EntityFrameworkCore</PackageId>
@@ -15,5 +15,6 @@
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="7.0.15" />
     <PackageReference Include="MongoDB.Driver" Version="2.23.1" />
+    <PackageReference Remove="Microsoft.SourceLink.GitHub"/>
   </ItemGroup>
 </Project>
