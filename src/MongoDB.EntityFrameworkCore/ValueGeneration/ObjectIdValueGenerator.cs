@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2024-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,29 +13,27 @@
  * limitations under the License.
  */
 
-using System.Threading;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.ValueGeneration;
+using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.ValueGeneration;
 
 /// <summary>
-/// Generates a unique sequential <see cref="int"/> to used by owned entity
-/// collections ensuring internal key uniqueness within EF tracking.
-/// The values are not actually persisted.
+/// Generates unique <see cref="ObjectId"/> values. This is the default generator
+/// for MongoDB `_id` <see cref="ObjectId"/> fields. These generated values persist
+/// to the server instead of using server-generated values and round-tripping.
 /// </summary>
-internal class OwnedEntityIndexValueGenerator : ValueGenerator<int>
+internal class ObjectIdValueGenerator : ValueGenerator<ObjectId>
 {
-    private int _current = int.MinValue;
-
     /// <summary>
-    /// Generates a unique sequential <see langref="int"/>.
+    /// Generates a unique <see cref="ObjectId"/>.
     /// </summary>
-    /// <param name="entry">The <see cref="EntityEntry"/> this <see langref="int"/>
+    /// <param name="entry">The <see cref="EntityEntry"/> this <see cref="ObjectId"/>
     /// will be used by.</param>
-    /// <returns>A unique <see langref="int"/>.</returns>
-    public override int Next(EntityEntry entry) =>
-        Interlocked.Increment(ref _current);
+    /// <returns>A unique <see cref="ObjectId"/>.</returns>
+    public override ObjectId Next(EntityEntry entry)
+        => ObjectId.GenerateNewId();
 
     /// <summary>
     /// Always <see langref="false"/> as this generator is only used for permanent values.
