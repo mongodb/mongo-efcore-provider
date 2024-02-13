@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Collections.ObjectModel;
 using System.Reflection;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -224,17 +225,16 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
     [InlineData(typeof(int[]), null)]
     [InlineData(typeof(int[]), new[] {-5, 0, 128, 10})]
-    // TODO: investigate and fix IEnumerable property support
-    // [InlineData(typeof(IEnumerable<int>), new[] { -5, 0, 128, 10 })]
     [InlineData(typeof(IList<int>), null)]
     [InlineData(typeof(IList<int>), new[] {-5, 0, 128, 10})]
-    [InlineData(typeof(ICollection<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(IReadOnlyList<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(List<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(string[]), null)]
     [InlineData(typeof(string[]), new[] {"one", "two"})]
     [InlineData(typeof(IList<string>), null)]
     [InlineData(typeof(List<string>), new[] {"one", "two"})]
+    [InlineData(typeof(Collection<int>), null)]
+    [InlineData(typeof(ObservableCollection<int>), null)]
     public void Entity_add_tests(Type valueType, object? value)
     {
         if (value != null && !value.GetType().IsAssignableTo(valueType))
@@ -242,8 +242,10 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
             value = Activator.CreateInstance(valueType, value);
         }
 
-        MethodInfo? methodInfo = GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
-        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] {value});
+        GetType()
+            .GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic)!
+            .MakeGenericMethod(valueType)
+            .Invoke(this, [value]);
     }
 
     private enum TestEnum
@@ -254,17 +256,16 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     private void EntityAddTestImpl<TValue>(TValue value)
     {
-        IMongoCollection<Entity<TValue>> collection =
-            _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityAddTestImpl", typeof(TValue), value);
+        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityAddTestImpl", typeof(TValue), value);
 
         {
-            SingleEntityDbContext<Entity<TValue>> dbContext = SingleEntityDbContext.Create(collection);
+            var dbContext = SingleEntityDbContext.Create(collection);
             dbContext.Entitites.Add(new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = value});
             dbContext.SaveChanges();
         }
 
         {
-            SingleEntityDbContext<Entity<TValue>> newDbContext = SingleEntityDbContext.Create(collection);
+            var newDbContext = SingleEntityDbContext.Create(collection);
             Entity<TValue> foundEntity = newDbContext.Entitites.Single();
             Assert.Equal(value, foundEntity.Value);
         }

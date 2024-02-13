@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Collections.ObjectModel;
 using System.Reflection;
 using MongoDB.Bson;
 
@@ -447,17 +448,16 @@ public class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture>
     [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue1)]
     [InlineData(typeof(int[]), null)]
     [InlineData(typeof(int[]), new[] {-5, 0, 128, 10})]
-    // TODO: investigate and fix IEnumerable property support
-    // [InlineData(typeof(IEnumerable<int>), new[] { -5, 0, 128, 10 })]
     [InlineData(typeof(IList<int>), null)]
     [InlineData(typeof(IList<int>), new[] {-5, 0, 128, 10})]
-    [InlineData(typeof(ICollection<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(IReadOnlyList<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(List<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(string[]), null)]
     [InlineData(typeof(string[]), new[] {"one", "two"})]
     [InlineData(typeof(IList<string>), null)]
     [InlineData(typeof(List<string>), new[] {"one", "two"})]
+    [InlineData(typeof(Collection<int>), null)]
+    [InlineData(typeof(ObservableCollection<int>), null)]
     public void Type_mapping_test(Type valueType, object? value)
     {
         if (value != null && !value.GetType().IsAssignableTo(valueType))
@@ -465,8 +465,10 @@ public class ClrTypeMappingTests : IClassFixture<TemporaryDatabaseFixture>
             value = Activator.CreateInstance(valueType, value);
         }
 
-        var methodInfo = this.GetType().GetMethod(nameof(ClrTypeMappingTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
-        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] {value});
+        GetType()
+            .GetMethod(nameof(ClrTypeMappingTestImpl), BindingFlags.Instance | BindingFlags.NonPublic)!
+            .MakeGenericMethod(valueType)
+            .Invoke(this, [value]);
     }
 
     private enum TestEnum

@@ -47,19 +47,16 @@ public class MongoTypeMapping : CoreTypeMapping
     }
 
     /// <inheritdoc/>
-    public override CoreTypeMapping Clone(in TypeMappingInfo? mappingInfo = null, Type? clrType = null,
-        ValueConverter? converter = null, ValueComparer? comparer = null, ValueComparer? keyComparer = null,
-        ValueComparer? providerValueComparer = null, CoreTypeMapping? elementMapping = null,
-        JsonValueReaderWriter? jsonValueReaderWriter = null)
-        => new MongoTypeMapping(Parameters.WithComposedConverter(converter, comparer, keyComparer, elementMapping,
-            jsonValueReaderWriter));
-
-    public override CoreTypeMapping WithComposedConverter(ValueConverter? converter, ValueComparer? comparer = null,
-        ValueComparer? keyComparer = null, CoreTypeMapping? elementMapping = null,
-        JsonValueReaderWriter? jsonValueReaderWriter = null)
-        => new MongoTypeMapping(Parameters.WithComposedConverter(converter, comparer, keyComparer, elementMapping,
-            jsonValueReaderWriter));
-
     protected override CoreTypeMapping Clone(CoreTypeMappingParameters parameters)
         => new MongoTypeMapping(parameters);
+
+    /// <inheritdoc/>
+    public override CoreTypeMapping WithComposedConverter(
+        ValueConverter? converter,
+        ValueComparer? comparer = null,
+        ValueComparer? keyComparer = null,
+        CoreTypeMapping? elementMapping = null,
+        JsonValueReaderWriter? jsonValueReaderWriter = null)
+        => new MongoTypeMapping(Parameters.WithComposedConverter(converter, comparer, keyComparer, elementMapping,
+            jsonValueReaderWriter));
 }
