@@ -55,8 +55,8 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
 
     private Expression BindProperty(IProperty property)
     {
-        if (!EntityType.IsAssignableFrom(property.DeclaringEntityType)
-            && !property.DeclaringEntityType.IsAssignableFrom(EntityType))
+        if (!EntityType.IsAssignableFrom(property.DeclaringType)
+            && !property.DeclaringType.IsAssignableFrom(EntityType))
         {
             throw new InvalidOperationException(
                 $"Unable to bind 'property' '{property.Name}' to an entity projection of '{EntityType.DisplayName()}'.");

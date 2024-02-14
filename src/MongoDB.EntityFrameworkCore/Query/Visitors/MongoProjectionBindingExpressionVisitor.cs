@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+#nullable disable
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -25,8 +27,6 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
-
-#nullable disable
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -76,7 +76,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
             case NewExpression:
             case MemberInitExpression:
-            case EntityShaperExpression:
+            case StructuralTypeShaperExpression:
             case MaterializeCollectionNavigationExpression:
                 return base.Visit(expression);
 
@@ -111,14 +111,15 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     {
         switch (extensionExpression)
         {
-            case EntityShaperExpression entityShaperExpression:
+            case StructuralTypeShaperExpression StructuralTypeShaperExpression:
                 {
-                    var projectionBindingExpression = (ProjectionBindingExpression)entityShaperExpression.ValueBufferExpression;
+                    var projectionBindingExpression =
+                        (ProjectionBindingExpression)StructuralTypeShaperExpression.ValueBufferExpression;
 
                     var entityProjection = (EntityProjectionExpression)_queryExpression.GetMappedProjection(
                         projectionBindingExpression.ProjectionMember);
 
-                    return entityShaperExpression.Update(
+                    return StructuralTypeShaperExpression.Update(
                         new ProjectionBindingExpression(
                             _queryExpression, _queryExpression.AddToProjection(entityProjection), typeof(ValueBuffer)));
                 }
@@ -134,7 +135,9 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                     if (!(includeExpression.Navigation is INavigation includableNavigation && includableNavigation.IsEmbedded()))
                     {
                         throw new InvalidOperationException(
-                            $"Including navigation '{nameof(includeExpression.Navigation)}' is not supported as the navigation is not embedded in same resource.");
+                            $"Including navigation '{
+                                nameof(includeExpression.Navigation)
+                            }' is not supported as the navigation is not embedded in same resource.");
                     }
 
                     _includedNavigations.Push(includableNavigation);
@@ -154,15 +157,15 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         {
             var visitedSource = Visit(source);
 
-            EntityShaperExpression shaperExpression;
+            StructuralTypeShaperExpression shaperExpression;
             switch (visitedSource)
             {
-                case EntityShaperExpression shaper:
+                case StructuralTypeShaperExpression shaper:
                     shaperExpression = shaper;
                     break;
 
                 case UnaryExpression unaryExpression:
-                    shaperExpression = unaryExpression.Operand as EntityShaperExpression;
+                    shaperExpression = unaryExpression.Operand as StructuralTypeShaperExpression;
                     if (shaperExpression == null || unaryExpression.NodeType != ExpressionType.Convert)
                     {
                         return null;
@@ -210,14 +213,14 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             switch (navigationProjection)
             {
                 case EntityProjectionExpression entityProjection:
-                    return new EntityShaperExpression(
+                    return new StructuralTypeShaperExpression(
                         navigation.TargetEntityType,
                         Expression.Convert(Expression.Convert(entityProjection, typeof(object)), typeof(ValueBuffer)),
                         nullable: true);
 
                 case ObjectArrayProjectionExpression objectArrayProjectionExpression:
                     {
-                        var innerShaperExpression = new EntityShaperExpression(
+                        var innerShaperExpression = new StructuralTypeShaperExpression(
                             navigation.TargetEntityType,
                             Expression.Convert(
                                 Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)),
@@ -228,7 +231,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                             objectArrayProjectionExpression,
                             innerShaperExpression,
                             navigation,
-                            innerShaperExpression.EntityType.ClrType);
+                            innerShaperExpression.StructuralType.ClrType);
                     }
 
                 default:
@@ -346,15 +349,15 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     {
         var innerExpression = Visit(memberExpression.Expression);
 
-        EntityShaperExpression shaperExpression;
+        StructuralTypeShaperExpression shaperExpression;
         switch (innerExpression)
         {
-            case EntityShaperExpression shaper:
+            case StructuralTypeShaperExpression shaper:
                 shaperExpression = shaper;
                 break;
 
             case UnaryExpression unaryExpression:
-                shaperExpression = unaryExpression.Operand as EntityShaperExpression;
+                shaperExpression = unaryExpression.Operand as StructuralTypeShaperExpression;
                 if (shaperExpression == null
                     || unaryExpression.NodeType != ExpressionType.Convert)
                 {
@@ -395,14 +398,14 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         switch (navigationProjection)
         {
             case EntityProjectionExpression entityProjection:
-                return new EntityShaperExpression(
+                return new StructuralTypeShaperExpression(
                     navigation.TargetEntityType,
                     Expression.Convert(Expression.Convert(entityProjection, typeof(object)), typeof(ValueBuffer)),
                     nullable: true);
 
             case ObjectArrayProjectionExpression objectArrayProjectionExpression:
                 {
-                    var innerShaperExpression = new EntityShaperExpression(
+                    var innerShaperExpression = new StructuralTypeShaperExpression(
                         navigation.TargetEntityType,
                         Expression.Convert(
                             Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)),
@@ -413,7 +416,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                         objectArrayProjectionExpression,
                         innerShaperExpression,
                         navigation,
-                        innerShaperExpression.EntityType.ClrType);
+                        innerShaperExpression.StructuralType.ClrType);
                 }
 
             default:
