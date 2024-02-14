@@ -1,7 +1,7 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-// Originally from EFCore.Cosmos EntityProjectionExpression.
+// Derived from EFCore.Cosmos EntityProjectionExpression.
 
 using System;
 using System.Collections.Generic;
@@ -13,31 +13,47 @@ using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
+/// <summary>
+/// Represents where an EF-Entity will be projected from and how it is mapped.
+/// </summary>
 internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrintableExpression, IAccessExpression
 {
-    private readonly Dictionary<IProperty, IAccessExpression> _propertyExpressionsMap = new();
     private readonly Dictionary<INavigation, IAccessExpression> _navigationExpressionsMap = new();
 
-    public EntityProjectionExpression(IEntityType entityType, Expression accessExpression)
+    /// <summary>
+    /// Create a <see cref="EntityProjectionExpression"/>.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IEntityType"/> being projected.</param>
+    /// <param name="parentAccessExpression">The <see cref="Expression"/> used to access the parent tree.</param>
+    public EntityProjectionExpression(
+        IEntityType entityType,
+        Expression parentAccessExpression)
         : base(entityType)
     {
-        AccessExpression = accessExpression;
-        Name = (accessExpression as IAccessExpression)?.Name;
+        ParentAccessExpression = parentAccessExpression;
+        Name = (parentAccessExpression as IAccessExpression)?.Name;
     }
 
-    public Expression AccessExpression { get; }
+    /// <summary>
+    /// The <see cref="Expression"/> used to access the parent for this entity.
+    /// </summary>
+    public Expression ParentAccessExpression { get; }
 
+    /// <summary>
+    /// The name or alias assigned to this projection.
+    /// </summary>
     public string? Name { get; }
 
+    /// <inheritdoc />
     protected override Expression VisitChildren(ExpressionVisitor visitor)
-        => Update(visitor.Visit(AccessExpression));
+        => Update(visitor.Visit(ParentAccessExpression));
 
     public Expression Update(Expression accessExpression)
-        => accessExpression != AccessExpression
+        => accessExpression != ParentAccessExpression
             ? new EntityProjectionExpression(EntityType, accessExpression)
             : this;
 
-    public Expression BindProperty(IProperty property)
+    private Expression BindProperty(IProperty property)
     {
         if (!EntityType.IsAssignableFrom(property.DeclaringEntityType)
             && !property.DeclaringEntityType.IsAssignableFrom(EntityType))
@@ -58,13 +74,13 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
                 $"Unable to bind 'navigation' '{navigation.Name}' to an entity projection of '{EntityType.DisplayName()}'.");
         }
 
-        if (!_navigationExpressionsMap.TryGetValue(navigation, out var expression))
+        if (!_navigationExpressionsMap.TryGetValue(navigation, out IAccessExpression? expression))
         {
             expression = navigation.IsCollection
-                ? new ObjectArrayProjectionExpression(navigation, AccessExpression)
+                ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression)
                 : new EntityProjectionExpression(
                     navigation.TargetEntityType,
-                    new ObjectAccessExpression(navigation, AccessExpression));
+                    new ObjectAccessExpression(navigation, ParentAccessExpression, navigation.ForeignKey.IsRequiredDependent));
 
             _navigationExpressionsMap[navigation] = expression;
         }
@@ -72,39 +88,58 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         return (Expression)expression;
     }
 
+    /// <summary>
+    /// Bind a member for this entity projection by name.
+    /// </summary>
+    /// <param name="name">The name of the member to be bound.</param>
+    /// <param name="entityType">The <see cref="IEntityType"/> being bound to.</param>
+    /// <param name="propertyBase">An <see cref="IPropertyBase"/> that may be returned if the member is bound.</param>
+    /// <returns>An <see cref="Expression"/> containing the member binding expression.</returns>
     public Expression? BindMember(
         string name,
         Type entityType,
         out IPropertyBase? propertyBase)
         => BindMember(MemberIdentity.Create(name), entityType, out propertyBase);
 
+    /// <summary>
+    /// Bind a member for this entity projection by <see cref="MemberInfo"/>.
+    /// </summary>
+    /// <param name="memberInfo">The <see cref="MemberInfo"/> identifying the member to be bound.</param>
+    /// <param name="entityType">The <see cref="IEntityType"/> being bound to.</param>
+    /// <param name="propertyBase">An <see cref="IPropertyBase"/> that may be returned if the member is bound.</param>
+    /// <returns>An <see cref="Expression"/> containing the member binding expression.</returns>
     public Expression? BindMember(
         MemberInfo memberInfo,
         Type entityType,
         out IPropertyBase? propertyBase)
         => BindMember(MemberIdentity.Create(memberInfo), entityType, out propertyBase);
 
-    private Expression? BindMember(MemberIdentity member, Type? entityClrType, out IPropertyBase? propertyBase)
+    private Expression? BindMember(
+        MemberIdentity member,
+        Type? entityClrType,
+        out IPropertyBase? propertyBase)
     {
-        var entityType = EntityType;
+        IEntityType entityType = EntityType;
         if (entityClrType != null
             && !entityClrType.IsAssignableFrom(entityType.ClrType))
         {
             entityType = entityType.GetDerivedTypes().First(e => entityClrType.IsAssignableFrom(e.ClrType));
         }
 
-        var property = member.MemberInfo == null
+        IProperty? property = member.MemberInfo == null
             ? entityType.FindProperty(member.Name)
             : entityType.FindProperty(member.MemberInfo);
+
         if (property != null)
         {
             propertyBase = property;
             return BindProperty(property);
         }
 
-        var navigation = member.MemberInfo == null
+        INavigation? navigation = member.MemberInfo == null
             ? entityType.FindNavigation(member.Name)
             : entityType.FindNavigation(member.MemberInfo);
+
         if (navigation != null)
         {
             propertyBase = navigation;
@@ -116,19 +151,22 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         return null;
     }
 
+    /// <inheritdoc />
     void IPrintableExpression.Print(ExpressionPrinter expressionPrinter)
-        => expressionPrinter.Visit(AccessExpression);
+        => expressionPrinter.Visit(ParentAccessExpression);
 
+    /// <inheritdoc />
     public override bool Equals(object? obj)
         => obj != null
            && (ReferenceEquals(this, obj)
-               || obj is EntityProjectionExpression entityProjectionExpression
-               && Equals(entityProjectionExpression));
+               || (obj is EntityProjectionExpression entityProjectionExpression
+                   && Equals(entityProjectionExpression)));
 
     private bool Equals(EntityProjectionExpression entityProjectionExpression)
         => Equals(EntityType, entityProjectionExpression.EntityType)
-           && AccessExpression.Equals(entityProjectionExpression.AccessExpression);
+           && ParentAccessExpression.Equals(entityProjectionExpression.ParentAccessExpression);
 
+    /// <inheritdoc />
     public override int GetHashCode()
-        => HashCode.Combine(EntityType, AccessExpression);
+        => HashCode.Combine(EntityType, ParentAccessExpression);
 }

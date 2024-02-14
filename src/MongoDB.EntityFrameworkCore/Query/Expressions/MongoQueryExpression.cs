@@ -76,7 +76,7 @@ internal sealed class MongoQueryExpression : Expression
             currentAlias = $"{baseAlias}{counter++}";
         }
 
-        _projection.Add(new ProjectionExpression(expression, currentAlias));
+        _projection.Add(new ProjectionExpression(expression, currentAlias, false));
 
         return _projection.Count - 1;
     }
@@ -94,13 +94,10 @@ internal sealed class MongoQueryExpression : Expression
             return;
         }
 
-        var result = new Dictionary<ProjectionMember, Expression>();
+        Dictionary<ProjectionMember, Expression> result = new();
         foreach (var (projectionMember, expression) in _projectionMapping)
         {
-            result[projectionMember] = Constant(
-                AddToProjection(
-                    expression,
-                    projectionMember.Last?.Name));
+            result[projectionMember] = Constant(AddToProjection(expression, projectionMember.Last?.Name));
         }
 
         _projectionMapping = result;

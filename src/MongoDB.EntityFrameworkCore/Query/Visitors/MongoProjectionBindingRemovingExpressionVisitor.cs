@@ -36,10 +36,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
     /// <summary>
     /// Create a <see cref="MongoProjectionBindingRemovingExpressionVisitor"/>.
     /// </summary>
+    /// <param name="rootEntityType">The <see cref="IEntityType"/> this projection relates to.</param>
     /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> this visitor should use.</param>
-    /// <param name="docParameter">
-    /// The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.
-    /// </param>
+    /// <param name="docParameter">The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.</param>
     /// <param name="trackQueryResults">
     /// <see langref="true"/> if the results from this query are being tracked for changes,
     /// <see langref="false"/> if they are not.
@@ -63,39 +62,44 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
     protected override ProjectionExpression GetProjection(ProjectionBindingExpression projectionBindingExpression)
         => _queryExpression.Projection[GetProjectionIndex(projectionBindingExpression)];
 
+    /// <inheritdoc />
     protected override Expression CreateGetValueExpression(
         Expression docExpression,
-        string? storeName,
+        string? fieldName,
+        bool fieldRequired,
         Type type,
         CoreTypeMapping? typeMapping = null)
     {
-        var entityType = docExpression switch
+        IEntityType entityType = docExpression switch
         {
             RootReferenceExpression rootReferenceExpression => rootReferenceExpression.EntityType,
-            ObjectAccessExpression objectAccessExpression => objectAccessExpression.Navigation.TargetEntityType,
+            ObjectAccessExpression docAccessExpression => docAccessExpression.Navigation.TargetEntityType,
             _ => _rootEntityType
         };
 
-        var innerExpression = docExpression;
-        if (ProjectionBindings.TryGetValue(docExpression, out var innerVariable))
+        Expression? innerExpression = docExpression;
+        if (ProjectionBindings.TryGetValue(docExpression, out ParameterExpression? innerVariable))
         {
             innerExpression = innerVariable;
         }
         else
+        {
             innerExpression = docExpression switch
             {
-                RootReferenceExpression => CreateGetValueExpression(DocParameter, null, typeof(BsonDocument)),
-                ObjectAccessExpression objectAccessExpression => CreateGetValueExpression(objectAccessExpression.AccessExpression,
-                    objectAccessExpression.Name, typeof(BsonDocument)),
+                RootReferenceExpression => CreateGetValueExpression(DocParameter, null, fieldRequired, typeof(BsonDocument)),
+                ObjectAccessExpression docAccessExpression => CreateGetValueExpression(docAccessExpression.AccessExpression,
+                    docAccessExpression.Name, fieldRequired, typeof(BsonDocument)),
                 _ => innerExpression
             };
+        }
 
-        return BsonBinding.CreateGetValueExpression(innerExpression, storeName, typeMapping?.ClrType ?? type, entityType);
+        return BsonBinding.CreateGetValueExpression(innerExpression, fieldName, fieldRequired, typeMapping?.ClrType ?? type,
+            entityType);
     }
 
     private int GetProjectionIndex(ProjectionBindingExpression projectionBindingExpression)
         => projectionBindingExpression.ProjectionMember != null
             ? _queryExpression.GetMappedProjection(projectionBindingExpression.ProjectionMember).GetConstantValue<int>()
             : projectionBindingExpression.Index
-              ?? throw new InvalidOperationException("");
+              ?? throw new InvalidOperationException("Internal error - projection mapping has neither member nor index.");
 }
