@@ -104,7 +104,7 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
     /// <summary>
     /// Bind a member for this entity projection by <see cref="MemberInfo"/>.
     /// </summary>
-    /// <param name="memberInfo"></param>
+    /// <param name="memberInfo">The <see cref="MemberInfo"/> identifying the member to be bound.</param>
     /// <param name="entityType">The <see cref="IEntityType"/> being bound to.</param>
     /// <param name="propertyBase">An <see cref="IPropertyBase"/> that may be returned if the member is bound.</param>
     /// <returns>An <see cref="Expression"/> containing the member binding expression.</returns>
