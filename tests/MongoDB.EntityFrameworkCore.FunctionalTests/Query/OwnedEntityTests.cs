@@ -19,19 +19,12 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(SampleGuidesFixture))]
-public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
+public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     [Fact]
     public void OwnedEntity_nested_one_level_materializes_single()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(__personWithLocation);
         var db = SingleEntityDbContext.Create(collection);
 
@@ -45,7 +38,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_one_level_allows_nested_where()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(__personWithLocation);
         var db = SingleEntityDbContext.Create(collection);
 
@@ -59,7 +52,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_two_levels_allows_nested_where()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithCity>();
         collection.WriteTestDocs(__personWithCity);
         var db = SingleEntityDbContext.Create(collection);
 
@@ -73,7 +66,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_materializes_when_missing_non_required_owned_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(__personWithMissingLocation);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(false); });
@@ -88,10 +81,11 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_throws_when_missing_required_owned_entity()
     {
-        var = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(__personWithMissingLocation);
-        SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
-            mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(); });
+        SingleEntityDbContext<PersonWithLocation> db
+            = SingleEntityDbContext.Create(collection, mb => {
+                mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(); });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entitites.Where(p => p.name != "bob").ToList());
         Assert.Contains(nameof(PersonWithLocation), ex.Message);
@@ -101,7 +95,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_one_level_materializes_many()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(__personWithLocation);
         var db = SingleEntityDbContext.Create(collection);
 
@@ -117,7 +111,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_one_level_creates()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         var expected = new PersonWithLocation {name = "Charlie", location = new() {latitude = 1.234m, longitude = 1.567m}};
 
         {
@@ -139,7 +133,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_collection_creates()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
 
         var expected = new PersonWithMultipleLocations
         {
@@ -172,7 +166,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_single()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithCity>();
         collection.WriteTestDocs(__personWithCity);
         var db = SingleEntityDbContext.Create(collection);
 
@@ -187,7 +181,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_many()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithCity>();
         collection.WriteTestDocs(__personWithCity);
         var db = SingleEntityDbContext.Create(collection);
 
@@ -204,7 +198,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_with_collection_materializes_many()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
         collection.WriteTestDocs(__personWithLocations);
         var db = SingleEntityDbContext.Create(collection);
 
@@ -222,7 +216,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_with_two_owned_entities_materializes()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
         var expected = __personWithTwoLocations[0];
         collection.WriteTestDocs(__personWithTwoLocations);
         var db = SingleEntityDbContext.Create(collection);
@@ -240,7 +234,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_with_two_owned_entities_creates()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
         var expected = new PersonWithTwoLocations {name = "Elizabeth", first = __location2, second = __location1};
 
         {
@@ -265,7 +259,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_can_have_element_name_set()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         var expected = __personWithLocation[0];
         collection.WriteTestDocs(__personWithLocation);
         var db = SingleEntityDbContext.Create(collection,
