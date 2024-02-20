@@ -51,6 +51,9 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         conventionSet.Add(new TableAttributeConvention(Dependencies));
         conventionSet.Add(new ColumnAttributeConvention(Dependencies));
 
+        // Convenience conventions for users familiar with the Mongo C# Driver
+        conventionSet.Add(new BsonElementPropertyAttributeConvention(Dependencies));
+
         // Replace default conventions with MongoDB-specific ones
         conventionSet.Replace<KeyDiscoveryConvention>(new PrimaryKeyDiscoveryConvention(Dependencies));
         conventionSet.Replace<ValueGenerationConvention>(new MongoValueGenerationConvention(Dependencies));
