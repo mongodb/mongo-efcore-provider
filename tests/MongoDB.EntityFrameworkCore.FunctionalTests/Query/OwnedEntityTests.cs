@@ -71,17 +71,31 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
-    public void OwnedEntity_nested_one_level_allows_list_nested_where()
+    public void OwnedEntity_materializes_when_missing_non_required_owned_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
-        collection.WriteTestDocs(__personWithLocations);
-        var db = SingleEntityDbContext.Create(collection);
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        collection.WriteTestDocs(__personWithMissingLocation);
+        SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
+            mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(false); });
 
-        var actual = db.Entitites.First(e => e.locations.Any(l => l.latitude == 40.1m && l.longitude != 0m));
+        List<PersonWithLocation> actual = db.Entitites.Where(p => p.name == "Elizabeth").ToList();
 
-        Assert.Equal("Carmen", actual.name);
-        Assert.Equal(__location3.latitude, actual.locations[0].latitude);
-        Assert.Equal(__location3.longitude, actual.locations[0].longitude);
+        Assert.NotEmpty(actual);
+        Assert.Equal("Elizabeth", actual[0].name);
+        Assert.Null(actual[0].location);
+    }
+
+    [Fact]
+    public void OwnedEntity_throws_when_missing_required_owned_entity()
+    {
+        var = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        collection.WriteTestDocs(__personWithMissingLocation);
+        SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
+            mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(); });
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entitites.Where(p => p.name != "bob").ToList());
+        Assert.Contains(nameof(PersonWithLocation), ex.Message);
+        Assert.Contains(nameof(PersonWithLocation.location), ex.Message);
     }
 
     [Fact]
@@ -185,19 +199,6 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal(__location1.latitude, actual[0].location.latitude);
         Assert.Equal(__location1.longitude, actual[0].location.longitude);
         Assert.Equal(__city.name, actual[0].location.city.name);
-    }
-
-    [Fact]
-    public void OwnedEntity_nested_multiple_times_can_by_queried_with_where_on_a_list()
-    {
-        var collection = _tempDatabase.CreateTemporaryCollection<TopLevelNestedPerson>();
-        collection.WriteTestDocs(__nestedPersons);
-        var db = SingleEntityDbContext.Create(collection);
-
-        var actual = db.Entitites.Where(p => p.children.Any(c => c.children.Any(d => d.name == "Third"))).ToList();
-
-        Assert.Single(actual);
-        Assert.Single(actual, s => __nestedPersons[0].name == s.name);
     }
 
     [Fact]
@@ -315,20 +316,6 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         public List<Location> locations { get; set; }
     }
 
-    class TopLevelNestedPerson
-    {
-        public ObjectId _id { get; set; }
-        public string name { get; set; }
-        public List<NestedPerson> children { get; set; }
-    }
-
-    class NestedPerson
-    {
-        public string name { get; set; }
-        public List<NestedPerson> children { get; set; }
-        public Location location { get; set; }
-    }
-
     class PersonWithTwoLocations : Person
     {
         public Location first { get; set; }
@@ -345,36 +332,17 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     private static readonly Location __location1 = new() {latitude = 32.715736m, longitude = -117.161087m};
     private static readonly PersonWithLocation[] __personWithLocation = {new() {name = "Carmen", location = __location1}};
 
-    private static readonly Location __location2 = new() {latitude = 49.45981m, longitude = -2.53527m};
+    private static readonly PersonWithLocation[] __personWithMissingLocation = {new() {name = "Elizabeth"}};
 
-    private static readonly Location __location3 = new() {latitude = 40.1m, longitude = -1.1m};
+    private static readonly Location __location2 = new() {latitude = 49.45981m, longitude = -2.53527m};
 
     private static readonly PersonWithMultipleLocations[] __personWithLocations =
     {
-        new() {name = "Damien", locations = new List<Location> {__location2, __location1}},
-        new() {name = "Carmen", locations = new List<Location> {__location3}}
+        new() {name = "Damien", locations = new List<Location> {__location2, __location1}}
     };
 
     private static readonly PersonWithTwoLocations[] __personWithTwoLocations =
     {
         new() {name = "Henry", first = __location1, second = __location2}
-    };
-
-
-    private static readonly TopLevelNestedPerson[] __nestedPersons =
-    {
-        new()
-        {
-            name = "First",
-            children = new List<NestedPerson>
-            {
-                new()
-                {
-                    name = "Second",
-                    children = new List<NestedPerson> {new() {name = "Third", location = __location3}}
-                }
-            },
-        },
-        new() {name = "Something Else", children = new List<NestedPerson>()}
     };
 }

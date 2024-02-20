@@ -46,7 +46,14 @@ public class MongoValueGeneratorSelectorTests
     }
 
     [Fact]
-    public void Create_throws_NotSupportedException_for_int()
+    public void Create_returns_ObjectIdValueGenerator_for_mapped_ObjectId()
+    {
+        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("_id")!, _entityType);
+        Assert.IsType<ObjectIdValueGenerator>(generator);
+    }
+
+    [Fact]
+    public void Create_throws_NotSupportedException_for_mapped_int()
     {
         Assert.Throws<NotSupportedException>(() =>
             _valueGeneratorSelector.Select(_entityType.FindProperty("someInt")!, _entityType));

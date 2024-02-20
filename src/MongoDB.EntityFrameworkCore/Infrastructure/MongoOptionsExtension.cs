@@ -148,9 +148,9 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     {
         if (connectionString == null) return null;
 
-        var uriBuilder = new UriBuilder(connectionString);
-        uriBuilder.Password = string.IsNullOrWhiteSpace(uriBuilder.Password) ? uriBuilder.Password : "redacted";
-        return uriBuilder.ToString();
+        var builder = new MongoUrlBuilder(connectionString);
+        builder.Password = string.IsNullOrWhiteSpace(builder.Password) ? builder.Password : "redacted";
+        return builder.ToString();
     }
 
     private sealed class ExtensionInfo : DbContextOptionsExtensionInfo

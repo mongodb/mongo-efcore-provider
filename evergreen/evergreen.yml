@@ -434,14 +434,10 @@ axes:
   - id: target_runtime
     display_name: Target .net runtime
     values:
-      - id: "net60"
-        display_name: "net 6.0"
+      - id: "net80"
+        display_name: "net 8.0"
         variables:
-          TARGET_RUNTIME: "net60"
-      - id: "net70"
-        display_name: "net 7.0"
-        variables:
-          TARGET_RUNTIME: "net70"
+          TARGET_RUNTIME: "net80"
 
   - id: build-target
     display_name: CI build target

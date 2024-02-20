@@ -15,8 +15,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Storage;
-using MongoDB.EntityFrameworkCore.ChangeTracking;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -49,7 +51,7 @@ public class MongoTypeMappingSource : TypeMappingSource
                ?? base.FindMapping(mappingInfo);
     }
 
-    private static CoreTypeMapping? FindPrimitiveMapping(in TypeMappingInfo mappingInfo)
+    private static MongoTypeMapping? FindPrimitiveMapping(in TypeMappingInfo mappingInfo)
     {
         var clrType = mappingInfo.ClrType!;
         if (clrType is {IsValueType: true, IsEnum: false} || clrType == typeof(string))
@@ -60,7 +62,7 @@ public class MongoTypeMappingSource : TypeMappingSource
         return null;
     }
 
-    private static CoreTypeMapping? FindCollectionMapping(in TypeMappingInfo mappingInfo)
+    private static MongoTypeMapping? FindCollectionMapping(in TypeMappingInfo mappingInfo)
     {
         var clrType = mappingInfo.ClrType!;
         var itemType = clrType.TryGetItemType();
@@ -76,27 +78,40 @@ public class MongoTypeMappingSource : TypeMappingSource
             var elementMapping = FindPrimitiveMapping(elementMappingInfo) ?? FindCollectionMapping(elementMappingInfo);
             return elementMapping == null
                 ? null
-                : new MongoTypeMapping(clrType, ComparerFactory.CreateComparer(elementMapping, clrType));
+                : new MongoTypeMapping(clrType, CreateComparer(elementMapping, clrType));
         }
 
         // Support collection on the entity
-        if (clrType.IsGenericType && !clrType.IsGenericTypeDefinition)
+        if (clrType is {IsGenericType: true, IsGenericTypeDefinition: false})
         {
             var genericTypeDefinition = clrType.GetGenericTypeDefinition();
             if (genericTypeDefinition == typeof(List<>)
                 || genericTypeDefinition == typeof(IList<>)
-                || genericTypeDefinition == typeof(ICollection<>)
                 || genericTypeDefinition == typeof(IReadOnlyList<>)
-                || genericTypeDefinition == typeof(IReadOnlyCollection<>))
+                || genericTypeDefinition == typeof(ObservableCollection<>)
+                || genericTypeDefinition == typeof(Collection<>))
             {
                 var elementMappingInfo = new TypeMappingInfo(itemType);
                 var elementMapping = FindPrimitiveMapping(elementMappingInfo) ?? FindCollectionMapping(elementMappingInfo);
                 return elementMapping == null
                     ? null
-                    : new MongoTypeMapping(clrType, ComparerFactory.CreateComparer(elementMapping, clrType));
+                    : new MongoTypeMapping(clrType, CreateComparer(elementMapping, clrType));
             }
         }
 
         return null;
+    }
+
+    public static ValueComparer? CreateComparer(CoreTypeMapping elementMapping, Type collectionType)
+    {
+        var elementType = collectionType.TryGetItemType(typeof(IEnumerable<>))!;
+
+        return (ValueComparer?)Activator.CreateInstance(
+            elementType.IsNullableValueType()
+                ? typeof(NullableValueTypeListComparer<>).MakeGenericType(Nullable.GetUnderlyingType(elementType) ?? elementType)
+            : elementMapping.Comparer.Type.IsAssignableFrom(elementType)
+            ? typeof(ListComparer<>).MakeGenericType(elementType)
+            : typeof(ObjectListComparer<>).MakeGenericType(elementType),
+        elementMapping.Comparer.ToNullableComparer(elementType)!);
     }
 }

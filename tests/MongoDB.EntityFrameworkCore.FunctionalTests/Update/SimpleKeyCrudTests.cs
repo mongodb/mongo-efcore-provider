@@ -51,7 +51,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 'key', Data: 'some text' }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -111,7 +111,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 'key', Data: 'updated text' }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 

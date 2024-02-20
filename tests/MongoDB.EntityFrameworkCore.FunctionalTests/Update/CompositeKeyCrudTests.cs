@@ -51,7 +51,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : { Id1 : 'key', Id2 : 2 }, Data: 'some text' }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -112,7 +112,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : { Id1 : 'key', Id2 : 2 }, Data: 'updated text' }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 

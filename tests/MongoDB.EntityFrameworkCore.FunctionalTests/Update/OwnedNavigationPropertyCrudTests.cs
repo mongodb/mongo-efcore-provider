@@ -48,7 +48,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 1, Name: 'John', City: null }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -72,7 +72,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 1, Name: 'John', City: { Id: 1, Name: 'New York' } }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -99,7 +99,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 1, Name: 'John', City: null }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -126,7 +126,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 1, Name: 'John',  City: { Id: 2, Name: 'Washington' } }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -153,7 +153,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 1, Name: 'John',  City: { Id: 1, Name: 'Washington' } }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -177,7 +177,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 1, Name: 'John', Cities: null }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -208,7 +208,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             var expected =
                 BsonDocument.Parse(
                     "{ _id : 1, Name: 'John', Cities: [{ Id: 1, Name: 'New York' }, { Id: 2, Name: 'Washington' }] }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -241,7 +241,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 1, Name: 'John', Cities: null }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -275,7 +275,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             var expected =
                 BsonDocument.Parse(
                     "{ _id : 1, Name: 'John',  Cities: [{ Id: 1, Name: 'New York' }, { Id: 2, Name: 'Washington' }, { Id: 3, Name: 'Denver' }] }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -307,7 +307,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 .Single();
 
             var expected = BsonDocument.Parse("{ _id : 1, Name: 'John',  Cities: [{ Id: 1, Name: 'New York' }] }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -341,7 +341,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             var expected =
                 BsonDocument.Parse(
                     "{ _id : 1, Name: 'John',  Cities: [{ Id: 1, Name: 'Denver' }, { Id: 2, Name: 'Washington' }] }");
-            Assert.Equivalent(expected, actual);
+            Assert.Equal(expected, actual);
         }
     }
 

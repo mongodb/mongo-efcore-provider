@@ -52,8 +52,9 @@ This preview has a number of limitations at this time. Please consider the follo
 - Properties with typical CLR types (int, string, Guid, decimal), Mongo types (ObjectId, Decimal128) and "value" objects
 - Properties containing arrays and lists of simple CLR types as well as "value" objects
 
-### Not supported but considering for next release
+### Roadmap for next release
 
+- Entity Framework Core 8 & .NET 8 or later
 - Select projections
 - Sum, Average, Min, Max etc.
 - Value converters
@@ -67,7 +68,6 @@ This preview has a number of limitations at this time. Please consider the follo
 - Properties with dictionary type
 - Binary/byte array properties
 - Keyless entity types
-- Entity Framework Core 8
 - Additional CLR types (DateOnly, TimeOnly etc).
 - EF shadow properties
 - GroupBy operations

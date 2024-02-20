@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2024-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,26 @@
  * limitations under the License.
  */
 
+using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.ValueGeneration;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.ValueGeneration;
 
-public class OwnedEntityIndexValueGeneratorTests
+public class ObjectIdValueGeneratorTests
 {
     [Fact]
-    public void Next_generates_non_temporary_id()
+    public void Generates_non_temporary_ObjectIds()
+    {
+        var generator = new ObjectIdValueGenerator();
+        Assert.False(generator.GeneratesTemporaryValues);
+    }
+
+    [Fact]
+    public void Next_generates_unique_ObjectId()
     {
         const int loops = 100;
-        var generator = new OwnedEntityIndexValueGenerator();
-        var values = new HashSet<int>(loops);
+        var generator = new ObjectIdValueGenerator();
+        var values = new HashSet<ObjectId>(loops);
 
         for (int i = 0; i < loops; i++)
             values.Add(generator.Next(null!));
