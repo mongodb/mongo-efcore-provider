@@ -13,41 +13,32 @@
  * limitations under the License.
  */
 
-using System.ComponentModel.DataAnnotations.Schema;
-using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
+using MongoDB.Bson.Serialization.Attributes;
 
-namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions;
+namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions.BsonAttributes;
 
-public static class ColumnAttributeConventionTests
+public static class BsonElementAttributeConventionTests
 {
     [Fact]
-    public static void ColumnAttribute_specified_names_are_used_as_element_names()
+    public static void BsonElement_specified_names_are_used_as_element_names()
     {
         using var context = new BaseDbContext();
-        Assert.Equal("attributeSpecifiedName", GetElementName(context, (Customer c) => c.Name));
+        Assert.Equal("attributeSpecifiedName", context.GetProperty((Customer c) => c.Name)?.GetElementName());
     }
 
     [Fact]
-    public static void ModelBuilder_specified_field_names_override_ColumnAttribute_names()
+    public static void ModelBuilder_specified_names_override_BsonElement_names()
     {
         using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("fluentSpecifiedName", GetElementName(context, (Customer c) => c.Name));
-    }
-
-    static string GetElementName<TEntity, TProperty>(DbContext context, Expression<Func<TEntity, TProperty>> propertyExpression)
-    {
-        var entityType = context.Model.FindEntityType(typeof(TEntity))!;
-        var property = entityType.FindProperty(propertyExpression.GetMemberAccess())!;
-        return property.GetElementName();
+        Assert.Equal("fluentSpecifiedName", context.GetProperty((Customer c) => c.Name)?.GetElementName());
     }
 
     class Customer
     {
         public int Id { get; set; }
 
-        [Column("attributeSpecifiedName")]
+        [BsonElement("attributeSpecifiedName")]
         public string Name { get; set; }
     }
 
@@ -56,8 +47,7 @@ public static class ColumnAttributeConventionTests
         public DbSet<Customer> Customers { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-            => optionsBuilder
-                .UseMongoDB("mongodb://localhost:27017", "UnitTests");
+            => optionsBuilder.UseMongoDB("mongodb://localhost:27017", "UnitTests");
     }
 
     class ModelBuilderSpecifiedDbContext : BaseDbContext

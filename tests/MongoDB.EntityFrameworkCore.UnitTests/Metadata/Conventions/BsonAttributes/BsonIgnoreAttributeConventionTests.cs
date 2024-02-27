@@ -13,42 +13,39 @@
  * limitations under the License.
  */
 
-using System.ComponentModel.DataAnnotations.Schema;
-using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
+using MongoDB.Bson.Serialization.Attributes;
 
-namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions;
+namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions.BsonAttributes;
 
-public static class ColumnAttributeConventionTests
+public static class BsonIgnoreAttributeConventionTests
 {
     [Fact]
-    public static void ColumnAttribute_specified_names_are_used_as_element_names()
+    public static void BsonIgnored_specified_properties_are_unmapped()
     {
         using var context = new BaseDbContext();
-        Assert.Equal("attributeSpecifiedName", GetElementName(context, (Customer c) => c.Name));
+
+        var property = context.GetProperty((Customer c) => c.IgnoreMe);
+
+        Assert.Null(property);
     }
 
     [Fact]
-    public static void ModelBuilder_specified_field_names_override_ColumnAttribute_names()
+    public static void ModelBuilder_specified_names_override_BsonIgnored_attribute()
     {
         using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("fluentSpecifiedName", GetElementName(context, (Customer c) => c.Name));
-    }
 
-    static string GetElementName<TEntity, TProperty>(DbContext context, Expression<Func<TEntity, TProperty>> propertyExpression)
-    {
-        var entityType = context.Model.FindEntityType(typeof(TEntity))!;
-        var property = entityType.FindProperty(propertyExpression.GetMemberAccess())!;
-        return property.GetElementName();
+        var property = context.GetProperty((Customer c) => c.IgnoreMe);
+
+        Assert.NotNull(property);
     }
 
     class Customer
     {
         public int Id { get; set; }
 
-        [Column("attributeSpecifiedName")]
-        public string Name { get; set; }
+        [BsonIgnore]
+        public string IgnoreMe { get; set; }
     }
 
     class BaseDbContext : DbContext
@@ -56,8 +53,7 @@ public static class ColumnAttributeConventionTests
         public DbSet<Customer> Customers { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-            => optionsBuilder
-                .UseMongoDB("mongodb://localhost:27017", "UnitTests");
+            => optionsBuilder.UseMongoDB("mongodb://localhost:27017", "UnitTests");
     }
 
     class ModelBuilderSpecifiedDbContext : BaseDbContext
@@ -65,7 +61,7 @@ public static class ColumnAttributeConventionTests
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-            modelBuilder.Entity<Customer>().Property(c => c.Name).HasElementName("fluentSpecifiedName");
+            modelBuilder.Entity<Customer>().Property(p => p.IgnoreMe).IsRequired();
         }
     }
 }

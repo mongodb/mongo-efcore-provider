@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
@@ -50,6 +51,12 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         // Convenience conventions for users familiar with EF
         conventionSet.Add(new TableAttributeConvention(Dependencies));
         conventionSet.Add(new ColumnAttributeConvention(Dependencies));
+
+        // Convenience conventions for users familiar with the Mongo C# Driver
+        conventionSet.Add(new BsonElementPropertyAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonIgnoreAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonRequiredPropertyAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonDateTimeOptionsAttributeConvention(Dependencies));
 
         // Replace default conventions with MongoDB-specific ones
         conventionSet.Replace<KeyDiscoveryConvention>(new PrimaryKeyDiscoveryConvention(Dependencies));
