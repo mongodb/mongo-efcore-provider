@@ -45,18 +45,31 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         var conventionSet = base.CreateConventionSet();
 
         // New MongoDB-specific conventions
-        conventionSet.Add(new CollectionNameFromDbSetConvention(Dependencies));
         conventionSet.Add(new CollectionAttributeConvention(Dependencies));
+        conventionSet.Add(new CollectionNameFromDbSetConvention(Dependencies));
 
         // Convenience conventions for users familiar with EF
-        conventionSet.Add(new TableAttributeConvention(Dependencies));
         conventionSet.Add(new ColumnAttributeConvention(Dependencies));
+        conventionSet.Add(new TableAttributeConvention(Dependencies));
 
         // Convenience conventions for users familiar with the Mongo C# Driver
-        conventionSet.Add(new BsonElementPropertyAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonDateTimeOptionsAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonElementAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonIdPropertyAttributeConvention(Dependencies));
         conventionSet.Add(new BsonIgnoreAttributeConvention(Dependencies));
         conventionSet.Add(new BsonRequiredPropertyAttributeConvention(Dependencies));
-        conventionSet.Add(new BsonDateTimeOptionsAttributeConvention(Dependencies));
+
+        // Unsupported attributes on properties that should throw not supported
+        // Note: Non-property level attributes are directly checked in MongoModelValidator.
+        conventionSet.Add(new BsonDefaultValueAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonDictionaryOptionsAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonExtraElementsAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonGuidRepresentationAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonIgnoreIfDefaultAttributePropertyAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonIgnoreIfNullAttributePropertyAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonRepresentationAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonSerializationOptionsAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonSerializerPropertyConvention(Dependencies));
 
         // Replace default conventions with MongoDB-specific ones
         conventionSet.Replace<KeyDiscoveryConvention>(new PrimaryKeyDiscoveryConvention(Dependencies));

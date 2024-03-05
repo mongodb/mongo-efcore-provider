@@ -14,7 +14,6 @@
  */
 
 using System.Reflection;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
@@ -23,30 +22,23 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 
 /// <summary>
-/// A convention that configures the element name for entity properties based on an applied <see cref="BsonElementAttribute" /> for
-/// familiarity with the Mongo C# Driver.
+/// Recognized <see cref="BsonSerializationOptionsAttribute"/> applied to properties of an entity
+/// to ensure the model throw later as it is not supported in the EF provider.
 /// </summary>
-public sealed class BsonElementPropertyAttributeConvention : PropertyAttributeConventionBase<BsonElementAttribute>
+/// <param name="dependencies">The <see cref="ProviderConventionSetBuilderDependencies"/> conventions depend upon.</param>
+public sealed class BsonSerializationOptionsAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)
+    : NotSupportedPropertyAttributeConvention<BsonSerializationOptionsAttribute>(dependencies)
 {
-    /// <summary>
-    /// Creates a <see cref="BsonElementPropertyAttributeConvention" />.
-    /// </summary>
-    /// <param name="dependencies">Parameter object containing dependencies for this convention.</param>
-    public BsonElementPropertyAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)
-        : base(dependencies)
-    {
-    }
-
     /// <inheritdoc />
     protected override void ProcessPropertyAdded(
         IConventionPropertyBuilder propertyBuilder,
-        BsonElementAttribute attribute,
+        BsonSerializationOptionsAttribute attribute,
         MemberInfo clrMember,
         IConventionContext context)
     {
-        if (!string.IsNullOrWhiteSpace(attribute.ElementName))
-        {
-            propertyBuilder.HasElementName(attribute.ElementName, fromDataAnnotation: true);
-        }
+        // DateTimeOptions are supported and it is a subclass of this so do not treat it as unsupported
+        if (attribute is BsonDateTimeOptionsAttribute) return;
+
+        base.ProcessPropertyAdded(propertyBuilder, attribute, clrMember, context);
     }
 }
