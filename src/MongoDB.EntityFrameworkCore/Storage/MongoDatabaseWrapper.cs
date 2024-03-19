@@ -122,7 +122,9 @@ public class MongoDatabaseWrapper : Database
             if (principal == null)
             {
                 throw new InvalidOperationException(
-                    $"The entity of type '{entry.EntityType.DisplayName()}' is mapped as a part of the document mapped to '{ownership.PrincipalEntityType.DisplayName()}', but there is no tracked entity of this type with the corresponding key value.");
+                    $"The entity of type '{entry.EntityType.DisplayName()}' is mapped as a part of the document mapped to '{
+                        ownership.PrincipalEntityType.DisplayName()
+                    }', but there is no tracked entity of this type with the corresponding key value.");
             }
 
             if (principal.EntityType.IsDocumentRoot()) return principal;
@@ -298,7 +300,7 @@ public class MongoDatabaseWrapper : Database
         {
             var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
             var result = collection.BulkWrite(session, batch.Models);
-            documentsAffected += result.ModifiedCount;
+            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
         }
 
         return documentsAffected;
@@ -324,7 +326,7 @@ public class MongoDatabaseWrapper : Database
             var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
             var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
-            documentsAffected += result.ModifiedCount;
+            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
         }
 
         return documentsAffected;
@@ -377,7 +379,10 @@ public class MongoDatabaseWrapper : Database
     {
         public static MongoUpdateBatch Create(MongoUpdate update)
         {
-            return new MongoUpdateBatch(update.CollectionName, new List<WriteModel<BsonDocument>> {update.Model});
+            return new MongoUpdateBatch(update.CollectionName, new List<WriteModel<BsonDocument>>
+            {
+                update.Model
+            });
         }
 
         private MongoUpdateBatch(
