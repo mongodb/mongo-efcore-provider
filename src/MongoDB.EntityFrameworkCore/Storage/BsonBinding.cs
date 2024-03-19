@@ -89,9 +89,9 @@ internal static class BsonBinding
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetBsonDocument));
 
-    private static BsonDocument? GetBsonDocument(BsonValue parent, string name, bool required, IEntityType entityType)
+    private static BsonDocument? GetBsonDocument(BsonDocument parent, string name, bool required, IReadOnlyTypeBase entityType)
     {
-        BsonValue? value = parent[name];
+        BsonValue? value = parent.GetValue(name, BsonNull.Value);
 
         if (value == BsonNull.Value && required)
         {

@@ -41,6 +41,20 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
+    public void OwnedEntity_missing_document_element_does_not_throw()
+    {
+        _tempDatabase.CreateTemporaryCollection<Person>("personNoLocation").WriteTestDocs([new Person { name = "Bill" }]);
+
+        var collection = _tempDatabase.MongoDatabase.GetCollection<PersonWithOptionalLocation>("personNoLocation");
+        var db = SingleEntityDbContext.Create(collection);
+
+        var person = db.Entitites.First();
+        Assert.NotNull(person);
+        Assert.Equal("Bill", person.name);
+        Assert.Null(person.location);
+    }
+
+    [Fact]
     public void OwnedEntity_nested_one_level_allows_nested_where()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
@@ -284,6 +298,11 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     {
         public ObjectId _id { get; set; }
         public string name { get; set; }
+    }
+
+    private class PersonWithOptionalLocation : Person
+    {
+        public Location? location { get; set; }
     }
 
     private class PersonWithLocation : Person
