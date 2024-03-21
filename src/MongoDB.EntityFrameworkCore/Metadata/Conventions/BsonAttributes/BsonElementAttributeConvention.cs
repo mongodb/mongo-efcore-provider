@@ -13,20 +13,24 @@
  * limitations under the License.
  */
 
+using System.Linq;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 
 /// <summary>
-/// A convention that configures the element name for entity properties based on an applied <see cref="BsonElementAttribute" /> for
-/// familiarity with the Mongo C# Driver.
+/// A convention that configures the element name for entity properties based on an applied
+/// <see cref="BsonElementAttribute" /> for familiarity with the Mongo C# Driver.
 /// </summary>
-public sealed class BsonElementAttributeConvention : PropertyAttributeConventionBase<BsonElementAttribute>
+public sealed class BsonElementAttributeConvention :
+    PropertyAttributeConventionBase<BsonElementAttribute>,
+    INavigationAddedConvention
 {
     /// <summary>
     /// Creates a <see cref="BsonElementAttributeConvention" />.
@@ -37,7 +41,14 @@ public sealed class BsonElementAttributeConvention : PropertyAttributeConvention
     {
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// For every property added to the model that has a <see cref="BsonElementAttribute"/>
+    /// use the specified name as an annotation to configure the element name used in BSON documents.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property.</param>
+    /// <param name="attribute">The attribute.</param>
+    /// <param name="clrMember">The member that has the attribute.</param>
+    /// <param name="context">Additional information associated with convention execution.</param>
     protected override void ProcessPropertyAdded(
         IConventionPropertyBuilder propertyBuilder,
         BsonElementAttribute attribute,
@@ -47,6 +58,25 @@ public sealed class BsonElementAttributeConvention : PropertyAttributeConvention
         if (!string.IsNullOrWhiteSpace(attribute.ElementName))
         {
             propertyBuilder.HasElementName(attribute.ElementName, fromDataAnnotation: true);
+        }
+    }
+
+    /// <summary>
+    /// For every navigation added to the model that is an owned entity with a <see cref="BsonElementAttribute"/>
+    /// use the specified element name as an annotation to configure the element name used in the BSON documents.
+    /// </summary>
+    /// <param name="navigationBuilder">The builder for the navigation.</param>
+    /// <param name="context">Additional information associated with convention execution.</param>
+    public void ProcessNavigationAdded(
+        IConventionNavigationBuilder navigationBuilder,
+        IConventionContext<IConventionNavigationBuilder> context)
+    {
+        var meta = navigationBuilder.Metadata;
+        var attribute = meta.PropertyInfo?.GetCustomAttributes().OfType<BsonElementAttribute>().FirstOrDefault();
+
+        if (!string.IsNullOrWhiteSpace(attribute?.ElementName) && meta.TargetEntityType.IsOwned())
+        {
+            meta.TargetEntityType.SetContainingElementName(attribute.ElementName, fromDataAnnotation: true);
         }
     }
 }

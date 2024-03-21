@@ -14,19 +14,23 @@
 */
 
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Linq;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
-/// A convention that configures the element name for entity properties based on an applied <see cref="ColumnAttribute" /> for
-/// familiarity/compatibility with other EF providers.
+/// A convention that configures the element name for entity properties based on an applied
+/// <see cref="ColumnAttribute" /> for familiarity/compatibility with other EF providers.
 /// </summary>
-public class ColumnAttributeConvention : PropertyAttributeConventionBase<ColumnAttribute>
+public class ColumnAttributeConvention :
+    PropertyAttributeConventionBase<ColumnAttribute>,
+    INavigationAddedConvention
 {
     /// <summary>
     /// Creates a <see cref="CollectionAttributeConvention" />.
@@ -37,7 +41,15 @@ public class ColumnAttributeConvention : PropertyAttributeConventionBase<ColumnA
     {
     }
 
-    /// <inheritdoc />
+
+    /// <summary>
+    /// For every property added to the model that has a <see cref="ColumnAttribute"/>
+    /// use the specified name as an annotation to configure the element name used in BSON documents.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property.</param>
+    /// <param name="attribute">The attribute.</param>
+    /// <param name="clrMember">The member that has the attribute.</param>
+    /// <param name="context">Additional information associated with convention execution.</param>
     protected override void ProcessPropertyAdded(
         IConventionPropertyBuilder propertyBuilder,
         ColumnAttribute attribute,
@@ -47,6 +59,25 @@ public class ColumnAttributeConvention : PropertyAttributeConventionBase<ColumnA
         if (!string.IsNullOrWhiteSpace(attribute.Name))
         {
             propertyBuilder.HasElementName(attribute.Name, fromDataAnnotation: true);
+        }
+    }
+
+    /// <summary>
+    /// For every navigation added to the model that is an owned entity with a <see cref="ColumnAttribute"/>
+    /// use the specified element name as an annotation to configure the element name used in the BSON documents.
+    /// </summary>
+    /// <param name="navigationBuilder">The builder for the navigation.</param>
+    /// <param name="context">Additional information associated with convention execution.</param>
+    public void ProcessNavigationAdded(
+        IConventionNavigationBuilder navigationBuilder,
+        IConventionContext<IConventionNavigationBuilder> context)
+    {
+        var meta = navigationBuilder.Metadata;
+        var attribute = meta.PropertyInfo?.GetCustomAttributes().OfType<ColumnAttribute>().FirstOrDefault();
+
+        if (!string.IsNullOrWhiteSpace(attribute?.Name) && meta.TargetEntityType.IsOwned())
+        {
+           meta.TargetEntityType.SetContainingElementName(attribute.Name, fromDataAnnotation: true);
         }
     }
 }

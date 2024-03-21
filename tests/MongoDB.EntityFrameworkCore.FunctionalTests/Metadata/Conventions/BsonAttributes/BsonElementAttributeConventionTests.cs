@@ -46,6 +46,47 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
         public string? name { get; set; }
     }
 
+    class OwnedEntityRemappingEntity
+    {
+        public ObjectId _id { get; set; }
+
+        [BsonElement("otherLocation")] public Geolocation Location { get; set; }
+    }
+
+    class IntendedOwnedEntityRemappingEntity
+    {
+        public ObjectId _id { get; set; }
+
+        public Geolocation otherLocation { get; set; }
+    }
+
+    record Geolocation(double latitude, double longitude);
+
+    [Fact]
+    public void BsonElement_redefines_element_name_for_owned_entity()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<OwnedEntityRemappingEntity>();
+
+        var id = ObjectId.GenerateNewId();
+        var location = new Geolocation(1.1, 2.2);
+
+        {
+            var dbContext = SingleEntityDbContext.Create(collection);
+            dbContext.Entitites.Add(new OwnedEntityRemappingEntity
+            {
+                _id = id,
+                Location = location
+            });
+            dbContext.SaveChanges();
+        }
+
+        {
+            var actual = collection.Database.GetCollection<IntendedOwnedEntityRemappingEntity>(collection.CollectionNamespace.CollectionName);
+            var directFound = actual.Find(f => f._id == id).Single();
+            Assert.Equal(location, directFound.otherLocation);
+        }
+    }
+
     [Fact]
     public void BsonElementAttribute_redefines_element_name_for_insert_and_query()
     {
