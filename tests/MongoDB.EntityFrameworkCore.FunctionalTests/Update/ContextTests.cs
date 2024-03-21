@@ -95,7 +95,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
         var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         const int deleteCount = 6;
-        var items = Enumerable.Range(0, deleteCount * 2)
+        var items = Enumerable.Range(0, deleteCount + 10)
             .Select(i => new Customer("Generated " + i))
             .ToArray();
 
@@ -105,7 +105,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
         db.Entitites.RemoveRange(items.Take(deleteCount));
 
         Assert.Equal(deleteCount, db.SaveChanges());
-        Assert.Equal(deleteCount, db.Entitites.Count());
+        Assert.Equal(items.Length - deleteCount, db.Entitites.Count());
     }
 
     [Fact]
