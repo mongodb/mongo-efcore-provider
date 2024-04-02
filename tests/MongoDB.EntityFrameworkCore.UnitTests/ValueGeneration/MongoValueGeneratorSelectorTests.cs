@@ -60,7 +60,7 @@ public class MongoValueGeneratorSelectorTests
     }
 
     [Fact]
-    public void Create_throws_NotSupportedException_for_guid()
+    public void Create_returns_GuidValueGenerator_for_guid()
     {
         var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("someGuid")!, _entityType);
         Assert.IsType<GuidValueGenerator>(generator);
