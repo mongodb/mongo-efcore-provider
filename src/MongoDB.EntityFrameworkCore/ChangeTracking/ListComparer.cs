@@ -24,11 +24,11 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.ChangeTracking;
 
-internal sealed class ListComparer<TElement>(ValueComparer elementComparer)
+internal sealed class ListComparer<TElement>(ValueComparer<TElement> elementComparer)
     : ValueComparer<IEnumerable<TElement>>(
-        (a, b) => Compare(a, b, (ValueComparer<TElement>)elementComparer),
-        o => GetHashCode(o, (ValueComparer<TElement>)elementComparer),
-        source => Snapshot(source, (ValueComparer<TElement>)elementComparer))
+        (a, b) => Compare(a, b, elementComparer),
+        o => GetHashCode(o, elementComparer),
+        source => Snapshot(source, elementComparer))
 {
     private static bool Compare(IEnumerable<TElement>? a, IEnumerable<TElement>? b, ValueComparer<TElement> elementComparer)
     {
@@ -73,12 +73,11 @@ internal sealed class ListComparer<TElement>(ValueComparer elementComparer)
         return hash.ToHashCode();
     }
 
-    private static IEnumerable<TElement> Snapshot(IEnumerable<TElement> source, ValueComparer<TElement> elementComparer)
+    private static IList<TElement> Snapshot(IEnumerable<TElement> source, ValueComparer<TElement> elementComparer)
     {
         // Deal with common cases first for performance
-        if (source.GetType().IsArray)
+        if (source is TElement[] sourceArray)
         {
-            var sourceArray = (TElement[])source;
             var snapshot = new TElement[sourceArray.Length];
             for (int i = 0; i < sourceArray.Length; i++)
                 snapshot[i] = elementComparer.Snapshot(sourceArray[i]);
@@ -111,8 +110,8 @@ internal sealed class ListComparer<TElement>(ValueComparer elementComparer)
                 typeof(TElement).ShortDisplayName()}>' to it.");
     }
 
-    private static IEnumerable<TElement> CreateInstance(Type type, IEnumerable<TElement> parameter)
-        => (IEnumerable<TElement>)Activator.CreateInstance(type, parameter)!;
+    private static IList<TElement> CreateInstance(Type type, IEnumerable<TElement> parameter)
+        => (IList<TElement>)Activator.CreateInstance(type, parameter)!;
 
     private static bool HasConstructorWithSingleParameterOf<T>(IEnumerable<ConstructorInfo> constructors)
         => constructors.Any(c => c.GetParameters().Length == 1 && typeof(T).IsAssignableFrom(c.GetParameters()[0].ParameterType));
