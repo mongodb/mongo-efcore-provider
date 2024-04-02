@@ -24,7 +24,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.ChangeTracking;
 
-internal sealed class CollectionComparer<TElement>(ValueComparer elementComparer)
+internal sealed class ListComparer<TElement>(ValueComparer elementComparer)
     : ValueComparer<IEnumerable<TElement>>(
         (a, b) => Compare(a, b, (ValueComparer<TElement>)elementComparer),
         o => GetHashCode(o, (ValueComparer<TElement>)elementComparer),
@@ -69,6 +69,7 @@ internal sealed class CollectionComparer<TElement>(ValueComparer elementComparer
         {
             hash.Add(element, elementComparer);
         }
+
         return hash.ToHashCode();
     }
 
@@ -101,17 +102,6 @@ internal sealed class CollectionComparer<TElement>(ValueComparer elementComparer
         if (HasConstructorWithSingleParameterOf<IEnumerable>(constructors))
         {
             return CreateInstance(source.GetType(), source.Select(elementComparer.Snapshot));
-        }
-
-        // Handle anything with a default constructor and ICollection support to Add the items
-        if (source is ICollection<TElement> sourceCollection && constructors.Any(c => c.GetParameters().Length == 0))
-        {
-            var newCollection = (IList<TElement>)Activator.CreateInstance(source.GetType())!;
-            foreach (var element in sourceCollection)
-            {
-                newCollection.Add(elementComparer.Snapshot(element));
-            }
-            return newCollection;
         }
 
         // Out of options, inform developer what they can do about it
