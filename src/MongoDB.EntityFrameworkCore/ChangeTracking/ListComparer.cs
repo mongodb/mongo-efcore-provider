@@ -75,7 +75,7 @@ internal sealed class ListComparer<TElement>(ValueComparer<TElement> elementComp
 
     private static IList<TElement> Snapshot(IEnumerable<TElement> source, ValueComparer<TElement> elementComparer)
     {
-        // Deal with common cases first for performance
+        // Common array case first
         if (source is TElement[] sourceArray)
         {
             var snapshot = new TElement[sourceArray.Length];
@@ -84,28 +84,31 @@ internal sealed class ListComparer<TElement>(ValueComparer<TElement> elementComp
             return snapshot;
         }
 
-        if (source.GetType() == typeof(List<TElement>))
+        var sourceType = source.GetType();
+
+        // Common List (not subtypes)
+        if (sourceType == typeof(List<TElement>))
         {
             return ((List<TElement>)source).ConvertAll(elementComparer.Snapshot);
         }
 
-        var constructors = source.GetType().GetConstructors().ToArray();
+        var constructors = sourceType.GetConstructors().ToArray();
 
         // Handle anything that has a constructor that accepts an IList<TElement>
         if (HasConstructorWithSingleParameterOf<IList<TElement>>(constructors))
         {
-            return CreateInstance(source.GetType(), source.Select(elementComparer.Snapshot).ToList());
+            return CreateInstance(sourceType, source.Select(elementComparer.Snapshot).ToList());
         }
 
-        // Handle anything that has a constructor that accepts an IEnumerable<TElement>
+        // Handle anything that has a constructor that accepts an IEnumerable
         if (HasConstructorWithSingleParameterOf<IEnumerable>(constructors))
         {
-            return CreateInstance(source.GetType(), source.Select(elementComparer.Snapshot));
+            return CreateInstance(sourceType, source.Select(elementComparer.Snapshot));
         }
 
         // Out of options, inform developer what they can do about it
         throw new NotSupportedException(
-            $"Collection type '{source.GetType().ShortDisplayName()
+            $"Collection type '{sourceType.ShortDisplayName()
             }' is unusable by change tracking. Consider adding a constructor that accepts an 'IEnumerable<{
                 typeof(TElement).ShortDisplayName()}>' to it.");
     }
