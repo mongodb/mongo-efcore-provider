@@ -36,22 +36,20 @@ public class TemporaryDatabaseFixture : IDisposable
 
     public IMongoDatabase MongoDatabase { get; }
 
-    public IMongoCollection<T> CreateTemporaryCollection<T>(string prefix, params object[]? values)
+    public IMongoCollection<T> CreateTemporaryCollection<T>(string prefix, params object[] values)
     {
-        var values_suffix = string.Join('+', values.Select(v =>
+        var valuesSuffix = string.Join('+', values.Select(v =>
         {
-            if (v == null)
+            switch (v)
             {
-                return "null";
-            }
-
-            if (v is IEnumerable enumerable)
-            {
-                return string.Join('+', enumerable.Cast<object>().Select(v => v.ToString()));
+                case null:
+                    return "null";
+                case IEnumerable enumerable:
+                    return string.Join('+', enumerable.Cast<object>().Select(i => i == null ? "null" : i.ToString()));
             }
 
             var result = v.ToString();
-            if (v is Type)
+            if (v is Type && result != null)
             {
                 // If parameter is a type - shrink the full name, to avoid max length limitation.
                 result = result
@@ -63,7 +61,7 @@ public class TemporaryDatabaseFixture : IDisposable
             return result;
         }));
 
-        return CreateTemporaryCollection<T>($"{prefix}_{values_suffix}");
+        return CreateTemporaryCollection<T>($"{prefix}_{valuesSuffix}");
     }
 
     public IMongoCollection<T> CreateTemporaryCollection<T>([CallerMemberName] string? name = null)

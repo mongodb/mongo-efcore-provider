@@ -61,7 +61,7 @@ internal class SingleEntityDbContext<T> : DbContext where T:class
 
     public DbSet<T> Entitites { get; init; }
 
-    public SingleEntityDbContext(DbContextOptions options, string collectionName, Action<ModelBuilder>? modelBuilderAction)
+    public SingleEntityDbContext(DbContextOptions options, string collectionName, Action<ModelBuilder>? modelBuilderAction = null)
         : base(options)
     {
         _collectionName = collectionName;

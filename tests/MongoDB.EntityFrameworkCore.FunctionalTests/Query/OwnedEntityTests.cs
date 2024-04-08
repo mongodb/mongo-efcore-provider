@@ -131,7 +131,14 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         PersonWithLocation expected =
-            new PersonWithLocation {name = "Charlie", location = new Location {latitude = 1.234m, longitude = 1.567m}};
+            new PersonWithLocation
+            {
+                name = "Charlie",
+                location = new Location
+                {
+                    latitude = 1.234m, longitude = 1.567m
+                }
+            };
 
         {
             SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
@@ -161,7 +168,14 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
             name = "Alfred",
             locations = new List<Location>
             {
-                new() {latitude = 1.234m, longitude = 1.567m}, new() {latitude = 5.1m, longitude = 3.9m}
+                new()
+                {
+                    latitude = 1.234m, longitude = 1.567m
+                },
+                new()
+                {
+                    latitude = 5.1m, longitude = 3.9m
+                }
             }
         };
 
@@ -235,6 +249,64 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
+    public void OwnedEntity_with_collection_adjusted_correctly()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+
+            var original = new PersonWithMultipleLocations
+            {
+                _id = ObjectId.GenerateNewId(),
+                name = "Many updates",
+                locations =
+                [
+                    new Location
+                    {
+                        latitude = 1.1m, longitude = 2.2m
+                    }
+                ]
+            };
+
+            db.Add(original);
+            db.SaveChanges();
+            Assert.Single(original.locations, l => l.latitude == 1.1m);
+
+            original.locations.Add(new()
+            {
+                latitude = 3.3m, longitude = 4.4m
+            });
+            db.SaveChanges();
+
+            Assert.Equal(2, original.locations.Count);
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+
+            var found = db.Entitites.Single();
+            Assert.Equal(2, found.locations.Count);
+
+            found.locations.RemoveAt(0);
+            db.SaveChanges();
+
+            Assert.Single(found.locations, l => l.longitude == 4.4m);
+
+            found.locations.Clear();
+            db.SaveChanges();
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            var found = db.Entitites.Single();
+
+            // Adjust to Assert.Empty when we initialize empty collections
+            Assert.Null(found.locations);
+        }
+    }
+
+    [Fact]
     public void OwnedEntity_with_two_owned_entities_materializes()
     {
         IMongoCollection<PersonWithTwoLocations> collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
@@ -256,7 +328,10 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_with_two_owned_entities_creates()
     {
         IMongoCollection<PersonWithTwoLocations> collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
-        PersonWithTwoLocations expected = new() {name = "Elizabeth", first = __location2, second = __location1};
+        PersonWithTwoLocations expected = new()
+        {
+            name = "Elizabeth", first = __location2, second = __location1
+        };
 
         {
             SingleEntityDbContext<PersonWithTwoLocations> db = SingleEntityDbContext.Create(collection);
@@ -342,27 +417,68 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         public Location second { get; set; }
     }
 
-    private static readonly City __city = new() {name = "San Diego"};
+    private static readonly City __city = new()
+    {
+        name = "San Diego"
+    };
 
     private static readonly LocationWithCity __locationWithCity =
-        new() {latitude = 32.715736m, longitude = -117.161087m, city = __city};
+        new()
+        {
+            latitude = 32.715736m, longitude = -117.161087m, city = __city
+        };
 
-    private static readonly PersonWithCity[] __personWithCity = {new() {name = "Carmen", location = __locationWithCity}};
+    private static readonly PersonWithCity[] __personWithCity =
+    {
+        new()
+        {
+            name = "Carmen", location = __locationWithCity
+        }
+    };
 
-    private static readonly Location __location1 = new() {latitude = 32.715736m, longitude = -117.161087m};
-    private static readonly PersonWithLocation[] __personWithLocation = {new() {name = "Carmen", location = __location1}};
+    private static readonly Location __location1 = new()
+    {
+        latitude = 32.715736m, longitude = -117.161087m
+    };
 
-    private static readonly PersonWithLocation[] __personWithMissingLocation = {new() {name = "Elizabeth"}};
+    private static readonly PersonWithLocation[] __personWithLocation =
+    {
+        new()
+        {
+            name = "Carmen", location = __location1
+        }
+    };
 
-    private static readonly Location __location2 = new() {latitude = 49.45981m, longitude = -2.53527m};
+    private static readonly PersonWithLocation[] __personWithMissingLocation =
+    {
+        new()
+        {
+            name = "Elizabeth"
+        }
+    };
+
+    private static readonly Location __location2 = new()
+    {
+        latitude = 49.45981m, longitude = -2.53527m
+    };
 
     private static readonly PersonWithMultipleLocations[] __personWithLocations =
     {
-        new() {name = "Damien", locations = new List<Location> {__location2, __location1}}
+        new()
+        {
+            name = "Damien",
+            locations = new List<Location>
+            {
+                __location2, __location1
+            }
+        }
     };
 
     private static readonly PersonWithTwoLocations[] __personWithTwoLocations =
     {
-        new() {name = "Henry", first = __location1, second = __location2}
+        new()
+        {
+            name = "Henry", first = __location1, second = __location2
+        }
     };
 }

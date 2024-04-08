@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -26,24 +27,16 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// Create a <see cref="MongoTypeMapping"/> (or <see cref="CoreTypeMapping"/>) for
 /// each property of an entity that should be mapped to the underlying MongoDB database.
 /// </summary>
-public class MongoTypeMappingSource : TypeMappingSource
+public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
+    : TypeMappingSource(dependencies)
 {
-    /// <summary>
-    /// Create a <see cref="MongoTypeMapping"/> with the given dependencies.
-    /// </summary>
-    /// <param name="dependencies">The <see cref="TypeMappingSourceDependencies"/> used to determine mappings.</param>
-    public MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
-        : base(dependencies)
-    {
-    }
-
     /// <inheritdoc/>
     protected override CoreTypeMapping? FindMapping(in TypeMappingInfo mappingInfo)
     {
         var clrType = mappingInfo.ClrType;
         if (clrType == null)
         {
-            throw new InvalidOperationException($"Unable to determine CLR type for mappingInfo {mappingInfo}");
+            throw new InvalidOperationException($"Unable to determine CLR type for mappingInfo '{mappingInfo}'");
         }
 
         return FindPrimitiveMapping(mappingInfo)
@@ -65,8 +58,13 @@ public class MongoTypeMappingSource : TypeMappingSource
     private static MongoTypeMapping? FindCollectionMapping(in TypeMappingInfo mappingInfo)
     {
         var clrType = mappingInfo.ClrType!;
-        var itemType = clrType.TryGetItemType();
-        if (itemType == null)
+        if (mappingInfo.ElementTypeMapping != null)
+        {
+            return null;
+        }
+
+        var elementType = clrType.TryGetItemType();
+        if (elementType == null)
         {
             return null;
         }
@@ -74,44 +72,56 @@ public class MongoTypeMappingSource : TypeMappingSource
         // Support arrays on the entity
         if (clrType.IsArray)
         {
-            var elementMappingInfo = new TypeMappingInfo(itemType);
-            var elementMapping = FindPrimitiveMapping(elementMappingInfo) ?? FindCollectionMapping(elementMappingInfo);
-            return elementMapping == null
-                ? null
-                : new MongoTypeMapping(clrType, CreateComparer(elementMapping, clrType));
+            return CreateCollectionTypeMapping(clrType, elementType);
         }
 
-        // Support collection on the entity
+        // Support generic collections on the entity
         if (clrType is {IsGenericType: true, IsGenericTypeDefinition: false})
         {
+            // Regular generic collections and interfaces
             var genericTypeDefinition = clrType.GetGenericTypeDefinition();
-            if (genericTypeDefinition == typeof(List<>)
-                || genericTypeDefinition == typeof(IList<>)
-                || genericTypeDefinition == typeof(IReadOnlyList<>)
-                || genericTypeDefinition == typeof(ObservableCollection<>)
-                || genericTypeDefinition == typeof(Collection<>))
+            if (supportedCollectionTypes.Contains(genericTypeDefinition) || supportedCollectionInterfaces.Contains(genericTypeDefinition))
             {
-                var elementMappingInfo = new TypeMappingInfo(itemType);
-                var elementMapping = FindPrimitiveMapping(elementMappingInfo) ?? FindCollectionMapping(elementMappingInfo);
-                return elementMapping == null
-                    ? null
-                    : new MongoTypeMapping(clrType, CreateComparer(elementMapping, clrType));
+                return CreateCollectionTypeMapping(clrType, elementType);
+            }
+
+            // Custom generic collections implementing a known interface
+            if (genericTypeDefinition.GetInterfaces().Any(i => i.IsGenericType && supportedCollectionInterfaces.Contains(i.GetGenericTypeDefinition())))
+            {
+                return CreateCollectionTypeMapping(clrType, elementType);
             }
         }
 
         return null;
     }
 
+    private static MongoTypeMapping? CreateCollectionTypeMapping(Type clrType, Type itemType)
+    {
+        var elementMappingInfo = new TypeMappingInfo(itemType);
+        var elementMapping = FindPrimitiveMapping(elementMappingInfo) ?? FindCollectionMapping(elementMappingInfo);
+        return elementMapping == null
+            ? null
+            : new MongoTypeMapping(clrType, CreateComparer(elementMapping, clrType));
+    }
+
+    private static readonly Type[] supportedCollectionTypes =
+    [
+        typeof(List<>),
+        typeof(ReadOnlyCollection<>),
+        typeof(Collection<>),
+        typeof(ObservableCollection<>)
+    ];
+
+    private static readonly Type[] supportedCollectionInterfaces =
+    [
+        typeof(IList<>),
+        typeof(IReadOnlyList<>)
+    ];
+
     public static ValueComparer? CreateComparer(CoreTypeMapping elementMapping, Type collectionType)
     {
         var elementType = collectionType.TryGetItemType(typeof(IEnumerable<>))!;
-
-        return (ValueComparer?)Activator.CreateInstance(
-            elementType.IsNullableValueType()
-                ? typeof(NullableValueTypeListComparer<>).MakeGenericType(Nullable.GetUnderlyingType(elementType) ?? elementType)
-            : elementMapping.Comparer.Type.IsAssignableFrom(elementType)
-            ? typeof(ListComparer<>).MakeGenericType(elementType)
-            : typeof(ObjectListComparer<>).MakeGenericType(elementType),
-        elementMapping.Comparer.ToNullableComparer(elementType)!);
+        var comparerType = typeof(ChangeTracking.ListComparer<>).MakeGenericType(elementType);
+        return (ValueComparer?)Activator.CreateInstance(comparerType, elementMapping.Comparer.ToNullableComparer(elementType)!);
     }
 }
