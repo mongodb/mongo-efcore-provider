@@ -54,8 +54,10 @@ internal class ListSerializationProvider : BsonSerializationProviderBase
 
     private IBsonSerializer? CreateCollectionSerializer(Type type, IBsonSerializerRegistry serializerRegistry)
     {
-        var enumerableInterface = type.GetInterfaces()
-            .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+        var enumerableInterface = type.GetGenericTypeDefinition() == typeof(IEnumerable<>) ?
+            type :
+            type.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
 
         if (enumerableInterface == null) return null;
 
