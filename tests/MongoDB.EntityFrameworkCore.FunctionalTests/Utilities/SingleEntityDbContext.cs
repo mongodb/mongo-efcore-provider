@@ -26,12 +26,12 @@ internal static class SingleEntityDbContext
 {
     private static readonly ConcurrentDictionary<object, DbContextOptions> __collectionOptionsCache = new();
 
-    private static DbContextOptions<SingleEntityDbContext<T>> GetOrCreateOptionsBuilder<T>(IMongoCollection<T> collection) where T:class
+    private static DbContextOptions<SingleEntityDbContext<T2>> GetOrCreateOptionsBuilder<T1, T2>(IMongoCollection<T1> collection) where T1:class where T2:class
     {
         if (__collectionOptionsCache.TryGetValue(collection, out var existingOptions))
-            return  (DbContextOptions<SingleEntityDbContext<T>>) existingOptions;
+            return (DbContextOptions<SingleEntityDbContext<T2>>) existingOptions;
 
-        var newOptions = new DbContextOptionsBuilder<SingleEntityDbContext<T>>()
+        var newOptions = new DbContextOptionsBuilder<SingleEntityDbContext<T2>>()
             .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
             .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
@@ -43,7 +43,10 @@ internal static class SingleEntityDbContext
     }
 
     public static SingleEntityDbContext<T> Create<T>(IMongoCollection<T> collection, Action<ModelBuilder>? modelBuilderAction = null) where T:class =>
-        new (GetOrCreateOptionsBuilder(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction);
+        new (GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction);
+
+    public static SingleEntityDbContext<T2> Create<T1, T2>(IMongoCollection<T1> collection, Action<ModelBuilder>? modelBuilderAction = null) where T1:class where T2:class
+        => new (GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction);
 
     private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
     {

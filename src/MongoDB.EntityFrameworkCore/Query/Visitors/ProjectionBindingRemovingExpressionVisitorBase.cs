@@ -108,7 +108,8 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                         || navigation.ForeignKey.DeclaringEntityType.IsDocumentRoot())
                     {
                         throw new InvalidOperationException(
-                            $"Including navigation '{includeExpression.Navigation}' is not supported as the navigation is not embedded in same resource.");
+                            $"Including navigation '{includeExpression.Navigation
+                            }' is not supported as the navigation is not embedded in same resource.");
                     }
 
                     bool isFirstInclude = _pendingIncludes.Count == 0;
@@ -244,6 +245,12 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     {
         MethodInfo method = methodCallExpression.Method;
         MethodInfo genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
+
+        // Ensure ".AsQueryable" is not injected around collections as sometimes they are null and will throw
+        if (method.DeclaringType == typeof(Queryable) && genericMethod == QueryableMethods.AsQueryable)
+        {
+            return Visit(methodCallExpression.Arguments[0]);
+        }
 
         if (genericMethod == ExpressionExtensions.ValueBufferTryReadValueMethod)
         {
@@ -383,14 +390,13 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
 #pragma warning disable EF1001 // Internal EF Core API usage.
         Expression entityEntryVariable = _trackQueryResults
             ? shaperBlock.Variables.Single(v => v.Type == typeof(InternalEntityEntry))
-            : (Expression)Expression.Constant(null, typeof(InternalEntityEntry));
+            : Expression.Constant(null, typeof(InternalEntityEntry));
 #pragma warning restore EF1001 // Internal EF Core API usage.
 
         ParameterExpression concreteEntityTypeVariable = shaperBlock.Variables.Single(v => v.Type == typeof(IEntityType));
         INavigation inverseNavigation = navigation.Inverse;
         Delegate fixup = GenerateFixup(
             includingClrType, relatedEntityClrType, navigation, inverseNavigation);
-        Delegate initialize = GenerateInitialize(includingClrType, navigation);
 
         Expression navigationExpression = Visit(includeExpression.NavigationExpression);
 
@@ -409,7 +415,6 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     Expression.Constant(navigation),
                     Expression.Constant(inverseNavigation, typeof(INavigation)),
                     Expression.Constant(fixup),
-                    Expression.Constant(initialize, typeof(Action<>).MakeGenericType(includingClrType)),
 #pragma warning disable EF1001 // Internal EF Core API usage.
                     Expression.Constant(includeExpression.SetLoaded))));
 #pragma warning restore EF1001 // Internal EF Core API usage.
@@ -429,7 +434,6 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         INavigation navigation,
         INavigation inverseNavigation,
         Action<TIncludingEntity, TIncludedEntity> fixup,
-        Action<TIncludingEntity> _,
         bool __)
     {
         if (entity == null
@@ -475,7 +479,6 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         INavigation navigation,
         INavigation inverseNavigation,
         Action<TIncludingEntity, TIncludedEntity> fixup,
-        Action<TIncludingEntity> initialize,
         bool setLoaded)
     {
         if (entity == null
@@ -497,10 +500,6 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     inverseNavigation?.SetIsLoadedWhenNoTracking(relatedEntity);
                 }
             }
-            else
-            {
-                initialize(includingEntity);
-            }
         }
         else
         {
@@ -517,10 +516,12 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                 while (enumerator.MoveNext())
                 {
                 }
-            }
-            else
-            {
-                initialize((TIncludingEntity)entity);
+
+                // Ensure empty collections still initialize a new CLR object for them
+                if (!navigation.IsShadowProperty())
+                {
+                    navigation.GetCollectionAccessor()!.GetOrCreate(entity, forMaterialization: true);
+                }
             }
         }
     }
@@ -552,24 +553,6 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             .Compile();
     }
 
-    private static Delegate GenerateInitialize(
-        Type entityType,
-        INavigation navigation)
-    {
-        if (!navigation.IsCollection) return null;
-
-        var entityParameter = Expression.Parameter(entityType);
-
-        var getOrCreateExpression = Expression.Call(
-            Expression.Constant(navigation.GetCollectionAccessor()),
-            CollectionAccessorGetOrCreateMethodInfo,
-            entityParameter,
-            Expression.Constant(true));
-
-        return Expression.Lambda(Expression.Block(typeof(void), getOrCreateExpression), entityParameter)
-            .Compile();
-    }
-
     private static Expression AssignReferenceNavigation(
         ParameterExpression entity,
         ParameterExpression relatedEntity,
@@ -592,7 +575,10 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             .GetDeclaredMethod(nameof(PopulateCollection));
 
     private static readonly MethodInfo IsAssignableFromMethodInfo
-        = typeof(IReadOnlyEntityType).GetMethod(nameof(IReadOnlyEntityType.IsAssignableFrom), new[] {typeof(IReadOnlyEntityType)})!;
+        = typeof(IReadOnlyEntityType).GetMethod(nameof(IReadOnlyEntityType.IsAssignableFrom), new[]
+        {
+            typeof(IReadOnlyEntityType)
+        })!;
 
     private static TCollection PopulateCollection<TEntity, TCollection>(
         IClrCollectionAccessor accessor,
@@ -611,8 +597,4 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     private static readonly MethodInfo CollectionAccessorAddMethodInfo
         = typeof(IClrCollectionAccessor).GetTypeInfo()
             .GetDeclaredMethod(nameof(IClrCollectionAccessor.Add));
-
-    private static readonly MethodInfo CollectionAccessorGetOrCreateMethodInfo
-        = typeof(IClrCollectionAccessor).GetTypeInfo()
-            .GetDeclaredMethod(nameof(IClrCollectionAccessor.GetOrCreate));
 }

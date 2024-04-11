@@ -31,7 +31,10 @@ public class BooleanSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new BooleanEntity {aBoolean = expected});
+            db.Entitites.Add(new BooleanEntity
+            {
+                aBoolean = expected
+            });
             db.SaveChanges();
         }
 
@@ -49,7 +52,7 @@ public class BooleanSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<BooleanEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class BooleanEntity : BaseIdEntity
@@ -68,7 +71,10 @@ public class BooleanSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableBooleanEntity {aNullableBoolean = expected});
+            db.Entitites.Add(new NullableBooleanEntity
+            {
+                aNullableBoolean = expected
+            });
             db.SaveChanges();
         }
 

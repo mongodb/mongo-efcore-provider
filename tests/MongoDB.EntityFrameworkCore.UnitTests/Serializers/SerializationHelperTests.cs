@@ -22,10 +22,9 @@ public class SerializationHelperTests
     {
         var document = BsonDocument.Parse("{ property: 12 }");
 
-        var exception = Record.Exception(() => SerializationHelper.GetElementValue<int>(document, "missedElementName"));
+        var ex = Assert.Throws<InvalidOperationException>(() => SerializationHelper.GetElementValue<int>(document, "missedElementName"));
 
-        Assert.IsType<KeyNotFoundException>(exception);
-        Assert.Contains("missedElementName", exception.Message);
+        Assert.Contains("missedElementName", ex.Message);
     }
 
     [Fact]
@@ -65,10 +64,8 @@ public class SerializationHelperTests
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ property: 12 }");
 
-        var exception = Record.Exception(() => SerializationHelper.GetPropertyValue<int>(document, property));
-
-        Assert.IsType<KeyNotFoundException>(exception);
-        Assert.Contains("IntProperty", exception.Message);
+        var ex = Assert.Throws<InvalidOperationException>(() => SerializationHelper.GetPropertyValue<int>(document, property));
+        Assert.Contains("IntProperty", ex.Message);
     }
 
     [Fact]

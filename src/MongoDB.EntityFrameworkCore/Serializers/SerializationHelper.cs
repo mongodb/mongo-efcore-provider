@@ -14,7 +14,6 @@
  */
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -29,15 +28,23 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 
 internal static class SerializationHelper
 {
-    public static T GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
+    public static T? GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
     {
         var serializationInfo = GetPropertySerializationInfo(property);
-        if (TryReadElementValue(document, serializationInfo, out T value) || property.IsNullable)
+        if (TryReadElementValue(document, serializationInfo, out T? value))
         {
+            if (value == null && !property.IsNullable)
+            {
+                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name
+                }'.");
+            }
+
             return value;
         }
 
-        throw new KeyNotFoundException($"Document does not contain value for non-nullable field '{property.Name}'.");
+        if (property.IsNullable) return default;
+
+        throw new InvalidOperationException($"Document element is missing for required non-nullable property '{property.Name}'.");
     }
 
     public static T GetElementValue<T>(BsonDocument document, string elementName)
@@ -48,7 +55,7 @@ internal static class SerializationHelper
             return value;
         }
 
-        throw new KeyNotFoundException($"Document does not contain value for non-nullable field '{elementName}'.");
+        throw new InvalidOperationException($"Document element '{elementName}' is missing but required.");
     }
 
     internal static void WriteKeyProperties(IBsonWriter writer, IUpdateEntry entry)
