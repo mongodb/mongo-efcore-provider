@@ -52,7 +52,7 @@ This preview has a number of limitations at this time. Please consider the follo
 - Properties with typical CLR types (int, string, Guid, decimal), Mongo types (ObjectId, Decimal128) and "value" objects
 - Properties containing arrays and lists of simple CLR types as well as "value" objects
 
-### Roadmap for next release
+### Roadmap for next releases
 
 - Entity Framework Core 8 & .NET 8 or later
 - Select projections
@@ -65,6 +65,7 @@ This preview has a number of limitations at this time. Please consider the follo
 
 ### Not supported but considering for future releases
 
+- ExecuteUpdate & ExecuteDelete
 - Properties with dictionary type
 - Binary/byte array properties
 - Keyless entity types
