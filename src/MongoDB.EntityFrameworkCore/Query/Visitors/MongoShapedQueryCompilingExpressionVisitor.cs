@@ -14,7 +14,6 @@
  */
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -127,20 +126,18 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         ResultCardinality resultCardinality)
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
-        string collectionName = queryExpression.CollectionExpression.CollectionName;
-        var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
-            .AsQueryable().As((IBsonSerializer<TSource>)entitySerializerCache.GetOrCreateSerializer(entityType));
+        var serializer = (IBsonSerializer<TSource>)entitySerializerCache.GetOrCreateSerializer(entityType);
+        var collection = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(queryExpression.CollectionExpression.CollectionName);
+        var source = collection.AsQueryable().As(serializer);
 
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
         var translatedQuery = queryTranslator.Visit(queryExpression.CapturedExpression)!;
 
-        IEnumerable<TResult> documents = resultCardinality == ResultCardinality.Enumerable
-            ? source.Provider.CreateQuery<TResult>(translatedQuery)
-            : new[] {source.Provider.Execute<TResult>(translatedQuery)};
+        var executableQuery = new MongoExecutableQuery(translatedQuery, resultCardinality, source.Provider, collection.CollectionNamespace);
 
         return new QueryingEnumerable<TResult, TResult>(
             mongoQueryContext,
-            documents,
+            executableQuery,
             (_, e) => e,
             contextType,
             false,
@@ -159,20 +156,17 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         ResultCardinality resultCardinality)
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
-        string collectionName = queryExpression.CollectionExpression.CollectionName;
-        var source = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(collectionName)
-            .AsQueryable().As((IBsonSerializer<TSource>)entitySerializerCache.GetOrCreateSerializer(entityType));
+        var collection = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(queryExpression.CollectionExpression.CollectionName);
+        var source = collection.AsQueryable().As((IBsonSerializer<TSource>)entitySerializerCache.GetOrCreateSerializer(entityType));
 
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
 
-        IEnumerable<BsonDocument> documents = resultCardinality == ResultCardinality.Enumerable
-            ? source.Provider.CreateQuery<BsonDocument>(translatedQuery)
-            : new[] {source.Provider.Execute<BsonDocument>(translatedQuery)};
+        var executableQuery = new MongoExecutableQuery(translatedQuery, resultCardinality, source.Provider, collection.CollectionNamespace);
 
         return new QueryingEnumerable<BsonDocument, TResult>(
             mongoQueryContext,
-            documents,
+            executableQuery,
             shaper,
             contextType,
             standAloneStateManager,

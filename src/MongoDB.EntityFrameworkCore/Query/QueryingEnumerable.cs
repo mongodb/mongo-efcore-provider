@@ -28,7 +28,7 @@ namespace MongoDB.EntityFrameworkCore.Query;
 internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TTarget>, IEnumerable<TTarget>
 {
     private readonly MongoQueryContext _queryContext;
-    private readonly IEnumerable<TSource> _serverEnumerable;
+    private readonly MongoExecutableQuery _executableQuery;
     private readonly Func<MongoQueryContext, TSource, TTarget> _shaper;
     private readonly Type _contextType;
     private readonly bool _standAloneStateManager;
@@ -36,14 +36,14 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
     public QueryingEnumerable(
         MongoQueryContext queryContext,
-        IEnumerable<TSource> serverEnumerable,
+        MongoExecutableQuery executableQuery,
         Func<MongoQueryContext, TSource, TTarget> shaper,
         Type contextType,
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled)
     {
         _queryContext = queryContext;
-        _serverEnumerable = serverEnumerable;
+        _executableQuery = executableQuery;
         _contextType = contextType;
         _shaper = shaper;
         _standAloneStateManager = standAloneStateManager;
@@ -69,14 +69,14 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         private readonly CancellationToken _cancellationToken;
         private readonly IConcurrencyDetector? _concurrencyDetector;
         private readonly IExceptionDetector _exceptionDetector;
-        private readonly IEnumerable<TSource> _serverEnumerable;
+        private readonly MongoExecutableQuery _executableQuery;
 
         private IEnumerator<TSource>? _enumerator;
 
         public Enumerator(QueryingEnumerable<TSource, TTarget> queryingEnumerable, CancellationToken cancellationToken = default)
         {
             _queryContext = queryingEnumerable._queryContext;
-            _serverEnumerable = queryingEnumerable._serverEnumerable;
+            _executableQuery = queryingEnumerable._executableQuery;
             _contextType = queryingEnumerable._contextType;
             _shaper = queryingEnumerable._shaper;
             _queryLogger = _queryContext.QueryLogger;
@@ -158,15 +158,20 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
         private bool MoveNextHelper()
         {
+            Action? logAction = null;
+
             if (_enumerator == null)
             {
                 EntityFrameworkEventSource.Log.QueryExecuting();
 
-                _enumerator = _serverEnumerable.GetEnumerator();
+                _enumerator = _queryContext.MongoClient.Execute<TSource>(_executableQuery, out logAction).GetEnumerator();
+
                 _queryContext.InitializeStateManager(_standAloneStateManager);
             }
 
             bool hasNext = _enumerator.MoveNext();
+
+            logAction?.Invoke();
 
             Current = hasNext
                 ? _shaper(_queryContext, _enumerator.Current)
