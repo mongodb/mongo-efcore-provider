@@ -37,19 +37,16 @@ internal static class MongoLoggerExtensions
 
         if (diagnostics.ShouldLog(definition))
         {
-            var logSensitiveData = diagnostics.ShouldLogSensitiveData();
-
-            // Ideally we would always log the query and only log the parameters
-            // when sensitive data is enabled but unfortunately the LINQ provider
-            // does not provide a layer for this.
-            if (logSensitiveData)
-            {
-                definition.Log(
-                    diagnostics,
-                    Environment.NewLine,
-                    collectionNamespace,
-                    LoggedStagesToMql(loggedStages));
-            }
+            // Ideally we would always log the query and then log parameter data
+            // when sensitive data is enabled. Unfortunately the LINQ provider
+            // only gives us the query with full values in so we only log MQL
+            // when sensitive logging is enabled.
+            var mql = diagnostics.ShouldLogSensitiveData() ? LoggedStagesToMql(loggedStages) : "?";
+            definition.Log(
+                diagnostics,
+                Environment.NewLine,
+                collectionNamespace,
+                mql);
         }
 
         if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
@@ -77,7 +74,7 @@ internal static class MongoLoggerExtensions
         return d.GenerateMessage(
             Environment.NewLine,
             p.CollectionNamespace,
-            p.QueryMql);
+            p.LogSensitiveData ? p.QueryMql : "?");
     }
 
     private static EventDefinition<string, CollectionNamespace, string> LogExecutedMqlQuery(IDiagnosticsLogger logger)
