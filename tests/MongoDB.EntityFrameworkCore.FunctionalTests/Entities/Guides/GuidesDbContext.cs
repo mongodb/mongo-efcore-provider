@@ -28,12 +28,13 @@ internal class GuidesDbContext(DbContextOptions options) : DbContext(options)
     public static GuidesDbContext Create(
         IMongoDatabase database,
         Action<string>? logAction = null,
-        ILoggerFactory? loggerFactory = null) =>
-        new (new DbContextOptionsBuilder<GuidesDbContext>()
+        ILoggerFactory? loggerFactory = null,
+        bool sensitiveDataLogging = true) =>
+        new(new DbContextOptionsBuilder<GuidesDbContext>()
             .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)
             .LogTo(l => logAction?.Invoke(l))
             .UseLoggerFactory(loggerFactory)
-            .EnableSensitiveDataLogging()
+            .EnableSensitiveDataLogging(sensitiveDataLogging)
             .Options);
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
