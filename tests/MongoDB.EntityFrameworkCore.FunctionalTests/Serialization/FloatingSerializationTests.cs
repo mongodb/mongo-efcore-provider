@@ -32,7 +32,10 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new FloatEntity {aFloat = expected});
+            db.Entitites.Add(new FloatEntity
+            {
+                aFloat = expected
+            });
             db.SaveChanges();
         }
 
@@ -50,7 +53,7 @@ public class FloatingSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<FloatEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class FloatEntity : BaseIdEntity
@@ -69,7 +72,10 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableFloatEntity {aNullableFloat = expected});
+            db.Entitites.Add(new NullableFloatEntity
+            {
+                aNullableFloat = expected
+            });
             db.SaveChanges();
         }
 
@@ -107,7 +113,10 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new DoubleEntity {aDouble = expected});
+            db.Entitites.Add(new DoubleEntity
+            {
+                aDouble = expected
+            });
             db.SaveChanges();
         }
 
@@ -125,7 +134,7 @@ public class FloatingSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<DoubleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class DoubleEntity : BaseIdEntity
@@ -145,7 +154,10 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDoubleEntity {aNullableDouble = expected});
+            db.Entitites.Add(new NullableDoubleEntity
+            {
+                aNullableDouble = expected
+            });
             db.SaveChanges();
         }
 

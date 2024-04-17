@@ -49,7 +49,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<UIntEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class UIntEntity : BaseIdEntity
@@ -122,7 +122,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<UlongEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class UlongEntity : BaseIdEntity
@@ -195,7 +195,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<UshortEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class UshortEntity : BaseIdEntity
@@ -270,7 +270,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<ByteEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class ByteEntity : BaseIdEntity

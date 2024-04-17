@@ -42,7 +42,7 @@ internal static class BsonBinding
     /// <param name="mappedType">What <see cref="Type"/> to the value is to be treated as.</param>
     /// <param name="entityType">The <see cref="IEntityType"/> the value will belong to in order to obtaining additional metadata.</param>
     /// <returns>A compilable expression the shaper can use to obtain this value from a <see cref="BsonDocument"/>.</returns>
-    /// <exception cref="InvalidOperationException"></exception>
+    /// <exception cref="InvalidOperationException">If we can't find anything mapped to this name.</exception>
     public static Expression CreateGetValueExpression(
         Expression bsonDocExpression,
         string? name,
@@ -50,10 +50,20 @@ internal static class BsonBinding
         Type mappedType,
         IEntityType entityType)
     {
-        if (name is null) return bsonDocExpression;
+        if (name is null)
+        {
+            return bsonDocExpression;
+        }
 
-        if (mappedType == typeof(BsonArray)) return CreateGetBsonArray(bsonDocExpression, name);
-        if (mappedType == typeof(BsonDocument)) return CreateGetBsonDocument(bsonDocExpression, name, required, entityType);
+        if (mappedType == typeof(BsonArray))
+        {
+            return CreateGetBsonArray(bsonDocExpression, name);
+        }
+
+        if (mappedType == typeof(BsonDocument))
+        {
+            return CreateGetBsonDocument(bsonDocExpression, name, required, entityType);
+        }
 
         IProperty? targetProperty = entityType.FindProperty(name);
         if (targetProperty != null)
@@ -77,11 +87,24 @@ internal static class BsonBinding
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetBsonArray));
 
-    private static BsonArray GetBsonArray(BsonDocument document, string name)
-        => document[name].AsBsonArray;
+    private static BsonArray? GetBsonArray(BsonDocument document, string name)
+    {
+        if (!document.TryGetValue(name, out BsonValue bsonValue))
+        {
+            throw new InvalidOperationException($"Document element '{name}' is mapped collection but missing.");
+        }
 
-    private static Expression CreateGetBsonDocument(Expression bsonDocExpression, string name, bool required,
-        IEntityType entityType)
+        return bsonValue switch
+        {
+            {IsBsonArray: true} => bsonValue.AsBsonArray,
+            {IsBsonNull: true} => null,
+            _ => throw new InvalidOperationException(
+                $"Document element '{name}' is {bsonValue.BsonType} when {nameof(BsonArray)} is required.")
+        };
+    }
+
+    private static Expression CreateGetBsonDocument(
+        Expression bsonDocExpression, string name, bool required, IEntityType entityType)
         => Expression.Call(null, __getBsonDocument, bsonDocExpression, Expression.Constant(name), Expression.Constant(required),
             Expression.Constant(entityType));
 
@@ -95,8 +118,8 @@ internal static class BsonBinding
 
         if (value == BsonNull.Value && required)
         {
-            throw new InvalidOperationException(
-                $"Field '{name}' required but not present in BsonDocument for a '{entityType.DisplayName()}'.");
+            throw new InvalidOperationException($"Field '{name}' required but not present in BsonDocument for a '{
+                entityType.DisplayName()}'.");
         }
 
         return value == BsonNull.Value ? null : value.AsBsonDocument;

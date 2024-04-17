@@ -40,7 +40,10 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new StringEntity {aString = expected});
+            db.Entitites.Add(new StringEntity
+            {
+                aString = expected
+            });
             db.SaveChanges();
         }
 
@@ -81,7 +84,10 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new CharEntity {aChar = expected});
+            db.Entitites.Add(new CharEntity
+            {
+                aChar = expected
+            });
             db.SaveChanges();
         }
 
@@ -99,7 +105,7 @@ public class StringSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<CharEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class CharEntity : BaseIdEntity
@@ -123,7 +129,10 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableCharEntity {aNullableChar = expected});
+            db.Entitites.Add(new NullableCharEntity
+            {
+                aNullableChar = expected
+            });
             db.SaveChanges();
         }
 

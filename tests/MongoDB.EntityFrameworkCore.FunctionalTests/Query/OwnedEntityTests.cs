@@ -197,6 +197,115 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         }
     }
 
+    class SimpleNonNullableCollection
+    {
+        public ObjectId _id { get; set; }
+        public List<SimpleChild> children { get; set; }
+    }
+
+    class SimpleNullableCollection
+    {
+        public ObjectId _id { get; set; }
+        public List<SimpleChild>? children { get; set; }
+    }
+
+    class MissingNullableCollection
+    {
+        public ObjectId _id { get; set; }
+    }
+
+    class SimpleChild
+    {
+        public string name { get; set; }
+    }
+
+    [Fact]
+    public void OwnedEntity_non_nullable_collection_is_empty_when_empty()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleNonNullableCollection>();
+        collection.WriteTestDocs([
+            new SimpleNonNullableCollection
+            {
+                children = []
+            }
+        ]);
+        var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entitites.First();
+        Assert.Empty(actual.children);
+    }
+
+    [Fact]
+    public void OwnedEntity_nullable_collection_is_empty_when_empty()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleNullableCollection>();
+        collection.WriteTestDocs([
+            new SimpleNullableCollection
+            {
+                children = []
+            }
+        ]);
+        var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entitites.First();
+        Assert.NotNull(actual.children);
+        Assert.Empty(actual.children);
+    }
+
+    [Fact]
+    public void OwnedEntity_non_nullable_collection_is_null_when_null()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleNonNullableCollection>();
+        collection.WriteTestDocs([
+            new SimpleNonNullableCollection
+            {
+                children = null
+            }
+        ]);
+        var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entitites.First();
+        Assert.Null(actual.children);
+    }
+
+    [Fact]
+    public void OwnedEntity_nullable_collection_is_null_when_null()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleNullableCollection>();
+        collection.WriteTestDocs([
+            new SimpleNullableCollection
+            {
+                children = null
+            }
+        ]);
+        var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entitites.First();
+        Assert.Null(actual.children);
+    }
+
+    [Fact]
+    public void OwnedEntity_non_nullable_collection_throws_when_missing()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<MissingNullableCollection>();
+        collection.WriteTestDocs([new MissingNullableCollection()]);
+        var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNullableCollection>(collection);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entitites.First());
+        Assert.Contains(nameof(SimpleNullableCollection.children), ex.Message);
+    }
+
+    [Fact]
+    public void OwnedEntity_nullable_collection_throws_when_missing()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<MissingNullableCollection>();
+        collection.WriteTestDocs([new MissingNullableCollection()]);
+        var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNullableCollection>(collection);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entitites.First());
+        Assert.Contains(nameof(SimpleNullableCollection.children), ex.Message);
+    }
+
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_single()
     {
@@ -301,8 +410,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
             var db = SingleEntityDbContext.Create(collection);
             var found = db.Entitites.Single();
 
-            // Adjust to Assert.Empty when we initialize empty collections
-            Assert.Null(found.locations);
+            Assert.Empty(found.locations);
         }
     }
 

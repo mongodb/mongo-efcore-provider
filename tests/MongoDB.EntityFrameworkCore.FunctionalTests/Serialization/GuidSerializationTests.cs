@@ -35,7 +35,10 @@ public class GuidSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new GuidEntity {aGuid = expected});
+            db.Entitites.Add(new GuidEntity
+            {
+                aGuid = expected
+            });
             db.SaveChanges();
         }
 
@@ -53,7 +56,7 @@ public class GuidSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<GuidEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class GuidEntity : BaseIdEntity
@@ -75,7 +78,10 @@ public class GuidSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableGuidEntity {aNullableGuid = expected});
+            db.Entitites.Add(new NullableGuidEntity
+            {
+                aNullableGuid = expected
+            });
             db.SaveChanges();
         }
 

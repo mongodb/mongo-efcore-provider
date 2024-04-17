@@ -33,7 +33,10 @@ public class DecimalSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new DecimalEntity {aDecimal = expected});
+            db.Entitites.Add(new DecimalEntity
+            {
+                aDecimal = expected
+            });
             db.SaveChanges();
         }
 
@@ -51,7 +54,7 @@ public class DecimalSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<DecimalEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class DecimalEntity : BaseIdEntity
@@ -73,7 +76,10 @@ public class DecimalSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDecimalEntity {aNullableDecimal = expected});
+            db.Entitites.Add(new NullableDecimalEntity
+            {
+                aNullableDecimal = expected
+            });
             db.SaveChanges();
         }
 

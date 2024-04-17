@@ -31,7 +31,10 @@ public class CollectionSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new IntArrayEntity {anIntArray = expected});
+            db.Entitites.Add(new IntArrayEntity
+            {
+                anIntArray = expected
+            });
             db.SaveChanges();
         }
 
@@ -49,7 +52,7 @@ public class CollectionSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<IntArrayEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class IntArrayEntity : BaseIdEntity
@@ -63,11 +66,16 @@ public class CollectionSerializationTests : BaseSerializationTests
     [InlineData(2, 4, 8, 16, 32, 64)]
     public void Nullable_int_array_round_trips(params int[] expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<NullableIntArrayEntity>(nameof(Nullable_int_array_round_trips) + expected.Length);
+        var collection =
+            TempDatabase.CreateTemporaryCollection<NullableIntArrayEntity>(nameof(Nullable_int_array_round_trips)
+                                                                           + expected.Length);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableIntArrayEntity {anIntArray = expected});
+            db.Entitites.Add(new NullableIntArrayEntity
+            {
+                anIntArray = expected
+            });
             db.SaveChanges();
         }
 
@@ -106,7 +114,10 @@ public class CollectionSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new StringArrayEntity {aStringArray = expected});
+            db.Entitites.Add(new StringArrayEntity
+            {
+                aStringArray = expected
+            });
             db.SaveChanges();
         }
 
@@ -124,7 +135,7 @@ public class CollectionSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<StringArrayEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class StringArrayEntity : BaseIdEntity
@@ -139,11 +150,15 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void Nullable_string_array_round_trips(params string[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableStringArrayEntity>(nameof(Nullable_string_array_round_trips) + expected.Length);
+            TempDatabase.CreateTemporaryCollection<NullableStringArrayEntity>(nameof(Nullable_string_array_round_trips)
+                                                                              + expected.Length);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableStringArrayEntity {aStringArray = expected});
+            db.Entitites.Add(new NullableStringArrayEntity
+            {
+                aStringArray = expected
+            });
             db.SaveChanges();
         }
 
@@ -181,7 +196,10 @@ public class CollectionSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new ListEntity {aList = new List<int>(expected)});
+            db.Entitites.Add(new ListEntity
+            {
+                aList = new List<int>(expected)
+            });
             db.SaveChanges();
         }
 
@@ -199,7 +217,7 @@ public class CollectionSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<ListEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<KeyNotFoundException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
     }
 
     class ListEntity : BaseIdEntity
@@ -217,7 +235,10 @@ public class CollectionSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableListEntity {aList = new List<int>(expected)});
+            db.Entitites.Add(new NullableListEntity
+            {
+                aList = new List<int>(expected)
+            });
             db.SaveChanges();
         }
 
