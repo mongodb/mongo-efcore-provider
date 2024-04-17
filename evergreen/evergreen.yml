@@ -422,10 +422,10 @@ axes:
   - id: driver
     display_name: MongoDB.Driver Version
     values:
-      - id: "2.22.0"
-        display_name: "2.22.0"
+      - id: "2.25.0"
+        display_name: "2.25.0"
         variables:
-          DRIVER_VERSION: "2.22.0"
+          DRIVER_VERSION: "2.25.0"
       - id: "latest"
         display_name: "Latest"
         variables:
