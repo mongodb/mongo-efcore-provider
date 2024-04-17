@@ -127,7 +127,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var serializer = (IBsonSerializer<TSource>)entitySerializerCache.GetOrCreateSerializer(entityType);
-        var collection = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(queryExpression.CollectionExpression.CollectionName);
+        var collection = mongoQueryContext.MongoClient.GetCollection<TSource>(queryExpression.CollectionExpression.CollectionName);
         var source = collection.AsQueryable().As(serializer);
 
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
@@ -156,7 +156,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         ResultCardinality resultCardinality)
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
-        var collection = mongoQueryContext.MongoClient.Database.GetCollection<TSource>(queryExpression.CollectionExpression.CollectionName);
+        var collection = mongoQueryContext.MongoClient.GetCollection<TSource>(queryExpression.CollectionExpression.CollectionName);
         var source = collection.AsQueryable().As((IBsonSerializer<TSource>)entitySerializerCache.GetOrCreateSerializer(entityType));
 
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);

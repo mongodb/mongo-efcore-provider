@@ -15,10 +15,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
@@ -33,6 +36,8 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 public class MongoClientWrapper : IMongoClientWrapper
 {
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
+    private readonly IMongoClient _client;
+    private readonly IMongoDatabase _database;
 
     /// <summary>
     /// Create a new instance of <see cref="MongoClientWrapper"/> with the supplied parameters.
@@ -48,8 +53,8 @@ public class MongoClientWrapper : IMongoClientWrapper
         var options = dbContextOptions.FindExtension<MongoOptionsExtension>();
         _commandLogger = commandLogger;
 
-        var client = GetOrCreateMongoClient(options, serviceProvider);
-        Database = client.GetDatabase(options!.DatabaseName);
+        _client = GetOrCreateMongoClient(options, serviceProvider);
+        _database = _client.GetDatabase(options!.DatabaseName);
     }
 
     public IEnumerable<T> Execute<T>(MongoExecutableQuery executableQuery, out Action log)
@@ -86,6 +91,35 @@ public class MongoClientWrapper : IMongoClientWrapper
             "An implementation of IMongoClient must be registered with the ServiceProvider or a ConnectionString set via DbOptions to connect to MongoDB.");
     }
 
-    // TODO: Consider hiding and providing functions that map to it as-required
-    public IMongoDatabase Database { get; }
+    public IMongoCollection<T> GetCollection<T>(string collectionName)
+        => _database.GetCollection<T>(collectionName);
+
+    public long SaveUpdates(IEnumerable<MongoUpdate> updates)
+    {
+        using var session = _client.StartSession();
+        long documentsAffected = 0;
+        foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
+        {
+            var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
+            var result = collection.BulkWrite(session, batch.Models);
+            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
+        }
+
+        return documentsAffected;
+    }
+
+    public async Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
+    {
+        using var session = await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        long documentsAffected = 0;
+        foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
+        {
+            var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
+            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
+        }
+
+        return documentsAffected;
+    }
 }
