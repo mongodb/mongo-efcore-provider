@@ -32,23 +32,29 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
 /// Represents an update to a MongoDB database by specifying the collection
-/// name and the appropriate document inside a writemodel which indicates
+/// name and the appropriate document inside a <see cref="WriteModel{BsonDocument}"/> which indicates
 /// the type of operation.
 /// </summary>
 /// <param name="collectionName">The name of the collection this update applies to.</param>
-/// <param name="model"></param>
+/// <param name="model">The <see cref="WriteModel{BsonDocument}"/> containing the update.</param>
 public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
 {
     /// <summary>
     /// The name of the collection this update applies to.
     /// </summary>
-    public string CollectionName { get => collectionName; }
+    public string CollectionName
+    {
+        get => collectionName;
+    }
 
     /// <summary>
     /// The <see cref="WriteModel{BsonDocument}"/> that contains both the document
     /// being modified and indication of the type of update being performed.
     /// </summary>
-    public WriteModel<BsonDocument> Model { get => model; }
+    public WriteModel<BsonDocument> Model
+    {
+        get => model;
+    }
 
     /// <summary>
     /// Create a enumeration of <see cref="MongoUpdate"/> from an enumeration of EF-supplied
@@ -108,7 +114,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         using var writer = new BsonDocumentWriter(document);
         WriteEntity(writer, entry, p => p.IsPrimaryKey());
 
-        // MongoDB require primary key named as "_id";
+        // MongoDB requires primary key named as "_id";
         return Builders<BsonDocument>.Filter.Eq("_id", document["_id"]);
     }
 
