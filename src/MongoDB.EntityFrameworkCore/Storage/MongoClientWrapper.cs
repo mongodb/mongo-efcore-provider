@@ -132,7 +132,6 @@ public class MongoClientWrapper : IMongoClientWrapper
         return documentsAffected;
     }
 
-
     private static IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
     {
         var injectedClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient));
