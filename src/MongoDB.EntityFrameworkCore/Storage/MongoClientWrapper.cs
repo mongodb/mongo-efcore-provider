@@ -57,6 +57,14 @@ public class MongoClientWrapper : IMongoClientWrapper
         _database = _client.GetDatabase(options!.DatabaseName);
     }
 
+    /// <summary>
+    /// Execute a <see cref="MongoExecutableQuery"/> and return  a <see cref="Action"/>
+    /// that should be executed once the first item has been enumerated.
+    /// </summary>
+    /// <param name="executableQuery">The <see cref="MongoExecutableQuery"/> containing everything needed to run the query.</param>
+    /// <param name="log">The <see cref="Action"/> returned that will perform the MQL log once evaluation has happened.</param>
+    /// <typeparam name="T">The type of items being returned by the query.</typeparam>
+    /// <returns>An <see cref="IEnumerable{T}"/> containing the items returned by the query.</returns>
     public IEnumerable<T> Execute<T>(MongoExecutableQuery executableQuery, out Action log)
     {
         log = () => { };
@@ -75,25 +83,20 @@ public class MongoClientWrapper : IMongoClientWrapper
         return queryable;
     }
 
-    private static IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
-    {
-        var injectedClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient));
-        if (injectedClient != null)
-            return injectedClient;
-
-        if (options?.ConnectionString != null)
-            return new MongoClient(options.ConnectionString);
-
-        if (options?.MongoClient != null)
-            return options.MongoClient;
-
-        throw new InvalidOperationException(
-            "An implementation of IMongoClient must be registered with the ServiceProvider or a ConnectionString set via DbOptions to connect to MongoDB.");
-    }
-
+    /// <summary>
+    /// Get an <see cref="IMongoCollection{T}"/> associated with a MongoDB collection by name.
+    /// </summary>
+    /// <param name="collectionName">The name of the collection that should be queried.</param>
+    /// <typeparam name="T">The type of items returned by the collection.</typeparam>
+    /// <returns>A <see cref="IMongoCollection{T}"/> for the named collection.</returns>
     public IMongoCollection<T> GetCollection<T>(string collectionName)
         => _database.GetCollection<T>(collectionName);
 
+    /// <summary>
+    /// Save the supplied <see cref="MongoUpdate"/> operations to the database.
+    /// </summary>
+    /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
+    /// <returns>The number of documents modified.</returns>
     public long SaveUpdates(IEnumerable<MongoUpdate> updates)
     {
         using var session = _client.StartSession();
@@ -108,6 +111,12 @@ public class MongoClientWrapper : IMongoClientWrapper
         return documentsAffected;
     }
 
+    /// <summary>
+    /// Save the supplied <see cref="MongoUpdate"/> operations to the database asynchronously.
+    /// </summary>
+    /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A <see cref="Task{long}"/> that when resolved gives the number of documents modified.</returns>
     public async Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
     {
         using var session = await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -121,5 +130,22 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
 
         return documentsAffected;
+    }
+
+
+    private static IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
+    {
+        var injectedClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient));
+        if (injectedClient != null)
+            return injectedClient;
+
+        if (options?.ConnectionString != null)
+            return new MongoClient(options.ConnectionString);
+
+        if (options?.MongoClient != null)
+            return options.MongoClient;
+
+        throw new InvalidOperationException(
+            "An implementation of IMongoClient must be registered with the ServiceProvider or a ConnectionString set via DbOptions to connect to MongoDB.");
     }
 }
