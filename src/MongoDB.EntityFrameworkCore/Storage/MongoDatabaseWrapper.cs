@@ -14,51 +14,35 @@
  */
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
-using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
-using MongoDB.Bson;
-using MongoDB.Bson.IO;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
-using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Provides database-level operations against the underlying <see cref="IMongoClientWrapper"/>.
+/// Provides EF database-level operations using the underlying <see cref="IMongoClientWrapper"/>.
 /// </summary>
 public class MongoDatabaseWrapper : Database
 {
     private readonly IMongoClientWrapper _mongoClient;
-    private readonly bool _sensitiveLoggingEnabled;
 
     /// <summary>
     /// Creates a <see cref="MongoDatabaseWrapper"/> with the required dependencies, client wrapper and logging options.
     /// </summary>
     /// <param name="dependencies">The <see cref="DatabaseDependencies"/> this object should use.</param>
     /// <param name="mongoClient">The <see cref="IMongoClientWrapper"/> this should use to interact with MongoDB.</param>
-    /// <param name="loggingOptions">The <see cref="ILoggingOptions"/> that specify how this class should log failures, warnings and informational messages.</param>
     public MongoDatabaseWrapper(
         DatabaseDependencies dependencies,
-        IMongoClientWrapper mongoClient,
-        ILoggingOptions loggingOptions)
+        IMongoClientWrapper mongoClient)
         : base(dependencies)
     {
         _mongoClient = mongoClient;
-
-        if (loggingOptions.IsSensitiveDataLoggingEnabled)
-        {
-            _sensitiveLoggingEnabled = true;
-        }
     }
 
     /// <summary>
@@ -68,8 +52,8 @@ public class MongoDatabaseWrapper : Database
     /// <returns>Number of documents affected during saving changes.</returns>
     public override int SaveChanges(IList<IUpdateEntry> entries)
     {
-        var updates = ConvertUpdateEntriesToMongoUpdates(entries);
-        return (int)SaveMongoUpdates(updates);
+        var updates = MongoUpdate.CreateAll(GetAllChangedRootEntries(entries));
+        return (int)_mongoClient.SaveUpdates(updates);
     }
 
     /// <summary>
@@ -80,8 +64,8 @@ public class MongoDatabaseWrapper : Database
     /// <returns>Task that when resolved contains the number of documents affected during saving changes.</returns>
     public override async Task<int> SaveChangesAsync(IList<IUpdateEntry> entries, CancellationToken cancellationToken = default)
     {
-        var updates = ConvertUpdateEntriesToMongoUpdates(entries);
-        return (int)await SaveMongoUpdatesAsync(updates, cancellationToken).ConfigureAwait(false);
+        var updates = MongoUpdate.CreateAll(GetAllChangedRootEntries(entries));
+        return (int)await _mongoClient.SaveUpdatesAsync(updates, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -130,270 +114,5 @@ public class MongoDatabaseWrapper : Database
             if (principal.EntityType.IsDocumentRoot()) return principal;
             entry = principal;
         }
-    }
-
-    /// <summary>
-    /// Convert a list of <see cref="IUpdateEntry"/> from EF core into <see cref="MongoUpdate"/> we
-    /// can send to MongoDB.
-    /// </summary>
-    /// <param name="entries">The list of <see cref="IUpdateEntry"/> to process from EF Core.</param>
-    /// <returns>The enumerable <see cref="MongoUpdate"/> sequence that will be sent to MongoDB.</returns>
-    private static IEnumerable<MongoUpdate> ConvertUpdateEntriesToMongoUpdates(IList<IUpdateEntry> entries)
-    {
-        return
-            GetAllChangedRootEntries(entries)
-                .Select(ConvertUpdateEntryToMongoUpdate)
-                .OfType<MongoUpdate>();
-    }
-
-    private static MongoUpdate? ConvertUpdateEntryToMongoUpdate(IUpdateEntry entry)
-    {
-        string collectionName = entry.EntityType.GetCollectionName();
-        var state = entry.EntityState;
-
-        return state switch
-        {
-            EntityState.Added => ConvertAddedEntryToMongoUpdate(collectionName, entry),
-            EntityState.Deleted => ConvertDeletedEntryToMongoUpdate(collectionName, entry),
-            EntityState.Detached => null,
-            EntityState.Modified => ConvertModifiedEntryToMongoUpdate(collectionName, entry),
-            EntityState.Unchanged => null,
-            _ => throw new NotSupportedException($"Unexpected entity state: {entry.EntityState}.")
-        };
-    }
-
-    private static MongoUpdate ConvertAddedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
-    {
-        var document = new BsonDocument();
-        using (var writer = new BsonDocumentWriter(document))
-        {
-            WriteEntity(writer, entry);
-        }
-
-        var model = new InsertOneModel<BsonDocument>(document);
-        return new MongoUpdate(collectionName, model);
-    }
-
-    private static void AcceptTemporaryValues(IUpdateEntry entry)
-    {
-        foreach (var property in entry.EntityType.GetProperties())
-        {
-            if (entry.HasTemporaryValue(property))
-                entry.SetStoreGeneratedValue(property, entry.GetCurrentValue(property));
-        }
-    }
-
-    private static MongoUpdate ConvertDeletedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
-    {
-        var idFilter = CreateIdFilter(entry);
-        var model = new DeleteOneModel<BsonDocument>(idFilter);
-        return new MongoUpdate(collectionName, model);
-    }
-
-    private static MongoUpdate ConvertModifiedEntryToMongoUpdate(string collectionName, IUpdateEntry entry)
-    {
-        var document = new BsonDocument();
-        using (var writer = new BsonDocumentWriter(document))
-        {
-            WriteEntity(writer, entry);
-        }
-
-        var updateDocument = new BsonDocument("$set", document);
-        var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(updateDocument);
-
-        var idFilter = CreateIdFilter(entry);
-        var model = new UpdateOneModel<BsonDocument>(idFilter, updateDefinition);
-        return new MongoUpdate(collectionName, model);
-    }
-
-    private static void WriteEntity(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null,
-        int? collectionIndex = null)
-    {
-        if (propertyFilter == null && entry.EntityState == EntityState.Modified)
-        {
-            propertyFilter = entry.IsModified;
-        }
-
-        AcceptTemporaryValues(entry);
-
-        writer.WriteStartDocument();
-
-        SerializationHelper.WriteKeyProperties(writer, entry);
-        SerializationHelper.WriteNonKeyProperties(writer, entry, propertyFilter);
-
-        foreach (var navigation in entry.EntityType.GetNavigations())
-        {
-            if (!navigation.IsEmbedded())
-            {
-                continue;
-            }
-
-            writer.WriteName(navigation.TargetEntityType.GetContainingElementName());
-            object? embeddedValue = entry.GetCurrentValue(navigation);
-
-            if (embeddedValue == null)
-            {
-                writer.WriteNull();
-            }
-            else
-            {
-                if (navigation.IsCollection)
-                {
-                    writer.WriteStartArray();
-                    foreach (object dependent in (IEnumerable)embeddedValue)
-                    {
-                        var embeddedEntry =
-                            ((InternalEntityEntry)entry).StateManager.TryGetEntry(dependent,
-                                navigation.ForeignKey.DeclaringEntityType)!;
-                        WriteEntity(writer, embeddedEntry, _ => true);
-                    }
-
-                    writer.WriteEndArray();
-                }
-                else
-                {
-                    var embeddedEntry =
-                        ((InternalEntityEntry)entry).StateManager.TryGetEntry(embeddedValue,
-                            navigation.ForeignKey.DeclaringEntityType)!;
-                    WriteEntity(writer, embeddedEntry, _ => true);
-                }
-            }
-        }
-
-        writer.WriteEndDocument();
-    }
-
-    private static FilterDefinition<BsonDocument> CreateIdFilter(IUpdateEntry entry)
-    {
-        var primaryKey = entry.EntityType.FindPrimaryKey();
-        if (primaryKey == null)
-        {
-            throw new InvalidOperationException($"Cannot find the primary key for the entity: {entry.EntityType.Name}");
-        }
-
-        var document = new BsonDocument();
-        using (var writer = new BsonDocumentWriter(document))
-        {
-            WriteEntity(writer, entry, p => p.IsPrimaryKey());
-        }
-
-        // MongoDB require primary key named as "_id";
-        var serializedIdValue = document["_id"];
-        return Builders<BsonDocument>.Filter.Eq("_id", serializedIdValue);
-    }
-
-    private long SaveMongoUpdates(IEnumerable<MongoUpdate> updates)
-    {
-        var database = _mongoClient.Database;
-        var client = database.Client;
-        using var session = client.StartSession();
-        return SaveMongoUpdates(session, database, updates);
-    }
-
-    private static long SaveMongoUpdates(
-        IClientSessionHandle session,
-        IMongoDatabase database,
-        IEnumerable<MongoUpdate> updates)
-    {
-        long documentsAffected = 0;
-        foreach (var batch in BatchUpdatesByCollection(updates))
-        {
-            var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = collection.BulkWrite(session, batch.Models);
-            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
-        }
-
-        return documentsAffected;
-    }
-
-    private async Task<long> SaveMongoUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
-    {
-        var database = _mongoClient.Database;
-        var client = database.Client;
-        using var session = await client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        return await SaveMongoUpdatesAsync(session, database, updates, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task<long> SaveMongoUpdatesAsync(
-        IClientSessionHandle session,
-        IMongoDatabase database,
-        IEnumerable<MongoUpdate> updates,
-        CancellationToken cancellationToken)
-    {
-        long documentsAffected = 0;
-        foreach (var batch in BatchUpdatesByCollection(updates))
-        {
-            var collection = database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
-        }
-
-        return documentsAffected;
-    }
-
-    private static IEnumerable<MongoUpdateBatch> BatchUpdatesByCollection(IEnumerable<MongoUpdate> updates)
-    {
-        MongoUpdateBatch? batch = null;
-        foreach (var update in updates)
-        {
-            if (batch == null)
-            {
-                batch = MongoUpdateBatch.Create(update);
-            }
-            else
-            {
-                if (batch.CollectionName == update.CollectionName)
-                {
-                    batch.Models.Add(update.Model);
-                }
-                else
-                {
-                    yield return batch;
-                    batch = MongoUpdateBatch.Create(update);
-                }
-            }
-        }
-
-        if (batch != null)
-        {
-            yield return batch;
-        }
-    }
-
-    private class MongoUpdate
-    {
-        public MongoUpdate(
-            string collectionName,
-            WriteModel<BsonDocument> model)
-        {
-            CollectionName = collectionName;
-            Model = model;
-        }
-
-        public string CollectionName { get; }
-        public WriteModel<BsonDocument> Model { get; }
-    }
-
-    private class MongoUpdateBatch
-    {
-        public static MongoUpdateBatch Create(MongoUpdate update)
-        {
-            return new MongoUpdateBatch(update.CollectionName, new List<WriteModel<BsonDocument>>
-            {
-                update.Model
-            });
-        }
-
-        private MongoUpdateBatch(
-            string collectionName,
-            List<WriteModel<BsonDocument>> models)
-        {
-            CollectionName = collectionName;
-            Models = models;
-        }
-
-        public string CollectionName { get; }
-        public List<WriteModel<BsonDocument>> Models { get; }
     }
 }
