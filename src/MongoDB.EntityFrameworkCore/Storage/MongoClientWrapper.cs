@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -99,12 +100,17 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <returns>The number of documents modified.</returns>
     public long SaveUpdates(IEnumerable<MongoUpdate> updates)
     {
+        var stopwatch = new Stopwatch();
         using var session = _client.StartSession();
         long documentsAffected = 0;
+
         foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
         {
+            stopwatch.Restart();
             var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
             var result = collection.BulkWrite(session, batch.Models);
+            stopwatch.Stop();
+            _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
             documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
         }
 
@@ -116,16 +122,20 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// </summary>
     /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
-    /// <returns>A <see cref="Task{long}"/> that when resolved gives the number of documents modified.</returns>
+    /// <returns>A <see cref="Task"/> that when resolved gives the number of documents modified.</returns>
     public async Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
     {
+        var stopwatch = new Stopwatch();
         using var session = await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         long documentsAffected = 0;
+
         foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
         {
+            stopwatch.Restart();
             var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
+            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken).ConfigureAwait(false);
+            stopwatch.Stop();
+            _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
             documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
         }
 
