@@ -159,28 +159,6 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
 
     [Fact]
-    public void Query_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
-    {
-        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
-
-        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
-
-        Assert.NotNull(items);
-        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
-
-        var message = Assert.Single(logger.Records, log =>
-            log.LogLevel == LogLevel.Information &&
-            log.EventId == MongoEventId.ExecutedMqlQuery &&
-            log.Exception == null
-        ).message;
-
-        Assert.Contains("Executed MQL query", message);
-        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
-        Assert.DoesNotContain("yearOfDiscovery", message);
-    }
-
-    [Fact]
     public void First_writes_event_via_LoggerFactory_with_mql_when_sensitive_logging()
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
@@ -225,5 +203,71 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.Contains(
             DbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])",
             message);
+    }
+
+    [Fact]
+    public void Query_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+
+        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+
+        Assert.NotEmpty(items);
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+
+        var message = Assert.Single(logger.Records, log =>
+            log.LogLevel == LogLevel.Information &&
+            log.EventId == MongoEventId.ExecutedMqlQuery &&
+            log.Exception == null
+        ).message;
+
+        Assert.Contains("Executed MQL query", message);
+        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
+        Assert.DoesNotContain("yearOfDiscovery", message);
+    }
+
+    [Fact]
+    public void First_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+
+        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > 1900);
+
+        Assert.NotNull(item);
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+
+        var message = Assert.Single(logger.Records, log =>
+            log.LogLevel == LogLevel.Information &&
+            log.EventId == MongoEventId.ExecutedMqlQuery &&
+            log.Exception == null
+        ).message;
+
+        Assert.Contains("Executed MQL query", message);
+        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
+        Assert.DoesNotContain("yearOfDiscovery", message);
+    }
+
+    [Fact]
+    public void Single_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+
+        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery > 1900);
+
+        Assert.NotNull(item);
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+
+        var message = Assert.Single(logger.Records, log =>
+            log.LogLevel == LogLevel.Information &&
+            log.EventId == MongoEventId.ExecutedMqlQuery &&
+            log.Exception == null
+        ).message;
+
+        Assert.Contains("Executed MQL query", message);
+        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
+        Assert.DoesNotContain("yearOfDiscovery", message);
     }
 }
