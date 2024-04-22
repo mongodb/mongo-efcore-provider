@@ -69,7 +69,7 @@ internal static class MongoLoggerExtensions
         this IDiagnosticsLogger<DbLoggerCategory.Database.Command> diagnostics,
         TimeSpan elapsed,
         CollectionNamespace collectionNamespace,
-        long documentsCreated,
+        long documentsInserted,
         long documentedDeleted,
         long documentsModified)
     {
@@ -81,7 +81,7 @@ internal static class MongoLoggerExtensions
                 diagnostics,
                 elapsed.TotalMilliseconds.ToString(),
                 collectionNamespace,
-                documentsCreated,
+                documentsInserted,
                 documentedDeleted,
                 documentsModified);
         }
@@ -93,7 +93,7 @@ internal static class MongoLoggerExtensions
                 ExecutedBulkWrite,
                 elapsed,
                 collectionNamespace,
-                documentsCreated,
+                documentsInserted,
                 documentedDeleted,
                 documentsModified,
                 diagnostics.ShouldLogSensitiveData());
@@ -124,7 +124,7 @@ internal static class MongoLoggerExtensions
         return d.GenerateMessage(
             p.Elapsed.Milliseconds.ToString(),
             p.CollectionNamespace,
-            p.DocumentsCreated,
+            p.DocumentsInserted,
             p.DocumentsDeleted,
             p.DocumentsModified);
     }
@@ -177,5 +177,5 @@ internal static class MongoLoggerExtensions
     private const string LogExecutedMqlQueryString = "Executed MQL query{newLine}{collectionNamespace}.aggregate([{queryMql}])";
 
     private const string LogExecuteBulkWriteString =
-        "Executed Bulk Write ({elapsed} ms) Collection='{colllectionNamespace}', Created={created}, Deleted={deleted}, Modified={modified}";
+        "Executed Bulk Write ({elapsed} ms) Collection='{collectionNamespace}', Inserted={inserted}, Deleted={deleted}, Modified={modified}";
 }

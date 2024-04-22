@@ -35,7 +35,7 @@ public class MongoBulkWriteEventData : EventData
     /// <param name="messageGenerator">A delegate that generates a log message for this event.</param>
     /// <param name="elapsed">The time elapsed since the command was sent to the database.</param>
     /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> being queried.</param>
-    /// <param name="documentsCreated">The number of documents created by this bulk write operation.</param>
+    /// <param name="documentsInserted">The number of documents inserted by this bulk write operation.</param>
     /// <param name="documentsDeleted">The number of documents deleted by this bulk write operation.</param>
     /// <param name="documentsModified">The number of documents modified by this bulk write operation.</param>
     /// <param name="logSensitiveData">Indicates whether the application allows logging of sensitive data.</param>
@@ -44,7 +44,7 @@ public class MongoBulkWriteEventData : EventData
         Func<EventDefinitionBase, EventData, string> messageGenerator,
         TimeSpan elapsed,
         CollectionNamespace collectionNamespace,
-        long documentsCreated,
+        long documentsInserted,
         long documentsDeleted,
         long documentsModified,
         bool logSensitiveData)
@@ -52,7 +52,7 @@ public class MongoBulkWriteEventData : EventData
     {
         Elapsed = elapsed;
         CollectionNamespace = collectionNamespace;
-        DocumentsCreated = documentsCreated;
+        DocumentsInserted = documentsInserted;
         DocumentsDeleted = documentsDeleted;
         DocumentsModified = documentsModified;
         LogSensitiveData = logSensitiveData;
@@ -69,9 +69,9 @@ public class MongoBulkWriteEventData : EventData
     public virtual CollectionNamespace CollectionNamespace { get; }
 
     /// <summary>
-    /// The number of documents created by this bulk write operation.
+    /// The number of documents inserted by this bulk write operation.
     /// </summary>
-    public virtual long DocumentsCreated { get; }
+    public virtual long DocumentsInserted { get; }
 
     /// <summary>
     /// The number of documents deleted by this bulk write operation.
