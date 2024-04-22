@@ -118,10 +118,11 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         });
 
         db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
-        foreach (var planet in  db.Planets.Where(m => m.hasRings))
+        foreach (var planet in db.Planets.Where(m => m.hasRings))
         {
             planet.hasRings = false;
         }
+
         db.Planets.Add(new Planet
         {
             name = "Proxima Centauri d", hasRings = false, orderFromSun = -1
@@ -133,7 +134,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.Contains("Executed Bulk Write", log);
         Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", log);
-        Assert.Contains("Created=1, Deleted=2, Modified=4", log);
+        Assert.Contains("Inserted=1, Deleted=2, Modified=4", log);
     }
 
     [Fact]
@@ -145,10 +146,11 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
         db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
-        foreach (var planet in  db.Planets.Where(m => m.hasRings))
+        foreach (var planet in db.Planets.Where(m => m.hasRings))
         {
             planet.hasRings = false;
         }
+
         db.Planets.Add(new Planet
         {
             name = "Proxima Centauri d", hasRings = false, orderFromSun = -1
@@ -165,6 +167,6 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.Contains("Executed Bulk Write", log);
         Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", log);
-        Assert.Contains("Created=1, Deleted=2, Modified=4", log);
+        Assert.Contains("Inserted=1, Deleted=2, Modified=4", log);
     }
 }
