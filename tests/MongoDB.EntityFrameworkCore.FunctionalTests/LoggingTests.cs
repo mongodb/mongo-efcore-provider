@@ -35,12 +35,50 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             testOutputHelper.WriteLine(s);
         });
 
-        var item = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+
+        Assert.NotEmpty(items);
+        Assert.Contains(logs, l => l.Contains("Executed MQL query"));
+        Assert.Contains(logs,
+            l => l.Contains(DbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])"));
+    }
+
+    [Fact]
+    public void First_writes_log_via_LogTo_with_mql_when_sensitive_logging()
+    {
+        List<string> logs = [];
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        {
+            logs.Add(s);
+            testOutputHelper.WriteLine(s);
+        });
+
+        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > 1900);
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs,
-            l => l.Contains($"{DbName}.moons.aggregate([{{ \"$match\" : {{ \"yearOfDiscovery\" : {{ \"$gt\" : 1900 }} }} }}])"));
+            l => l.Contains(DbName
+                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : NumberLong(1) }])"));
+    }
+
+    [Fact]
+    public void Single_writes_log_via_LogTo_with_mql_when_sensitive_logging()
+    {
+        List<string> logs = [];
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        {
+            logs.Add(s);
+            testOutputHelper.WriteLine(s);
+        });
+
+        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery == 1949);
+
+        Assert.NotNull(item);
+        Assert.Contains(logs, l => l.Contains("Executed MQL query"));
+        Assert.Contains(logs,
+            l => l.Contains(DbName
+                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])"));
     }
 
     [Fact]
@@ -53,7 +91,43 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             testOutputHelper.WriteLine(s);
         }, sensitiveDataLogging: false);
 
-        var item = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+
+        Assert.NotEmpty(items);
+        Assert.Contains(logs, l => l.Contains("Executed MQL query"));
+        Assert.Contains(logs, l => l.Contains($"{DbName}.moons.aggregate([?])"));
+        Assert.DoesNotContain(logs, l => l.Contains("yearOfDiscovery"));
+    }
+
+    [Fact]
+    public void First_writes_log_via_LogTo_without_mql_when_no_sensitive_logging()
+    {
+        List<string> logs = [];
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        {
+            logs.Add(s);
+            testOutputHelper.WriteLine(s);
+        }, sensitiveDataLogging: false);
+
+        var item = db.Moons.First(m => m.yearOfDiscovery > 1900);
+
+        Assert.NotNull(item);
+        Assert.Contains(logs, l => l.Contains("Executed MQL query"));
+        Assert.Contains(logs, l => l.Contains($"{DbName}.moons.aggregate([?])"));
+        Assert.DoesNotContain(logs, l => l.Contains("yearOfDiscovery"));
+    }
+
+    [Fact]
+    public void Single_writes_log_via_LogTo_without_mql_when_no_sensitive_logging()
+    {
+        List<string> logs = [];
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        {
+            logs.Add(s);
+            testOutputHelper.WriteLine(s);
+        }, sensitiveDataLogging: false);
+
+        var item = db.Moons.Single(m => m.yearOfDiscovery == 1949);
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
@@ -67,7 +141,30 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
 
-        var item = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+
+        Assert.NotEmpty(items);
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+
+        var message = Assert.Single(logger.Records, log =>
+            log.LogLevel == LogLevel.Information &&
+            log.EventId == MongoEventId.ExecutedMqlQuery &&
+            log.Exception == null
+        ).message;
+
+        Assert.Contains("Executed MQL query", message);
+        Assert.Contains(DbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])",
+            message);
+    }
+
+
+    [Fact]
+    public void First_writes_event_via_LoggerFactory_with_mql_when_sensitive_logging()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
+
+        var item = db.Moons.First(m => m.yearOfDiscovery > 1900);
 
         Assert.NotNull(item);
         var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
@@ -79,7 +176,32 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         ).message;
 
         Assert.Contains("Executed MQL query", message);
-        Assert.Contains($"{DbName}.moons.aggregate([{{ \"$match\" : {{ \"yearOfDiscovery\" : {{ \"$gt\" : 1900 }} }} }}])",
+        Assert.Contains(
+            DbName
+            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : NumberLong(1) }])",
+            message);
+    }
+
+    [Fact]
+    public void Single_writes_event_via_LoggerFactory_with_mql_when_sensitive_logging()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
+
+        var item = db.Moons.Single(m => m.yearOfDiscovery == 1949);
+
+        Assert.NotNull(item);
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+
+        var message = Assert.Single(logger.Records, log =>
+            log.LogLevel == LogLevel.Information &&
+            log.EventId == MongoEventId.ExecutedMqlQuery &&
+            log.Exception == null
+        ).message;
+
+        Assert.Contains("Executed MQL query", message);
+        Assert.Contains(
+            DbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])",
             message);
     }
 
@@ -89,7 +211,51 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
-        var item = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+
+        Assert.NotEmpty(items);
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+
+        var message = Assert.Single(logger.Records, log =>
+            log.LogLevel == LogLevel.Information &&
+            log.EventId == MongoEventId.ExecutedMqlQuery &&
+            log.Exception == null
+        ).message;
+
+        Assert.Contains("Executed MQL query", message);
+        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
+        Assert.DoesNotContain("yearOfDiscovery", message);
+    }
+
+    [Fact]
+    public void First_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+
+        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > 1900);
+
+        Assert.NotNull(item);
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+
+        var message = Assert.Single(logger.Records, log =>
+            log.LogLevel == LogLevel.Information &&
+            log.EventId == MongoEventId.ExecutedMqlQuery &&
+            log.Exception == null
+        ).message;
+
+        Assert.Contains("Executed MQL query", message);
+        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
+        Assert.DoesNotContain("yearOfDiscovery", message);
+    }
+
+    [Fact]
+    public void Single_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+
+        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery > 1900);
 
         Assert.NotNull(item);
         var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
