@@ -115,12 +115,13 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
     private static readonly Type[] supportedCollectionInterfaces =
     [
         typeof(IList<>),
-        typeof(IReadOnlyList<>)
+        typeof(IReadOnlyList<>),
+        typeof(IEnumerable<>)
     ];
 
-    public static ValueComparer? CreateComparer(CoreTypeMapping elementMapping, Type collectionType)
+    private static ValueComparer? CreateComparer(CoreTypeMapping elementMapping, Type collectionType)
     {
-        var elementType = collectionType.TryGetItemType(typeof(IEnumerable<>))!;
+        var elementType = collectionType.TryGetItemType(typeof(IEnumerable<>));
         var comparerType = typeof(ChangeTracking.ListComparer<>).MakeGenericType(elementType);
         return (ValueComparer?)Activator.CreateInstance(comparerType, elementMapping.Comparer.ToNullableComparer(elementType)!);
     }

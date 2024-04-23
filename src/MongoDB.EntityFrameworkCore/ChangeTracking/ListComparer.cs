@@ -73,7 +73,7 @@ internal sealed class ListComparer<TElement>(ValueComparer<TElement> elementComp
         return hash.ToHashCode();
     }
 
-    private static IList<TElement> Snapshot(IEnumerable<TElement> source, ValueComparer<TElement> elementComparer)
+    private static IEnumerable<TElement> Snapshot(IEnumerable<TElement> source, ValueComparer<TElement> elementComparer)
     {
         // Common array case first
         if (source is TElement[] sourceArray)
@@ -113,8 +113,8 @@ internal sealed class ListComparer<TElement>(ValueComparer<TElement> elementComp
                 typeof(TElement).ShortDisplayName()}>' to it.");
     }
 
-    private static IList<TElement> CreateInstance(Type type, IEnumerable<TElement> parameter)
-        => (IList<TElement>)Activator.CreateInstance(type, parameter)!;
+    private static IEnumerable<TElement> CreateInstance(Type type, IEnumerable<TElement> parameter)
+        => (IEnumerable<TElement>)Activator.CreateInstance(type, parameter)!;
 
     private static bool HasConstructorWithSingleParameterOf<T>(IEnumerable<ConstructorInfo> constructors)
         => constructors.Any(c => c.GetParameters().Length == 1 && typeof(T).IsAssignableFrom(c.GetParameters()[0].ParameterType));

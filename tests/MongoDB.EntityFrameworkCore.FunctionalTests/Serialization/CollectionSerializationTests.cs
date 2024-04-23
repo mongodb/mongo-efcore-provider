@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using System.Collections;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
 public class CollectionSerializationTests : BaseSerializationTests
@@ -264,5 +266,80 @@ public class CollectionSerializationTests : BaseSerializationTests
     class NullableListEntity : BaseIdEntity
     {
         public List<int>? aList { get; set; }
+    }
+
+    [Theory]
+    [InlineData]
+    [InlineData(1, 2, 3, 4)]
+    public void IEnumerable_exposed_list_round_trips(params int[] expected)
+    {
+        var collection =
+            TempDatabase.CreateTemporaryCollection<IEnumerableEntity>(nameof(IEnumerable_exposed_list_round_trips) + expected.Length);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(new IEnumerableEntity
+            {
+                anEnumerable = new List<int>(expected)
+            });
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entitites.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equivalent(expected, result.anEnumerable);
+        }
+    }
+
+    class IEnumerableEntity : BaseIdEntity
+    {
+        public IEnumerable<int>? anEnumerable { get; set; }
+    }
+
+    [Theory]
+    [InlineData]
+    [InlineData(1, 2, 3, 4)]
+    public void Nullable_ienumerable_exposed_list_round_trips(params int[] expected)
+    {
+        var collection =
+            TempDatabase.CreateTemporaryCollection<NullableIEnumerableEntity>(nameof(Nullable_ienumerable_exposed_list_round_trips) + expected.Length);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(new NullableIEnumerableEntity
+            {
+                anEnumerable = new List<int>(expected)
+            });
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entitites.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equivalent(expected, result.anEnumerable);
+        }
+    }
+
+    class NullableIEnumerableEntity : BaseIdEntity
+    {
+        public IEnumerable<int>? anEnumerable { get; set; }
+    }
+
+    [Fact]
+    public void IEnumerable_exposed_ienumerable_throws()
+    {
+        var collection = TempDatabase.CreateTemporaryCollection<IEnumerableEntity>();
+
+        using var db = SingleEntityDbContext.Create(collection);
+        db.Entitites.Add(new IEnumerableEntity
+        {
+            anEnumerable = EnumerableOnlyWrapper.Wrap(new [] { 1, 2, 3 })
+        });
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.SaveChanges());
+        Assert.Contains(nameof(EnumerableOnlyWrapper<int>), ex.Message);
     }
 }
