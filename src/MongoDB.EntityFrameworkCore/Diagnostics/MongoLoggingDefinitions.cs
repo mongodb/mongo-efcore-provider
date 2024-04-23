@@ -23,4 +23,5 @@ namespace MongoDB.EntityFrameworkCore.Diagnostics;
 public class MongoLoggingDefinitions : LoggingDefinitions
 {
     public EventDefinitionBase? LogExecutedMqlQuery;
+    public EventDefinitionBase? LogExecutedBulkWrite;
 }

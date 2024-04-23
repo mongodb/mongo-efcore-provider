@@ -270,4 +270,69 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.Contains($"{DbName}.moons.aggregate([?])", message);
         Assert.DoesNotContain("yearOfDiscovery", message);
     }
+
+    [Fact]
+    public void BulkWrite_writes_log_via_LogTo_with_counts()
+    {
+        List<string> logs = [];
+
+        using var guidesFixture = new SampleGuidesFixture();
+        var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, s =>
+        {
+            logs.Add(s);
+            testOutputHelper.WriteLine(s);
+        });
+
+        db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
+        foreach (var planet in db.Planets.Where(m => m.hasRings))
+        {
+            planet.hasRings = false;
+        }
+
+        db.Planets.Add(new Planet
+        {
+            name = "Proxima Centauri d", hasRings = false, orderFromSun = -1
+        });
+
+        Assert.Equal(7, db.SaveChanges());
+
+        var log = Assert.Single(logs, l => l.Contains("MongoEventId.ExecutedBulkWrite"));
+
+        Assert.Contains("Executed Bulk Write", log);
+        Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", log);
+        Assert.Contains("Inserted=1, Deleted=2, Modified=4", log);
+    }
+
+    [Fact]
+    public void BulkWrite_writes_event_via_LoggerFactory_with_counts()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+
+        using var guidesFixture = new SampleGuidesFixture();
+        var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+
+        db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
+        foreach (var planet in db.Planets.Where(m => m.hasRings))
+        {
+            planet.hasRings = false;
+        }
+
+        db.Planets.Add(new Planet
+        {
+            name = "Proxima Centauri d", hasRings = false, orderFromSun = -1
+        });
+
+        Assert.Equal(7, db.SaveChanges());
+
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+        var log = Assert.Single(logger.Records, log =>
+            log.LogLevel == LogLevel.Information &&
+            log.EventId == MongoEventId.ExecutedBulkWrite &&
+            log.Exception == null
+        ).message;
+
+        Assert.Contains("Executed Bulk Write", log);
+        Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", log);
+        Assert.Contains("Inserted=1, Deleted=2, Modified=4", log);
+    }
 }

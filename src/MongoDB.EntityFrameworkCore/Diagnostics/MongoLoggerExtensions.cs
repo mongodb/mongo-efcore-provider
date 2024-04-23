@@ -23,6 +23,9 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
+using MqlQueryEventDefinition = EventDefinition<string, CollectionNamespace, string>;
+using BulkWriteEventDefinition = EventDefinition<string, CollectionNamespace, long, long, long>;
+
 /// <summary>
 /// MongoDB-specific logging extensions.
 /// </summary>
@@ -62,6 +65,43 @@ internal static class MongoLoggerExtensions
         }
     }
 
+    public static void ExecutedBulkWrite(
+        this IDiagnosticsLogger<DbLoggerCategory.Database.Command> diagnostics,
+        TimeSpan elapsed,
+        CollectionNamespace collectionNamespace,
+        long documentsInserted,
+        long documentedDeleted,
+        long documentsModified)
+    {
+        var definition = LogExecutedBulkWrite(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(
+                diagnostics,
+                elapsed.TotalMilliseconds.ToString(),
+                collectionNamespace,
+                documentsInserted,
+                documentedDeleted,
+                documentsModified);
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new MongoBulkWriteEventData(
+                definition,
+                ExecutedBulkWrite,
+                elapsed,
+                collectionNamespace,
+                documentsInserted,
+                documentedDeleted,
+                documentsModified,
+                diagnostics.ShouldLogSensitiveData());
+
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
     private static string LoggedStagesToMql(BsonDocument[]? documents)
         => documents == null
             ? ""
@@ -69,7 +109,7 @@ internal static class MongoLoggerExtensions
 
     private static string ExecutedMqlQuery(EventDefinitionBase definition, EventData payload)
     {
-        var d = (EventDefinition<string, CollectionNamespace, string>)definition;
+        var d = (MqlQueryEventDefinition)definition;
         var p = (MongoQueryEventData)payload;
         return d.GenerateMessage(
             Environment.NewLine,
@@ -77,7 +117,19 @@ internal static class MongoLoggerExtensions
             p.LogSensitiveData ? p.QueryMql : "?");
     }
 
-    private static EventDefinition<string, CollectionNamespace, string> LogExecutedMqlQuery(IDiagnosticsLogger logger)
+    private static string ExecutedBulkWrite(EventDefinitionBase definition, EventData payload)
+    {
+        var d = (BulkWriteEventDefinition)definition;
+        var p = (MongoBulkWriteEventData)payload;
+        return d.GenerateMessage(
+            p.Elapsed.Milliseconds.ToString(),
+            p.CollectionNamespace,
+            p.DocumentsInserted,
+            p.DocumentsDeleted,
+            p.DocumentsModified);
+    }
+
+    private static MqlQueryEventDefinition LogExecutedMqlQuery(IDiagnosticsLogger logger)
     {
         var definition = ((MongoLoggingDefinitions)logger.Definitions).LogExecutedMqlQuery;
         if (definition == null)
@@ -85,7 +137,7 @@ internal static class MongoLoggerExtensions
             definition = NonCapturingLazyInitializer.EnsureInitialized(
                 ref ((MongoLoggingDefinitions)logger.Definitions).LogExecutedMqlQuery,
                 logger,
-                static logger => new EventDefinition<string, CollectionNamespace, string>(
+                static logger => new MqlQueryEventDefinition(
                     logger.Options,
                     MongoEventId.ExecutedMqlQuery,
                     LogLevel.Information,
@@ -96,8 +148,34 @@ internal static class MongoLoggerExtensions
                         LogExecutedMqlQueryString)));
         }
 
-        return (EventDefinition<string, CollectionNamespace, string>)definition;
+        return (MqlQueryEventDefinition)definition;
+    }
+
+
+    private static BulkWriteEventDefinition LogExecutedBulkWrite(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogExecutedBulkWrite;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogExecutedBulkWrite,
+                logger,
+                static logger => new BulkWriteEventDefinition(
+                    logger.Options,
+                    MongoEventId.ExecutedBulkWrite,
+                    LogLevel.Information,
+                    "MongoEventId.ExecutedBulkWrite",
+                    level => LoggerMessage.Define<string, CollectionNamespace, long, long, long>(
+                        level,
+                        MongoEventId.ExecutedBulkWrite,
+                        LogExecuteBulkWriteString)));
+        }
+
+        return (BulkWriteEventDefinition)definition;
     }
 
     private const string LogExecutedMqlQueryString = "Executed MQL query{newLine}{collectionNamespace}.aggregate([{queryMql}])";
+
+    private const string LogExecuteBulkWriteString =
+        "Executed Bulk Write ({elapsed} ms) Collection='{collectionNamespace}', Inserted={inserted}, Deleted={deleted}, Modified={modified}";
 }

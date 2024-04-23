@@ -33,7 +33,8 @@ public static class MongoEventId
     // Only add new values to the end of sections, never in the middle.
     private enum Id
     {
-        ExecutedMqlQuery = CoreEventId.ProviderDesignBaseId
+        ExecutedMqlQuery = CoreEventId.ProviderDesignBaseId,
+        ExecutedBulkWrite
     }
 
     /// <summary>
@@ -46,6 +47,17 @@ public static class MongoEventId
     /// </para>
     /// </remarks>
     public static readonly EventId ExecutedMqlQuery = MakeEventId(Id.ExecutedMqlQuery);
+
+    /// <summary>
+    /// An bulk write has been executed.
+    /// </summary>
+    /// <remarks>
+    /// <para>This event is in the <see cref="DbLoggerCategory.Database.Command" /> category.</para>
+    /// <para>
+    /// This event uses the <see cref="MongoQueryEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// </para>
+    /// </remarks>
+    public static readonly EventId ExecutedBulkWrite = MakeEventId(Id.ExecutedBulkWrite);
 
     private static readonly string EventPrefix = DbLoggerCategory.Database.Command.Name + ".";
 
