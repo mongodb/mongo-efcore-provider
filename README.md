@@ -52,16 +52,22 @@ This preview has a number of limitations at this time. Please consider the follo
 - Properties with typical CLR types (int, string, Guid, decimal), Mongo types (ObjectId, Decimal128) and "value" objects
 - Properties containing arrays and lists of simple CLR types as well as "value" objects
 
-### Roadmap for next releases
+### Next release
 
 - Entity Framework Core 8 & .NET 8 or later
+- Limited Bson*Attribute support
+- Mapping configuration options (e.g. DateTimeKind)
+- Value converters
+- Logging
+- Mapping configuration options
+
+### Planned for next release +1 
+
 - Select projections
 - Sum, Average, Min, Max etc.
-- Value converters
-- Type discriminators
-- Logging
 - Transactions
-- Mapping configuration options
+- Type discriminators
+- More mapping configuration options
 
 ### Not supported but considering for future releases
 
