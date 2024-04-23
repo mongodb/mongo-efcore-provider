@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -358,6 +359,79 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
+    public void OwnedEntity_with_ienumerable_collection_materializes_many()
+    {
+        var expectedLocation = new Location { latitude = 1.01m, longitude = 1.02m };
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithIEnumerableLocations>();
+        collection.WriteTestDocs(new PersonWithIEnumerableLocations[]
+        {
+            new() { _id = ObjectId.GenerateNewId(), name = "IEnumerableRound1", locations = new List<Location>
+            {
+                expectedLocation
+            }},
+            new() { _id = ObjectId.GenerateNewId(), name = "IEnumerableRound2", locations = new List<Location>
+            {
+                new() { latitude = 1.03m, longitude = 1.04m }
+            }}
+        });
+
+        var actual = SingleEntityDbContext.Create(collection).Entitites.ToList();
+
+        Assert.NotEmpty(actual);
+        Assert.Equal("IEnumerableRound1", actual[0].name);
+        Assert.Equal(2, actual.Count);
+        var actualLocation = Assert.Single(actual[0].locations);
+        Assert.Equal(expectedLocation, actualLocation);
+    }
+
+    [Fact]
+    public void OwnedEntity_with_ienumerable_list_serializes()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithIEnumerableLocations>();
+        var entity = new PersonWithIEnumerableLocations
+        {
+            _id = ObjectId.GenerateNewId(),
+            name = "IEnumerableSerialize",
+            locations = new List<Location> { __location1, __location2 }
+        };
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            db.Entitites.Add(entity);
+            db.SaveChanges();
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entitites.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal("IEnumerableSerialize", actual.name);
+            Assert.Equal(2, actual.locations.Count());
+            Assert.Equal(__location1, actual.locations.First());
+            Assert.Equal(__location2, actual.locations.Last());
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_with_ienumerable_non_list_or_array_throws()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithIEnumerableLocations>();
+        var db = SingleEntityDbContext.Create(collection);
+
+        var entity = new PersonWithIEnumerableLocations
+        {
+            _id = ObjectId.GenerateNewId(),
+            name = "IEnumerableSerialize",
+            locations = EnumerableOnlyWrapper.Wrap(new List<Location> { __location1, __location2 })
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entitites.Add(entity));
+        Assert.Contains(nameof(PersonWithIEnumerableLocations.locations), ex.Message);
+        Assert.Contains(entity.locations.GetType().ShortDisplayName(), ex.Message);
+    }
+
+    [Fact]
     public void OwnedEntity_with_collection_adjusted_correctly()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
@@ -498,13 +572,13 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         public LocationWithCity location { get; set; }
     }
 
-    private class Location
+    private record Location
     {
         public decimal latitude { get; set; }
         public decimal longitude { get; set; }
     }
 
-    private class LocationWithCity : Location
+    private record LocationWithCity : Location
     {
         public City city { get; set; }
     }
@@ -517,6 +591,11 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     private class PersonWithMultipleLocations : Person
     {
         public List<Location> locations { get; set; }
+    }
+
+    private class PersonWithIEnumerableLocations : Person
+    {
+        public IEnumerable<Location> locations { get; set; }
     }
 
     private class PersonWithTwoLocations : Person
