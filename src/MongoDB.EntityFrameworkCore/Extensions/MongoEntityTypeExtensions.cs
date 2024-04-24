@@ -82,7 +82,7 @@ public static class MongoEntityTypeExtensions
            ?? GetDefaultContainingElementName(entityType);
 
     private static string? GetDefaultContainingElementName(IReadOnlyEntityType entityType)
-        => entityType.FindOwnership() is IReadOnlyForeignKey ownership
+        => entityType.FindOwnership() is { } ownership
             ? ownership.PrincipalToDependent!.Name
             : null;
 
