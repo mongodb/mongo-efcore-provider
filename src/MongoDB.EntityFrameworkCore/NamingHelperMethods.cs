@@ -37,7 +37,7 @@ public static partial class NamingHelperMethods
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        string[] words = WordSplitRegex.Split(input);
+        var words = WordSplitRegex.Split(input);
 
         var result = new char[input.Length];
         var outIndex = 0;
@@ -78,7 +78,7 @@ public static partial class NamingHelperMethods
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        string[] words = WordSplitRegex.Split(input);
+        var words = WordSplitRegex.Split(input);
 
         var result = new char[input.Length];
         var outIndex = 0;

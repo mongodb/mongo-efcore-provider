@@ -13,8 +13,6 @@
  * limitations under the License.
  */
 
-using MongoDB.Driver;
-
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
 public class StringSerializationTests : BaseSerializationTests
@@ -35,7 +33,7 @@ public class StringSerializationTests : BaseSerializationTests
     public void String_round_trips(string? expected)
     {
         var counter = Interlocked.Increment(ref CollectionCounter);
-        IMongoCollection<StringEntity> collection =
+        var collection =
             TempDatabase.CreateTemporaryCollection<StringEntity>(nameof(String_round_trips) + counter);
 
         {

@@ -15,7 +15,6 @@
 
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -30,7 +29,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_one_level_materializes_single()
     {
-        IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
 
@@ -63,7 +62,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_one_level_allows_nested_where()
     {
-        IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
 
@@ -77,7 +76,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_two_levels_allows_nested_where()
     {
-        IMongoCollection<PersonWithCity> collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
         collection.WriteTestDocs(PersonWithCity1);
         SingleEntityDbContext<PersonWithCity> db = SingleEntityDbContext.Create(collection);
 
@@ -91,7 +90,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_materializes_when_missing_non_required_owned_entity()
     {
-        IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithMissingLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(false); });
@@ -106,7 +105,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_throws_when_missing_required_owned_entity()
     {
-        IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithMissingLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(); });
@@ -119,7 +118,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_one_level_materializes_many()
     {
-        IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
 
@@ -135,7 +134,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_one_level_creates()
     {
-        IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         var expected =
             new PersonWithLocation
             {
@@ -165,7 +164,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_collection_creates()
     {
-        IMongoCollection<PersonWithMultipleLocations> collection =
+        var collection =
             _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
 
         PersonWithMultipleLocations expected = new()
@@ -315,7 +314,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_single()
     {
-        IMongoCollection<PersonWithCity> collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
         collection.WriteTestDocs(PersonWithCity1);
         SingleEntityDbContext<PersonWithCity> db = SingleEntityDbContext.Create(collection);
 
@@ -330,7 +329,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_many()
     {
-        IMongoCollection<PersonWithCity> collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
         collection.WriteTestDocs(PersonWithCity1);
         SingleEntityDbContext<PersonWithCity> db = SingleEntityDbContext.Create(collection);
 
@@ -347,7 +346,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_with_collection_materializes_many()
     {
-        IMongoCollection<PersonWithMultipleLocations> collection =
+        var collection =
             _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
         collection.WriteTestDocs(PersonWithLocations1);
         SingleEntityDbContext<PersonWithMultipleLocations> db = SingleEntityDbContext.Create(collection);
@@ -518,7 +517,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_with_two_owned_entities_materializes()
     {
-        IMongoCollection<PersonWithTwoLocations> collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
         var expected = PersonWithTwoLocations1[0];
         collection.WriteTestDocs(PersonWithTwoLocations1);
         SingleEntityDbContext<PersonWithTwoLocations> db = SingleEntityDbContext.Create(collection);
@@ -536,7 +535,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_with_two_owned_entities_creates()
     {
-        IMongoCollection<PersonWithTwoLocations> collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
         PersonWithTwoLocations expected = new()
         {
             name = "Elizabeth", first = Location2, second = Location1
@@ -564,7 +563,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void OwnedEntity_can_have_element_name_set()
     {
-        IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         var expected = PersonWithLocation1[0];
         collection.WriteTestDocs(PersonWithLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
