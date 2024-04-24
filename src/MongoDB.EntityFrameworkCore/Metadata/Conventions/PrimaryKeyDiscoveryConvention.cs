@@ -17,7 +17,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
@@ -80,7 +79,10 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
                                           entityProperties.FirstOrDefault(p => p.Name == "_id");
         if (underscoreIdElementProperty != null)
         {
-            entityTypeBuilder.PrimaryKey(new[] {underscoreIdElementProperty});
+            entityTypeBuilder.PrimaryKey(new[]
+            {
+                underscoreIdElementProperty
+            });
             return;
         }
 
