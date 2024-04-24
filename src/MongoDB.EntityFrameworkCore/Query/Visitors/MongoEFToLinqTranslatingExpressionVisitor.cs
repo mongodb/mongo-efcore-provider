@@ -69,7 +69,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
         Expression query,
         BsonDocumentSerializer resultSerializer)
     {
-        var asMethodInfo = __asMethodInfo.MakeGenericMethod(query.Type.GenericTypeArguments[0], typeof(BsonDocument));
+        var asMethodInfo = AsMethodInfo.MakeGenericMethod(query.Type.GenericTypeArguments[0], typeof(BsonDocument));
         var cast = Expression.Convert(query, typeof(IMongoQueryable<>).MakeGenericType(query.Type.GenericTypeArguments[0]));
         var serializerExpression = Expression.Constant(resultSerializer, resultSerializer.GetType());
 
@@ -140,7 +140,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
             ? unaryExpression.Operand
             : expression;
 
-    private static readonly MethodInfo __asMethodInfo = typeof(MongoQueryable)
+    private static readonly MethodInfo AsMethodInfo = typeof(MongoQueryable)
         .GetMethods()
         .First(mi => mi is {Name: nameof(MongoQueryable.As), IsPublic: true, IsStatic: true} && mi.GetParameters().Length == 2);
 }

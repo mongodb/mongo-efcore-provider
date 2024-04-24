@@ -19,7 +19,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
 public class StringSerializationTests : BaseSerializationTests
 {
-    private static long __collectionCounter;
+    private static long CollectionCounter;
 
     public StringSerializationTests(TemporaryDatabaseFixture tempDatabase)
         : base(tempDatabase)
@@ -34,7 +34,7 @@ public class StringSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void String_round_trips(string? expected)
     {
-        var counter = Interlocked.Increment(ref __collectionCounter);
+        var counter = Interlocked.Increment(ref CollectionCounter);
         IMongoCollection<StringEntity> collection =
             TempDatabase.CreateTemporaryCollection<StringEntity>(nameof(String_round_trips) + counter);
 

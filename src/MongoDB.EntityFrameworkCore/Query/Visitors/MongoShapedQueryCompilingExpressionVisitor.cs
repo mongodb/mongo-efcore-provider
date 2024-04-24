@@ -72,7 +72,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         {
             // We are relying on raw/scalar values coming back from LINQ V3 provider for now - no shaper required
             return Expression.Call(null,
-                __translateAndExecuteUnshapedQuery.MakeGenericMethod(rootEntityType.ClrType,
+                TranslateAndExecuteUnshapedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType,
                     shapedQueryExpression.ShaperExpression.Type),
                 QueryCompilationContext.QueryContextParameter,
                 Expression.Constant(rootEntityType),
@@ -104,7 +104,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                                      QueryTrackingBehavior.NoTrackingWithIdentityResolution;
 
         return Expression.Call(null,
-            __translateAndExecuteQuery.MakeGenericMethod(rootEntityType.ClrType, projectedType),
+            TranslateAndExecuteQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType, projectedType),
             QueryCompilationContext.QueryContextParameter,
             Expression.Constant(rootEntityType),
             Expression.Constant(_entitySerializerCache),
@@ -133,7 +133,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
         var translatedQuery = queryTranslator.Visit(queryExpression.CapturedExpression)!;
 
-        var executableQuery = new MongoExecutableQuery(translatedQuery, resultCardinality, source.Provider, collection.CollectionNamespace);
+        var executableQuery =
+            new MongoExecutableQuery(translatedQuery, resultCardinality, source.Provider, collection.CollectionNamespace);
 
         return new QueryingEnumerable<TResult, TResult>(
             mongoQueryContext,
@@ -162,7 +163,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression);
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
 
-        var executableQuery = new MongoExecutableQuery(translatedQuery, resultCardinality, source.Provider, collection.CollectionNamespace);
+        var executableQuery =
+            new MongoExecutableQuery(translatedQuery, resultCardinality, source.Provider, collection.CollectionNamespace);
 
         return new QueryingEnumerable<BsonDocument, TResult>(
             mongoQueryContext,
@@ -173,13 +175,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             threadSafetyChecksEnabled);
     }
 
-    private static readonly MethodInfo __translateAndExecuteQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
+    private static readonly MethodInfo TranslateAndExecuteQueryMethodInfo = typeof(MongoShapedQueryCompilingExpressionVisitor)
         .GetTypeInfo()
         .DeclaredMethods
         .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
 
-    private static readonly MethodInfo __translateAndExecuteUnshapedQuery = typeof(MongoShapedQueryCompilingExpressionVisitor)
-        .GetTypeInfo()
-        .DeclaredMethods
-        .Single(m => m.Name == nameof(TranslateAndExecuteUnshapedQuery));
+    private static readonly MethodInfo TranslateAndExecuteUnshapedQueryMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(TranslateAndExecuteUnshapedQuery));
 }

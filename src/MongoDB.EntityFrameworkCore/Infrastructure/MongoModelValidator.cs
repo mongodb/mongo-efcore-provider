@@ -33,10 +33,10 @@ namespace MongoDB.EntityFrameworkCore.Infrastructure;
 /// </summary>
 public class MongoModelValidator : ModelValidator
 {
-    private static readonly Type[] __unsupportedConstructorAttributes = [typeof(BsonConstructorAttribute)];
-    private static readonly Type[] __unsupportedMethodAttributes = [typeof(BsonFactoryMethodAttribute)];
+    private static readonly Type[] UnsupportedConstructorAttributes = [typeof(BsonConstructorAttribute)];
+    private static readonly Type[] UnsupportedMethodAttributes = [typeof(BsonFactoryMethodAttribute)];
 
-    private static readonly Type[] __unsupportedClassAttributes =
+    private static readonly Type[] UnsupportedClassAttributes =
     [
         typeof(BsonDictionaryOptionsAttribute),
         typeof(BsonDiscriminatorAttribute),
@@ -97,7 +97,7 @@ public class MongoModelValidator : ModelValidator
     /// <exception cref="NotSupportedException">When an unsupported attribute is encountered on the type.</exception>
     private static void ValidateNoUnsupportedClassAttributes(IReadOnlyTypeBase entityType)
     {
-        var unsupported = FindUndefinedAttribute(entityType.ClrType.GetCustomAttributes(), __unsupportedClassAttributes);
+        var unsupported = FindUndefinedAttribute(entityType.ClrType.GetCustomAttributes(), UnsupportedClassAttributes);
         if (unsupported == null) return;
 
         var attributeTypeName = unsupported.GetType().ShortDisplayName();
@@ -114,7 +114,7 @@ public class MongoModelValidator : ModelValidator
     {
         foreach (var constructor in entityType.ClrType.GetConstructors())
         {
-            var unsupported = FindUndefinedAttribute(constructor.GetCustomAttributes(), __unsupportedConstructorAttributes);
+            var unsupported = FindUndefinedAttribute(constructor.GetCustomAttributes(), UnsupportedConstructorAttributes);
             if (unsupported == null) continue;
 
             var attributeTypeName = unsupported.GetType().ShortDisplayName();
@@ -133,7 +133,7 @@ public class MongoModelValidator : ModelValidator
     {
         foreach (var method in entityType.ClrType.GetMethods())
         {
-            var unsupported = FindUndefinedAttribute(method.GetCustomAttributes(), __unsupportedMethodAttributes);
+            var unsupported = FindUndefinedAttribute(method.GetCustomAttributes(), UnsupportedMethodAttributes);
             if (unsupported == null) continue;
 
             var attributeTypeName = unsupported.GetType().ShortDisplayName();

@@ -23,7 +23,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 [XUnitCollection("UpdateTests")]
 public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 {
-    private static readonly Random __random = new();
+    private static readonly Random Random = new();
     private readonly TemporaryDatabaseFixture _tempDatabase;
 
     public AddEntityTests(TemporaryDatabaseFixture tempDatabase) => _tempDatabase = tempDatabase;
@@ -141,14 +141,14 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         NumericTypesEntity expected = new()
         {
-            _id = __random.Next(),
-            aDecimal = __random.NextDecimal(),
-            aSingle = __random.NextSingle(),
-            aDouble = __random.NextDouble() * double.MaxValue,
-            aByte = __random.NextByte(),
-            anInt16 = __random.NextInt16(),
-            anInt32 = __random.Next(),
-            anInt64 = __random.NextInt64()
+            _id = Random.Next(),
+            aDecimal = Random.NextDecimal(),
+            aSingle = Random.NextSingle(),
+            aDouble = Random.NextDouble() * double.MaxValue,
+            aByte = Random.NextByte(),
+            anInt16 = Random.NextInt16(),
+            anInt32 = Random.Next(),
+            anInt64 = Random.NextInt64()
         };
 
         {
@@ -209,7 +209,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         MongoSpecificTypeEntity expected = new()
         {
-            _id = ObjectId.GenerateNewId(), aDecimal128 = new Decimal128(__random.NextDecimal())
+            _id = ObjectId.GenerateNewId(), aDecimal128 = new Decimal128(Random.NextDecimal())
         };
 
         {

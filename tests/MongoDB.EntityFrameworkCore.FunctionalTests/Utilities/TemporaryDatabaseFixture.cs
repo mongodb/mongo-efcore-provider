@@ -23,15 +23,15 @@ public class TemporaryDatabaseFixture : IDisposable
 {
     public const string TestDatabasePrefix = "EFCoreTest-";
 
-    private static readonly string __timeStamp = DateTime.Now.ToString("s").Replace(':', '-');
-    private static int __count;
+    private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+    private static int Count;
 
     private readonly IMongoClient _mongoClient;
 
     public TemporaryDatabaseFixture()
     {
         _mongoClient = TestServer.GetClient();
-        MongoDatabase = _mongoClient.GetDatabase($"{TestDatabasePrefix}{__timeStamp}-{Interlocked.Increment(ref __count)}");
+        MongoDatabase = _mongoClient.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
     }
 
     public IMongoDatabase MongoDatabase { get; }
@@ -68,7 +68,8 @@ public class TemporaryDatabaseFixture : IDisposable
     {
         if (name == ".ctor")
             name = GetLastConstructorTypeNameFromStack()
-                   ?? throw new InvalidOperationException("Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
+                   ?? throw new InvalidOperationException(
+                       "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
 
         MongoDatabase.CreateCollection(name);
         return MongoDatabase.GetCollection<T>(name);

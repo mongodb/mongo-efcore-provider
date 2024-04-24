@@ -33,10 +33,10 @@ internal static class SingleEntityDbContext
 
     private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
     {
-        private static int __count;
+        private static int Count;
 
         public object Create(DbContext context, bool designTime)
-            => Interlocked.Increment(ref __count);
+            => Interlocked.Increment(ref Count);
     }
 }
 

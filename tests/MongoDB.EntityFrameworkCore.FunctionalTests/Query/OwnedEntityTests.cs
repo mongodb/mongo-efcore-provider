@@ -31,20 +31,25 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_one_level_materializes_single()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        collection.WriteTestDocs(__personWithLocation);
+        collection.WriteTestDocs(PersonWithLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.Single();
 
         Assert.Equal("Carmen", actual.name);
-        Assert.Equal(__location1.latitude, actual.location.latitude);
-        Assert.Equal(__location1.longitude, actual.location.longitude);
+        Assert.Equal(Location1.latitude, actual.location.latitude);
+        Assert.Equal(Location1.longitude, actual.location.longitude);
     }
 
     [Fact]
     public void OwnedEntity_missing_document_element_does_not_throw()
     {
-        _tempDatabase.CreateTemporaryCollection<Person>("personNoLocation").WriteTestDocs([new Person { name = "Bill" }]);
+        _tempDatabase.CreateTemporaryCollection<Person>("personNoLocation").WriteTestDocs([
+            new Person
+            {
+                name = "Bill"
+            }
+        ]);
 
         var collection = _tempDatabase.MongoDatabase.GetCollection<PersonWithOptionalLocation>("personNoLocation");
         var db = SingleEntityDbContext.Create(collection);
@@ -59,35 +64,35 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_one_level_allows_nested_where()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        collection.WriteTestDocs(__personWithLocation);
+        collection.WriteTestDocs(PersonWithLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.First(e => e.location.latitude > 0.00m);
 
         Assert.Equal("Carmen", actual.name);
-        Assert.Equal(__location1.latitude, actual.location.latitude);
-        Assert.Equal(__location1.longitude, actual.location.longitude);
+        Assert.Equal(Location1.latitude, actual.location.latitude);
+        Assert.Equal(Location1.longitude, actual.location.longitude);
     }
 
     [Fact]
     public void OwnedEntity_nested_two_levels_allows_nested_where()
     {
         IMongoCollection<PersonWithCity> collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
-        collection.WriteTestDocs(__personWithCity);
+        collection.WriteTestDocs(PersonWithCity1);
         SingleEntityDbContext<PersonWithCity> db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.First(e => e.location.city.name == "San Diego");
 
         Assert.Equal("Carmen", actual.name);
-        Assert.Equal(__location1.latitude, actual.location.latitude);
-        Assert.Equal(__location1.longitude, actual.location.longitude);
+        Assert.Equal(Location1.latitude, actual.location.latitude);
+        Assert.Equal(Location1.longitude, actual.location.longitude);
     }
 
     [Fact]
     public void OwnedEntity_materializes_when_missing_non_required_owned_entity()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        collection.WriteTestDocs(__personWithMissingLocation);
+        collection.WriteTestDocs(PersonWithMissingLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(false); });
 
@@ -102,7 +107,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_throws_when_missing_required_owned_entity()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        collection.WriteTestDocs(__personWithMissingLocation);
+        collection.WriteTestDocs(PersonWithMissingLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(); });
 
@@ -115,7 +120,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_one_level_materializes_many()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        collection.WriteTestDocs(__personWithLocation);
+        collection.WriteTestDocs(PersonWithLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
 
         List<PersonWithLocation> actual = db.Entitites.Where(p => p.name != "bob").ToList();
@@ -123,8 +128,8 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.NotEmpty(actual);
 
         Assert.Equal("Carmen", actual[0].name);
-        Assert.Equal(__location1.latitude, actual[0].location.latitude);
-        Assert.Equal(__location1.longitude, actual[0].location.longitude);
+        Assert.Equal(Location1.latitude, actual[0].location.latitude);
+        Assert.Equal(Location1.longitude, actual[0].location.longitude);
     }
 
     [Fact]
@@ -311,22 +316,22 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_two_levels_materializes_single()
     {
         IMongoCollection<PersonWithCity> collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
-        collection.WriteTestDocs(__personWithCity);
+        collection.WriteTestDocs(PersonWithCity1);
         SingleEntityDbContext<PersonWithCity> db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.Single();
 
         Assert.Equal("Carmen", actual.name);
-        Assert.Equal(__location1.latitude, actual.location.latitude);
-        Assert.Equal(__location1.longitude, actual.location.longitude);
-        Assert.Equal(__city.name, actual.location.city.name);
+        Assert.Equal(Location1.latitude, actual.location.latitude);
+        Assert.Equal(Location1.longitude, actual.location.longitude);
+        Assert.Equal(City1.name, actual.location.city.name);
     }
 
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_many()
     {
         IMongoCollection<PersonWithCity> collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
-        collection.WriteTestDocs(__personWithCity);
+        collection.WriteTestDocs(PersonWithCity1);
         SingleEntityDbContext<PersonWithCity> db = SingleEntityDbContext.Create(collection);
 
         List<PersonWithCity> actual = db.Entitites.Where(p => p.name != "bob").ToList();
@@ -334,9 +339,9 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.NotEmpty(actual);
 
         Assert.Equal("Carmen", actual[0].name);
-        Assert.Equal(__location1.latitude, actual[0].location.latitude);
-        Assert.Equal(__location1.longitude, actual[0].location.longitude);
-        Assert.Equal(__city.name, actual[0].location.city.name);
+        Assert.Equal(Location1.latitude, actual[0].location.latitude);
+        Assert.Equal(Location1.longitude, actual[0].location.longitude);
+        Assert.Equal(City1.name, actual[0].location.city.name);
     }
 
     [Fact]
@@ -344,7 +349,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     {
         IMongoCollection<PersonWithMultipleLocations> collection =
             _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
-        collection.WriteTestDocs(__personWithLocations);
+        collection.WriteTestDocs(PersonWithLocations1);
         SingleEntityDbContext<PersonWithMultipleLocations> db = SingleEntityDbContext.Create(collection);
 
         List<PersonWithMultipleLocations> actual = db.Entitites.Where(p => p.name != "bob").ToList();
@@ -354,25 +359,41 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal("Damien", actual[0].name);
         Assert.Equal(2, actual[0].locations.Count);
 
-        Assert.Single(actual[0].locations, s => __location1.latitude == s.latitude && __location1.longitude == s.longitude);
-        Assert.Single(actual[0].locations, s => __location2.latitude == s.latitude && __location2.longitude == s.longitude);
+        Assert.Single(actual[0].locations, s => Location1.latitude == s.latitude && Location1.longitude == s.longitude);
+        Assert.Single(actual[0].locations, s => Location2.latitude == s.latitude && Location2.longitude == s.longitude);
     }
 
     [Fact]
     public void OwnedEntity_with_ienumerable_collection_materializes_many()
     {
-        var expectedLocation = new Location { latitude = 1.01m, longitude = 1.02m };
+        var expectedLocation = new Location
+        {
+            latitude = 1.01m, longitude = 1.02m
+        };
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithIEnumerableLocations>();
         collection.WriteTestDocs(new PersonWithIEnumerableLocations[]
         {
-            new() { _id = ObjectId.GenerateNewId(), name = "IEnumerableRound1", locations = new List<Location>
+            new()
             {
-                expectedLocation
-            }},
-            new() { _id = ObjectId.GenerateNewId(), name = "IEnumerableRound2", locations = new List<Location>
+                _id = ObjectId.GenerateNewId(),
+                name = "IEnumerableRound1",
+                locations = new List<Location>
+                {
+                    expectedLocation
+                }
+            },
+            new()
             {
-                new() { latitude = 1.03m, longitude = 1.04m }
-            }}
+                _id = ObjectId.GenerateNewId(),
+                name = "IEnumerableRound2",
+                locations = new List<Location>
+                {
+                    new()
+                    {
+                        latitude = 1.03m, longitude = 1.04m
+                    }
+                }
+            }
         });
 
         var actual = SingleEntityDbContext.Create(collection).Entitites.ToList();
@@ -392,7 +413,10 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         {
             _id = ObjectId.GenerateNewId(),
             name = "IEnumerableSerialize",
-            locations = new List<Location> { __location1, __location2 }
+            locations = new List<Location>
+            {
+                Location1, Location2
+            }
         };
 
         {
@@ -408,8 +432,8 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
             Assert.NotNull(actual);
             Assert.Equal("IEnumerableSerialize", actual.name);
             Assert.Equal(2, actual.locations.Count());
-            Assert.Equal(__location1, actual.locations.First());
-            Assert.Equal(__location2, actual.locations.Last());
+            Assert.Equal(Location1, actual.locations.First());
+            Assert.Equal(Location2, actual.locations.Last());
         }
     }
 
@@ -423,7 +447,10 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         {
             _id = ObjectId.GenerateNewId(),
             name = "IEnumerableSerialize",
-            locations = EnumerableOnlyWrapper.Wrap(new List<Location> { __location1, __location2 })
+            locations = EnumerableOnlyWrapper.Wrap(new List<Location>
+            {
+                Location1, Location2
+            })
         };
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entitites.Add(entity));
@@ -492,8 +519,8 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_with_two_owned_entities_materializes()
     {
         IMongoCollection<PersonWithTwoLocations> collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
-        var expected = __personWithTwoLocations[0];
-        collection.WriteTestDocs(__personWithTwoLocations);
+        var expected = PersonWithTwoLocations1[0];
+        collection.WriteTestDocs(PersonWithTwoLocations1);
         SingleEntityDbContext<PersonWithTwoLocations> db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entitites.FirstOrDefault();
@@ -512,7 +539,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         IMongoCollection<PersonWithTwoLocations> collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
         PersonWithTwoLocations expected = new()
         {
-            name = "Elizabeth", first = __location2, second = __location1
+            name = "Elizabeth", first = Location2, second = Location1
         };
 
         {
@@ -538,8 +565,8 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_can_have_element_name_set()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        var expected = __personWithLocation[0];
-        collection.WriteTestDocs(__personWithLocation);
+        var expected = PersonWithLocation1[0];
+        collection.WriteTestDocs(PersonWithLocation1);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().OwnsOne(p => p.location, r => r.HasElementName("location")); });
 
@@ -604,39 +631,39 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         public Location second { get; set; }
     }
 
-    private static readonly City __city = new()
+    private static readonly City City1 = new()
     {
         name = "San Diego"
     };
 
-    private static readonly LocationWithCity __locationWithCity =
+    private static readonly LocationWithCity LocationWithCity1 =
         new()
         {
-            latitude = 32.715736m, longitude = -117.161087m, city = __city
+            latitude = 32.715736m, longitude = -117.161087m, city = City1
         };
 
-    private static readonly PersonWithCity[] __personWithCity =
+    private static readonly PersonWithCity[] PersonWithCity1 =
     {
         new()
         {
-            name = "Carmen", location = __locationWithCity
+            name = "Carmen", location = LocationWithCity1
         }
     };
 
-    private static readonly Location __location1 = new()
+    private static readonly Location Location1 = new()
     {
         latitude = 32.715736m, longitude = -117.161087m
     };
 
-    private static readonly PersonWithLocation[] __personWithLocation =
+    private static readonly PersonWithLocation[] PersonWithLocation1 =
     {
         new()
         {
-            name = "Carmen", location = __location1
+            name = "Carmen", location = Location1
         }
     };
 
-    private static readonly PersonWithLocation[] __personWithMissingLocation =
+    private static readonly PersonWithLocation[] PersonWithMissingLocation1 =
     {
         new()
         {
@@ -644,28 +671,28 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         }
     };
 
-    private static readonly Location __location2 = new()
+    private static readonly Location Location2 = new()
     {
         latitude = 49.45981m, longitude = -2.53527m
     };
 
-    private static readonly PersonWithMultipleLocations[] __personWithLocations =
+    private static readonly PersonWithMultipleLocations[] PersonWithLocations1 =
     {
         new()
         {
             name = "Damien",
             locations = new List<Location>
             {
-                __location2, __location1
+                Location2, Location1
             }
         }
     };
 
-    private static readonly PersonWithTwoLocations[] __personWithTwoLocations =
+    private static readonly PersonWithTwoLocations[] PersonWithTwoLocations1 =
     {
         new()
         {
-            name = "Henry", first = __location1, second = __location2
+            name = "Henry", first = Location1, second = Location2
         }
     };
 }
