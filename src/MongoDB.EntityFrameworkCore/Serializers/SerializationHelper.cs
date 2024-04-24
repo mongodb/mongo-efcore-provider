@@ -58,7 +58,8 @@ internal static class SerializationHelper
     internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
     {
         var serializer = CreateTypeSerializer(property.ClrType, property);
-        if (property.IsPrimaryKey() && property.DeclaringEntityType.FindPrimaryKey()?.Properties.Count > 1)
+        if (property.IsPrimaryKey() && property.DeclaringType is IEntityType entityType
+                                    && entityType.FindPrimaryKey()?.Properties.Count > 1)
         {
             return BsonSerializationInfo.CreateWithPath(new[]
             {

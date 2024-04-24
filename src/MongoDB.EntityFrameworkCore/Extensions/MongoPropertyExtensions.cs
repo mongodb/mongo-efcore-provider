@@ -38,7 +38,7 @@ public static class MongoPropertyExtensions
 
     private static string GetDefaultElementName(IReadOnlyProperty property)
     {
-        var entityType = property.DeclaringEntityType;
+        var entityType = (IReadOnlyEntityType)property.DeclaringType;
         var ownership = entityType.FindOwnership();
 
         if (ownership != null && !entityType.IsDocumentRoot())
@@ -58,7 +58,7 @@ public static class MongoPropertyExtensions
 
     public static bool IsOwnedTypeKey(this IProperty property)
     {
-        var entityType = property.DeclaringEntityType;
+        var entityType = (IReadOnlyEntityType)property.DeclaringType;
         if (entityType.IsDocumentRoot())
         {
             return false;
@@ -119,7 +119,8 @@ public static class MongoPropertyExtensions
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
-            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {property.DeclaringEntityType.Name} entity.");
+            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {
+                property.DeclaringType.Name} entity.");
         }
 
         property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind);
@@ -135,7 +136,8 @@ public static class MongoPropertyExtensions
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
-            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {property.DeclaringEntityType.Name} entity.");
+            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {
+                property.DeclaringType.Name} entity.");
         }
 
         property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind);

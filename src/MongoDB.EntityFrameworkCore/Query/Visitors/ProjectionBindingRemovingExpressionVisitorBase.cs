@@ -282,7 +282,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     {
         if (property.IsOwnedTypeKey())
         {
-            var entityType = property.DeclaringEntityType;
+            var entityType = (IReadOnlyEntityType)property.DeclaringType;
             if (!entityType.IsDocumentRoot())
             {
                 var ownership = entityType.FindOwnership();
