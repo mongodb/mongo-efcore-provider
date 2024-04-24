@@ -22,22 +22,22 @@ internal static class EnumerableMethods
 
         GetMethod(
             nameof(Enumerable.All), 1,
-            types => new[]
-            {
+            types =>
+            [
                 typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))
-            });
+            ]);
 
-        Cast = GetMethod(nameof(Enumerable.Cast), 1, _ => new[]
-        {
+        Cast = GetMethod(nameof(Enumerable.Cast), 1, _ =>
+        [
             typeof(IEnumerable)
-        });
+        ]);
 
         SelectWithOrdinal = GetMethod(
             nameof(Enumerable.Select), 2,
-            types => new[]
-            {
+            types =>
+            [
                 typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,,>).MakeGenericType(types[0], typeof(int), types[1])
-            });
+            ]);
 
         MethodInfo GetMethod(string name, int genericParameterCount, Func<Type[], Type[]> parameterGenerator)
         {

@@ -38,7 +38,7 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
     }
 
     private static readonly Planet[] PlanetData =
-    {
+    [
         new()
         {
             _id = ObjectId.Parse("621ff30d2a3e781873fcb65c"),
@@ -53,10 +53,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Venus",
             orderFromSun = 2,
             hasRings = false,
-            mainAtmosphere = new[]
-            {
+            mainAtmosphere =
+            [
                 "CO2", "N"
-            }
+            ]
         },
         new()
         {
@@ -64,10 +64,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Earth",
             orderFromSun = 3,
             hasRings = false,
-            mainAtmosphere = new[]
-            {
+            mainAtmosphere =
+            [
                 "N", "O2", "Ar"
-            }
+            ]
         },
         new()
         {
@@ -75,10 +75,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Mars",
             orderFromSun = 4,
             hasRings = false,
-            mainAtmosphere = new[]
-            {
+            mainAtmosphere =
+            [
                 "CO2", "Ar", "N"
-            }
+            ]
         },
         new()
         {
@@ -86,10 +86,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Jupiter",
             orderFromSun = 5,
             hasRings = true,
-            mainAtmosphere = new[]
-            {
+            mainAtmosphere =
+            [
                 "H2", "He", "CH4"
-            }
+            ]
         },
         new()
         {
@@ -97,10 +97,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Saturn",
             orderFromSun = 6,
             hasRings = true,
-            mainAtmosphere = new[]
-            {
+            mainAtmosphere =
+            [
                 "H2", "He", "CH4"
-            }
+            ]
         },
         new()
         {
@@ -108,10 +108,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Uranus",
             orderFromSun = 7,
             hasRings = true,
-            mainAtmosphere = new[]
-            {
+            mainAtmosphere =
+            [
                 "H2", "He", "CH4"
-            }
+            ]
         },
         new()
         {
@@ -119,12 +119,12 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Neptune",
             orderFromSun = 8,
             hasRings = true,
-            mainAtmosphere = new[]
-            {
+            mainAtmosphere =
+            [
                 "H2", "He", "CH4"
-            }
+            ]
         }
-    };
+    ];
 
     class InternalMoon
     {
@@ -146,7 +146,7 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
     }
 
     private static readonly InternalMoon[] MoonData =
-    {
+    [
         new()
         {
             _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb65f"), "I"), name = "Triton", yearOfDiscovery = 1846
@@ -167,5 +167,5 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
         {
             _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI"), name = "Titan", yearOfDiscovery = 1655
         }
-    };
+    ];
 }

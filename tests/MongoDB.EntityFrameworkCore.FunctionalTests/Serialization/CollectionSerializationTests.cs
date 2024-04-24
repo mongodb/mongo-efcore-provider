@@ -198,7 +198,7 @@ public class CollectionSerializationTests : BaseSerializationTests
             using var db = SingleEntityDbContext.Create(collection);
             db.Entitites.Add(new ListEntity
             {
-                aList = new List<int>(expected)
+                aList = [..expected]
             });
             db.SaveChanges();
         }

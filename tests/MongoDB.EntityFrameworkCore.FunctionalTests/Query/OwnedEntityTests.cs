@@ -171,17 +171,18 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         {
             _id = ObjectId.GenerateNewId(),
             name = "Alfred",
-            locations = new List<Location>
-            {
+            locations =
+            [
                 new()
                 {
                     latitude = 1.234m, longitude = 1.567m
                 },
+
                 new()
                 {
                     latitude = 5.1m, longitude = 3.9m
                 }
-            }
+            ]
         };
 
         {
@@ -642,12 +643,12 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         };
 
     private static readonly PersonWithCity[] PersonWithCity1 =
-    {
+    [
         new()
         {
             name = "Carmen", location = LocationWithCity1
         }
-    };
+    ];
 
     private static readonly Location Location1 = new()
     {
@@ -655,20 +656,20 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     };
 
     private static readonly PersonWithLocation[] PersonWithLocation1 =
-    {
+    [
         new()
         {
             name = "Carmen", location = Location1
         }
-    };
+    ];
 
     private static readonly PersonWithLocation[] PersonWithMissingLocation1 =
-    {
+    [
         new()
         {
             name = "Elizabeth"
         }
-    };
+    ];
 
     private static readonly Location Location2 = new()
     {
@@ -676,22 +677,18 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     };
 
     private static readonly PersonWithMultipleLocations[] PersonWithLocations1 =
-    {
+    [
         new()
         {
-            name = "Damien",
-            locations = new List<Location>
-            {
-                Location2, Location1
-            }
+            name = "Damien", locations = [Location2, Location1]
         }
-    };
+    ];
 
     private static readonly PersonWithTwoLocations[] PersonWithTwoLocations1 =
-    {
+    [
         new()
         {
             name = "Henry", first = Location1, second = Location2
         }
-    };
+    ];
 }

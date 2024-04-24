@@ -35,7 +35,10 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {Id = 1, Name = "John"};
+            var person = new PersonWithCity
+            {
+                Id = 1, Name = "John"
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -59,7 +62,15 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
+            var person = new PersonWithCity
+            {
+                Id = 1,
+                Name = "John",
+                City = new City
+                {
+                    Id = 1, Name = "New York"
+                }
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -83,7 +94,15 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
+            var person = new PersonWithCity
+            {
+                Id = 1,
+                Name = "John",
+                City = new City
+                {
+                    Id = 1, Name = "New York"
+                }
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -110,12 +129,23 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
+            var person = new PersonWithCity
+            {
+                Id = 1,
+                Name = "John",
+                City = new City
+                {
+                    Id = 1, Name = "New York"
+                }
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
 
-            person.City = new City {Id = 2, Name = "Washington"};
+            person.City = new City
+            {
+                Id = 2, Name = "Washington"
+            };
             db.SaveChanges();
         }
 
@@ -137,7 +167,15 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
+            var person = new PersonWithCity
+            {
+                Id = 1,
+                Name = "John",
+                City = new City
+                {
+                    Id = 1, Name = "New York"
+                }
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -164,7 +202,10 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCities {Id = 1, Name = "John"};
+            var person = new PersonWithCities
+            {
+                Id = 1, Name = "John"
+            };
 
             db.Entitites.Add(person);
             db.SaveChanges();
@@ -192,7 +233,17 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+                Cities =
+                [
+                    new City
+                    {
+                        Id = 1, Name = "New York"
+                    },
+                    new City
+                    {
+                        Id = 2, Name = "Washington"
+                    }
+                ]
             };
 
             db.Entitites.Add(person);
@@ -223,7 +274,17 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+                Cities =
+                [
+                    new City
+                    {
+                        Id = 1, Name = "New York"
+                    },
+                    new City
+                    {
+                        Id = 2, Name = "Washington"
+                    }
+                ]
             };
 
 
@@ -256,13 +317,29 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+                Cities =
+                [
+                    new City
+                    {
+                        Id = 1, Name = "New York"
+                    },
+                    new City
+                    {
+                        Id = 2, Name = "Washington"
+                    }
+                ]
             };
 
             db.Entitites.Add(person);
             db.SaveChanges();
 
-            person.Cities = person.Cities.Concat(new List<City> {new City {Id = 3, Name = "Denver"}}).ToList();
+            person.Cities = person.Cities.Concat(new List<City>
+            {
+                new City
+                {
+                    Id = 3, Name = "Denver"
+                }
+            }).ToList();
             db.SaveChanges();
         }
 
@@ -290,7 +367,17 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+                Cities =
+                [
+                    new City
+                    {
+                        Id = 1, Name = "New York"
+                    },
+                    new City
+                    {
+                        Id = 2, Name = "Washington"
+                    }
+                ]
             };
 
             db.Entitites.Add(person);
@@ -322,7 +409,17 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             {
                 Id = 1,
                 Name = "John",
-                Cities = new List<City> {new City {Id = 1, Name = "New York"}, new City {Id = 2, Name = "Washington"}}
+                Cities =
+                [
+                    new City
+                    {
+                        Id = 1, Name = "New York"
+                    },
+                    new City
+                    {
+                        Id = 2, Name = "Washington"
+                    }
+                ]
             };
 
             db.Entitites.Add(person);

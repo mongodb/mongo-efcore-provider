@@ -31,7 +31,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     protected readonly Dictionary<Expression, ParameterExpression> ProjectionBindings = new();
     private readonly Dictionary<Expression, (IEntityType EntityType, Expression BsonDocExpression)> _ownerMappings = new();
     private readonly Dictionary<Expression, Expression> _ordinalParameterBindings = new();
-    private List<IncludeExpression> _pendingIncludes = new();
+    private List<IncludeExpression> _pendingIncludes = [];
 
     protected ProjectionBindingRemovingExpressionVisitor(
         ParameterExpression docParameter,
@@ -127,7 +127,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     var shaperBlock = (BlockExpression)bsonDocCondition.IfFalse;
                     shaperBlock = AddIncludes(shaperBlock);
 
-                    List<Expression> jObjectExpressions = new(bsonDocBlock.Expressions);
+                    List<Expression> jObjectExpressions = [..bsonDocBlock.Expressions];
                     jObjectExpressions.RemoveAt(jObjectExpressions.Count - 1);
 
                     jObjectExpressions.Add(
@@ -360,12 +360,12 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             return shaperBlock;
         }
 
-        List<Expression> shaperExpressions = new(shaperBlock.Expressions);
+        List<Expression> shaperExpressions = [..shaperBlock.Expressions];
         var instanceVariable = shaperExpressions[^1];
         shaperExpressions.RemoveAt(shaperExpressions.Count - 1);
 
         var includesToProcess = _pendingIncludes;
-        _pendingIncludes = new List<IncludeExpression>();
+        _pendingIncludes = [];
 
         foreach (var include in includesToProcess)
         {
@@ -534,12 +534,12 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     {
         var entityParameter = Expression.Parameter(entityType);
         var relatedEntityParameter = Expression.Parameter(relatedEntityType);
-        List<Expression> expressions = new()
-        {
+        List<Expression> expressions =
+        [
             navigation.IsCollection
                 ? AddToCollectionNavigation(entityParameter, relatedEntityParameter, navigation)
                 : AssignReferenceNavigation(entityParameter, relatedEntityParameter, navigation)
-        };
+        ];
 
         if (inverseNavigation != null)
         {
@@ -575,10 +575,9 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             .GetDeclaredMethod(nameof(PopulateCollection));
 
     private static readonly MethodInfo IsAssignableFromMethodInfo
-        = typeof(IReadOnlyEntityType).GetMethod(nameof(IReadOnlyEntityType.IsAssignableFrom), new[]
-        {
+        = typeof(IReadOnlyEntityType).GetMethod(nameof(IReadOnlyEntityType.IsAssignableFrom), [
             typeof(IReadOnlyEntityType)
-        })!;
+        ])!;
 
     private static TCollection PopulateCollection<TEntity, TCollection>(
         IClrCollectionAccessor accessor,
