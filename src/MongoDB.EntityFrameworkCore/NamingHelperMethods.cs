@@ -37,7 +37,7 @@ public static partial class NamingHelperMethods
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        var words = WordSplitRegex.Split(input);
+        var words = WordSplitRegex().Split(input);
 
         var result = new char[input.Length];
         var outIndex = 0;
@@ -78,7 +78,7 @@ public static partial class NamingHelperMethods
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        var words = WordSplitRegex.Split(input);
+        var words = WordSplitRegex().Split(input);
 
         var result = new char[input.Length];
         var outIndex = 0;
@@ -100,6 +100,6 @@ public static partial class NamingHelperMethods
     // Find word boundaries.
     // Word boundaries are considered spaces, non-alphanumeric, a transition from lower to upper,
     // a transition from multiple uppers to lowercase, and a transition from number to non-number.
-    private static readonly Regex WordSplitRegex =
-        new(@"(?<=[a-z])(?=[A-Z])|[\s\p{P}]|(?<=\p{Lu})(?=\p{Lu}\p{Ll})|(?<=\p{N})(?=\P{N})");
+    [GeneratedRegex(@"(?<=[a-z])(?=[A-Z])|[\s\p{P}]|(?<=\p{Lu})(?=\p{Lu}\p{Ll})|(?<=\p{N})(?=\P{N})")]
+    private static partial Regex WordSplitRegex();
 }
