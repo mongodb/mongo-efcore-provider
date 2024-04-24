@@ -169,7 +169,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 _queryContext.InitializeStateManager(_standAloneStateManager);
             }
 
-            bool hasNext = _enumerator.MoveNext();
+            var hasNext = _enumerator.MoveNext();
 
             logAction?.Invoke();
 

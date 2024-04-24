@@ -34,7 +34,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.WriteTestDocs(__personWithLocation);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
 
-        PersonWithLocation actual = db.Entitites.Single();
+        var actual = db.Entitites.Single();
 
         Assert.Equal("Carmen", actual.name);
         Assert.Equal(__location1.latitude, actual.location.latitude);
@@ -62,7 +62,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.WriteTestDocs(__personWithLocation);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
 
-        PersonWithLocation actual = db.Entitites.First(e => e.location.latitude > 0.00m);
+        var actual = db.Entitites.First(e => e.location.latitude > 0.00m);
 
         Assert.Equal("Carmen", actual.name);
         Assert.Equal(__location1.latitude, actual.location.latitude);
@@ -76,7 +76,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.WriteTestDocs(__personWithCity);
         SingleEntityDbContext<PersonWithCity> db = SingleEntityDbContext.Create(collection);
 
-        PersonWithCity actual = db.Entitites.First(e => e.location.city.name == "San Diego");
+        var actual = db.Entitites.First(e => e.location.city.name == "San Diego");
 
         Assert.Equal("Carmen", actual.name);
         Assert.Equal(__location1.latitude, actual.location.latitude);
@@ -131,7 +131,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_nested_one_level_creates()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        PersonWithLocation expected =
+        var expected =
             new PersonWithLocation
             {
                 name = "Charlie",
@@ -149,7 +149,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection);
-            PersonWithLocation actual = db.Entitites.First(p => p.name == "Charlie");
+            var actual = db.Entitites.First(p => p.name == "Charlie");
 
             Assert.Equal(expected.name, actual.name);
             Assert.Equal(expected.location.latitude, actual.location.latitude);
@@ -188,7 +188,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             SingleEntityDbContext<PersonWithMultipleLocations> db = SingleEntityDbContext.Create(collection);
-            PersonWithMultipleLocations actual = db.Entitites.First(p => p.name == "Alfred");
+            var actual = db.Entitites.First(p => p.name == "Alfred");
 
             Assert.Equal(expected.name, actual.name);
             Assert.Equal(expected.locations[0].latitude, actual.locations[0].latitude);
@@ -314,7 +314,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.WriteTestDocs(__personWithCity);
         SingleEntityDbContext<PersonWithCity> db = SingleEntityDbContext.Create(collection);
 
-        PersonWithCity actual = db.Entitites.Single();
+        var actual = db.Entitites.Single();
 
         Assert.Equal("Carmen", actual.name);
         Assert.Equal(__location1.latitude, actual.location.latitude);
@@ -492,11 +492,11 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_with_two_owned_entities_materializes()
     {
         IMongoCollection<PersonWithTwoLocations> collection = _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
-        PersonWithTwoLocations expected = __personWithTwoLocations[0];
+        var expected = __personWithTwoLocations[0];
         collection.WriteTestDocs(__personWithTwoLocations);
         SingleEntityDbContext<PersonWithTwoLocations> db = SingleEntityDbContext.Create(collection);
 
-        PersonWithTwoLocations? actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entitites.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected.name, actual.name);
@@ -523,7 +523,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             SingleEntityDbContext<PersonWithTwoLocations> db = SingleEntityDbContext.Create(collection);
-            PersonWithTwoLocations? actual = db.Entitites.FirstOrDefault();
+            var actual = db.Entitites.FirstOrDefault();
 
             Assert.NotNull(actual);
             Assert.Equal(expected.name, actual.name);
@@ -538,12 +538,12 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void OwnedEntity_can_have_element_name_set()
     {
         IMongoCollection<PersonWithLocation> collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
-        PersonWithLocation expected = __personWithLocation[0];
+        var expected = __personWithLocation[0];
         collection.WriteTestDocs(__personWithLocation);
         SingleEntityDbContext<PersonWithLocation> db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().OwnsOne(p => p.location, r => r.HasElementName("location")); });
 
-        PersonWithLocation? actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entitites.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected.name, actual.name);

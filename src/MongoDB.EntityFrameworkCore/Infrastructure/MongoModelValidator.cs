@@ -100,7 +100,7 @@ public class MongoModelValidator : ModelValidator
         var unsupported = FindUndefinedAttribute(entityType.ClrType.GetCustomAttributes(), __unsupportedClassAttributes);
         if (unsupported == null) return;
 
-        string attributeTypeName = unsupported.GetType().ShortDisplayName();
+        var attributeTypeName = unsupported.GetType().ShortDisplayName();
         throw new NotSupportedException($"Entity '{entityType.DisplayName()}' is annotated with unsupported attribute '{
             attributeTypeName}'.");
     }
@@ -117,7 +117,7 @@ public class MongoModelValidator : ModelValidator
             var unsupported = FindUndefinedAttribute(constructor.GetCustomAttributes(), __unsupportedConstructorAttributes);
             if (unsupported == null) continue;
 
-            string attributeTypeName = unsupported.GetType().ShortDisplayName();
+            var attributeTypeName = unsupported.GetType().ShortDisplayName();
             throw new NotSupportedException(
                 $"Entity '{entityType.DisplayName()}' has a constructor annotated with unsupported attribute '{attributeTypeName
                 }'.");
@@ -136,7 +136,7 @@ public class MongoModelValidator : ModelValidator
             var unsupported = FindUndefinedAttribute(method.GetCustomAttributes(), __unsupportedMethodAttributes);
             if (unsupported == null) continue;
 
-            string attributeTypeName = unsupported.GetType().ShortDisplayName();
+            var attributeTypeName = unsupported.GetType().ShortDisplayName();
             throw new NotSupportedException(
                 $"Method '{entityType.DisplayName()}.{method.Name}' is annotated with unsupported attribute '{attributeTypeName
                 }'.");
@@ -159,7 +159,7 @@ public class MongoModelValidator : ModelValidator
         {
             if (property.FindAnnotation(MongoAnnotationNames.NotSupportedAttributes) is {Value: Attribute unsupported})
             {
-                string attributeTypeName = unsupported.GetType().ShortDisplayName();
+                var attributeTypeName = unsupported.GetType().ShortDisplayName();
                 throw new NotSupportedException(
                     $"Property '{entityType.DisplayName()}.{property.Name}' is annotated with unsupported attribute '{
                         attributeTypeName}'.");
@@ -216,7 +216,7 @@ public class MongoModelValidator : ModelValidator
         {
             // The primary key must map to "_id"
             var primaryKeyProperty = primaryKey.Properties[0];
-            string primaryKeyElementName = primaryKeyProperty.GetElementName();
+            var primaryKeyElementName = primaryKeyProperty.GetElementName();
             if (primaryKeyElementName != "_id")
             {
                 throw new InvalidOperationException(
@@ -237,7 +237,7 @@ public class MongoModelValidator : ModelValidator
 
         foreach (var property in entityType.GetProperties())
         {
-            string elementName = property.GetElementName();
+            var elementName = property.GetElementName();
             if (string.IsNullOrWhiteSpace(elementName)) continue;
 
             if (elementName.StartsWith("$"))
@@ -269,7 +269,7 @@ public class MongoModelValidator : ModelValidator
 
         foreach (var navigation in entityType.GetNavigations().Where(n => n.IsEmbedded()))
         {
-            string? elementName = navigation.TargetEntityType.GetContainingElementName();
+            var elementName = navigation.TargetEntityType.GetContainingElementName();
             if (elementName != null)
             {
                 if (elementName.StartsWith("$"))

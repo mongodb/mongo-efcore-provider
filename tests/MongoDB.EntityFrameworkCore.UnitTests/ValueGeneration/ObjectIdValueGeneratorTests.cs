@@ -34,7 +34,7 @@ public class ObjectIdValueGeneratorTests
         var generator = new ObjectIdValueGenerator();
         var values = new HashSet<ObjectId>(loops);
 
-        for (int i = 0; i < loops; i++)
+        for (var i = 0; i < loops; i++)
             values.Add(generator.Next(null!));
 
         Assert.Equal(loops, values.Count);

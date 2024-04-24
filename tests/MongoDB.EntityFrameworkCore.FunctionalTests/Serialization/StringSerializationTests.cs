@@ -34,7 +34,7 @@ public class StringSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void String_round_trips(string? expected)
     {
-        long counter = Interlocked.Increment(ref __collectionCounter);
+        var counter = Interlocked.Increment(ref __collectionCounter);
         IMongoCollection<StringEntity> collection =
             TempDatabase.CreateTemporaryCollection<StringEntity>(nameof(String_round_trips) + counter);
 

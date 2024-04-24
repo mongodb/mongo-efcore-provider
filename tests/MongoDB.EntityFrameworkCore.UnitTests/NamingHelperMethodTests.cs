@@ -30,7 +30,7 @@ public static class NamingHelperMethodTests
     [InlineData("test-THIS-Out", "testThisOut")]
     public static void ToCamelCase_finds_word_boundaries_and_camel_cases_words(string toConvert, string expected)
     {
-        string actual = toConvert.ToCamelCase(CultureInfo.InvariantCulture);
+        var actual = toConvert.ToCamelCase(CultureInfo.InvariantCulture);
         Assert.Equal(expected, actual);
     }
 
@@ -45,7 +45,7 @@ public static class NamingHelperMethodTests
     [InlineData("test-THIS-Out", "TestThisOut")]
     public static void ToTitleCase_finds_word_boundaries_and_title_cases_words(string toConvert, string expected)
     {
-        string actual = toConvert.ToTitleCase(CultureInfo.InvariantCulture);
+        var actual = toConvert.ToTitleCase(CultureInfo.InvariantCulture);
         Assert.Equal(expected, actual);
     }
 }

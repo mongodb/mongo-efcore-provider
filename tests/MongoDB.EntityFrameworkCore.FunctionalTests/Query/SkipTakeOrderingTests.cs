@@ -83,7 +83,7 @@ public class SkipTakeOrderingTests
     {
         var results = _db.Planets.OrderBy(o => o.name).ToArray();
 
-        string previousName = "";
+        var previousName = "";
 
         Assert.Equal(8, results.Length);
         Assert.All(results, r =>
@@ -98,7 +98,7 @@ public class SkipTakeOrderingTests
     {
         var results = _db.Planets.OrderByDescending(o => o.name).ToArray();
 
-        string previousName = "zzz";
+        var previousName = "zzz";
 
         Assert.Equal(8, results.Length);
         Assert.All(results, r =>
@@ -113,7 +113,7 @@ public class SkipTakeOrderingTests
     {
         var results = _db.Planets.OrderBy(o => o.orderFromSun).ToArray();
 
-        int previousOrderFromSun = 0;
+        var previousOrderFromSun = 0;
 
         Assert.Equal(8, results.Length);
         Assert.All(results, r =>
@@ -128,7 +128,7 @@ public class SkipTakeOrderingTests
     {
         var results = _db.Planets.OrderByDescending(o => o.orderFromSun).ToArray();
 
-        int previousOrderFromSun = 9999;
+        var previousOrderFromSun = 9999;
 
         Assert.Equal(8, results.Length);
         Assert.All(results, r =>
@@ -146,8 +146,8 @@ public class SkipTakeOrderingTests
         Assert.Equal(8, results.Length);
         Assert.False(results.First().hasRings);
         Assert.True(results.Last().hasRings);
-        bool changed = false;
-        bool previousHasRings = false;
+        var changed = false;
+        var previousHasRings = false;
         Assert.All(results, r =>
         {
             if (r.hasRings != previousHasRings)
@@ -167,8 +167,8 @@ public class SkipTakeOrderingTests
         Assert.Equal(8, results.Length);
         Assert.True(results.First().hasRings);
         Assert.False(results.Last().hasRings);
-        bool changed = false;
-        bool previousHasRings = true;
+        var changed = false;
+        var previousHasRings = true;
         Assert.All(results, r =>
         {
             if (r.hasRings != previousHasRings)
@@ -188,9 +188,9 @@ public class SkipTakeOrderingTests
         Assert.Equal(8, results.Length);
         Assert.False(results.First().hasRings);
         Assert.True(results.Last().hasRings);
-        bool ringsChanged = false;
-        bool previousHasRings = false;
-        string previousName = "";
+        var ringsChanged = false;
+        var previousHasRings = false;
+        var previousName = "";
 
         Assert.All(results, r =>
         {
@@ -215,9 +215,9 @@ public class SkipTakeOrderingTests
         Assert.Equal(8, results.Length);
         Assert.False(results.First().hasRings);
         Assert.True(results.Last().hasRings);
-        bool ringsChanged = false;
-        bool previousHasRings = false;
-        string previousName = "zzzz";
+        var ringsChanged = false;
+        var previousHasRings = false;
+        var previousName = "zzzz";
         Assert.All(results, r =>
         {
             if (r.hasRings != previousHasRings)
@@ -241,9 +241,9 @@ public class SkipTakeOrderingTests
         Assert.Equal(8, results.Length);
         Assert.True(results.First().hasRings);
         Assert.False(results.Last().hasRings);
-        bool ringsChanged = false;
-        bool previousHasRings = true;
-        string previousName = "";
+        var ringsChanged = false;
+        var previousHasRings = true;
+        var previousName = "";
         Assert.All(results, r =>
         {
             if (r.hasRings != previousHasRings)
@@ -267,9 +267,9 @@ public class SkipTakeOrderingTests
         Assert.Equal(8, results.Length);
         Assert.True(results.First().hasRings);
         Assert.False(results.Last().hasRings);
-        bool ringsChanged = false;
-        bool previousHasRings = true;
-        string previousName = "zzzz";
+        var ringsChanged = false;
+        var previousHasRings = true;
+        var previousName = "zzzz";
         Assert.All(results, r =>
         {
             if (r.hasRings != previousHasRings)

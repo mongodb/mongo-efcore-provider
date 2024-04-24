@@ -84,7 +84,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
 
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
-        bool trackQueryResults = QueryCompilationContext.QueryTrackingBehavior == QueryTrackingBehavior.TrackAll;
+        var trackQueryResults = QueryCompilationContext.QueryTrackingBehavior == QueryTrackingBehavior.TrackAll;
 
         var shaperBody = shapedQueryExpression.ShaperExpression;
         shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
@@ -100,8 +100,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var compiledShaper = shaperLambda.Compile();
 
         var projectedType = shaperLambda.ReturnType;
-        bool standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
-                                      QueryTrackingBehavior.NoTrackingWithIdentityResolution;
+        var standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
+                                     QueryTrackingBehavior.NoTrackingWithIdentityResolution;
 
         return Expression.Call(null,
             __translateAndExecuteQuery.MakeGenericMethod(rootEntityType.ClrType, projectedType),

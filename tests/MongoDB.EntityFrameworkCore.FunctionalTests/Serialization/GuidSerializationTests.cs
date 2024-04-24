@@ -30,7 +30,7 @@ public class GuidSerializationTests : BaseSerializationTests
     [InlineData("00000000-0000-0000-0000-000000000000")]
     public void Guid_round_trips(string expectedString)
     {
-        Guid expected = Guid.Parse(expectedString);
+        var expected = Guid.Parse(expectedString);
         var collection = TempDatabase.CreateTemporaryCollection<GuidEntity>(nameof(Guid_round_trips) + expected);
 
         {

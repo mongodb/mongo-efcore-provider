@@ -65,18 +65,18 @@ internal static class BsonBinding
             return CreateGetBsonDocument(bsonDocExpression, name, required, entityType);
         }
 
-        IProperty? targetProperty = entityType.FindProperty(name);
+        var targetProperty = entityType.FindProperty(name);
         if (targetProperty != null)
         {
             mappedType = targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType;
             return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
         }
 
-        INavigation navigationProperty = entityType.FindNavigation(name) ??
-                                         throw new InvalidOperationException(
-                                             CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
+        var navigationProperty = entityType.FindNavigation(name) ??
+                                 throw new InvalidOperationException(
+                                     CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
 
-        string fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
+        var fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
         return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
     }
 
@@ -89,7 +89,7 @@ internal static class BsonBinding
 
     private static BsonArray? GetBsonArray(BsonDocument document, string name)
     {
-        if (!document.TryGetValue(name, out BsonValue bsonValue))
+        if (!document.TryGetValue(name, out var bsonValue))
         {
             throw new InvalidOperationException($"Document element '{name}' is mapped collection but missing.");
         }
@@ -114,7 +114,7 @@ internal static class BsonBinding
 
     private static BsonDocument? GetBsonDocument(BsonDocument parent, string name, bool required, IReadOnlyTypeBase entityType)
     {
-        BsonValue? value = parent.GetValue(name, BsonNull.Value);
+        var value = parent.GetValue(name, BsonNull.Value);
 
         if (value == BsonNull.Value && required)
         {

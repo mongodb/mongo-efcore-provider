@@ -47,7 +47,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         {
             case ProjectionBindingExpression projectionBindingExpression:
                 {
-                    ProjectionExpression projection = GetProjection(projectionBindingExpression);
+                    var projection = GetProjection(projectionBindingExpression);
 
                     return CreateGetValueExpression(
                         DocParameter,
@@ -62,7 +62,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     switch (collectionShaperExpression.Projection)
                     {
                         case ProjectionBindingExpression projectionBindingExpression:
-                            ProjectionExpression projection = GetProjection(projectionBindingExpression);
+                            var projection = GetProjection(projectionBindingExpression);
                             objectArrayProjection = (ObjectArrayProjectionExpression)projection.Expression;
                             break;
                         case ObjectArrayProjectionExpression objectArrayProjectionExpression:
@@ -72,29 +72,29 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                             throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
                     }
 
-                    ParameterExpression bsonArray = ProjectionBindings[objectArrayProjection];
-                    ParameterExpression jObjectParameter = Expression.Parameter(typeof(BsonDocument), bsonArray.Name + "Object");
-                    ParameterExpression ordinalParameter = Expression.Parameter(typeof(int), bsonArray.Name + "Ordinal");
+                    var bsonArray = ProjectionBindings[objectArrayProjection];
+                    var jObjectParameter = Expression.Parameter(typeof(BsonDocument), bsonArray.Name + "Object");
+                    var ordinalParameter = Expression.Parameter(typeof(int), bsonArray.Name + "Ordinal");
 
-                    Expression accessExpression = objectArrayProjection.InnerProjection.ParentAccessExpression;
+                    var accessExpression = objectArrayProjection.InnerProjection.ParentAccessExpression;
                     ProjectionBindings[accessExpression] = jObjectParameter;
                     _ownerMappings[accessExpression] =
                         (objectArrayProjection.Navigation.DeclaringEntityType, objectArrayProjection.AccessExpression);
                     _ordinalParameterBindings[accessExpression] = Expression.Add(
                         ordinalParameter, Expression.Constant(1, typeof(int)));
 
-                    BlockExpression innerShaper = (BlockExpression)Visit(collectionShaperExpression.InnerShaper);
+                    var innerShaper = (BlockExpression)Visit(collectionShaperExpression.InnerShaper);
 
                     innerShaper = AddIncludes(innerShaper);
 
-                    MethodCallExpression entities = Expression.Call(
+                    var entities = Expression.Call(
                         EnumerableMethods.SelectWithOrdinal.MakeGenericMethod(typeof(BsonDocument), innerShaper.Type),
                         Expression.Call(
                             EnumerableMethods.Cast.MakeGenericMethod(typeof(BsonDocument)),
                             bsonArray),
                         Expression.Lambda(innerShaper, jObjectParameter, ordinalParameter));
 
-                    INavigationBase navigation = collectionShaperExpression.Navigation;
+                    var navigation = collectionShaperExpression.Navigation;
                     return Expression.Call(
                         PopulateCollectionMethodInfo.MakeGenericMethod(navigation.TargetEntityType.ClrType, navigation.ClrType),
                         Expression.Constant(navigation.GetCollectionAccessor()),
@@ -112,19 +112,19 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                             }' is not supported as the navigation is not embedded in same resource.");
                     }
 
-                    bool isFirstInclude = _pendingIncludes.Count == 0;
+                    var isFirstInclude = _pendingIncludes.Count == 0;
                     _pendingIncludes.Add(includeExpression);
 
-                    BlockExpression bsonDocBlock = Visit(includeExpression.EntityExpression) as BlockExpression;
+                    var bsonDocBlock = Visit(includeExpression.EntityExpression) as BlockExpression;
 
                     if (!isFirstInclude)
                     {
                         return bsonDocBlock;
                     }
 
-                    ConditionalExpression bsonDocCondition = (ConditionalExpression)bsonDocBlock.Expressions[^1];
+                    var bsonDocCondition = (ConditionalExpression)bsonDocBlock.Expressions[^1];
 
-                    BlockExpression shaperBlock = (BlockExpression)bsonDocCondition.IfFalse;
+                    var shaperBlock = (BlockExpression)bsonDocCondition.IfFalse;
                     shaperBlock = AddIncludes(shaperBlock);
 
                     List<Expression> jObjectExpressions = new(bsonDocBlock.Expressions);
@@ -153,12 +153,12 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             if (parameterExpression.Type == typeof(BsonDocument) || parameterExpression.Type == typeof(BsonArray))
             {
                 string fieldName = null;
-                bool fieldRequired = true;
+                var fieldRequired = true;
 
-                Expression projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
+                var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
                 if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
                 {
-                    ProjectionExpression projection = GetProjection(projectionBindingExpression);
+                    var projection = GetProjection(projectionBindingExpression);
                     projectionExpression = projection.Expression;
                     fieldName = projection.Alias;
                 }
@@ -177,8 +177,8 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                 }
                 else
                 {
-                    EntityProjectionExpression entityProjectionExpression = (EntityProjectionExpression)projectionExpression;
-                    Expression accessExpression = entityProjectionExpression.ParentAccessExpression;
+                    var entityProjectionExpression = (EntityProjectionExpression)projectionExpression;
+                    var accessExpression = entityProjectionExpression.ParentAccessExpression;
                     ProjectionBindings[accessExpression] = parameterExpression;
                     fieldName ??= entityProjectionExpression.Name;
 
@@ -199,7 +199,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     }
                 }
 
-                Expression valueExpression =
+                var valueExpression =
                     CreateGetValueExpression(innerAccessExpression, fieldName, fieldRequired, parameterExpression.Type);
 
                 return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
@@ -207,23 +207,23 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
 
             if (parameterExpression.Type == typeof(MaterializationContext))
             {
-                NewExpression newExpression = (NewExpression)binaryExpression.Right;
+                var newExpression = (NewExpression)binaryExpression.Right;
 
                 EntityProjectionExpression entityProjectionExpression;
                 if (newExpression.Arguments[0] is ProjectionBindingExpression projectionBindingExpression)
                 {
-                    ProjectionExpression projection = GetProjection(projectionBindingExpression);
+                    var projection = GetProjection(projectionBindingExpression);
                     entityProjectionExpression = (EntityProjectionExpression)projection.Expression;
                 }
                 else
                 {
-                    Expression projection = ((UnaryExpression)((UnaryExpression)newExpression.Arguments[0]).Operand).Operand;
+                    var projection = ((UnaryExpression)((UnaryExpression)newExpression.Arguments[0]).Operand).Operand;
                     entityProjectionExpression = (EntityProjectionExpression)projection;
                 }
 
                 _materializationContextBindings[parameterExpression] = entityProjectionExpression.ParentAccessExpression;
 
-                NewExpression updatedExpression = Expression.New(
+                var updatedExpression = Expression.New(
                     newExpression.Constructor,
                     Expression.Constant(ValueBuffer.Empty),
                     newExpression.Arguments[1]);
@@ -243,8 +243,8 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     /// <returns>A <see cref="Expression"/> to replace the original method call with.</returns>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
-        MethodInfo method = methodCallExpression.Method;
-        MethodInfo genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
+        var method = methodCallExpression.Method;
+        var genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
 
         // Ensure ".AsQueryable" is not injected around collections as sometimes they are null and will throw
         if (method.DeclaringType == typeof(Queryable) && genericMethod == QueryableMethods.AsQueryable)
@@ -254,11 +254,11 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
 
         if (genericMethod == ExpressionExtensions.ValueBufferTryReadValueMethod)
         {
-            IProperty property = methodCallExpression.Arguments[2].GetConstantValue<IProperty>();
+            var property = methodCallExpression.Arguments[2].GetConstantValue<IProperty>();
             Expression innerExpression;
             if (methodCallExpression.Arguments[0] is ProjectionBindingExpression projectionBindingExpression)
             {
-                ProjectionExpression projection = GetProjection(projectionBindingExpression);
+                var projection = GetProjection(projectionBindingExpression);
                 innerExpression =
                     CreateGetValueExpression(DocParameter, projection.Alias, projection.Required, typeof(BsonDocument));
             }
@@ -282,13 +282,13 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     {
         if (property.IsOwnedTypeKey())
         {
-            IEntityType entityType = property.DeclaringEntityType;
+            var entityType = property.DeclaringEntityType;
             if (!entityType.IsDocumentRoot())
             {
-                IForeignKey ownership = entityType.FindOwnership();
+                var ownership = entityType.FindOwnership();
                 if (ownership?.IsUnique == false && property.IsOwnedCollectionShadowKey())
                 {
-                    Expression readExpression = _ordinalParameterBindings[docExpression];
+                    var readExpression = _ordinalParameterBindings[docExpression];
                     if (readExpression.Type != type)
                     {
                         readExpression = Expression.Convert(readExpression, type);
@@ -297,12 +297,12 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     return readExpression;
                 }
 
-                IProperty principalProperty = property.FindFirstPrincipal();
+                var principalProperty = property.FindFirstPrincipal();
                 if (principalProperty != null)
                 {
                     Expression ownerBsonDocExpression = null;
                     if (_ownerMappings.TryGetValue(docExpression,
-                            out (IEntityType EntityType, Expression BsonDocExpression) ownerInfo))
+                            out var ownerInfo))
                     {
                         ownerBsonDocExpression = ownerInfo.BsonDocExpression;
                     }
@@ -361,13 +361,13 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         }
 
         List<Expression> shaperExpressions = new(shaperBlock.Expressions);
-        Expression instanceVariable = shaperExpressions[^1];
+        var instanceVariable = shaperExpressions[^1];
         shaperExpressions.RemoveAt(shaperExpressions.Count - 1);
 
-        List<IncludeExpression> includesToProcess = _pendingIncludes;
+        var includesToProcess = _pendingIncludes;
         _pendingIncludes = new List<IncludeExpression>();
 
-        foreach (IncludeExpression include in includesToProcess)
+        foreach (var include in includesToProcess)
         {
             AddInclude(shaperExpressions, include, shaperBlock, instanceVariable);
         }
@@ -383,22 +383,22 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         BlockExpression shaperBlock,
         Expression instanceVariable)
     {
-        INavigation navigation = (INavigation)includeExpression.Navigation;
-        MethodInfo includeMethod = navigation.IsCollection ? IncludeCollectionMethodInfo : IncludeReferenceMethodInfo;
-        Type includingClrType = navigation.DeclaringEntityType.ClrType;
-        Type relatedEntityClrType = navigation.TargetEntityType.ClrType;
+        var navigation = (INavigation)includeExpression.Navigation;
+        var includeMethod = navigation.IsCollection ? IncludeCollectionMethodInfo : IncludeReferenceMethodInfo;
+        var includingClrType = navigation.DeclaringEntityType.ClrType;
+        var relatedEntityClrType = navigation.TargetEntityType.ClrType;
 #pragma warning disable EF1001 // Internal EF Core API usage.
         Expression entityEntryVariable = _trackQueryResults
             ? shaperBlock.Variables.Single(v => v.Type == typeof(InternalEntityEntry))
             : Expression.Constant(null, typeof(InternalEntityEntry));
 #pragma warning restore EF1001 // Internal EF Core API usage.
 
-        ParameterExpression concreteEntityTypeVariable = shaperBlock.Variables.Single(v => v.Type == typeof(IEntityType));
-        INavigation inverseNavigation = navigation.Inverse;
-        Delegate fixup = GenerateFixup(
+        var concreteEntityTypeVariable = shaperBlock.Variables.Single(v => v.Type == typeof(IEntityType));
+        var inverseNavigation = navigation.Inverse;
+        var fixup = GenerateFixup(
             includingClrType, relatedEntityClrType, navigation, inverseNavigation);
 
-        Expression navigationExpression = Visit(includeExpression.NavigationExpression);
+        var navigationExpression = Visit(includeExpression.NavigationExpression);
 
         shaperExpressions.Add(
             Expression.IfThen(
@@ -444,7 +444,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
 
         if (entry == null)
         {
-            TIncludingEntity includingEntity = (TIncludingEntity)entity;
+            var includingEntity = (TIncludingEntity)entity;
             navigation.SetIsLoadedWhenNoTracking(includingEntity);
             if (relatedEntity != null)
             {
@@ -489,12 +489,12 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
 
         if (entry == null)
         {
-            TIncludingEntity includingEntity = (TIncludingEntity)entity;
+            var includingEntity = (TIncludingEntity)entity;
             navigation.SetIsLoadedWhenNoTracking(includingEntity);
 
             if (relatedEntities != null)
             {
-                foreach (TIncludedEntity relatedEntity in relatedEntities)
+                foreach (var relatedEntity in relatedEntities)
                 {
                     fixup(includingEntity, relatedEntity);
                     inverseNavigation?.SetIsLoadedWhenNoTracking(relatedEntity);
@@ -512,7 +512,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
 
             if (relatedEntities != null)
             {
-                using IEnumerator<TIncludedEntity> enumerator = relatedEntities.GetEnumerator();
+                using var enumerator = relatedEntities.GetEnumerator();
                 while (enumerator.MoveNext())
                 {
                 }
@@ -532,8 +532,8 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         INavigation navigation,
         INavigation inverseNavigation)
     {
-        ParameterExpression entityParameter = Expression.Parameter(entityType);
-        ParameterExpression relatedEntityParameter = Expression.Parameter(relatedEntityType);
+        var entityParameter = Expression.Parameter(entityType);
+        var relatedEntityParameter = Expression.Parameter(relatedEntityType);
         List<Expression> expressions = new()
         {
             navigation.IsCollection
@@ -585,8 +585,8 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         IEnumerable<TEntity> entities)
     {
         // TODO: throw a better exception for non-ICollection navigations
-        ICollection<TEntity> collection = (ICollection<TEntity>)accessor.Create();
-        foreach (TEntity entity in entities)
+        var collection = (ICollection<TEntity>)accessor.Create();
+        foreach (var entity in entities)
         {
             collection.Add(entity);
         }

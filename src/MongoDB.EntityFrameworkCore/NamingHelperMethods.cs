@@ -39,12 +39,12 @@ public static partial class NamingHelperMethods
 
         string[] words = __wordSplitRegex.Split(input);
 
-        char[] result = new char[input.Length];
-        int outIndex = 0;
+        var result = new char[input.Length];
+        var outIndex = 0;
 
-        for (int inIndex = 0; inIndex < words.Length; inIndex++)
+        for (var inIndex = 0; inIndex < words.Length; inIndex++)
         {
-            string w = words[inIndex];
+            var w = words[inIndex];
             if (w.Length == 0) continue;
 
             if (inIndex == 0)
@@ -80,12 +80,12 @@ public static partial class NamingHelperMethods
 
         string[] words = __wordSplitRegex.Split(input);
 
-        char[] result = new char[input.Length];
-        int outIndex = 0;
+        var result = new char[input.Length];
+        var outIndex = 0;
 
-        for (int inIndex = 0; inIndex < words.Length; inIndex++)
+        for (var inIndex = 0; inIndex < words.Length; inIndex++)
         {
-            string w = words[inIndex];
+            var w = words[inIndex];
             if (w.Length == 0) continue;
 
             result[outIndex] = char.ToUpper(w[0], culture);

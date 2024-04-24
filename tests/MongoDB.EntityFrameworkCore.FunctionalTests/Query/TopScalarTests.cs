@@ -31,35 +31,35 @@ public class TopScalarTests
     [Fact]
     public void Count_with_no_predicate()
     {
-        int result = _db.Planets.Count();
+        var result = _db.Planets.Count();
         Assert.Equal(8, result);
     }
 
     [Fact]
     public void Count_with_no_predicate_after_where()
     {
-        int result = _db.Planets.Where(p => p.hasRings).Count();
+        var result = _db.Planets.Where(p => p.hasRings).Count();
         Assert.Equal(4, result);
     }
 
     [Fact]
     public void Count_with_predicate()
     {
-        int result = _db.Planets.Count(p => p.hasRings);
+        var result = _db.Planets.Count(p => p.hasRings);
         Assert.Equal(4, result);
     }
 
     [Fact]
     public void Count_with_predicate_after_where()
     {
-        int result = _db.Planets.Where(p => p.orderFromSun > 5).Count(p => p.hasRings);
+        var result = _db.Planets.Where(p => p.orderFromSun > 5).Count(p => p.hasRings);
         Assert.Equal(3, result);
     }
 
     [Fact]
     public async Task CountAsync_with_no_predicate()
     {
-        int result = await _db.Planets.CountAsync();
+        var result = await _db.Planets.CountAsync();
         Assert.Equal(8, result);
     }
 
@@ -67,133 +67,133 @@ public class TopScalarTests
     [Fact]
     public async Task CountAsync_with_no_predicate_after_where()
     {
-        int result = await _db.Planets.Where(p => p.hasRings).CountAsync();
+        var result = await _db.Planets.Where(p => p.hasRings).CountAsync();
         Assert.Equal(4, result);
     }
 
     [Fact]
     public async Task CountAsync_with_predicate()
     {
-        int result = await _db.Planets.CountAsync(p => p.hasRings);
+        var result = await _db.Planets.CountAsync(p => p.hasRings);
         Assert.Equal(4, result);
     }
 
     [Fact]
     public async Task CountAsync_with_predicate_after_where()
     {
-        int result = await _db.Planets.Where(p => p.orderFromSun > 5).CountAsync(p => p.hasRings);
+        var result = await _db.Planets.Where(p => p.orderFromSun > 5).CountAsync(p => p.hasRings);
         Assert.Equal(3, result);
     }
 
     [Fact]
     public void LongCount_with_no_predicate()
     {
-        long result = _db.Planets.LongCount();
+        var result = _db.Planets.LongCount();
         Assert.Equal(8, result);
     }
 
     [Fact]
     public void LongCount_with_no_predicate_after_where()
     {
-        long result = _db.Planets.Where(p => p.hasRings).LongCount();
+        var result = _db.Planets.Where(p => p.hasRings).LongCount();
         Assert.Equal(4, result);
     }
 
     [Fact]
     public void LongCount_with_predicate()
     {
-        long result = _db.Planets.LongCount(p => p.hasRings);
+        var result = _db.Planets.LongCount(p => p.hasRings);
         Assert.Equal(4, result);
     }
 
     [Fact]
     public void LongCount_with_predicate_after_where()
     {
-        long result = _db.Planets.Where(p => p.orderFromSun > 5).LongCount(p => p.hasRings);
+        var result = _db.Planets.Where(p => p.orderFromSun > 5).LongCount(p => p.hasRings);
         Assert.Equal(3, result);
     }
 
     [Fact]
     public async Task LongCountAsync_with_no_predicate()
     {
-        long result = await _db.Planets.LongCountAsync();
+        var result = await _db.Planets.LongCountAsync();
         Assert.Equal(8, result);
     }
 
     [Fact]
     public async Task LongCountAsync_with_no_predicate_after_where()
     {
-        long result = await _db.Planets.Where(p => p.hasRings).LongCountAsync();
+        var result = await _db.Planets.Where(p => p.hasRings).LongCountAsync();
         Assert.Equal(4, result);
     }
 
     [Fact]
     public async Task LongCountAsync_with_predicate()
     {
-        long result = await _db.Planets.LongCountAsync(p => p.hasRings);
+        var result = await _db.Planets.LongCountAsync(p => p.hasRings);
         Assert.Equal(4, result);
     }
 
     [Fact]
     public async Task LongCountAsync_with_predicate_after_where()
     {
-        long result = await _db.Planets.Where(p => p.orderFromSun > 6).LongCountAsync(p => p.hasRings);
+        var result = await _db.Planets.Where(p => p.orderFromSun > 6).LongCountAsync(p => p.hasRings);
         Assert.Equal(2, result);
     }
 
     [Fact]
     public void Any_with_no_predicate()
     {
-        bool result = _db.Planets.Any();
+        var result = _db.Planets.Any();
         Assert.True(result);
     }
 
     [Fact]
     public void Any_with_no_predicate_after_where()
     {
-        bool result = _db.Planets.Where(p => p.orderFromSun < 1).Any();
+        var result = _db.Planets.Where(p => p.orderFromSun < 1).Any();
         Assert.False(result);
     }
 
     [Fact]
     public void Any_with_predicate()
     {
-        bool result = _db.Planets.Any(p => p.hasRings);
+        var result = _db.Planets.Any(p => p.hasRings);
         Assert.True(result);
     }
 
     [Fact]
     public void Any_with_predicate_after_where()
     {
-        bool result = _db.Planets.Where(p => p.orderFromSun < 5).Any(p => p.hasRings);
+        var result = _db.Planets.Where(p => p.orderFromSun < 5).Any(p => p.hasRings);
         Assert.False(result);
     }
 
     [Fact]
     public async Task AnyAsync_with_no_predicate()
     {
-        bool result = await _db.Planets.AnyAsync();
+        var result = await _db.Planets.AnyAsync();
         Assert.True(result);
     }
 
     [Fact]
     public async Task AnyAsync_with_no_predicate_after_where()
     {
-        bool result = await _db.Planets.Where(p => p.orderFromSun < 1).AnyAsync();
+        var result = await _db.Planets.Where(p => p.orderFromSun < 1).AnyAsync();
         Assert.False(result);
     }
 
     [Fact]
     public async Task AnyAsync_with_predicate()
     {
-        bool result = await _db.Planets.AnyAsync(p => p.hasRings);
+        var result = await _db.Planets.AnyAsync(p => p.hasRings);
         Assert.True(result);
     }
 
     [Fact]
     public async Task AnyAsync_with_predicate_after_where()
     {
-        bool result = await _db.Planets.Where(p => p.orderFromSun < 5).AnyAsync(p => p.hasRings);
+        var result = await _db.Planets.Where(p => p.orderFromSun < 5).AnyAsync(p => p.hasRings);
         Assert.False(result);
     }
 }

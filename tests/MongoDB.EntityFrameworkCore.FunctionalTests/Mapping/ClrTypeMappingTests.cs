@@ -343,7 +343,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
     {
         var collection = tempDatabase.CreateTemporaryCollection<DecimalEntity>();
 
-        decimal expected = 0m;
+        var expected = 0m;
         while (expected <= 0)
             expected = random.NextDecimal();
 
@@ -381,7 +381,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
     {
         var collection = tempDatabase.CreateTemporaryCollection<DecimalEntity>();
 
-        decimal expected = 0m;
+        var expected = 0m;
         while (expected >= 0)
             expected = random.NextDecimal();
 

@@ -28,7 +28,7 @@ public class DecimalSerializationTests : BaseSerializationTests
     [InlineData("0")]
     public void Decimal_round_trips(string expectedString)
     {
-        Decimal expected = Decimal.Parse(expectedString);
+        var expected = Decimal.Parse(expectedString);
         var collection = TempDatabase.CreateTemporaryCollection<DecimalEntity>(nameof(Decimal_round_trips) + expected);
 
         {
@@ -69,7 +69,7 @@ public class DecimalSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_Decimal_round_trips(string expectedString)
     {
-        Decimal? expected = Decimal.TryParse(expectedString, out Decimal parsedDecimal) ? parsedDecimal : null;
+        Decimal? expected = Decimal.TryParse(expectedString, out var parsedDecimal) ? parsedDecimal : null;
 
         var collection =
             TempDatabase.CreateTemporaryCollection<NullableDecimalEntity>(nameof(Nullable_Decimal_round_trips) + expected);

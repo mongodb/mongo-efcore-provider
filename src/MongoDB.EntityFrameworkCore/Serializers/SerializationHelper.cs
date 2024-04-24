@@ -123,7 +123,7 @@ internal static class SerializationHelper
         else
         {
             rawValue = document;
-            foreach (string? node in elementSerializationInfo.ElementPath)
+            foreach (var node in elementSerializationInfo.ElementPath)
             {
                 var doc = (BsonDocument)rawValue;
                 if (!doc.TryGetValue(node, out rawValue))
