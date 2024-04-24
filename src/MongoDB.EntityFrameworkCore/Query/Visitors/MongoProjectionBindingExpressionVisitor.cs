@@ -111,15 +111,15 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     {
         switch (extensionExpression)
         {
-            case StructuralTypeShaperExpression StructuralTypeShaperExpression:
+            case StructuralTypeShaperExpression structuralTypeShaperExpression:
                 {
                     var projectionBindingExpression =
-                        (ProjectionBindingExpression)StructuralTypeShaperExpression.ValueBufferExpression;
+                        (ProjectionBindingExpression)structuralTypeShaperExpression.ValueBufferExpression;
 
                     var entityProjection = (EntityProjectionExpression)_queryExpression.GetMappedProjection(
                         projectionBindingExpression.ProjectionMember);
 
-                    return StructuralTypeShaperExpression.Update(
+                    return structuralTypeShaperExpression.Update(
                         new ProjectionBindingExpression(
                             _queryExpression, _queryExpression.AddToProjection(entityProjection), typeof(ValueBuffer)));
                 }
