@@ -52,7 +52,10 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void Update_simple_entity()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
-        var entity = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "Before"};
+        var entity = new SimpleEntity
+        {
+            _id = ObjectId.GenerateNewId(), name = "Before"
+        };
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
@@ -108,7 +111,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void Entity_update_tests(Type valueType, object initialValue, object updatedValue)
     {
         var methodInfo = this.GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
-        methodInfo.MakeGenericMethod(valueType).Invoke(this, new[] {initialValue, updatedValue});
+        methodInfo.MakeGenericMethod(valueType).Invoke(this, [initialValue, updatedValue]);
     }
 
     private enum TestEnum
@@ -124,7 +127,10 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            var entity = new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = initialValue};
+            var entity = new Entity<TValue>
+            {
+                _id = ObjectId.GenerateNewId(), Value = initialValue
+            };
             dbContext.Entitites.Add(entity);
             dbContext.SaveChanges();
             entity.Value = updatedValue;

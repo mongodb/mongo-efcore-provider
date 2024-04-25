@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// </summary>
 internal class FinalPredicateHoistingVisitor : ExpressionVisitor
 {
-    private static readonly FinalPredicateHoistingVisitor __instance = new();
+    private static readonly FinalPredicateHoistingVisitor Instance = new();
 
     private FinalPredicateHoistingVisitor()
     {
@@ -41,7 +41,7 @@ internal class FinalPredicateHoistingVisitor : ExpressionVisitor
     /// <returns>A hoisted version of the LINQ query expression if required, otherwise the original expression.</returns>
     public static Expression Hoist(Expression expression)
     {
-        return __instance.Visit(expression);
+        return Instance.Visit(expression);
     }
 
     /// <inheritdoc/>

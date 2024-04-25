@@ -65,31 +65,31 @@ internal static class BsonBinding
             return CreateGetBsonDocument(bsonDocExpression, name, required, entityType);
         }
 
-        IProperty? targetProperty = entityType.FindProperty(name);
+        var targetProperty = entityType.FindProperty(name);
         if (targetProperty != null)
         {
             mappedType = targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType;
             return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
         }
 
-        INavigation navigationProperty = entityType.FindNavigation(name) ??
-                                         throw new InvalidOperationException(
-                                             CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
+        var navigationProperty = entityType.FindNavigation(name) ??
+                                 throw new InvalidOperationException(
+                                     CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
 
-        string fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
+        var fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
         return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
     }
 
     private static Expression CreateGetBsonArray(Expression bsonDocExpression, string name)
-        => Expression.Call(null, __getBsonArray, bsonDocExpression, Expression.Constant(name));
+        => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
-    private static readonly MethodInfo __getBsonArray
+    private static readonly MethodInfo GetBsonArrayMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetBsonArray));
 
     private static BsonArray? GetBsonArray(BsonDocument document, string name)
     {
-        if (!document.TryGetValue(name, out BsonValue bsonValue))
+        if (!document.TryGetValue(name, out var bsonValue))
         {
             throw new InvalidOperationException($"Document element '{name}' is mapped collection but missing.");
         }
@@ -105,16 +105,17 @@ internal static class BsonBinding
 
     private static Expression CreateGetBsonDocument(
         Expression bsonDocExpression, string name, bool required, IEntityType entityType)
-        => Expression.Call(null, __getBsonDocument, bsonDocExpression, Expression.Constant(name), Expression.Constant(required),
+        => Expression.Call(null, GetBsonDocumentMethodInfo, bsonDocExpression, Expression.Constant(name),
+            Expression.Constant(required),
             Expression.Constant(entityType));
 
-    private static readonly MethodInfo __getBsonDocument
+    private static readonly MethodInfo GetBsonDocumentMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetBsonDocument));
 
     private static BsonDocument? GetBsonDocument(BsonDocument parent, string name, bool required, IReadOnlyTypeBase entityType)
     {
-        BsonValue? value = parent.GetValue(name, BsonNull.Value);
+        var value = parent.GetValue(name, BsonNull.Value);
 
         if (value == BsonNull.Value && required)
         {
@@ -127,16 +128,16 @@ internal static class BsonBinding
 
     private static Expression
         CreateGetPropertyValue(Expression bsonDocExpression, Expression propertyExpression, Type resultType) =>
-        Expression.Call(null, __getPropertyValueMethodInfo.MakeGenericMethod(resultType), bsonDocExpression, propertyExpression);
+        Expression.Call(null, GetPropertyValueMethodInfo.MakeGenericMethod(resultType), bsonDocExpression, propertyExpression);
 
     private static Expression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
-        Expression.Call(null, __getElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
+        Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
-    private static readonly MethodInfo __getPropertyValueMethodInfo
+    private static readonly MethodInfo GetPropertyValueMethodInfo
         = typeof(SerializationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
             .Single(mi => mi.Name == nameof(SerializationHelper.GetPropertyValue));
 
-    private static readonly MethodInfo __getElementValueMethodInfo
+    private static readonly MethodInfo GetElementValueMethodInfo
         = typeof(SerializationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
             .Single(mi => mi.Name == nameof(SerializationHelper.GetElementValue));
 }

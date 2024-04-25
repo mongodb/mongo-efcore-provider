@@ -74,7 +74,7 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
                 $"Unable to bind 'navigation' '{navigation.Name}' to an entity projection of '{EntityType.DisplayName()}'.");
         }
 
-        if (!_navigationExpressionsMap.TryGetValue(navigation, out IAccessExpression? expression))
+        if (!_navigationExpressionsMap.TryGetValue(navigation, out var expression))
         {
             expression = navigation.IsCollection
                 ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression)
@@ -119,14 +119,14 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         Type? entityClrType,
         out IPropertyBase? propertyBase)
     {
-        IEntityType entityType = EntityType;
+        var entityType = EntityType;
         if (entityClrType != null
             && !entityClrType.IsAssignableFrom(entityType.ClrType))
         {
             entityType = entityType.GetDerivedTypes().First(e => entityClrType.IsAssignableFrom(e.ClrType));
         }
 
-        IProperty? property = member.MemberInfo == null
+        var property = member.MemberInfo == null
             ? entityType.FindProperty(member.Name)
             : entityType.FindProperty(member.MemberInfo);
 
@@ -136,7 +136,7 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
             return BindProperty(property);
         }
 
-        INavigation? navigation = member.MemberInfo == null
+        var navigation = member.MemberInfo == null
             ? entityType.FindNavigation(member.Name)
             : entityType.FindNavigation(member.MemberInfo);
 

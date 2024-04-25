@@ -70,7 +70,7 @@ public class CollectionNameFromDbSetConvention : IEntityTypeAddedConvention
     {
         var entityType = entityTypeBuilder.Metadata;
         if (!entityType.HasSharedClrType
-            && _sets.TryGetValue(entityType.ClrType, out string? setName))
+            && _sets.TryGetValue(entityType.ClrType, out var setName))
         {
             entityTypeBuilder.ToCollection(setName);
         }

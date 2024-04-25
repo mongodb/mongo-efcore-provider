@@ -62,7 +62,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
         db.Entitites.AddRange(items);
         db.SaveChanges();
 
-        for (int i = 0; i < updateCount; i++)
+        for (var i = 0; i < updateCount; i++)
             items[i].name = "Updated " + i;
 
         Assert.Equal(updateCount, db.SaveChanges());
@@ -82,7 +82,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
         db.Entitites.AddRange(items);
         await db.SaveChangesAsync();
 
-        for (int i = 0; i < updateCount; i++)
+        for (var i = 0; i < updateCount; i++)
             items[i].name = "Updated " + i;
 
         Assert.Equal(updateCount, await db.SaveChangesAsync());

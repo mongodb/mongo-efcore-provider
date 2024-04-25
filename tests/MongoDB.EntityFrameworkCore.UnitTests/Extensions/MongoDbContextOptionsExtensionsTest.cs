@@ -90,7 +90,7 @@ public static class MongoDbContextOptionsExtensionsTest
                 "db");
 
         var extension = optionsBuilder.Options.FindExtension<MongoOptionsExtension>();
-        string? logFragment = extension?.Info.LogFragment;
+        var logFragment = extension?.Info.LogFragment;
 
         Assert.DoesNotContain("NotActuallyA", logFragment);
         Assert.Contains("myDbUsr:redacted@", logFragment);

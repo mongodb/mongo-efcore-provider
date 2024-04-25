@@ -13,8 +13,6 @@
  * limitations under the License.
  */
 
-using System.Collections;
-
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
 public class CollectionSerializationTests : BaseSerializationTests
@@ -200,7 +198,7 @@ public class CollectionSerializationTests : BaseSerializationTests
             using var db = SingleEntityDbContext.Create(collection);
             db.Entitites.Add(new ListEntity
             {
-                aList = new List<int>(expected)
+                aList = [..expected]
             });
             db.SaveChanges();
         }
@@ -274,7 +272,8 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void IEnumerable_exposed_list_round_trips(params int[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<IEnumerableEntity>(nameof(IEnumerable_exposed_list_round_trips) + expected.Length);
+            TempDatabase.CreateTemporaryCollection<IEnumerableEntity>(
+                nameof(IEnumerable_exposed_list_round_trips) + expected.Length);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -304,7 +303,8 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void Nullable_ienumerable_exposed_list_round_trips(params int[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableIEnumerableEntity>(nameof(Nullable_ienumerable_exposed_list_round_trips) + expected.Length);
+            TempDatabase.CreateTemporaryCollection<NullableIEnumerableEntity>(nameof(Nullable_ienumerable_exposed_list_round_trips)
+                                                                              + expected.Length);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -336,7 +336,10 @@ public class CollectionSerializationTests : BaseSerializationTests
         using var db = SingleEntityDbContext.Create(collection);
         db.Entitites.Add(new IEnumerableEntity
         {
-            anEnumerable = EnumerableOnlyWrapper.Wrap(new [] { 1, 2, 3 })
+            anEnumerable = EnumerableOnlyWrapper.Wrap(new[]
+            {
+                1, 2, 3
+            })
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.SaveChanges());

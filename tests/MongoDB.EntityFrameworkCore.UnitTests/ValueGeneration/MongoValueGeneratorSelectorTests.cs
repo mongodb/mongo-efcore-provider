@@ -32,7 +32,7 @@ public class MongoValueGeneratorSelectorTests
         builder.Entity<RootEntity>();
 
         builder.FinalizeModel();
-        IModel model = (IModel)builder.Model;
+        var model = (IModel)builder.Model;
         var serviceProvider = instance.CreateServiceProvider();
         _valueGeneratorSelector = (IValueGeneratorSelector)serviceProvider.GetService(typeof(IValueGeneratorSelector))!;
         _entityType = model.FindEntityType(typeof(EntityWithDifferentTypes))!;

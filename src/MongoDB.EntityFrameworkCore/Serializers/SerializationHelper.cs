@@ -14,13 +14,10 @@
  */
 
 using System;
-using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
-using Microsoft.EntityFrameworkCore.Update;
 using MongoDB.Bson;
-using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 
@@ -61,7 +58,8 @@ internal static class SerializationHelper
     internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
     {
         var serializer = CreateTypeSerializer(property.ClrType, property);
-        if (property.IsPrimaryKey() && property.DeclaringEntityType.FindPrimaryKey()?.Properties.Count > 1)
+        if (property.IsPrimaryKey() && property.DeclaringType is IEntityType entityType
+                                    && entityType.FindPrimaryKey()?.Properties.Count > 1)
         {
             return BsonSerializationInfo.CreateWithPath(new[]
             {
@@ -123,7 +121,7 @@ internal static class SerializationHelper
         else
         {
             rawValue = document;
-            foreach (string? node in elementSerializationInfo.ElementPath)
+            foreach (var node in elementSerializationInfo.ElementPath)
             {
                 var doc = (BsonDocument)rawValue;
                 if (!doc.TryGetValue(node, out rawValue))

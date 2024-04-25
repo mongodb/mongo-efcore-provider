@@ -29,7 +29,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     [InlineData("64a8583aa1ee84d292c009dd")]
     public void ObjectId_round_trips(string expectedString)
     {
-        ObjectId expected = ObjectId.Parse(expectedString);
+        var expected = ObjectId.Parse(expectedString);
         var collection = TempDatabase.CreateTemporaryCollection<ObjectIdEntity>(nameof(ObjectId_round_trips) + expectedString);
 
         {
@@ -112,7 +112,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     [InlineData("-987654321.01234")]
     public void Decimal128_round_trips(string expectedString)
     {
-        Decimal128 expected = Decimal128.Parse(expectedString);
+        var expected = Decimal128.Parse(expectedString);
         var collection = TempDatabase.CreateTemporaryCollection<Decimal128Entity>(nameof(Decimal128_round_trips) + expectedString);
 
         {

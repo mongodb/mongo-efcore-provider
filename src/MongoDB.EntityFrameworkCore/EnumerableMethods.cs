@@ -15,27 +15,29 @@ internal static class EnumerableMethods
 {
     static EnumerableMethods()
     {
-        Dictionary<string, List<MethodInfo>>? queryableMethodGroups = typeof(Enumerable)
+        var queryableMethodGroups = typeof(Enumerable)
             .GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
             .GroupBy(mi => mi.Name)
             .ToDictionary(e => e.Key, l => l.ToList());
 
         GetMethod(
             nameof(Enumerable.All), 1,
-            types => new[]
-            {
+            types =>
+            [
                 typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))
-            });
+            ]);
 
-        Cast = GetMethod(nameof(Enumerable.Cast), 1, _ => new[] {typeof(IEnumerable)});
+        Cast = GetMethod(nameof(Enumerable.Cast), 1, _ =>
+        [
+            typeof(IEnumerable)
+        ]);
 
         SelectWithOrdinal = GetMethod(
             nameof(Enumerable.Select), 2,
-            types => new[]
-            {
-                typeof(IEnumerable<>).MakeGenericType(types[0]),
-                typeof(Func<,,>).MakeGenericType(types[0], typeof(int), types[1])
-            });
+            types =>
+            [
+                typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,,>).MakeGenericType(types[0], typeof(int), types[1])
+            ]);
 
         MethodInfo GetMethod(string name, int genericParameterCount, Func<Type[], Type[]> parameterGenerator)
         {

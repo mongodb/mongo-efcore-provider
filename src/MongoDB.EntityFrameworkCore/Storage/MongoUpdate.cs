@@ -140,7 +140,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
             }
 
             writer.WriteName(navigation.TargetEntityType.GetContainingElementName());
-            object? embeddedValue = entry.GetCurrentValue(navigation);
+            var embeddedValue = entry.GetCurrentValue(navigation);
 
             if (embeddedValue == null)
             {
@@ -151,7 +151,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
                 if (navigation.IsCollection)
                 {
                     writer.WriteStartArray();
-                    foreach (object dependent in (IEnumerable)embeddedValue)
+                    foreach (var dependent in (IEnumerable)embeddedValue)
                     {
                         var embeddedEntry =
                             ((InternalEntityEntry)entry).StateManager.TryGetEntry(dependent,
@@ -191,7 +191,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
 
         if (!keyProperties.Any()) return;
 
-        bool compoundKey = keyProperties.Length > 1;
+        var compoundKey = keyProperties.Length > 1;
         if (compoundKey)
         {
             writer.WriteName("_id");
@@ -201,7 +201,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         foreach (var property in keyProperties)
         {
             var serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
-            string? elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
+            var elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
             writer.WriteName(elementName);
             var root = BsonSerializationContext.CreateRoot(writer);
             serializationInfo.Serializer.Serialize(root, entry.GetCurrentValue(property));
@@ -223,7 +223,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         foreach (var property in properties)
         {
             var serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
-            string? elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
+            var elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
             writer.WriteName(elementName);
             var root = BsonSerializationContext.CreateRoot(writer);
             serializationInfo.Serializer.Serialize(root, entry.GetCurrentValue(property));

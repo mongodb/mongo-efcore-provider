@@ -111,15 +111,15 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     {
         switch (extensionExpression)
         {
-            case StructuralTypeShaperExpression StructuralTypeShaperExpression:
+            case StructuralTypeShaperExpression structuralTypeShaperExpression:
                 {
                     var projectionBindingExpression =
-                        (ProjectionBindingExpression)StructuralTypeShaperExpression.ValueBufferExpression;
+                        (ProjectionBindingExpression)structuralTypeShaperExpression.ValueBufferExpression;
 
                     var entityProjection = (EntityProjectionExpression)_queryExpression.GetMappedProjection(
                         projectionBindingExpression.ProjectionMember);
 
-                    return StructuralTypeShaperExpression.Update(
+                    return structuralTypeShaperExpression.Update(
                         new ProjectionBindingExpression(
                             _queryExpression, _queryExpression.AddToProjection(entityProjection), typeof(ValueBuffer)));
                 }
@@ -153,7 +153,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     /// <inheritdoc />
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
-        if (methodCallExpression.TryGetEFPropertyArguments(out var source, out string memberName))
+        if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))
         {
             var visitedSource = Visit(source);
 
@@ -241,7 +241,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
         var newObject = Visit(methodCallExpression.Object);
         var newArguments = new Expression[methodCallExpression.Arguments.Count];
-        for (int i = 0; i < newArguments.Length; i++)
+        for (var i = 0; i < newArguments.Length; i++)
         {
             var argument = methodCallExpression.Arguments[i];
             var newArgument = Visit(argument);
@@ -273,10 +273,10 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     protected override Expression VisitNew(NewExpression newExpression)
     {
         if (newExpression.Arguments.Count == 0) return newExpression;
-        bool hasMembers = newExpression.Members != null;
+        var hasMembers = newExpression.Members != null;
 
         var newArguments = new Expression[newExpression.Arguments.Count];
-        for (int i = 0; i < newArguments.Length; i++)
+        for (var i = 0; i < newArguments.Length; i++)
         {
             var argument = newExpression.Arguments[i];
 
@@ -327,7 +327,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         }
 
         var newBindings = new MemberBinding[memberInitExpression.Bindings.Count];
-        for (int i = 0; i < newBindings.Length; i++)
+        for (var i = 0; i < newBindings.Length; i++)
         {
             if (memberInitExpression.Bindings[i].BindingType != MemberBindingType.Assignment)
             {

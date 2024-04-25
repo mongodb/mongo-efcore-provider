@@ -69,11 +69,20 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
         {
             var context = SingleEntityDbContext.Create(collection, ConfigureContext);
             context.Entitites.AddRange(
-                new[]
+            [
+                new Entity
                 {
-                    new Entity {Key1 = "one", Key2 = 1}, new Entity {Key1 = "two", Key2 = 2},
-                    new Entity {Key1 = "two", Key2 = 3},
-                });
+                    Key1 = "one", Key2 = 1
+                },
+                new Entity
+                {
+                    Key1 = "two", Key2 = 2
+                },
+                new Entity
+                {
+                    Key1 = "two", Key2 = 3
+                }
+            ]);
 
             context.SaveChanges();
         }

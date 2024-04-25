@@ -82,8 +82,8 @@ public sealed class BsonIgnoreAttributeConvention : IEntityTypeAddedConvention, 
 
     private static string GetMemberName(MemberInfo member)
     {
-        string name = member.Name;
-        int index = member.Name.LastIndexOf('.');
+        var name = member.Name;
+        var index = member.Name.LastIndexOf('.');
         return index >= 0 ? name[(index + 1)..] : name;
     }
 }

@@ -61,16 +61,16 @@ internal sealed class MongoQueryExpression : Expression
 
     public int AddToProjection(Expression expression, string? alias = null)
     {
-        int existingIndex = _projection.FindIndex(pe => pe.Expression.Equals(expression));
+        var existingIndex = _projection.FindIndex(pe => pe.Expression.Equals(expression));
         if (existingIndex != -1)
         {
             return existingIndex;
         }
 
-        string? baseAlias = alias ?? (expression as IAccessExpression)?.Name;
+        var baseAlias = alias ?? (expression as IAccessExpression)?.Name;
 
-        string? currentAlias = baseAlias;
-        int counter = 0;
+        var currentAlias = baseAlias;
+        var counter = 0;
         while (_projection.Any(pe => string.Equals(pe.Alias, currentAlias, StringComparison.OrdinalIgnoreCase)))
         {
             currentAlias = $"{baseAlias}{counter++}";

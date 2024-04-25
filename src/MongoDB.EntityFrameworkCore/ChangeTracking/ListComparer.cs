@@ -40,7 +40,7 @@ internal sealed class ListComparer<TElement>(ValueComparer<TElement> elementComp
         {
             if (aList.Count != bList.Count) return false;
 
-            for (int i = 0; i < aList.Count; i++)
+            for (var i = 0; i < aList.Count; i++)
             {
                 var (el1, el2) = (aList[i], bList[i]);
                 if (el1 is null)
@@ -79,7 +79,7 @@ internal sealed class ListComparer<TElement>(ValueComparer<TElement> elementComp
         if (source is TElement[] sourceArray)
         {
             var snapshot = new TElement[sourceArray.Length];
-            for (int i = 0; i < sourceArray.Length; i++)
+            for (var i = 0; i < sourceArray.Length; i++)
                 snapshot[i] = elementComparer.Snapshot(sourceArray[i]);
             return snapshot;
         }

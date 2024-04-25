@@ -32,13 +32,13 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
     public SampleGuidesFixture()
     {
         MongoDatabase.GetCollection<Planet>("planets")
-            .BulkWrite(__planetData.Select(p => new InsertOneModel<Planet>(p)));
+            .BulkWrite(PlanetData.Select(p => new InsertOneModel<Planet>(p)));
         MongoDatabase.GetCollection<InternalMoon>("moons")
-            .BulkWrite(__moonData.Select(m => new InsertOneModel<InternalMoon>(m)));
+            .BulkWrite(MoonData.Select(m => new InsertOneModel<InternalMoon>(m)));
     }
 
-    private static readonly Planet[] __planetData =
-    {
+    private static readonly Planet[] PlanetData =
+    [
         new()
         {
             _id = ObjectId.Parse("621ff30d2a3e781873fcb65c"),
@@ -53,7 +53,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Venus",
             orderFromSun = 2,
             hasRings = false,
-            mainAtmosphere = new[] {"CO2", "N"}
+            mainAtmosphere =
+            [
+                "CO2", "N"
+            ]
         },
         new()
         {
@@ -61,7 +64,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Earth",
             orderFromSun = 3,
             hasRings = false,
-            mainAtmosphere = new[] {"N", "O2", "Ar"}
+            mainAtmosphere =
+            [
+                "N", "O2", "Ar"
+            ]
         },
         new()
         {
@@ -69,7 +75,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Mars",
             orderFromSun = 4,
             hasRings = false,
-            mainAtmosphere = new[] {"CO2", "Ar", "N"}
+            mainAtmosphere =
+            [
+                "CO2", "Ar", "N"
+            ]
         },
         new()
         {
@@ -77,7 +86,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Jupiter",
             orderFromSun = 5,
             hasRings = true,
-            mainAtmosphere = new[] {"H2", "He", "CH4"}
+            mainAtmosphere =
+            [
+                "H2", "He", "CH4"
+            ]
         },
         new()
         {
@@ -85,7 +97,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Saturn",
             orderFromSun = 6,
             hasRings = true,
-            mainAtmosphere = new[] {"H2", "He", "CH4"}
+            mainAtmosphere =
+            [
+                "H2", "He", "CH4"
+            ]
         },
         new()
         {
@@ -93,7 +108,10 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Uranus",
             orderFromSun = 7,
             hasRings = true,
-            mainAtmosphere = new[] {"H2", "He", "CH4"}
+            mainAtmosphere =
+            [
+                "H2", "He", "CH4"
+            ]
         },
         new()
         {
@@ -101,9 +119,12 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
             name = "Neptune",
             orderFromSun = 8,
             hasRings = true,
-            mainAtmosphere = new[] {"H2", "He", "CH4"}
+            mainAtmosphere =
+            [
+                "H2", "He", "CH4"
+            ]
         }
-    };
+    ];
 
     class InternalMoon
     {
@@ -124,12 +145,27 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
         }
     }
 
-    private static readonly InternalMoon[] __moonData =
-    {
-        new() {_id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb65f"), "I"), name = "Triton", yearOfDiscovery = 1846},
-        new() {_id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb65f"), "II"), name = "Nereid", yearOfDiscovery = 1949},
-        new() {_id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb661"), "I"), name = "The Moon", yearOfDiscovery = null},
-        new() {_id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "I"), name = "Mimas", yearOfDiscovery = 1789},
-        new() {_id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI"), name = "Titan", yearOfDiscovery = 1655 }
-    };
+    private static readonly InternalMoon[] MoonData =
+    [
+        new()
+        {
+            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb65f"), "I"), name = "Triton", yearOfDiscovery = 1846
+        },
+        new()
+        {
+            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb65f"), "II"), name = "Nereid", yearOfDiscovery = 1949
+        },
+        new()
+        {
+            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb661"), "I"), name = "The Moon", yearOfDiscovery = null
+        },
+        new()
+        {
+            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "I"), name = "Mimas", yearOfDiscovery = 1789
+        },
+        new()
+        {
+            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI"), name = "Titan", yearOfDiscovery = 1655
+        }
+    ];
 }

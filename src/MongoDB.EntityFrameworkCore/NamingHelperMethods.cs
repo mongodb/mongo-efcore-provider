@@ -37,14 +37,14 @@ public static partial class NamingHelperMethods
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        string[] words = __wordSplitRegex.Split(input);
+        var words = WordSplitRegex().Split(input);
 
-        char[] result = new char[input.Length];
-        int outIndex = 0;
+        var result = new char[input.Length];
+        var outIndex = 0;
 
-        for (int inIndex = 0; inIndex < words.Length; inIndex++)
+        for (var inIndex = 0; inIndex < words.Length; inIndex++)
         {
-            string w = words[inIndex];
+            var w = words[inIndex];
             if (w.Length == 0) continue;
 
             if (inIndex == 0)
@@ -78,14 +78,14 @@ public static partial class NamingHelperMethods
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        string[] words = __wordSplitRegex.Split(input);
+        var words = WordSplitRegex().Split(input);
 
-        char[] result = new char[input.Length];
-        int outIndex = 0;
+        var result = new char[input.Length];
+        var outIndex = 0;
 
-        for (int inIndex = 0; inIndex < words.Length; inIndex++)
+        for (var inIndex = 0; inIndex < words.Length; inIndex++)
         {
-            string w = words[inIndex];
+            var w = words[inIndex];
             if (w.Length == 0) continue;
 
             result[outIndex] = char.ToUpper(w[0], culture);
@@ -100,6 +100,6 @@ public static partial class NamingHelperMethods
     // Find word boundaries.
     // Word boundaries are considered spaces, non-alphanumeric, a transition from lower to upper,
     // a transition from multiple uppers to lowercase, and a transition from number to non-number.
-    private static readonly Regex __wordSplitRegex =
-        new(@"(?<=[a-z])(?=[A-Z])|[\s\p{P}]|(?<=\p{Lu})(?=\p{Lu}\p{Ll})|(?<=\p{N})(?=\P{N})");
+    [GeneratedRegex(@"(?<=[a-z])(?=[A-Z])|[\s\p{P}]|(?<=\p{Lu})(?=\p{Lu}\p{Ll})|(?<=\p{N})(?=\P{N})")]
+    private static partial Regex WordSplitRegex();
 }

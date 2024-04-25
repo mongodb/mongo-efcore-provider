@@ -27,7 +27,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
     [Fact]
     public void DateTime_round_trips_as_utc_with_expected_precision()
     {
-        DateTime expected = DateTime.UtcNow;
+        var expected = DateTime.UtcNow;
         var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
 
         {
@@ -50,7 +50,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
     [Fact]
     public void DateTime_round_trips_as_local()
     {
-        DateTime expected = DateTime.Now;
+        var expected = DateTime.Now;
         var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
 
         {
@@ -151,7 +151,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
     [Fact]
     public void DateTimeOffset_round_trips()
     {
-        DateTimeOffset expected = DateTimeOffset.Now;
+        var expected = DateTimeOffset.Now;
         var collection = TempDatabase.CreateTemporaryCollection<DateTimeOffsetEntity>();
 
         {
@@ -251,7 +251,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
     [Fact]
     public void TimeSpan_round_trips()
     {
-        TimeSpan expected = TimeSpan.FromTicks(Random.Shared.NextInt64());
+        var expected = TimeSpan.FromTicks(Random.Shared.NextInt64());
         var collection = TempDatabase.CreateTemporaryCollection<TimeSpanEntity>();
 
         {

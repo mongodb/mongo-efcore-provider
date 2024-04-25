@@ -70,15 +70,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
         Type type,
         CoreTypeMapping? typeMapping = null)
     {
-        IEntityType entityType = docExpression switch
+        var entityType = docExpression switch
         {
             RootReferenceExpression rootReferenceExpression => rootReferenceExpression.EntityType,
             ObjectAccessExpression docAccessExpression => docAccessExpression.Navigation.TargetEntityType,
             _ => _rootEntityType
         };
 
-        Expression? innerExpression = docExpression;
-        if (ProjectionBindings.TryGetValue(docExpression, out ParameterExpression? innerVariable))
+        var innerExpression = docExpression;
+        if (ProjectionBindings.TryGetValue(docExpression, out var innerVariable))
         {
             innerExpression = innerVariable;
         }

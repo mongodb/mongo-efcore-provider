@@ -67,7 +67,7 @@ namespace MongoDB.EntityFrameworkCore.Serializers
             {
                 var entityType = navigation.TargetEntityType;
                 var serializer = _entitySerializerCache.GetOrCreateSerializer(entityType);
-                string? elementName = entityType.GetContainingElementName();
+                var elementName = entityType.GetContainingElementName();
                 if (elementName != null)
                 {
                     serializationInfo = new BsonSerializationInfo(elementName, serializer, entityType.ClrType);
