@@ -70,6 +70,7 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         conventionSet.Add(new BsonRepresentationAttributeConvention(Dependencies));
         conventionSet.Add(new BsonSerializationOptionsAttributeConvention(Dependencies));
         conventionSet.Add(new BsonSerializerPropertyConvention(Dependencies));
+        conventionSet.Add(new BsonBsonTimeSpanOptionsPropertyAttributeConvention(Dependencies));
 
         // Replace default conventions with MongoDB-specific ones
         conventionSet.Replace<KeyDiscoveryConvention>(new PrimaryKeyDiscoveryConvention(Dependencies));
