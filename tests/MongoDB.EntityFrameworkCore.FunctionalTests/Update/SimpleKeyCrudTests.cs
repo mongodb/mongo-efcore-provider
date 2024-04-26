@@ -40,7 +40,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id));
             });
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
         }
 
@@ -67,7 +67,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id));
             });
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
         }
 
@@ -78,7 +78,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                     .HasKey(nameof(Entity.Id));
             });
 
-            var actual = dbContext.Entitites.Single();
+            var actual = dbContext.Entities.Single();
 
             Assert.Equal(entity.Id, actual.Id);
             Assert.Equal(entity.Data, actual.Data);
@@ -97,7 +97,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id));
             });
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
 
             entity.Data = "updated text";
@@ -126,7 +126,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                     .HasKey(nameof(Entity.Id));
             });
             var entity = new Entity {Id = "key", Data = "some text"};
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
 
             dbContext.Remove(entity);

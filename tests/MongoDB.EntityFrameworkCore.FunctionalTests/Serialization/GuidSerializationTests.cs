@@ -35,7 +35,7 @@ public class GuidSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new GuidEntity
+            db.Entities.Add(new GuidEntity
             {
                 aGuid = expected
             });
@@ -44,7 +44,7 @@ public class GuidSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aGuid);
         }
@@ -56,7 +56,7 @@ public class GuidSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<GuidEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class GuidEntity : BaseIdEntity
@@ -78,7 +78,7 @@ public class GuidSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableGuidEntity
+            db.Entities.Add(new NullableGuidEntity
             {
                 aNullableGuid = expected
             });
@@ -87,7 +87,7 @@ public class GuidSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableGuid);
         }
@@ -99,7 +99,7 @@ public class GuidSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableGuidEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableGuid);
     }

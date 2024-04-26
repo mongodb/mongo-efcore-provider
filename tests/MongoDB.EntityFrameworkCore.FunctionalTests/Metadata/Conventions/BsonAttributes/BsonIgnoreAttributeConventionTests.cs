@@ -57,7 +57,7 @@ public class BsonIgnoreAttributeConventionTests(TemporaryDatabaseFixture tempDat
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(new IgnoredPropertiesEntity
+            dbContext.Entities.Add(new IgnoredPropertiesEntity
             {
                 _id = id, KeepMe = name, IgnoreMe = "a", AndMe = true
             });

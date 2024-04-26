@@ -72,7 +72,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(new UnderscoreIdNamedProperty {_id = id, name = name});
+            dbContext.Entities.Add(new UnderscoreIdNamedProperty {_id = id, name = name});
             dbContext.SaveChanges();
         }
 
@@ -87,7 +87,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
         {
             // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection);
-            var found = dbContext.Entitites.Single(f => f._id == id);
+            var found = dbContext.Entities.Single(f => f._id == id);
             Assert.Equal(name, found.name);
         }
     }
@@ -102,7 +102,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(new IdNamedProperty {Id = id, name = name});
+            dbContext.Entities.Add(new IdNamedProperty {Id = id, name = name});
             dbContext.SaveChanges();
         }
 
@@ -116,7 +116,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
         {
             // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection);
-            var found = dbContext.Entitites.Single(f => f.Id == id);
+            var found = dbContext.Entities.Single(f => f.Id == id);
             Assert.Equal(name, found.name);
         }
     }
@@ -132,7 +132,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
         {
             var dbContext = SingleEntityDbContext.Create(collection);
             var entity = new ColumnAttributedIdProperty {MyPrimaryKey = id, name = name};
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
         }
 
@@ -147,7 +147,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
         {
             // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection);
-            var found = dbContext.Entitites.Single(f => f.MyPrimaryKey == id);
+            var found = dbContext.Entities.Single(f => f.MyPrimaryKey == id);
             Assert.Equal(name, found.name);
         }
     }
@@ -163,7 +163,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
         {
             var dbContext = SingleEntityDbContext.Create(collection);
             var entity = new Product {ProductId = id, name = name};
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
         }
 
@@ -177,7 +177,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
         {
             // Find with EF
             var dbContext = SingleEntityDbContext.Create(collection);
-            var found = dbContext.Entitites.Single(f => f.ProductId == id);
+            var found = dbContext.Entities.Single(f => f.ProductId == id);
             Assert.Equal(name, found.name);
         }
     }

@@ -31,7 +31,7 @@ public class BooleanSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new BooleanEntity
+            db.Entities.Add(new BooleanEntity
             {
                 aBoolean = expected
             });
@@ -40,7 +40,7 @@ public class BooleanSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aBoolean);
         }
@@ -52,7 +52,7 @@ public class BooleanSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<BooleanEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class BooleanEntity : BaseIdEntity
@@ -71,7 +71,7 @@ public class BooleanSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableBooleanEntity
+            db.Entities.Add(new NullableBooleanEntity
             {
                 aNullableBoolean = expected
             });
@@ -80,7 +80,7 @@ public class BooleanSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableBoolean);
         }
@@ -92,7 +92,7 @@ public class BooleanSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableBooleanEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableBoolean);
     }

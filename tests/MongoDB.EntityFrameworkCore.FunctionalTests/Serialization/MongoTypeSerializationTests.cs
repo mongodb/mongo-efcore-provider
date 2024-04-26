@@ -34,7 +34,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new ObjectIdEntity
+            db.Entities.Add(new ObjectIdEntity
             {
                 anObjectId = expected
             });
@@ -43,7 +43,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.anObjectId);
         }
@@ -55,7 +55,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<ObjectIdEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class ObjectIdEntity : BaseIdEntity
@@ -75,7 +75,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableObjectIdEntity
+            db.Entities.Add(new NullableObjectIdEntity
             {
                 aNullableObjectId = expected
             });
@@ -84,7 +84,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableObjectId);
         }
@@ -96,7 +96,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableObjectIdEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableObjectId);
     }
@@ -117,7 +117,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new Decimal128Entity
+            db.Entities.Add(new Decimal128Entity
             {
                 anDecimal128 = expected
             });
@@ -126,7 +126,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.anDecimal128);
         }
@@ -138,7 +138,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<Decimal128Entity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class Decimal128Entity : BaseIdEntity
@@ -160,7 +160,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDecimal128Entity
+            db.Entities.Add(new NullableDecimal128Entity
             {
                 aNullableDecimal128 = expected
             });
@@ -169,7 +169,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableDecimal128);
         }
@@ -181,7 +181,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableDecimal128Entity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableDecimal128);
     }

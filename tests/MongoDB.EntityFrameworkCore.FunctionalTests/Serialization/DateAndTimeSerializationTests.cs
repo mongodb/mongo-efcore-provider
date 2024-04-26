@@ -32,7 +32,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new DateTimeEntity
+            db.Entities.Add(new DateTimeEntity
             {
                 aDateTime = expected
             });
@@ -41,7 +41,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected.ToExpectedPrecision(), result.aDateTime.ToExpectedPrecision());
         }
@@ -56,7 +56,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         {
             using var db = SingleEntityDbContext.Create(collection,
                 model => model.Entity<DateTimeEntity>().Property(e => e.aDateTime).HasDateTimeKind(DateTimeKind.Local));
-            db.Entitites.Add(new DateTimeEntity
+            db.Entities.Add(new DateTimeEntity
             {
                 aDateTime = expected
             });
@@ -66,7 +66,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         {
             using var db = SingleEntityDbContext.Create(collection,
                 model => model.Entity<DateTimeEntity>().Property(e => e.aDateTime).HasDateTimeKind(DateTimeKind.Local));
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected.ToExpectedPrecision(), result.aDateTime.ToExpectedPrecision());
         }
@@ -78,7 +78,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<DateTimeEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class DateTimeEntity : BaseIdEntity
@@ -94,7 +94,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDateTimeEntity
+            db.Entities.Add(new NullableDateTimeEntity
             {
                 aNullableDateTime = expected
             });
@@ -103,7 +103,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected.Value.ToExpectedPrecision(), result.aNullableDateTime.Value.ToExpectedPrecision());
         }
@@ -117,7 +117,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDateTimeEntity
+            db.Entities.Add(new NullableDateTimeEntity
             {
                 aNullableDateTime = expected
             });
@@ -126,7 +126,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Null(result.aNullableDateTime);
         }
@@ -138,7 +138,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableDateTimeEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableDateTime);
     }
@@ -156,7 +156,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new DateTimeOffsetEntity
+            db.Entities.Add(new DateTimeOffsetEntity
             {
                 aDateTimeOffset = expected
             });
@@ -165,7 +165,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aDateTimeOffset);
         }
@@ -177,7 +177,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<DateTimeOffsetEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class DateTimeOffsetEntity : BaseIdEntity
@@ -193,7 +193,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDateTimeOffsetEntity
+            db.Entities.Add(new NullableDateTimeOffsetEntity
             {
                 aNullableDateTimeOffset = expected
             });
@@ -202,7 +202,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected.Value, result.aNullableDateTimeOffset.Value);
         }
@@ -216,7 +216,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDateTimeOffsetEntity
+            db.Entities.Add(new NullableDateTimeOffsetEntity
             {
                 aNullableDateTimeOffset = expected
             });
@@ -225,7 +225,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Null(result.aNullableDateTimeOffset);
         }
@@ -237,7 +237,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableDateTimeOffsetEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableDateTimeOffset);
     }
@@ -256,7 +256,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new TimeSpanEntity
+            db.Entities.Add(new TimeSpanEntity
             {
                 aTimeSpan = expected
             });
@@ -265,7 +265,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aTimeSpan);
         }
@@ -277,7 +277,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<TimeSpanEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class TimeSpanEntity : BaseIdEntity
@@ -298,7 +298,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableTimeSpanEntity
+            db.Entities.Add(new NullableTimeSpanEntity
             {
                 aNullableTimeSpan = expected
             });
@@ -307,7 +307,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableTimeSpan);
         }
@@ -319,7 +319,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableTimeSpanEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableTimeSpan);
     }

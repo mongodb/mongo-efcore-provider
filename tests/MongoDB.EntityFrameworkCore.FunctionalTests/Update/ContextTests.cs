@@ -28,11 +28,11 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
 
         const int insertCount = 10;
 
-        db.Entitites.AddRange(
+        db.Entities.AddRange(
             Enumerable.Range(0, insertCount).Select(i => new Customer("Generated " + i)));
 
         Assert.Equal(insertCount, db.SaveChanges());
-        Assert.Equal(insertCount, db.Entitites.Count());
+        Assert.Equal(insertCount, db.Entities.Count());
     }
 
     [Fact]
@@ -42,11 +42,11 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
 
         const int insertCount = 9;
 
-        db.Entitites.AddRange(
+        db.Entities.AddRange(
             Enumerable.Range(0, insertCount).Select(i => new Customer("Generated " + i)));
 
         Assert.Equal(insertCount, await db.SaveChangesAsync());
-        Assert.Equal(insertCount, await db.Entitites.CountAsync());
+        Assert.Equal(insertCount, await db.Entities.CountAsync());
     }
 
     [Fact]
@@ -59,14 +59,14 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
             .Select(i => new Customer("Generated " + i))
             .ToArray();
 
-        db.Entitites.AddRange(items);
+        db.Entities.AddRange(items);
         db.SaveChanges();
 
         for (var i = 0; i < updateCount; i++)
             items[i].name = "Updated " + i;
 
         Assert.Equal(updateCount, db.SaveChanges());
-        Assert.Equal(updateCount, db.Entitites.Count(c => c.name.StartsWith("Updated ")));
+        Assert.Equal(updateCount, db.Entities.Count(c => c.name.StartsWith("Updated ")));
     }
 
     [Fact]
@@ -79,14 +79,14 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
             .Select(i => new Customer("Generated " + i))
             .ToArray();
 
-        db.Entitites.AddRange(items);
+        db.Entities.AddRange(items);
         await db.SaveChangesAsync();
 
         for (var i = 0; i < updateCount; i++)
             items[i].name = "Updated " + i;
 
         Assert.Equal(updateCount, await db.SaveChangesAsync());
-        Assert.Equal(updateCount, await db.Entitites.CountAsync(c => c.name.StartsWith("Updated ")));
+        Assert.Equal(updateCount, await db.Entities.CountAsync(c => c.name.StartsWith("Updated ")));
     }
 
     [Fact]
@@ -99,13 +99,13 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
             .Select(i => new Customer("Generated " + i))
             .ToArray();
 
-        db.Entitites.AddRange(items);
+        db.Entities.AddRange(items);
         db.SaveChanges();
 
-        db.Entitites.RemoveRange(items.Take(deleteCount));
+        db.Entities.RemoveRange(items.Take(deleteCount));
 
         Assert.Equal(deleteCount, db.SaveChanges());
-        Assert.Equal(items.Length - deleteCount, db.Entitites.Count());
+        Assert.Equal(items.Length - deleteCount, db.Entities.Count());
     }
 
     [Fact]
@@ -118,13 +118,13 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
             .Select(i => new Customer("Generated " + i))
             .ToArray();
 
-        await db.Entitites.AddRangeAsync(items);
+        await db.Entities.AddRangeAsync(items);
         await db.SaveChangesAsync();
 
-        db.Entitites.RemoveRange(items.Take(deleteCount));
+        db.Entities.RemoveRange(items.Take(deleteCount));
 
         Assert.Equal(deleteCount, await db.SaveChangesAsync());
-        Assert.Equal(deleteCount, await db.Entitites.CountAsync());
+        Assert.Equal(deleteCount, await db.Entities.CountAsync());
     }
 
     [Fact]
@@ -136,16 +136,16 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
             .Select(i => new Customer("Generated " + i))
             .ToArray();
 
-        db.Entitites.AddRange(items);
+        db.Entities.AddRange(items);
         db.SaveChanges();
 
-        db.Entitites.Remove(items[0]);
+        db.Entities.Remove(items[0]);
         items[2].name = "Updated 2";
         items[3].name = "Updated 3";
-        db.Entitites.Add(new Customer("Generated x"));
+        db.Entities.Add(new Customer("Generated x"));
 
         Assert.Equal(4, db.SaveChanges());
-        Assert.Equal(4, db.Entitites.Count());
+        Assert.Equal(4, db.Entities.Count());
     }
 
     [Fact]
@@ -157,16 +157,16 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
             .Select(i => new Customer("Generated " + i))
             .ToArray();
 
-        await db.Entitites.AddRangeAsync(items);
+        await db.Entities.AddRangeAsync(items);
         await db.SaveChangesAsync();
 
-        db.Entitites.Remove(items[0]);
+        db.Entities.Remove(items[0]);
         items[2].name = "Updated 2";
         items[3].name = "Updated 3";
-        await db.Entitites.AddAsync(new Customer("Generated x"));
+        await db.Entities.AddAsync(new Customer("Generated x"));
 
         Assert.Equal(4, await db.SaveChangesAsync());
-        Assert.Equal(4, await db.Entitites.CountAsync());
+        Assert.Equal(4, await db.Entities.CountAsync());
     }
 
     [Fact]
@@ -175,14 +175,14 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
         var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<PeopleOnMoons>());
 
         var item = new PeopleOnMoons("Space Adventurer");
-        db.Entitites.Add(item);
+        db.Entities.Add(item);
         db.SaveChanges();
 
         item.Moons.Add(new Moon("Titan"));
         item.Moons.Add(new Moon("Mimas"));
 
         Assert.Equal(1, db.SaveChanges());
-        Assert.Equal(1, db.Entitites.Count());
+        Assert.Equal(1, db.Entities.Count());
     }
 
     [Fact]
@@ -192,8 +192,8 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
 
         var item1 = new PeopleOnMoons("Captain A");
         var item2 = new PeopleOnMoons("Captain B");
-        db.Entitites.Add(item1);
-        db.Entitites.Add(item2);
+        db.Entities.Add(item1);
+        db.Entities.Add(item2);
         await db.SaveChangesAsync();
 
         item1.Moons.Add(new Moon("Io"));
@@ -202,7 +202,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
         item1.name = "Captain J";
 
         Assert.Equal(2, await db.SaveChangesAsync());
-        Assert.Equal(2, await db.Entitites.CountAsync());
+        Assert.Equal(2, await db.Entities.CountAsync());
     }
 
     class Customer(string name)

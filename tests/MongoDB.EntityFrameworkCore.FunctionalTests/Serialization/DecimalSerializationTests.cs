@@ -33,7 +33,7 @@ public class DecimalSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new DecimalEntity
+            db.Entities.Add(new DecimalEntity
             {
                 aDecimal = expected
             });
@@ -42,7 +42,7 @@ public class DecimalSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aDecimal);
         }
@@ -54,7 +54,7 @@ public class DecimalSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<DecimalEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class DecimalEntity : BaseIdEntity
@@ -76,7 +76,7 @@ public class DecimalSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDecimalEntity
+            db.Entities.Add(new NullableDecimalEntity
             {
                 aNullableDecimal = expected
             });
@@ -85,7 +85,7 @@ public class DecimalSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableDecimal);
         }
@@ -97,7 +97,7 @@ public class DecimalSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableDecimalEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableDecimal);
     }
