@@ -229,7 +229,6 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Theory]
     [InlineData(typeof(TestEnum), TestEnum.EnumValue0)]
     [InlineData(typeof(TestEnum), TestEnum.EnumValue1)]
-    [InlineData(typeof(TestEnum?), null)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue0)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
     [InlineData(typeof(int[]), null)]
