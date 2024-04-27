@@ -152,6 +152,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         }
 
         {
+            var db = SingleEntityDbContext.Create(collection);
             var actual = db.Entities.First(p => p.name == "Charlie");
 
             Assert.Equal(expected.name, actual.name);
@@ -568,7 +569,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         var db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().OwnsOne(p => p.location, r => r.HasElementName("location")); });
 
-        var actual = db.Entitites.First(e => e.location.latitude == expected.location.latitude);
+        var actual = db.Entities.First(e => e.location.latitude == expected.location.latitude);
 
         Assert.Equal(expected, actual);
     }
@@ -582,7 +583,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         var db = SingleEntityDbContext.Create(collection);
 
-        var actual = db.Entitites.First(e => e.locations.Any(l => l.latitude == expected.locations[0].latitude));
+        var actual = db.Entities.First(e => e.locations.Any(l => l.latitude == expected.locations[0].latitude));
 
         Assert.Equal(expected._id, actual._id);
     }
@@ -594,7 +595,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.WriteTestDocs(PersonWithLocations1);
         var db = SingleEntityDbContext.Create(collection);
 
-        var actual = db.Entitites.First(e => e.locations.Any(l => l.latitude == 40.1m && l.longitude != 0m));
+        var actual = db.Entities.First(e => e.locations.Any(l => l.latitude == 40.1m && l.longitude != 0m));
 
         Assert.Equal("Carmen", actual.name);
         Assert.Equal(Location3.latitude, actual.locations[0].latitude);
