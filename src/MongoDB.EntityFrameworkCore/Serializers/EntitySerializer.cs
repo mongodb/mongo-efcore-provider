@@ -66,7 +66,9 @@ namespace MongoDB.EntityFrameworkCore.Serializers
             if (navigation != null)
             {
                 var entityType = navigation.TargetEntityType;
-                var serializer = _entitySerializerCache.GetOrCreateSerializer(entityType);
+                var serializer = navigation.IsCollection
+                    ? new CollectionSerializationProvider().GetSerializer(navigation.ClrType)
+                    : _entitySerializerCache.GetOrCreateSerializer(entityType);
                 var elementName = entityType.GetContainingElementName();
                 if (elementName != null)
                 {
