@@ -58,12 +58,12 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.InsertOne(new SimpleEntityWithStringId {_id = ObjectId.GenerateNewId().ToString(), name = "DeleteMe"});
 
         var dbContext = SingleEntityDbContext.Create(collection);
-        var entity = dbContext.Entitites.Single();
+        var entity = dbContext.Entities.Single();
 
         dbContext.Remove(entity);
         dbContext.SaveChanges();
 
-        Assert.Empty(dbContext.Entitites);
+        Assert.Empty(dbContext.Entities);
     }
 
     [Fact]
@@ -73,12 +73,12 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.InsertOne(new SimpleEntityWithObjectIdId {_id = ObjectId.GenerateNewId(), name = "DeleteMe"});
 
         var dbContext = SingleEntityDbContext.Create(collection);
-        var entity = dbContext.Entitites.Single();
+        var entity = dbContext.Entities.Single();
 
         dbContext.Remove(entity);
         dbContext.SaveChanges();
 
-        Assert.Empty(dbContext.Entitites);
+        Assert.Empty(dbContext.Entities);
     }
 
     [Fact]
@@ -88,12 +88,12 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.InsertOne(new SimpleEntityWithGuidId {_id = Guid.NewGuid(), name = "DeleteMe"});
 
         var dbContext = SingleEntityDbContext.Create(collection);
-        var entity = dbContext.Entitites.Single();
+        var entity = dbContext.Entities.Single();
 
         dbContext.Remove(entity);
         dbContext.SaveChanges();
 
-        Assert.Empty(dbContext.Entitites);
+        Assert.Empty(dbContext.Entities);
     }
 
     [Fact]
@@ -103,11 +103,11 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.InsertOne(new SimpleEntityWithIntId {_id = new Random().Next(), name = "DeleteMe"});
 
         var dbContext = SingleEntityDbContext.Create(collection);
-        var entity = dbContext.Entitites.Single();
+        var entity = dbContext.Entities.Single();
 
         dbContext.Remove(entity);
         dbContext.SaveChanges();
 
-        Assert.Empty(dbContext.Entitites);
+        Assert.Empty(dbContext.Entities);
     }
 }

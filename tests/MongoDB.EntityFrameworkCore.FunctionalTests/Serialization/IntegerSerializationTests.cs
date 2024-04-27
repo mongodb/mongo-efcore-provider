@@ -32,7 +32,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new IntEntity
+            db.Entities.Add(new IntEntity
             {
                 anInt = expected
             });
@@ -41,7 +41,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.anInt);
         }
@@ -53,7 +53,7 @@ public class IntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<IntEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class IntEntity : BaseIdEntity
@@ -72,7 +72,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableIntEntity
+            db.Entities.Add(new NullableIntEntity
             {
                 aNullableInt = expected
             });
@@ -81,7 +81,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableInt);
         }
@@ -93,7 +93,7 @@ public class IntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableIntEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableInt);
     }
@@ -113,7 +113,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new LongEntity
+            db.Entities.Add(new LongEntity
             {
                 aLong = expected
             });
@@ -122,7 +122,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aLong);
         }
@@ -134,7 +134,7 @@ public class IntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<LongEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class LongEntity : BaseIdEntity
@@ -153,7 +153,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableLongEntity
+            db.Entities.Add(new NullableLongEntity
             {
                 aNullableLong = expected
             });
@@ -162,7 +162,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableLong);
         }
@@ -174,7 +174,7 @@ public class IntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableLongEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableLong);
     }
@@ -194,7 +194,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new ShortEntity
+            db.Entities.Add(new ShortEntity
             {
                 aShort = expected
             });
@@ -203,7 +203,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aShort);
         }
@@ -215,7 +215,7 @@ public class IntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<ShortEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class ShortEntity : BaseIdEntity
@@ -234,7 +234,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableShortEntity
+            db.Entities.Add(new NullableShortEntity
             {
                 aNullableShort = expected
             });
@@ -243,7 +243,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableShort);
         }
@@ -255,7 +255,7 @@ public class IntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableShortEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableShort);
     }
@@ -276,7 +276,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new SByteEntity
+            db.Entities.Add(new SByteEntity
             {
                 aByte = expected
             });
@@ -285,7 +285,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aByte);
         }
@@ -297,7 +297,7 @@ public class IntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<SByteEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class SByteEntity : BaseIdEntity
@@ -318,7 +318,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableSByteEntity
+            db.Entities.Add(new NullableSByteEntity
             {
                 aNullableSByte = expected
             });
@@ -327,7 +327,7 @@ public class IntegerSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableSByte);
         }
@@ -339,7 +339,7 @@ public class IntegerSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableSByteEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableSByte);
     }

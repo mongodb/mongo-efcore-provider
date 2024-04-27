@@ -72,7 +72,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(new OwnedEntityRemappingEntity
+            dbContext.Entities.Add(new OwnedEntityRemappingEntity
             {
                 _id = id,
                 Location = location
@@ -97,7 +97,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(new NonKeyRemappingEntity
+            dbContext.Entities.Add(new NonKeyRemappingEntity
             {
                 _id = id, RemapThisToName = name
             });
@@ -121,7 +121,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(new KeyRemappingEntity
+            dbContext.Entities.Add(new KeyRemappingEntity
             {
                 _id = id, name = name
             });
@@ -149,10 +149,10 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
             {
                 _id = id, name = name
             };
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
 
-            dbContext.Entitites.Remove(entity);
+            dbContext.Entities.Remove(entity);
             dbContext.SaveChanges();
         }
 

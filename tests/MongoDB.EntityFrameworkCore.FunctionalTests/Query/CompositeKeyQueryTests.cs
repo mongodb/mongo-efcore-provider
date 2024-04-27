@@ -33,7 +33,7 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
     {
         var dbContext = CreateContext();
 
-        var result = dbContext.Entitites.Where(e => e.Key1 == "two").ToList();
+        var result = dbContext.Entities.Where(e => e.Key1 == "two").ToList();
 
         Assert.Equal(2, result.Count);
         Assert.All(result, e => Assert.Equal("two", e.Key1));
@@ -44,7 +44,7 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
     {
         var dbContext = CreateContext();
 
-        var result = dbContext.Entitites.Where(e => e.Key1 == "two" && e.Key2 == 3).ToList();
+        var result = dbContext.Entities.Where(e => e.Key1 == "two" && e.Key2 == 3).ToList();
 
         Assert.Single(result);
         Assert.All(result, e => Assert.Equal("two", e.Key1));
@@ -56,7 +56,7 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
     {
         var dbContext = CreateContext();
 
-        var result = dbContext.Entitites.Where(e => e.Key2 > 2).ToList();
+        var result = dbContext.Entities.Where(e => e.Key2 > 2).ToList();
 
         Assert.Single(result);
         Assert.All(result, e => Assert.True(e.Key2 > 2));
@@ -68,7 +68,7 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             var context = SingleEntityDbContext.Create(collection, ConfigureContext);
-            context.Entitites.AddRange(
+            context.Entities.AddRange(
             [
                 new Entity
                 {

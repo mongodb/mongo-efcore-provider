@@ -119,7 +119,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aGuid);
@@ -137,7 +137,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aString);
@@ -155,7 +155,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.anInt16);
@@ -172,7 +172,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(0, actual.anInt16);
@@ -190,7 +190,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.anInt16);
@@ -208,7 +208,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.anInt32);
@@ -225,7 +225,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(0, actual.anInt32);
@@ -243,7 +243,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.anInt32);
@@ -261,7 +261,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.anInt64);
@@ -278,7 +278,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(0, actual.anInt64);
@@ -296,7 +296,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.anInt64);
@@ -314,7 +314,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aByte);
@@ -332,7 +332,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aChar);
@@ -353,7 +353,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aDecimal);
@@ -370,7 +370,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(0, actual.aDecimal);
@@ -391,7 +391,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aDecimal);
@@ -409,7 +409,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aSingle);
@@ -426,7 +426,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(0, actual.aSingle);
@@ -444,7 +444,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aSingle);
@@ -462,7 +462,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aDouble);
@@ -479,7 +479,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(0, actual.aDouble);
@@ -497,7 +497,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aDouble);
@@ -513,7 +513,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Empty(actual.aList);
@@ -533,10 +533,10 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         };
 
         var db = SingleEntityDbContext.Create(collection);
-        db.Entitites.Add(item);
+        db.Entities.Add(item);
         db.SaveChanges();
 
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aList);
     }
@@ -551,7 +551,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Empty(actual.aList);
@@ -571,10 +571,10 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         };
 
         var db = SingleEntityDbContext.Create(collection);
-        db.Entitites.Add(item);
+        db.Entities.Add(item);
         db.SaveChanges();
 
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aList);
     }
@@ -678,7 +678,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         });
 
         var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entitites.FirstOrDefault();
+        var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
         Assert.Equal(value, actual.Value);

@@ -40,7 +40,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 Id = 1, Name = "John"
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
         }
 
@@ -72,7 +72,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 }
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
         }
 
@@ -104,7 +104,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 }
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
 
             person.City = null;
@@ -139,7 +139,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 }
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
 
             person.City = new City
@@ -177,7 +177,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 }
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
 
             person.City.Name = "Washington";
@@ -207,7 +207,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 Id = 1, Name = "John"
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
         }
 
@@ -246,7 +246,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 ]
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
         }
 
@@ -288,7 +288,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             };
 
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
 
             person.Cities = null;
@@ -330,7 +330,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 ]
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
 
             person.Cities = person.Cities.Concat(new List<City>
@@ -380,7 +380,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 ]
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
 
             person.Cities = person.Cities.Where(c => c.Name != "Washington").ToList();
@@ -422,7 +422,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 ]
             };
 
-            db.Entitites.Add(person);
+            db.Entities.Add(person);
             db.SaveChanges();
 
             person.Cities[0].Name = "Denver";

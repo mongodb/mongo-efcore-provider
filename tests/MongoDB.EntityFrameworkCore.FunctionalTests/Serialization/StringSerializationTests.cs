@@ -38,7 +38,7 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new StringEntity
+            db.Entities.Add(new StringEntity
             {
                 aString = expected
             });
@@ -47,7 +47,7 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aString);
         }
@@ -59,7 +59,7 @@ public class StringSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<StringEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aString);
     }
@@ -82,7 +82,7 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new CharEntity
+            db.Entities.Add(new CharEntity
             {
                 aChar = expected
             });
@@ -91,7 +91,7 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aChar);
         }
@@ -103,7 +103,7 @@ public class StringSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<CharEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class CharEntity : BaseIdEntity
@@ -127,7 +127,7 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableCharEntity
+            db.Entities.Add(new NullableCharEntity
             {
                 aNullableChar = expected
             });
@@ -136,7 +136,7 @@ public class StringSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableChar);
         }
@@ -148,7 +148,7 @@ public class StringSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableCharEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableChar);
     }

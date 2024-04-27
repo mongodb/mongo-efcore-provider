@@ -32,7 +32,7 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new FloatEntity
+            db.Entities.Add(new FloatEntity
             {
                 aFloat = expected
             });
@@ -41,7 +41,7 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aFloat);
         }
@@ -53,7 +53,7 @@ public class FloatingSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<FloatEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class FloatEntity : BaseIdEntity
@@ -72,7 +72,7 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableFloatEntity
+            db.Entities.Add(new NullableFloatEntity
             {
                 aNullableFloat = expected
             });
@@ -81,7 +81,7 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableFloat);
         }
@@ -93,7 +93,7 @@ public class FloatingSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableFloatEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableFloat);
     }
@@ -113,7 +113,7 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new DoubleEntity
+            db.Entities.Add(new DoubleEntity
             {
                 aDouble = expected
             });
@@ -122,7 +122,7 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aDouble);
         }
@@ -134,7 +134,7 @@ public class FloatingSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<DoubleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        Assert.Throws<InvalidOperationException>(() => db.Entitites.FirstOrDefault());
+        Assert.Throws<InvalidOperationException>(() => db.Entities.FirstOrDefault());
     }
 
     class DoubleEntity : BaseIdEntity
@@ -154,7 +154,7 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entitites.Add(new NullableDoubleEntity
+            db.Entities.Add(new NullableDoubleEntity
             {
                 aNullableDouble = expected
             });
@@ -163,7 +163,7 @@ public class FloatingSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entitites.FirstOrDefault();
+            var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
             Assert.Equal(expected, result.aNullableDouble);
         }
@@ -175,7 +175,7 @@ public class FloatingSerializationTests : BaseSerializationTests
         var collection = SetupIdOnlyCollection<NullableDoubleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var result = db.Entitites.FirstOrDefault();
+        var result = db.Entities.FirstOrDefault();
         Assert.NotNull(result);
         Assert.Null(result.aNullableDouble);
     }

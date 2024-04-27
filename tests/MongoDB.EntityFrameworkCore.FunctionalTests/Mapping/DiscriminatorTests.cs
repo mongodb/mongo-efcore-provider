@@ -55,7 +55,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture tempDatabase)
             mb.Entity<Vehicle>().HasDiscriminator(v => v.VehicleType);
         });
 
-        var ex = Assert.Throws<NotSupportedException>(() => db.Entitites.FirstOrDefault());
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.FirstOrDefault());
         Assert.Contains(nameof(Vehicle), ex.Message);
     }
 }

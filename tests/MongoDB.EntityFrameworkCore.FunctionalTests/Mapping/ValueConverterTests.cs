@@ -50,7 +50,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<IdIsObjectId>();
         var db = SingleEntityDbContext.Create(collection, ClrObjectIdToMongoString);
 
-        var found = db.Entitites.First();
+        var found = db.Entities.First();
         Assert.Equal(expectedId, found._id);
     }
 
@@ -64,7 +64,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<IdIsObjectId>();
         var db = SingleEntityDbContext.Create(collection, ClrObjectIdToMongoString);
 
-        var found = db.Entitites.First(e => e._id == expectedId);
+        var found = db.Entities.First(e => e._id == expectedId);
         Assert.Equal(expectedId, found._id);
     }
 
@@ -75,7 +75,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var db = SingleEntityDbContext.Create(collection, ClrObjectIdToMongoString);
 
         var original = new IdIsObjectId();
-        db.Entitites.Add(original);
+        db.Entities.Add(original);
         db.SaveChanges();
 
         var found = GetCollection<IdIsString>().AsQueryable().First();
@@ -97,7 +97,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<IdIsString>();
         var db = SingleEntityDbContext.Create(collection, ClrStringToMongoObjectId);
 
-        var found = db.Entitites.First();
+        var found = db.Entities.First();
         Assert.Equal(expected._id.ToString(), found._id);
     }
 
@@ -110,7 +110,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<IdIsString>();
         var db = SingleEntityDbContext.Create(collection, ClrStringToMongoObjectId);
 
-        var found = db.Entitites.First(e => e._id == expected._id.ToString());
+        var found = db.Entities.First(e => e._id == expected._id.ToString());
         Assert.Equal(expected._id.ToString(), found._id);
     }
 
@@ -121,7 +121,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var db = SingleEntityDbContext.Create(collection, ClrStringToMongoObjectId);
 
         var original = new IdIsString { _id = ObjectId.GenerateNewId().ToString() };
-        db.Entitites.Add(original);
+        db.Entities.Add(original);
         db.SaveChanges();
 
         var found = GetCollection<IdIsObjectId>().AsQueryable().First();
@@ -156,7 +156,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<ActiveIsBool>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrBoolToMongoString);
 
-        var found = db.Entitites.First();
+        var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
         Assert.Equal(active, found.active);
     }
@@ -173,7 +173,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<ActiveIsBool>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrBoolToMongoString);
 
-        var found = db.Entitites.First(e => e.active == active);
+        var found = db.Entities.First(e => e.active == active);
         Assert.Equal(expected._id, found._id);
         Assert.Equal(active, found.active);
     }
@@ -187,7 +187,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var db = SingleEntityDbContext.Create(collection, ClrBoolToMongoString);
 
         var original = new ActiveIsBool { active = active };
-        db.Entitites.Add(original);
+        db.Entities.Add(original);
         db.SaveChanges();
 
         var found = GetCollection<ActiveIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
@@ -224,7 +224,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrIntToMongoString);
 
-        var found = db.Entitites.First();
+        var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
         Assert.Equal(days, found.days);
     }
@@ -242,7 +242,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrIntToMongoString);
 
-        var found = db.Entitites.First(e => e.days == days);
+        var found = db.Entities.First(e => e.days == days);
         Assert.Equal(expected._id, found._id);
         Assert.Equal(days, found.days);
     }
@@ -257,7 +257,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var db = SingleEntityDbContext.Create(collection, ClrIntToMongoString);
 
         var original = new DaysIsInt { days = days };
-        db.Entitites.Add(original);
+        db.Entities.Add(original);
         db.SaveChanges();
 
         var found = GetCollection<DaysIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
@@ -289,7 +289,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<DaysIsTimeSpan>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrTimeSpanToMongoInt);
 
-        var found = db.Entitites.First();
+        var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
         Assert.Equal(days, found.days.TotalDays);
     }
@@ -307,7 +307,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrTimeSpanToMongoInt);
 
-        var found = db.Entitites.First(e => e.days == days);
+        var found = db.Entities.First(e => e.days == days);
         Assert.Equal(expected._id, found._id);
         Assert.Equal(days, found.days);
     }
@@ -322,7 +322,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var db = SingleEntityDbContext.Create(collection, ClrTimeSpanToMongoInt);
 
         var original = new DaysIsTimeSpan { days = TimeSpan.FromDays(days) };
-        db.Entitites.Add(original);
+        db.Entities.Add(original);
         db.SaveChanges();
 
         var found = GetCollection<DaysIsInt>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
@@ -349,7 +349,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrStringToMongoInt);
 
-        var found = db.Entitites.First();
+        var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
         Assert.Equal(days, found.days);
     }
@@ -367,7 +367,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrStringToMongoInt);
 
-        var found = db.Entitites.First(e => e.days == days);
+        var found = db.Entities.First(e => e.days == days);
         Assert.Equal(expected._id, found._id);
         Assert.Equal(days, found.days);
     }
@@ -382,7 +382,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var db = SingleEntityDbContext.Create(collection, ClrStringToMongoInt);
 
         var original = new DaysIsString { days = days.ToString() };
-        db.Entitites.Add(original);
+        db.Entities.Add(original);
         db.SaveChanges();
 
         var found = GetCollection<DaysIsInt>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
@@ -420,7 +420,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrDecimalToMongoDecimal128);
 
-        var found = db.Entitites.First();
+        var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
         Assert.Equal(amount, found.amount);
     }
@@ -439,7 +439,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrDecimalToMongoDecimal128);
 
-        var found = db.Entitites.First(e => e.amount == amount);
+        var found = db.Entities.First(e => e.amount == amount);
         Assert.Equal(expected._id, found._id);
         Assert.Equal(amount, found.amount);
     }
@@ -455,7 +455,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var db = SingleEntityDbContext.Create(collection, ClrDecimalToMongoDecimal128);
 
         var original = new AmountIsDecimal { amount = amount };
-        db.Entitites.Add(original);
+        db.Entities.Add(original);
         db.SaveChanges();
 
         var found = GetCollection<AmountIsDecimal128>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
@@ -487,7 +487,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrDecimalToString);
 
-        var found = db.Entitites.First();
+        var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
         Assert.Equal(amount, found.amount.ToString());
     }
@@ -505,7 +505,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var collection = GetCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
         var db = SingleEntityDbContext.Create(collection, ClrDecimalToString);
 
-        var found = db.Entitites.First(e => e.amount == decimal.Parse(amount));
+        var found = db.Entities.First(e => e.amount == decimal.Parse(amount));
         Assert.Equal(expected._id, found._id);
         Assert.Equal(amount, found.amount.ToString());
     }
@@ -520,7 +520,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var db = SingleEntityDbContext.Create(collection, ClrDecimalToString);
 
         var original = new AmountIsDecimal { amount = decimal.Parse(amount) };
-        db.Entitites.Add(original);
+        db.Entities.Add(original);
         db.SaveChanges();
 
         var found = GetCollection<AmountIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
