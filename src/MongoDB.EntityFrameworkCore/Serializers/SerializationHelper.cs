@@ -57,20 +57,39 @@ internal static class SerializationHelper
 
     internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
     {
-        var serializer = CreateTypeSerializer(property.ClrType, property);
+        var serializer = CreateTypeSerializer(property);
+
         if (property.IsPrimaryKey() && property.DeclaringType is IEntityType entityType
                                     && entityType.FindPrimaryKey()?.Properties.Count > 1)
         {
             return BsonSerializationInfo.CreateWithPath(new[]
             {
                 "_id", property.GetElementName()
-            }, serializer, property.ClrType);
+            }, serializer, serializer.ValueType);
         }
 
-        return new BsonSerializationInfo(property.GetElementName(), serializer, property.ClrType);
+        return new BsonSerializationInfo(property.GetElementName(), serializer, serializer.ValueType);
     }
 
-    private static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty? property = null)
+    private static IBsonSerializer CreateTypeSerializer(IReadOnlyProperty property)
+    {
+        var typeMapping = property.FindTypeMapping();
+        if (typeMapping is {Converter: { } converter})
+        {
+            var valueConverterSerializerType = typeof(ValueConverterSerializer<,>)
+                .MakeGenericType(converter.ModelClrType, converter.ProviderClrType);
+
+            var providerSerializer = CreateTypeSerializer(converter.ProviderClrType);
+            var serializer =
+                (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, [converter, providerSerializer]);
+
+            return serializer ?? throw new InvalidOperationException($"Unable to create serializer to handle '{converter.GetType().ShortDisplayName()}'");
+        }
+
+        return CreateTypeSerializer(property.ClrType, property);
+    }
+
+    private static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty property = null)
         => type switch
         {
             _ when type == typeof(bool) => BooleanSerializer.Instance,

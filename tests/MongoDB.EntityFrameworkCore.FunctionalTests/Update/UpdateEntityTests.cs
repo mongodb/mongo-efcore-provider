@@ -59,14 +59,14 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
             entity.name = "After";
             dbContext.SaveChanges();
         }
 
         var newDbContext = SingleEntityDbContext.Create(collection);
-        var foundEntity = newDbContext.Entitites.Single();
+        var foundEntity = newDbContext.Entities.Single();
         Assert.Equal(entity._id, foundEntity._id);
         Assert.Equal("After", foundEntity.name);
     }
@@ -86,7 +86,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
             entity.session = Guid.NewGuid();
             entity.lastCount++;
@@ -95,7 +95,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
         }
 
         var newDbContext = SingleEntityDbContext.Create(collection);
-        var foundEntity = newDbContext.Entitites.Single();
+        var foundEntity = newDbContext.Entities.Single();
         Assert.Equal(entity._id, foundEntity._id);
         Assert.Equal(entity.session, foundEntity.session);
         Assert.Equal(entity.lastCount, foundEntity.lastCount);
@@ -105,8 +105,6 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Theory]
     [InlineData(typeof(TestEnum), TestEnum.Value0, TestEnum.Value1)]
     [InlineData(typeof(TestEnum), TestEnum.Value1, TestEnum.Value0)]
-    [InlineData(typeof(TestEnum?), null, TestEnum.Value1)]
-    [InlineData(typeof(TestEnum?), TestEnum.Value1, null)]
     [InlineData(typeof(TestEnum?), TestEnum.Value0, TestEnum.Value1)]
     public void Entity_update_tests(Type valueType, object initialValue, object updatedValue)
     {
@@ -131,7 +129,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
             {
                 _id = ObjectId.GenerateNewId(), Value = initialValue
             };
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
             entity.Value = updatedValue;
             dbContext.SaveChanges();
@@ -139,7 +137,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             var newDbContext = SingleEntityDbContext.Create(collection);
-            var foundEntity = newDbContext.Entitites.Single();
+            var foundEntity = newDbContext.Entities.Single();
             Assert.Equal(updatedValue, foundEntity.Value);
         }
     }

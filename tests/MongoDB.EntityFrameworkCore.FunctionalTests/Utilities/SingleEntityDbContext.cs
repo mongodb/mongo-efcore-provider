@@ -65,7 +65,7 @@ internal class SingleEntityDbContext<T> : DbContext where T : class
     private readonly string _collectionName;
     private readonly Action<ModelBuilder>? _modelBuilderAction;
 
-    public DbSet<T> Entitites { get; init; }
+    public DbSet<T> Entities { get; init; }
 
     public SingleEntityDbContext(DbContextOptions options, string collectionName, Action<ModelBuilder>? modelBuilderAction = null)
         : base(options)

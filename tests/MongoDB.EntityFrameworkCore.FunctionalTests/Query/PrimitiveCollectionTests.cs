@@ -46,7 +46,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
         ]);
         var db = SingleEntityDbContext.Create(collection);
 
-        var actual = db.Entitites.First();
+        var actual = db.Entities.First();
         Assert.Empty(actual.items);
     }
 
@@ -57,7 +57,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
         collection.WriteTestDocs([new MissingPrimitiveList()]);
         var db = SingleEntityDbContext.Create<MissingPrimitiveList, NonNullablePrimitiveArray>(collection);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.Entitites.First());
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.First());
         Assert.Contains("null", ex.Message);
         Assert.Contains("non-nullable", ex.Message);
         Assert.Contains(nameof(NonNullablePrimitiveList.items), ex.Message);
@@ -75,7 +75,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
         ]);
         var db = SingleEntityDbContext.Create(collection);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.Entitites.First());
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.First());
         Assert.Contains("null", ex.Message);
         Assert.Contains("non-nullable", ex.Message);
         Assert.Contains(nameof(NonNullablePrimitiveList.items), ex.Message);
@@ -88,7 +88,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
         collection.WriteTestDocs([new MissingPrimitiveList()]);
         var db = SingleEntityDbContext.Create<MissingPrimitiveList, NullablePrimitiveArray>(collection);
 
-        var actual = db.Entitites.First();
+        var actual = db.Entities.First();
         Assert.Null(actual.items);
     }
 
@@ -104,7 +104,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
         ]);
         var db = SingleEntityDbContext.Create(collection);
 
-        var actual = db.Entitites.First();
+        var actual = db.Entities.First();
         Assert.NotNull(actual.items);
         Assert.Empty(actual.items);
     }
@@ -121,7 +121,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
         ]);
         var db = SingleEntityDbContext.Create(collection);
 
-        var actual = db.Entitites.First();
+        var actual = db.Entities.First();
         Assert.Null(actual.items);
     }
 }

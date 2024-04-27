@@ -40,7 +40,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
         }
 
@@ -67,7 +67,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
         }
 
@@ -78,7 +78,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
 
-            var actual = dbContext.Entitites.Single();
+            var actual = dbContext.Entities.Single();
 
             Assert.Equal(entity.Id1, actual.Id1);
             Assert.Equal(entity.Id2, actual.Id2);
@@ -98,7 +98,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
 
             entity.Data = "updated text";
@@ -127,7 +127,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
             var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
-            dbContext.Entitites.Add(entity);
+            dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
 
             dbContext.Remove(entity);
