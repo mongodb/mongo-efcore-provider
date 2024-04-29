@@ -621,32 +621,14 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
-    public void OwnedEntity_can_go_multiple_levels_deep()
+    public void OwnedEntity_can_go_multiple_levels_deep_serializing()
     {
-        var expectedNestedName = nameof(OwnedEntity_can_go_multiple_levels_deep);
+        var expectedName = FirstLevel1.children[0].children[0].name;
         var collection = _tempDatabase.CreateTemporaryCollection<FirstLevel>();
-
-        var expected = new FirstLevel
-        {
-            _id = Guid.NewGuid(),
-            children =
-            [
-                new SecondLevel
-                {
-                    children =
-                    [
-                        new()
-                        {
-                            name = expectedNestedName
-                        }
-                    ]
-                }
-            ]
-        };
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(expected);
+            db.Entities.Add(FirstLevel1);
             db.SaveChanges();
         }
 
@@ -655,21 +637,59 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
             var actual = db.Entities.FirstOrDefault();
 
             Assert.NotNull(actual);
-            Assert.Equal(expected._id, actual._id);
+            Assert.Equal(FirstLevel1._id, actual._id);
             var secondLevel = Assert.Single(actual.children);
             var thirdLevel = Assert.Single(secondLevel.children);
-            Assert.Equal(expectedNestedName, thirdLevel.name);
+            Assert.Equal(expectedName, thirdLevel.name);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_can_go_multiple_levels_deep_querying_collection()
+    {
+        var expectedName = FirstLevel1.children[0].children[0].name;
+        var collection = _tempDatabase.CreateTemporaryCollection<FirstLevel>();
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(FirstLevel1);
+            db.SaveChanges();
         }
 
         {
             var db = SingleEntityDbContext.Create(collection);
-            var actual = db.Entities.FirstOrDefault(e => e.children.Any(f => f.children.Any(g => g.name == expectedNestedName)));
+            var actual = db.Entities.FirstOrDefault(e => e.children.Any(f => f.children.Any(g => g.name == expectedName)));
 
             Assert.NotNull(actual);
-            Assert.Equal(expected._id, actual._id);
+            Assert.Equal(FirstLevel1._id, actual._id);
             var secondLevel = Assert.Single(actual.children);
             var thirdLevel = Assert.Single(secondLevel.children);
-            Assert.Equal(expectedNestedName, thirdLevel.name);
+            Assert.Equal(expectedName, thirdLevel.name);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_can_go_multiple_levels_deep_querying_reference()
+    {
+        var expectedReference = FirstLevel1.children[0].children[0].reference;
+        var collection = _tempDatabase.CreateTemporaryCollection<FirstLevel>();
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(FirstLevel1);
+            db.SaveChanges();
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault(e
+                => e.children.Any(f => f.children.Any(g => g.reference.name == expectedReference.name)));
+
+            Assert.NotNull(actual);
+            Assert.Equal(FirstLevel1._id, actual._id);
+            var secondLevel = Assert.Single(actual.children);
+            var thirdLevel = Assert.Single(secondLevel.children);
+            Assert.Equal(expectedReference.name, thirdLevel.reference.name);
         }
     }
 
@@ -738,6 +758,12 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     private record ThirdLevel
+    {
+        public string name { get; set; }
+        public Reference reference { get; set; }
+    }
+
+    private record Reference
     {
         public string name { get; set; }
     }
@@ -811,4 +837,26 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
             name = "Henry", first = Location1, second = Location2
         }
     ];
+
+    private static readonly FirstLevel FirstLevel1 = new()
+    {
+        _id = Guid.NewGuid(),
+        children =
+        [
+            new SecondLevel
+            {
+                children =
+                [
+                    new()
+                    {
+                        name = "This is the third level name",
+                        reference = new()
+                        {
+                            name = "This is the item reference name"
+                        }
+                    }
+                ]
+            }
+        ]
+    };
 }
