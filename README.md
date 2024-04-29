@@ -1,6 +1,6 @@
-# MongoDB Entity Framework Core Provider Preview
+# MongoDB Entity Framework Core Provider 
 
-This project is currently in preview and not recommended for production use yet.
+The MongoDB EF Core Provider requires Entity Framework Core 8 on .NET 8 or later.
 
 ## Getting Started
 
@@ -29,7 +29,7 @@ internal class PlanetDbContext : DbContext
 }
 ```
 
-And then to get going with the DbContext
+To get going with the DbContext:
 
 ```csharp
 var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI");
@@ -37,44 +37,41 @@ var mongoClient = new MongoClient(mongoConnectionString);
 var db = PlanetDbContext.Create(mongoClient.GetDatabase("planets"));
 ```
 
-## Limitations & Roadmap
+## Supported Features
 
-This preview has a number of limitations at this time. Please consider the following support matrix.
+Entity Framework Core and MongoDB have a wide variety of features. This provider supports a subset of the functionality available in both, specifically:
 
-### Supported in Preview 1
-
-- Entity Framework Core 7 & .NET 7 or later
-- Querying with Where, Find, First, Single, OrderBy, ThenBy, Skip, Take
+- Querying with Where, Find, First, Single, OrderBy, ThenBy, Skip, Take etc.
 - Top-level aggregates of Any, Count, LongCount
-- Mapping properties to BSON Element Names using `[Column]` attribute or `HasElementName("name")` method
+- Mapping properties to BSON elements using `[Column]` or `[BsonElement]` attributes or `HasElementName("name")` method
 - Mapping entities to collections using `[Table("name")]` attribute or `ToCollection("name")` method
-- Composite keys
-- Properties with typical CLR types (int, string, Guid, decimal), Mongo types (ObjectId, Decimal128) and "value" objects
-- Properties containing arrays and lists of simple CLR types as well as "value" objects
+- Single or composite keys of standard types including string, Guid and ObjectId
+- Properties with typical CLR types (int, string, Guid, decimal), Mongo types (ObjectId, Decimal128)
+- Properties containing arrays and lists of simple CLR types
+- Owned entities (aka value types, sub-documents, embedded documents) both directly and within collections
+- BsonIgnore, BsonId, BsonDateTimeOptions, BsonElement and BsonRequired support
+- Value converters using `HasConversion`
+- Query and update logging including MQL (sensitive mode only)
+- Some mapping configuration options for DateTime
 
-### Next release
+## Limitations
 
-- Entity Framework Core 8 & .NET 8 or later
-- Limited Bson*Attribute support
-- Mapping configuration options (e.g. DateTimeKind)
-- Value converters
-- Logging
-- Mapping configuration options
+A number of Entity Framework Core features are not currently supported but planned for future release. If you require use of these facilities
+in the mean-time consider using the existing [MongoDB C# Driver's](https://github.com/mongodb/mongo-csharp-driver) LINQ provider which supports them.
 
-### Planned for next release +1 
+They are:
 
 - Select projections
 - Sum, Average, Min, Max etc.
 - Transactions
 - Type discriminators
-- More mapping configuration options
+- Additional mapping configuration options
 
 ### Not supported but considering for future releases
 
 - ExecuteUpdate & ExecuteDelete
-- Properties with dictionary type
+- Properties of Dictionary type
 - Binary/byte array properties
-- Keyless entity types
 - Additional CLR types (DateOnly, TimeOnly etc).
 - EF shadow properties
 - GroupBy operations
@@ -82,8 +79,9 @@ This preview has a number of limitations at this time. Please consider the follo
 - Includes/joins
 - Foreign keys and navigation traversal
   
-### Not supported out-of-scope features
+### Not supported & out-of-scope features
 
+- Keyless entity types
 - Schema migrations
 - Database-first & model-first
 - Alternate keys
