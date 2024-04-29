@@ -37,6 +37,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 {
     private readonly Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly Stack<ProjectionMember> _projectionMembers = new();
+    private readonly Dictionary<ParameterExpression, CollectionShaperExpression> _collectionShaperMapping = new();
     private readonly Stack<INavigation> _includedNavigations = new();
 
     private MongoQueryExpression _queryExpression;
@@ -81,6 +82,11 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 return base.Visit(expression);
 
             case ParameterExpression parameterExpression:
+                if (_collectionShaperMapping.ContainsKey(parameterExpression))
+                {
+                    return parameterExpression;
+                }
+
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
                     == true)
                 {
@@ -173,6 +179,15 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
                     break;
 
+                case ParameterExpression parameterExpression:
+                    if (!_collectionShaperMapping.TryGetValue(parameterExpression, out var collectionShaper))
+                    {
+                        return null;
+                    }
+
+                    shaperExpression = (StructuralTypeShaperExpression)collectionShaper.InnerShaper;
+                    break;
+
                 default:
                     return null;
             }
@@ -236,6 +251,38 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
                 default:
                     throw new InvalidOperationException(CoreStrings.TranslationFailed(methodCallExpression.Print()));
+            }
+        }
+
+        var method = methodCallExpression.Method;
+        if (method.DeclaringType == typeof(Queryable))
+        {
+            var genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
+            var visitedSource = Visit(methodCallExpression.Arguments[0]);
+
+            switch (method.Name)
+            {
+                case nameof(Queryable.AsQueryable)
+                    when genericMethod == QueryableMethods.AsQueryable:
+                    // Unwrap AsQueryable
+                    return visitedSource;
+
+                case nameof(Queryable.Select)
+                    when genericMethod == QueryableMethods.Select:
+                    if (visitedSource is not CollectionShaperExpression shaper)
+                    {
+                        return null;
+                    }
+
+                    var lambda = methodCallExpression.Arguments[1].UnwrapLambdaFromQuote();
+
+                    _collectionShaperMapping.Add(lambda.Parameters.Single(), shaper);
+
+                    lambda = Expression.Lambda(Visit(lambda.Body), lambda.Parameters);
+                    return Expression.Call(
+                        EnumerableMethods.Select.MakeGenericMethod(method.GetGenericArguments()),
+                        shaper,
+                        lambda);
             }
         }
 

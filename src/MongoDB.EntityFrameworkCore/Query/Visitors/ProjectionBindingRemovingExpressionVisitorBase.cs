@@ -246,12 +246,6 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         var method = methodCallExpression.Method;
         var genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
 
-        // Ensure ".AsQueryable" is not injected around collections as sometimes they are null and will throw
-        if (method.DeclaringType == typeof(Queryable) && genericMethod == QueryableMethods.AsQueryable)
-        {
-            return Visit(methodCallExpression.Arguments[0]);
-        }
-
         if (genericMethod == ExpressionExtensions.ValueBufferTryReadValueMethod)
         {
             var property = methodCallExpression.Arguments[2].GetConstantValue<IProperty>();
@@ -270,6 +264,30 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             }
 
             return CreateGetValueExpression(innerExpression, property, methodCallExpression.Type);
+        }
+
+        if (method.DeclaringType == typeof(Enumerable)
+            && method.Name == nameof(Enumerable.Select)
+            && genericMethod == EnumerableMethods.Select)
+        {
+            var lambda = (LambdaExpression)methodCallExpression.Arguments[1];
+            if (lambda.Body is IncludeExpression includeExpression)
+            {
+                if (!(includeExpression.Navigation is INavigation navigation)
+                    || navigation.IsOnDependent
+                    || navigation.ForeignKey.DeclaringEntityType.IsDocumentRoot())
+                {
+                    throw new InvalidOperationException($"Including navigation '{nameof(navigation)
+                    }' is not supported as the navigation is not embedded in same resource.");
+                }
+
+                _pendingIncludes.Add(includeExpression);
+
+                Visit(includeExpression.EntityExpression);
+
+                // Includes on collections are processed when visiting CollectionShaperExpression
+                return Visit(methodCallExpression.Arguments[0]);
+            }
         }
 
         return base.VisitMethodCall(methodCallExpression);

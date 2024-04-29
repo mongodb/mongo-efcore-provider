@@ -602,6 +602,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal(Location3.longitude, actual.locations[0].longitude);
     }
 
+
     [Fact]
     public void OwnedEntity_can_have_element_name_set()
     {
@@ -617,6 +618,59 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         Assert.Equal(expected.name, actual.name);
         Assert.Equal(expected.location.latitude, actual.location.latitude);
         Assert.Equal(expected.location.longitude, actual.location.longitude);
+    }
+
+    [Fact]
+    public void OwnedEntity_can_go_multiple_levels_deep()
+    {
+        var expectedNestedName = nameof(OwnedEntity_can_go_multiple_levels_deep);
+        var collection = _tempDatabase.CreateTemporaryCollection<FirstLevel>();
+
+        var expected = new FirstLevel
+        {
+            _id = Guid.NewGuid(),
+            children =
+            [
+                new SecondLevel
+                {
+                    children =
+                    [
+                        new()
+                        {
+                            name = expectedNestedName
+                        }
+                    ]
+                }
+            ]
+        };
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(expected);
+            db.SaveChanges();
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(expected._id, actual._id);
+            var secondLevel = Assert.Single(actual.children);
+            var thirdLevel = Assert.Single(secondLevel.children);
+            Assert.Equal(expectedNestedName, thirdLevel.name);
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault(e => e.children.Any(f => f.children.Any(g => g.name == expectedNestedName)));
+
+            Assert.NotNull(actual);
+            Assert.Equal(expected._id, actual._id);
+            var secondLevel = Assert.Single(actual.children);
+            var thirdLevel = Assert.Single(secondLevel.children);
+            Assert.Equal(expectedNestedName, thirdLevel.name);
+        }
     }
 
     private record Person
@@ -672,18 +726,20 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         public Location second { get; set; }
     }
 
-    class TopLevelNestedPerson
+    private record FirstLevel
     {
-        public ObjectId _id { get; set; }
-        public string name { get; set; }
-        public List<NestedPerson> children { get; set; }
+        public Guid _id { get; set; }
+        public List<SecondLevel> children { get; set; }
     }
 
-    class NestedPerson
+    private record SecondLevel
+    {
+        public List<ThirdLevel> children { get; set; }
+    }
+
+    private record ThirdLevel
     {
         public string name { get; set; }
-        public List<NestedPerson> children { get; set; }
-        public Location location { get; set; }
     }
 
     private static readonly City City1 = new()
@@ -755,28 +811,4 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
             name = "Henry", first = Location1, second = Location2
         }
     ];
-
-    private static readonly TopLevelNestedPerson[] NestedPersons =
-    {
-        new()
-        {
-            name = "First",
-            children =
-            [
-                new()
-                {
-                    name = "Second",
-                    children =
-                    [
-                        new()
-                        {
-                            name = "Third", location = Location3
-                        }
-                    ]
-                }
-            ],
-        },
-        new() {name = "Fourth", children = []
-        }
-    };
 }
