@@ -144,167 +144,26 @@ Class MongoServiceCollectionExtensions  <a class="header-action link-secondary" 
 
 
 
-
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddEntityFrameworkMongoDB_" data-uid="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddEntityFrameworkMongoDB*"></a>
-
-  <h3 id="Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddEntityFrameworkMongoDB_Microsoft_Extensions_DependencyInjection_IServiceCollection_" data-uid="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddEntityFrameworkMongoDB(Microsoft.Extensions.DependencyInjection.IServiceCollection)">
-  AddEntityFrameworkMongoDB(IServiceCollection)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Extensions/MongoServiceCollectionExtensions.cs/#L100"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Adds the services required by the MongoDB provider for Entity Framework to an <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static IServiceCollection AddEntityFrameworkMongoDB(this IServiceCollection serviceCollection)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>serviceCollection</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a></dt>
-    <dd><p>The <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a> to add services to.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddEntityFrameworkMongoDB.html#Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddEntityFrameworkMongoDB_Microsoft_Extensions_DependencyInjection_IServiceCollection_">AddEntityFrameworkMongoDB(IServiceCollection)</a></dt>
+    <dd><p>Adds the services required by the MongoDB provider for Entity Framework to an <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a>.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a></dt>
-    <dd><p>The same service collection so that multiple calls can be chained.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-  <h4 class="section" id="Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddEntityFrameworkMongoDB_Microsoft_Extensions_DependencyInjection_IServiceCollection__remarks">Remarks</h4>
-  <div class="markdown level1 remarks"><p>You probably meant to use <a class="xref" href="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.html#Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddMongoDB__1_Microsoft_Extensions_DependencyInjection_IServiceCollection_System_String_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__System_Action_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder__">AddMongoDB&lt;TContext&gt;(IServiceCollection, string, string, Action&lt;MongoDbContextOptionsBuilder&gt;?, Action&lt;DbContextOptionsBuilder&gt;?)</a> instead.</p>
-</div>
-
-
-
-
-  <a id="Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddMongoDB_" data-uid="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddMongoDB*"></a>
-
-  <h3 id="Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddMongoDB__1_Microsoft_Extensions_DependencyInjection_IServiceCollection_MongoDB_Driver_IMongoClient_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__System_Action_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder__" data-uid="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddMongoDB``1(Microsoft.Extensions.DependencyInjection.IServiceCollection,MongoDB.Driver.IMongoClient,System.String,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder},System.Action{Microsoft.EntityFrameworkCore.DbContextOptionsBuilder})">
-  AddMongoDB&lt;TContext&gt;(IServiceCollection, IMongoClient, string, Action&lt;MongoDbContextOptionsBuilder&gt;?, Action&lt;DbContextOptionsBuilder&gt;?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Extensions/MongoServiceCollectionExtensions.cs/#L80"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Registers the given Entity Framework <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> as a service in the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a>
+  <dl class="jumplist">
+    <dt><a class="xref" href="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddMongoDB.html#Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddMongoDB__1_Microsoft_Extensions_DependencyInjection_IServiceCollection_MongoDB_Driver_IMongoClient_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__System_Action_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder__">AddMongoDB&lt;TContext&gt;(IServiceCollection, IMongoClient, string, Action&lt;MongoDbContextOptionsBuilder&gt;?, Action&lt;DbContextOptionsBuilder&gt;?)</a></dt>
+    <dd><p>Registers the given Entity Framework <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> as a service in the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a>
 and configures it to connect to an MongoDB database.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static IServiceCollection AddMongoDB&lt;TContext&gt;(this IServiceCollection serviceCollection, IMongoClient mongoClient, string databaseName, Action&lt;MongoDbContextOptionsBuilder&gt;? mongoOptionsAction = null, Action&lt;DbContextOptionsBuilder&gt;? optionsAction = null) where TContext : DbContext</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>serviceCollection</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a></dt>
-    <dd><p>The <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a> to add services to.</p>
-</dd>
-    <dt><code>mongoClient</code> <span class="xref">IMongoClient</span></dt>
-    <dd><p>The <span class="xref">MongoDB.Driver.IMongoClient</span> to use to connect to the MongoDB server.</p>
-</dd>
-    <dt><code>databaseName</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The database name on the server.</p>
-</dd>
-    <dt><code>mongoOptionsAction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.action-1">Action</a>&lt;<a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.html">MongoDbContextOptionsBuilder</a>&gt;</dt>
-    <dd><p>An optional action to allow additional MongoDB-specific configuration.</p>
-</dd>
-    <dt><code>optionsAction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.action-1">Action</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a>&gt;</dt>
-    <dd><p>An optional action to configure the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptions">DbContextOptions</a> for the context.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a></dt>
-    <dd><p>The same service collection so that multiple calls can be chained.</p>
-</dd>
-  </dl>
-
-  <h4 class="section">Type Parameters</h4>
-  <dl class="parameters">
-    <dt><code>TContext</code></dt>
-    <dd><p>The type of context to be registered.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-
-
-  <a id="Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddMongoDB_" data-uid="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddMongoDB*"></a>
-
-  <h3 id="Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddMongoDB__1_Microsoft_Extensions_DependencyInjection_IServiceCollection_System_String_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__System_Action_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder__" data-uid="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddMongoDB``1(Microsoft.Extensions.DependencyInjection.IServiceCollection,System.String,System.String,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder},System.Action{Microsoft.EntityFrameworkCore.DbContextOptionsBuilder})">
-  AddMongoDB&lt;TContext&gt;(IServiceCollection, string, string, Action&lt;MongoDbContextOptionsBuilder&gt;?, Action&lt;DbContextOptionsBuilder&gt;?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Extensions/MongoServiceCollectionExtensions.cs/#L55"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Registers the given Entity Framework <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> as a service in the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a>
+  <dl class="jumplist">
+    <dt><a class="xref" href="Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddMongoDB.html#Microsoft_Extensions_DependencyInjection_MongoServiceCollectionExtensions_AddMongoDB__1_Microsoft_Extensions_DependencyInjection_IServiceCollection_System_String_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__System_Action_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder__">AddMongoDB&lt;TContext&gt;(IServiceCollection, string, string, Action&lt;MongoDbContextOptionsBuilder&gt;?, Action&lt;DbContextOptionsBuilder&gt;?)</a></dt>
+    <dd><p>Registers the given Entity Framework <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> as a service in the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a>
 and configures it to connect to an MongoDB database.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static IServiceCollection AddMongoDB&lt;TContext&gt;(this IServiceCollection serviceCollection, string connectionString, string databaseName, Action&lt;MongoDbContextOptionsBuilder&gt;? mongoOptionsAction = null, Action&lt;DbContextOptionsBuilder&gt;? optionsAction = null) where TContext : DbContext</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>serviceCollection</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a></dt>
-    <dd><p>The <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a> to add services to.</p>
-</dd>
-    <dt><code>connectionString</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The connection string of the MongoDB server to connect to.</p>
-</dd>
-    <dt><code>databaseName</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The database name on the server.</p>
-</dd>
-    <dt><code>mongoOptionsAction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.action-1">Action</a>&lt;<a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.html">MongoDbContextOptionsBuilder</a>&gt;</dt>
-    <dd><p>An optional action to allow additional MongoDB-specific configuration.</p>
-</dd>
-    <dt><code>optionsAction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.action-1">Action</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a>&gt;</dt>
-    <dd><p>An optional action to configure the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptions">DbContextOptions</a> for the context.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.iservicecollection">IServiceCollection</a></dt>
-    <dd><p>The same service collection so that multiple calls can be chained.</p>
-</dd>
-  </dl>
-
-  <h4 class="section">Type Parameters</h4>
-  <dl class="parameters">
-    <dt><code>TContext</code></dt>
-    <dd><p>The type of context to be registered.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
 
 
 

@@ -193,128 +193,27 @@ Class MongoRelationshipDiscoveryConvention  <a class="header-action link-seconda
 
 
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention__ctor_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.#ctor(Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure.ProviderConventionSetBuilderDependencies)">
-  MongoRelationshipDiscoveryConvention(ProviderConventionSetBuilderDependencies)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoRelationshipDiscoveryConvention.cs/#L29"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"></div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public MongoRelationshipDiscoveryConvention(ProviderConventionSetBuilderDependencies dependencies)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>dependencies</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.infrastructure.providerconventionsetbuilderdependencies">ProviderConventionSetBuilderDependencies</a></dt>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.-ctor.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_">MongoRelationshipDiscoveryConvention(ProviderConventionSetBuilderDependencies)</a></dt>
     <dd></dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention_ShouldBeOwned_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwned*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention_ShouldBeOwned_System_Type_Microsoft_EntityFrameworkCore_Metadata_IConventionModel_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwned(System.Type,Microsoft.EntityFrameworkCore.Metadata.IConventionModel)">
-  ShouldBeOwned(Type, IConventionModel)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoRelationshipDiscoveryConvention.cs/#L35"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Returns a value indicating whether the given entity type should be added as owned if it isn't currently in the model.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">protected override bool? ShouldBeOwned(Type targetType, IConventionModel model)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>targetType</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.type">Type</a></dt>
-    <dd><p>Target entity type.</p>
-</dd>
-    <dt><code>model</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.iconventionmodel">IConventionModel</a></dt>
-    <dd><p>The model.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwned.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention_ShouldBeOwned_System_Type_Microsoft_EntityFrameworkCore_Metadata_IConventionModel_">ShouldBeOwned(Type, IConventionModel)</a></dt>
+    <dd><p>Returns a value indicating whether the given entity type should be added as owned if it isn't currently in the model.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a>?</dt>
-    <dd><p><a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">true</a> if the given entity type should be owned.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwnedType.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention_ShouldBeOwnedType_System_Type_Microsoft_EntityFrameworkCore_Metadata_IConventionModel_">ShouldBeOwnedType(Type, IConventionModel)</a></dt>
+    <dd><p>Determine if a given entity type should be added as an owned entity if not already in the model.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention_ShouldBeOwnedType_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwnedType*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention_ShouldBeOwnedType_System_Type_Microsoft_EntityFrameworkCore_Metadata_IConventionModel_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwnedType(System.Type,Microsoft.EntityFrameworkCore.Metadata.IConventionModel)">
-  ShouldBeOwnedType(Type, IConventionModel)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoRelationshipDiscoveryConvention.cs/#L44"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Determine if a given entity type should be added as an owned entity if not already in the model.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static bool ShouldBeOwnedType(Type targetType, IConventionModel model)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>targetType</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.type">Type</a></dt>
-    <dd><p>Target entity <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.type">Type</a>.</p>
-</dd>
-    <dt><code>model</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.iconventionmodel">IConventionModel</a></dt>
-    <dd><p>The <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.iconventionmodel">IConventionModel</a> being built.</p>
-</dd>
-  </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a></dt>
-    <dd><p><a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">true</a> if the type is to be owned, <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">false</a> otherwise.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-
 
 
 

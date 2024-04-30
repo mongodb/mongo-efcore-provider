@@ -153,404 +153,68 @@ are not supported in case somebody attempts to use them.</p>
 
 
 
-
   <h2 class="section" id="properties">Properties
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CurrentTransaction_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CurrentTransaction*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CurrentTransaction" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CurrentTransaction">
-  CurrentTransaction
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L72"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Gets the current transaction.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public IDbContextTransaction? CurrentTransaction { get; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.idbcontexttransaction">IDbContextTransaction</a></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CurrentTransaction.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CurrentTransaction">CurrentTransaction</a></dt>
+    <dd><p>Gets the current transaction.</p>
+</dd>
   </dl>
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_EnlistedTransaction_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.EnlistedTransaction*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_EnlistedTransaction" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.EnlistedTransaction">
-  EnlistedTransaction
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L68"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>The currently enlisted transaction.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Transaction? EnlistedTransaction { get; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.transactions.transaction">Transaction</a></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.EnlistedTransaction.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_EnlistedTransaction">EnlistedTransaction</a></dt>
+    <dd><p>The currently enlisted transaction.</p>
+</dd>
   </dl>
-
-
-
-
-
-
-
 
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_BeginTransaction_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.BeginTransaction*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_BeginTransaction" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.BeginTransaction">
-  BeginTransaction()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L40"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Begins a new transaction.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public IDbContextTransaction BeginTransaction()</code></pre>
-  </div>
-
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.idbcontexttransaction">IDbContextTransaction</a></dt>
-    <dd><p>The newly created transaction.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.BeginTransaction.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_BeginTransaction">BeginTransaction()</a></dt>
+    <dd><p>Begins a new transaction.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_BeginTransactionAsync_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.BeginTransactionAsync*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_BeginTransactionAsync_System_Threading_CancellationToken_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.BeginTransactionAsync(System.Threading.CancellationToken)">
-  BeginTransactionAsync(CancellationToken)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L44"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Asynchronously begins a new transaction.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Task&lt;IDbContextTransaction&gt; BeginTransactionAsync(CancellationToken cancellationToken = default)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>cancellationToken</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a></dt>
-    <dd><p>A <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> to observe while waiting for the task to complete.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.BeginTransactionAsync.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_BeginTransactionAsync_System_Threading_CancellationToken_">BeginTransactionAsync(CancellationToken)</a></dt>
+    <dd><p>Asynchronously begins a new transaction.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.tasks.task-1">Task</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.idbcontexttransaction">IDbContextTransaction</a>&gt;</dt>
-    <dd><p>A task that represents the asynchronous operation. The task result contains the newly created transaction.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CommitTransaction.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CommitTransaction">CommitTransaction()</a></dt>
+    <dd><p>Commits all changes made to the database in the current transaction.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-  <h4 class="section">Exceptions</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.operationcanceledexception">OperationCanceledException</a></dt>
-    <dd><p>If the <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> is canceled.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CommitTransactionAsync.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CommitTransactionAsync_System_Threading_CancellationToken_">CommitTransactionAsync(CancellationToken)</a></dt>
+    <dd><p>Commits all changes made to the database in the current transaction.</p>
 </dd>
   </dl>
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CommitTransaction_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CommitTransaction*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CommitTransaction" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CommitTransaction">
-  CommitTransaction()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L48"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Commits all changes made to the database in the current transaction.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public void CommitTransaction()</code></pre>
-  </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CommitTransactionAsync_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CommitTransactionAsync*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_CommitTransactionAsync_System_Threading_CancellationToken_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CommitTransactionAsync(System.Threading.CancellationToken)">
-  CommitTransactionAsync(CancellationToken)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L52"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Commits all changes made to the database in the current transaction.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Task CommitTransactionAsync(CancellationToken cancellationToken = default)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>cancellationToken</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a></dt>
-    <dd><p>A <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> to observe while waiting for the task to complete.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.EnlistTransaction.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_EnlistTransaction_System_Transactions_Transaction_">EnlistTransaction(Transaction?)</a></dt>
+    <dd><p>Specifies an existing <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.transactions.transaction">Transaction</a> to be used for database operations.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.tasks.task">Task</a></dt>
-    <dd><p>A task that represents the asynchronous operation.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.ResetState.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_ResetState">ResetState()</a></dt>
+    <dd><p>Resets the service so that it can be used from the pool.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-  <h4 class="section">Exceptions</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.operationcanceledexception">OperationCanceledException</a></dt>
-    <dd><p>If the <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> is canceled.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.ResetStateAsync.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_ResetStateAsync_System_Threading_CancellationToken_">ResetStateAsync(CancellationToken)</a></dt>
+    <dd><p>Resets the service so that it can be used from the pool.</p>
 </dd>
   </dl>
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_EnlistTransaction_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.EnlistTransaction*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_EnlistTransaction_System_Transactions_Transaction_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.EnlistTransaction(System.Transactions.Transaction)">
-  EnlistTransaction(Transaction?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L64"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Specifies an existing <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.transactions.transaction">Transaction</a> to be used for database operations.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public void EnlistTransaction(Transaction? transaction)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>transaction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.transactions.transaction">Transaction</a></dt>
-    <dd><p>The transaction to be used.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.RollbackTransaction.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_RollbackTransaction">RollbackTransaction()</a></dt>
+    <dd><p>Discards all changes made to the database in the current transaction.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_ResetState_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.ResetState*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_ResetState" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.ResetState">
-  ResetState()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L31"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Resets the service so that it can be used from the pool.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public void ResetState()</code></pre>
-  </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_ResetStateAsync_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.ResetStateAsync*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_ResetStateAsync_System_Threading_CancellationToken_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.ResetStateAsync(System.Threading.CancellationToken)">
-  ResetStateAsync(CancellationToken)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L36"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Resets the service so that it can be used from the pool.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Task ResetStateAsync(CancellationToken cancellationToken = default)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>cancellationToken</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a></dt>
-    <dd><p>A <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> to observe while waiting for the task to complete.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.RollbackTransactionAsync.html#MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_RollbackTransactionAsync_System_Threading_CancellationToken_">RollbackTransactionAsync(CancellationToken)</a></dt>
+    <dd><p>Discards all changes made to the database in the current transaction.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.tasks.task">Task</a></dt>
-    <dd><p>A task that represents the asynchronous operation.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-  <h4 class="section">Exceptions</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.operationcanceledexception">OperationCanceledException</a></dt>
-    <dd><p>If the <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> is canceled.</p>
-</dd>
-  </dl>
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_RollbackTransaction_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.RollbackTransaction*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_RollbackTransaction" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.RollbackTransaction">
-  RollbackTransaction()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L56"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Discards all changes made to the database in the current transaction.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public void RollbackTransaction()</code></pre>
-  </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_RollbackTransactionAsync_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.RollbackTransactionAsync*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoTransactionManager_RollbackTransactionAsync_System_Threading_CancellationToken_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.RollbackTransactionAsync(System.Threading.CancellationToken)">
-  RollbackTransactionAsync(CancellationToken)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoTransactionManager.cs/#L60"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Discards all changes made to the database in the current transaction.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Task RollbackTransactionAsync(CancellationToken cancellationToken = default)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>cancellationToken</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a></dt>
-    <dd><p>A <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> to observe while waiting for the task to complete.</p>
-</dd>
-  </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.tasks.task">Task</a></dt>
-    <dd><p>A task that represents the asynchronous operation.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-  <h4 class="section">Exceptions</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.operationcanceledexception">OperationCanceledException</a></dt>
-    <dd><p>If the <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> is canceled.</p>
-</dd>
-  </dl>
-
 
 
 

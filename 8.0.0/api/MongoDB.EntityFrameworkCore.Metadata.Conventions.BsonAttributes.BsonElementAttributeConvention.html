@@ -164,126 +164,30 @@ Class BsonElementAttributeConvention  <a class="header-action link-secondary" ti
 
 
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention__ctor_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.#ctor(Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure.ProviderConventionSetBuilderDependencies)">
-  BsonElementAttributeConvention(ProviderConventionSetBuilderDependencies)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/BsonAttributes/BsonElementAttributeConvention.cs/#L39"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Creates a <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.html">BsonElementAttributeConvention</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public BsonElementAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>dependencies</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.infrastructure.providerconventionsetbuilderdependencies">ProviderConventionSetBuilderDependencies</a></dt>
-    <dd><p>Parameter object containing dependencies for this convention.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.-ctor.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_">BsonElementAttributeConvention(ProviderConventionSetBuilderDependencies)</a></dt>
+    <dd><p>Creates a <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.html">BsonElementAttributeConvention</a>.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention_ProcessNavigationAdded_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.ProcessNavigationAdded*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention_ProcessNavigationAdded_Microsoft_EntityFrameworkCore_Metadata_Builders_IConventionNavigationBuilder_Microsoft_EntityFrameworkCore_Metadata_Conventions_IConventionContext_Microsoft_EntityFrameworkCore_Metadata_Builders_IConventionNavigationBuilder__" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.ProcessNavigationAdded(Microsoft.EntityFrameworkCore.Metadata.Builders.IConventionNavigationBuilder,Microsoft.EntityFrameworkCore.Metadata.Conventions.IConventionContext{Microsoft.EntityFrameworkCore.Metadata.Builders.IConventionNavigationBuilder})">
-  ProcessNavigationAdded(IConventionNavigationBuilder, IConventionContext&lt;IConventionNavigationBuilder&gt;)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/BsonAttributes/BsonElementAttributeConvention.cs/#L70"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>For every navigation added to the model that is an owned entity with a <span class="xref">MongoDB.Bson.Serialization.Attributes.BsonElementAttribute</span>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.ProcessNavigationAdded.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention_ProcessNavigationAdded_Microsoft_EntityFrameworkCore_Metadata_Builders_IConventionNavigationBuilder_Microsoft_EntityFrameworkCore_Metadata_Conventions_IConventionContext_Microsoft_EntityFrameworkCore_Metadata_Builders_IConventionNavigationBuilder__">ProcessNavigationAdded(IConventionNavigationBuilder, IConventionContext&lt;IConventionNavigationBuilder&gt;)</a></dt>
+    <dd><p>For every navigation added to the model that is an owned entity with a <span class="xref">MongoDB.Bson.Serialization.Attributes.BsonElementAttribute</span>
 use the specified element name as an annotation to configure the element name used in the BSON documents.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public void ProcessNavigationAdded(IConventionNavigationBuilder navigationBuilder, IConventionContext&lt;IConventionNavigationBuilder&gt; context)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>navigationBuilder</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.builders.iconventionnavigationbuilder">IConventionNavigationBuilder</a></dt>
-    <dd><p>The builder for the navigation.</p>
-</dd>
-    <dt><code>context</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.iconventioncontext-1">IConventionContext</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.builders.iconventionnavigationbuilder">IConventionNavigationBuilder</a>&gt;</dt>
-    <dd><p>Additional information associated with convention execution.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention_ProcessPropertyAdded_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.ProcessPropertyAdded*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention_ProcessPropertyAdded_Microsoft_EntityFrameworkCore_Metadata_Builders_IConventionPropertyBuilder_MongoDB_Bson_Serialization_Attributes_BsonElementAttribute_System_Reflection_MemberInfo_Microsoft_EntityFrameworkCore_Metadata_Conventions_IConventionContext_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.ProcessPropertyAdded(Microsoft.EntityFrameworkCore.Metadata.Builders.IConventionPropertyBuilder,MongoDB.Bson.Serialization.Attributes.BsonElementAttribute,System.Reflection.MemberInfo,Microsoft.EntityFrameworkCore.Metadata.Conventions.IConventionContext)">
-  ProcessPropertyAdded(IConventionPropertyBuilder, BsonElementAttribute, MemberInfo, IConventionContext)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/BsonAttributes/BsonElementAttributeConvention.cs/#L52"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>For every property added to the model that has a <span class="xref">MongoDB.Bson.Serialization.Attributes.BsonElementAttribute</span>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.ProcessPropertyAdded.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_BsonAttributes_BsonElementAttributeConvention_ProcessPropertyAdded_Microsoft_EntityFrameworkCore_Metadata_Builders_IConventionPropertyBuilder_MongoDB_Bson_Serialization_Attributes_BsonElementAttribute_System_Reflection_MemberInfo_Microsoft_EntityFrameworkCore_Metadata_Conventions_IConventionContext_">ProcessPropertyAdded(IConventionPropertyBuilder, BsonElementAttribute, MemberInfo, IConventionContext)</a></dt>
+    <dd><p>For every property added to the model that has a <span class="xref">MongoDB.Bson.Serialization.Attributes.BsonElementAttribute</span>
 use the specified name as an annotation to configure the element name used in BSON documents.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">protected override void ProcessPropertyAdded(IConventionPropertyBuilder propertyBuilder, BsonElementAttribute attribute, MemberInfo clrMember, IConventionContext context)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>propertyBuilder</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.builders.iconventionpropertybuilder">IConventionPropertyBuilder</a></dt>
-    <dd><p>The builder for the property.</p>
-</dd>
-    <dt><code>attribute</code> <span class="xref">BsonElementAttribute</span></dt>
-    <dd><p>The attribute.</p>
-</dd>
-    <dt><code>clrMember</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.reflection.memberinfo">MemberInfo</a></dt>
-    <dd><p>The member that has the attribute.</p>
-</dd>
-    <dt><code>context</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.iconventioncontext">IConventionContext</a></dt>
-    <dd><p>Additional information associated with convention execution.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
 
 
 

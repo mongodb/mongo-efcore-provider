@@ -154,90 +154,25 @@ Class MongoValueConverterSelector  <a class="header-action link-secondary" title
 
 
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_ValueConversion_MongoValueConverterSelector__ctor_" data-uid="MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_ValueConversion_MongoValueConverterSelector__ctor_Microsoft_EntityFrameworkCore_Storage_ValueConversion_ValueConverterSelectorDependencies_" data-uid="MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.#ctor(Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverterSelectorDependencies)">
-  MongoValueConverterSelector(ValueConverterSelectorDependencies)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/ValueConversion/MongoValueConverterSelector.cs/#L35"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Creates a new instance of <a class="xref" href="MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.html">MongoValueConverterSelector</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public MongoValueConverterSelector(ValueConverterSelectorDependencies dependencies)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>dependencies</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.valueconversion.valueconverterselectordependencies">ValueConverterSelectorDependencies</a></dt>
-    <dd><p>Parameter object containing dependencies for this service.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.-ctor.html#MongoDB_EntityFrameworkCore_Storage_ValueConversion_MongoValueConverterSelector__ctor_Microsoft_EntityFrameworkCore_Storage_ValueConversion_ValueConverterSelectorDependencies_">MongoValueConverterSelector(ValueConverterSelectorDependencies)</a></dt>
+    <dd><p>Creates a new instance of <a class="xref" href="MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.html">MongoValueConverterSelector</a>.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_ValueConversion_MongoValueConverterSelector_Select_" data-uid="MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.Select*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_ValueConversion_MongoValueConverterSelector_Select_System_Type_System_Type_" data-uid="MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.Select(System.Type,System.Type)">
-  Select(Type, Type?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/ValueConversion/MongoValueConverterSelector.cs/#L41"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Returns the list of <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.valueconversion.valueconverter">ValueConverter</a> instances that can be
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.Select.html#MongoDB_EntityFrameworkCore_Storage_ValueConversion_MongoValueConverterSelector_Select_System_Type_System_Type_">Select(Type, Type?)</a></dt>
+    <dd><p>Returns the list of <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.valueconversion.valueconverter">ValueConverter</a> instances that can be
 used to convert the given model type. Converters nearer the front of
 the list should be used in preference to converters nearer the end.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public override IEnumerable&lt;ValueConverterInfo&gt; Select(Type modelClrType, Type? providerClrType = null)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>modelClrType</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.type">Type</a></dt>
-    <dd><p>The type for which a converter is needed.</p>
-</dd>
-    <dt><code>providerClrType</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.type">Type</a></dt>
-    <dd><p>The database provider type to target, or null for any.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.collections.generic.ienumerable-1">IEnumerable</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.valueconversion.valueconverterinfo">ValueConverterInfo</a>&gt;</dt>
-    <dd><p>The converters available.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-
 
 
 

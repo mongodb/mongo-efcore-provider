@@ -157,190 +157,39 @@ Class MongoConventionSetBuilder  <a class="header-action link-secondary" title="
 
 
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder__ctor_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.#ctor(Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure.ProviderConventionSetBuilderDependencies)">
-  MongoConventionSetBuilder(ProviderConventionSetBuilderDependencies)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoConventionSetBuilder.cs/#L34"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Creates a <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.html">MongoConventionSetBuilder</a> with the required dependencies.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public MongoConventionSetBuilder(ProviderConventionSetBuilderDependencies dependencies)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>dependencies</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.infrastructure.providerconventionsetbuilderdependencies">ProviderConventionSetBuilderDependencies</a></dt>
-    <dd><p>Parameter object containing dependencies for this service.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.-ctor.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_">MongoConventionSetBuilder(ProviderConventionSetBuilderDependencies)</a></dt>
+    <dd><p>Creates a <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.html">MongoConventionSetBuilder</a> with the required dependencies.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_Build_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.Build*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_Build" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.Build">
-  Build()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoConventionSetBuilder.cs/#L88"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Call this method to build a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.conventionset">ConventionSet</a> for the MongoDB provider when using
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.Build.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_Build">Build()</a></dt>
+    <dd><p>Call this method to build a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.conventionset">ConventionSet</a> for the MongoDB provider when using
 the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.modelbuilder">ModelBuilder</a> outside of <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.onmodelcreating">OnModelCreating(ModelBuilder)</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static ConventionSet Build()</code></pre>
-  </div>
-
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.conventionset">ConventionSet</a></dt>
-    <dd><p>The convention set.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateConventionSet_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateConventionSet*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateConventionSet" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateConventionSet">
-  CreateConventionSet()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoConventionSetBuilder.cs/#L43"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Builds and returns the convention set for the MongoDB provider.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public override ConventionSet CreateConventionSet()</code></pre>
-  </div>
-
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.conventionset">ConventionSet</a></dt>
-    <dd><p>The convention set for the MongoDB provider.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateConventionSet.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateConventionSet">CreateConventionSet()</a></dt>
+    <dd><p>Builds and returns the convention set for the MongoDB provider.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateModelBuilder_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateModelBuilder*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateModelBuilder" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateModelBuilder">
-  CreateModelBuilder()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoConventionSetBuilder.cs/#L102"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Call this method to build a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.modelbuilder">ModelBuilder</a> for MongoDB outside of <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.onmodelcreating">OnModelCreating(ModelBuilder)</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static ModelBuilder CreateModelBuilder()</code></pre>
-  </div>
-
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.modelbuilder">ModelBuilder</a></dt>
-    <dd><p>The model builder with this convention set.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateModelBuilder.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateModelBuilder">CreateModelBuilder()</a></dt>
+    <dd><p>Call this method to build a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.modelbuilder">ModelBuilder</a> for MongoDB outside of <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.onmodelcreating">OnModelCreating(ModelBuilder)</a>.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-  <h4 class="section" id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateModelBuilder_remarks">Remarks</h4>
-  <div class="markdown level1 remarks"><p>Note that it is unusual to use this method. Consider using <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> in the normal way instead.</p>
-</div>
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateModelBuilder_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateModelBuilder*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateModelBuilder__1" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateModelBuilder``1">
-  CreateModelBuilder&lt;T&gt;()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoConventionSetBuilder.cs/#L116"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Call this method to build a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.modelbuilder">ModelBuilder</a> for MongoDB outside of <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.onmodelcreating">OnModelCreating(ModelBuilder)</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static ModelBuilder CreateModelBuilder&lt;T&gt;() where T : DbContext</code></pre>
-  </div>
-
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.modelbuilder">ModelBuilder</a></dt>
-    <dd><p>The model builder with this convention set.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateModelBuilder.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateModelBuilder__1">CreateModelBuilder&lt;T&gt;()</a></dt>
+    <dd><p>Call this method to build a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.modelbuilder">ModelBuilder</a> for MongoDB outside of <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.onmodelcreating">OnModelCreating(ModelBuilder)</a>.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Type Parameters</h4>
-  <dl class="parameters">
-    <dt><code>T</code></dt>
-    <dd></dd>
-  </dl>
-
-
-
-
-
-
-  <h4 class="section" id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoConventionSetBuilder_CreateModelBuilder__1_remarks">Remarks</h4>
-  <div class="markdown level1 remarks"><p>Note that it is unusual to use this method. Consider using <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> in the normal way instead.</p>
-</div>
-
-
 
 
 

@@ -93,7 +93,7 @@ Class NotSupportedPropertyAttributeConvention&lt;T&gt;  <a class="header-action 
   <dl><dt>Assembly</dt><dd>MongoDB.EntityFrameworkCore.dll</dd></dl>
   </div>
 
-  <div class="markdown summary"><p>Abstract class to register unsupported attributes on properties as <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.html#MongoDB_EntityFrameworkCore_Metadata_MongoAnnotationNames_NotSupportedAttributes">NotSupportedAttributes</a>
+  <div class="markdown summary"><p>Abstract class to register unsupported attributes on properties as <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.NotSupportedAttributes.html">NotSupportedAttributes</a>
 allowing <a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.html">MongoModelValidator</a> to throw when encountered.</p>
 </div>
   <div class="markdown conceptual"></div>
@@ -193,89 +193,24 @@ allowing <a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoM
 
 
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_NotSupportedPropertyAttributeConvention_1__ctor_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention`1.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_NotSupportedPropertyAttributeConvention_1__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention`1.#ctor(Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure.ProviderConventionSetBuilderDependencies)">
-  NotSupportedPropertyAttributeConvention(ProviderConventionSetBuilderDependencies)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/NotSupportedPropertyAttributeConvention.cs/#L31"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Abstract class to register unsupported attributes on properties as <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.html#MongoDB_EntityFrameworkCore_Metadata_MongoAnnotationNames_NotSupportedAttributes">NotSupportedAttributes</a>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention-1.-ctor.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_NotSupportedPropertyAttributeConvention_1__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_">NotSupportedPropertyAttributeConvention(ProviderConventionSetBuilderDependencies)</a></dt>
+    <dd><p>Abstract class to register unsupported attributes on properties as <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.NotSupportedAttributes.html">NotSupportedAttributes</a>
 allowing <a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.html">MongoModelValidator</a> to throw when encountered.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">protected NotSupportedPropertyAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>dependencies</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.infrastructure.providerconventionsetbuilderdependencies">ProviderConventionSetBuilderDependencies</a></dt>
-    <dd><p>The <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.infrastructure.providerconventionsetbuilderdependencies">ProviderConventionSetBuilderDependencies</a> conventions depend upon.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Metadata_Conventions_NotSupportedPropertyAttributeConvention_1_ProcessPropertyAdded_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention`1.ProcessPropertyAdded*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_NotSupportedPropertyAttributeConvention_1_ProcessPropertyAdded_Microsoft_EntityFrameworkCore_Metadata_Builders_IConventionPropertyBuilder__0_System_Reflection_MemberInfo_Microsoft_EntityFrameworkCore_Metadata_Conventions_IConventionContext_" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention`1.ProcessPropertyAdded(Microsoft.EntityFrameworkCore.Metadata.Builders.IConventionPropertyBuilder,`0,System.Reflection.MemberInfo,Microsoft.EntityFrameworkCore.Metadata.Conventions.IConventionContext)">
-  ProcessPropertyAdded(IConventionPropertyBuilder, T, MemberInfo, IConventionContext)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/NotSupportedPropertyAttributeConvention.cs/#L35"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Called after a property is added to the entity type with an attribute on the associated CLR property or field.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">protected override void ProcessPropertyAdded(IConventionPropertyBuilder propertyBuilder, T attribute, MemberInfo clrMember, IConventionContext context)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>propertyBuilder</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.builders.iconventionpropertybuilder">IConventionPropertyBuilder</a></dt>
-    <dd><p>The builder for the property.</p>
-</dd>
-    <dt><code>attribute</code> <span class="xref">T</span></dt>
-    <dd><p>The attribute.</p>
-</dd>
-    <dt><code>clrMember</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.reflection.memberinfo">MemberInfo</a></dt>
-    <dd><p>The member that has the attribute.</p>
-</dd>
-    <dt><code>context</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.iconventioncontext">IConventionContext</a></dt>
-    <dd><p>Additional information associated with convention execution.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention-1.ProcessPropertyAdded.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_NotSupportedPropertyAttributeConvention_1_ProcessPropertyAdded_Microsoft_EntityFrameworkCore_Metadata_Builders_IConventionPropertyBuilder__0_System_Reflection_MemberInfo_Microsoft_EntityFrameworkCore_Metadata_Conventions_IConventionContext_">ProcessPropertyAdded(IConventionPropertyBuilder, T, MemberInfo, IConventionContext)</a></dt>
+    <dd><p>Called after a property is added to the entity type with an attribute on the associated CLR property or field.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
 
 
 

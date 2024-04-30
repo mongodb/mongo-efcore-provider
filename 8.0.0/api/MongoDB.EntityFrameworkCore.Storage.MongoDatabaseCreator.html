@@ -151,188 +151,36 @@ dependency of the <a class="xref" href="MongoDB.EntityFrameworkCore.Storage.Mong
 
 
 
-
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_CanConnect_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.CanConnect*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_CanConnect" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.CanConnect">
-  CanConnect()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoDatabaseCreator.cs/#L47"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Determines whether or not the database is available and can be connected to.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public bool CanConnect()</code></pre>
-  </div>
-
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a></dt>
-    <dd><p><a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">true</a> if the database is available; <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">false</a> otherwise.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.CanConnect.html#MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_CanConnect">CanConnect()</a></dt>
+    <dd><p>Determines whether or not the database is available and can be connected to.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-  <h4 class="section" id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_CanConnect_remarks">Remarks</h4>
-  <div class="markdown level1 remarks"><p>Note that being able to connect to the database does not mean that it is
-up-to-date with regard to schema creation, etc.</p>
-</div>
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_CanConnectAsync_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.CanConnectAsync*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_CanConnectAsync_System_Threading_CancellationToken_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.CanConnectAsync(System.Threading.CancellationToken)">
-  CanConnectAsync(CancellationToken)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoDatabaseCreator.cs/#L51"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Determines whether or not the database is available and can be connected to.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Task&lt;bool&gt; CanConnectAsync(CancellationToken cancellationToken = default)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>cancellationToken</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a></dt>
-    <dd><p>A <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> to observe while waiting for the task to complete.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.CanConnectAsync.html#MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_CanConnectAsync_System_Threading_CancellationToken_">CanConnectAsync(CancellationToken)</a></dt>
+    <dd><p>Determines whether or not the database is available and can be connected to.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.tasks.task-1">Task</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a>&gt;</dt>
-    <dd><p><a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">true</a> if the database is available; <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">false</a> otherwise.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-  <h4 class="section" id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_CanConnectAsync_System_Threading_CancellationToken__remarks">Remarks</h4>
-  <div class="markdown level1 remarks"><p>Note that being able to connect to the database does not mean that it is
-up-to-date with regard to schema creation, etc.</p>
-</div>
-
-  <h4 class="section">Exceptions</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.operationcanceledexception">OperationCanceledException</a></dt>
-    <dd><p>If the <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> is canceled.</p>
-</dd>
-  </dl>
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureCreated_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureCreated*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureCreated" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureCreated">
-  EnsureCreated()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoDatabaseCreator.cs/#L39"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Ensures that the database for the context exists. If it exists, no action is taken. If it does not
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureCreated.html#MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureCreated">EnsureCreated()</a></dt>
+    <dd><p>Ensures that the database for the context exists. If it exists, no action is taken. If it does not
 exist then the database and all its schema are created. If the database exists, then no effort is made
 to ensure it is compatible with the model for this context.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public bool EnsureCreated()</code></pre>
-  </div>
-
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a></dt>
-    <dd><p><a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">true</a> if the database is created, <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">false</a> if it already existed.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureCreatedAsync_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureCreatedAsync*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureCreatedAsync_System_Threading_CancellationToken_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureCreatedAsync(System.Threading.CancellationToken)">
-  EnsureCreatedAsync(CancellationToken)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoDatabaseCreator.cs/#L43"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Asynchronously ensures that the database for the context exists. If it exists, no action is taken. If it does not
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureCreatedAsync.html#MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureCreatedAsync_System_Threading_CancellationToken_">EnsureCreatedAsync(CancellationToken)</a></dt>
+    <dd><p>Asynchronously ensures that the database for the context exists. If it exists, no action is taken. If it does not
 exist then the database and all its schema are created. If the database exists, then no effort is made
 to ensure it is compatible with the model for this context.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Task&lt;bool&gt; EnsureCreatedAsync(CancellationToken cancellationToken = default)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>cancellationToken</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a></dt>
-    <dd><p>A <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> to observe while waiting for the task to complete.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.tasks.task-1">Task</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a>&gt;</dt>
-    <dd><p>A task that represents the asynchronous save operation. The task result contains <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">true</a> if the database is created,
-<a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">false</a> if it already existed.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-  <h4 class="section">Exceptions</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.operationcanceledexception">OperationCanceledException</a></dt>
-    <dd><p>If the <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> is canceled.</p>
-</dd>
-  </dl>
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureDeleted_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureDeleted*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureDeleted" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureDeleted">
-  EnsureDeleted()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoDatabaseCreator.cs/#L31"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureDeleted.html#MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureDeleted">EnsureDeleted()</a></dt>
+    <dd><p>
                 Ensures that the database for the context does not exist. If it does not exist, no action is taken. If it does
                 exist then the database is deleted.
             </p>
@@ -340,39 +188,11 @@ to ensure it is compatible with the model for this context.</p>
                 Warning: The entire database is deleted an no effort is made to remove just the database objects that are used by
                 the model for this context.
             </p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public bool EnsureDeleted()</code></pre>
-  </div>
-
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a></dt>
-    <dd><p><a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">true</a> if the database is deleted, <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">false</a> if it did not exist.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureDeletedAsync_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureDeletedAsync*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureDeletedAsync_System_Threading_CancellationToken_" data-uid="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureDeletedAsync(System.Threading.CancellationToken)">
-  EnsureDeletedAsync(CancellationToken)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Storage/MongoDatabaseCreator.cs/#L35"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureDeletedAsync.html#MongoDB_EntityFrameworkCore_Storage_MongoDatabaseCreator_EnsureDeletedAsync_System_Threading_CancellationToken_">EnsureDeletedAsync(CancellationToken)</a></dt>
+    <dd><p>
                 Asynchronously ensures that the database for the context does not exist. If it does not exist, no action is taken. If it does
                 exist then the database is deleted.
             </p>
@@ -380,42 +200,8 @@ to ensure it is compatible with the model for this context.</p>
                 Warning: The entire database is deleted an no effort is made to remove just the database objects that are used by
                 the model for this context.
             </p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Task&lt;bool&gt; EnsureDeletedAsync(CancellationToken cancellationToken = default)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>cancellationToken</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a></dt>
-    <dd><p>A <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> to observe while waiting for the task to complete.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.tasks.task-1">Task</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a>&gt;</dt>
-    <dd><p>A task that represents the asynchronous save operation. The task result contains <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">true</a> if the database is deleted,
-<a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool">false</a> if it did not exist.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-  <h4 class="section">Exceptions</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.operationcanceledexception">OperationCanceledException</a></dt>
-    <dd><p>If the <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.threading.cancellationtoken">CancellationToken</a> is canceled.</p>
-</dd>
-  </dl>
-
 
 
 

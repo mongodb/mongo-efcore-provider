@@ -144,213 +144,29 @@ Class MongoDbContextOptionsExtensions  <a class="header-action link-secondary" t
 
 
 
-
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB_" data-uid="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB*"></a>
-
-  <h3 id="Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder_MongoDB_Driver_IMongoClient_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__" data-uid="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB(Microsoft.EntityFrameworkCore.DbContextOptionsBuilder,MongoDB.Driver.IMongoClient,System.String,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder})">
-  UseMongoDB(DbContextOptionsBuilder, IMongoClient, string, Action&lt;MongoDbContextOptionsBuilder&gt;?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Extensions/MongoDbContextOptionsExtensions.cs/#L108"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Configures the context to connect to a MongoDB database using the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static DbContextOptionsBuilder UseMongoDB(this DbContextOptionsBuilder optionsBuilder, IMongoClient mongoClient, string databaseName, Action&lt;MongoDbContextOptionsBuilder&gt;? optionsAction = null)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>optionsBuilder</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a></dt>
-    <dd><p>The builder being used to configure the context.</p>
-</dd>
-    <dt><code>mongoClient</code> <span class="xref">IMongoClient</span></dt>
-    <dd><p>The connections string used to identify the MongoDB server to use.</p>
-</dd>
-    <dt><code>databaseName</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The name of the MongoDB database to use on the server.</p>
-</dd>
-    <dt><code>optionsAction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.action-1">Action</a>&lt;<a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.html">MongoDbContextOptionsBuilder</a>&gt;</dt>
-    <dd><p>An optional action to allow additional MongoDB-specific configuration.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB.html#Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder_MongoDB_Driver_IMongoClient_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__">UseMongoDB(DbContextOptionsBuilder, IMongoClient, string, Action&lt;MongoDbContextOptionsBuilder&gt;?)</a></dt>
+    <dd><p>Configures the context to connect to a MongoDB database using the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a>.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a></dt>
-    <dd><p>The options builder so that further configuration can be chained.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB.html#Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder_System_String_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__">UseMongoDB(DbContextOptionsBuilder, string, string, Action&lt;MongoDbContextOptionsBuilder&gt;?)</a></dt>
+    <dd><p>Configures the context to connect to a MongoDB database using the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a>.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-  <a id="Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB_" data-uid="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB*"></a>
-
-  <h3 id="Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder_System_String_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__" data-uid="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB(Microsoft.EntityFrameworkCore.DbContextOptionsBuilder,System.String,System.String,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder})">
-  UseMongoDB(DbContextOptionsBuilder, string, string, Action&lt;MongoDbContextOptionsBuilder&gt;?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Extensions/MongoDbContextOptionsExtensions.cs/#L59"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Configures the context to connect to a MongoDB database using the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static DbContextOptionsBuilder UseMongoDB(this DbContextOptionsBuilder optionsBuilder, string connectionString, string databaseName, Action&lt;MongoDbContextOptionsBuilder&gt;? optionsAction = null)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>optionsBuilder</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a></dt>
-    <dd><p>The builder being used to configure the context.</p>
-</dd>
-    <dt><code>connectionString</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The connection string used to identify the MongoDB server to use.</p>
-</dd>
-    <dt><code>databaseName</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The name of the database to use on the MongoDB server.</p>
-</dd>
-    <dt><code>optionsAction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.action-1">Action</a>&lt;<a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.html">MongoDbContextOptionsBuilder</a>&gt;</dt>
-    <dd><p>An optional action to allow additional MongoDB-specific configuration.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB.html#Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB__1_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder___0__MongoDB_Driver_IMongoClient_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__">UseMongoDB&lt;TContext&gt;(DbContextOptionsBuilder&lt;TContext&gt;, IMongoClient, string, Action&lt;MongoDbContextOptionsBuilder&gt;?)</a></dt>
+    <dd><p>Configures the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> subclass to connect to a MongoDB database.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder">DbContextOptionsBuilder</a></dt>
-    <dd><p>The options builder so that further configuration can be chained.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB.html#Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB__1_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder___0__System_String_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__">UseMongoDB&lt;TContext&gt;(DbContextOptionsBuilder&lt;TContext&gt;, string, string, Action&lt;MongoDbContextOptionsBuilder&gt;?)</a></dt>
+    <dd><p>Configures the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> subclass to connect to a MongoDB database.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-  <a id="Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB_" data-uid="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB*"></a>
-
-  <h3 id="Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB__1_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder___0__MongoDB_Driver_IMongoClient_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__" data-uid="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB``1(Microsoft.EntityFrameworkCore.DbContextOptionsBuilder{``0},MongoDB.Driver.IMongoClient,System.String,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder})">
-  UseMongoDB&lt;TContext&gt;(DbContextOptionsBuilder&lt;TContext&gt;, IMongoClient, string, Action&lt;MongoDbContextOptionsBuilder&gt;?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Extensions/MongoDbContextOptionsExtensions.cs/#L88"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Configures the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> subclass to connect to a MongoDB database.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static DbContextOptionsBuilder&lt;TContext&gt; UseMongoDB&lt;TContext&gt;(this DbContextOptionsBuilder&lt;TContext&gt; optionsBuilder, IMongoClient mongoClient, string databaseName, Action&lt;MongoDbContextOptionsBuilder&gt;? optionsAction = null) where TContext : DbContext</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>optionsBuilder</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder-1">DbContextOptionsBuilder</a>&lt;TContext&gt;</dt>
-    <dd><p>The builder being used to configure the context.</p>
-</dd>
-    <dt><code>mongoClient</code> <span class="xref">IMongoClient</span></dt>
-    <dd><p>The connections string used to identify the MongoDB server to use.</p>
-</dd>
-    <dt><code>databaseName</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The name of the MongoDB database to use on the server.</p>
-</dd>
-    <dt><code>optionsAction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.action-1">Action</a>&lt;<a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.html">MongoDbContextOptionsBuilder</a>&gt;</dt>
-    <dd><p>An optional action to allow additional MongoDB-specific configuration.</p>
-</dd>
-  </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder-1">DbContextOptionsBuilder</a>&lt;TContext&gt;</dt>
-    <dd><p>The options builder so that further configuration can be chained.</p>
-</dd>
-  </dl>
-
-  <h4 class="section">Type Parameters</h4>
-  <dl class="parameters">
-    <dt><code>TContext</code></dt>
-    <dd><p>The type of context to be configured.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-
-
-  <a id="Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB_" data-uid="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB*"></a>
-
-  <h3 id="Microsoft_EntityFrameworkCore_MongoDbContextOptionsExtensions_UseMongoDB__1_Microsoft_EntityFrameworkCore_DbContextOptionsBuilder___0__System_String_System_String_System_Action_MongoDB_EntityFrameworkCore_Infrastructure_MongoDbContextOptionsBuilder__" data-uid="Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB``1(Microsoft.EntityFrameworkCore.DbContextOptionsBuilder{``0},System.String,System.String,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder})">
-  UseMongoDB&lt;TContext&gt;(DbContextOptionsBuilder&lt;TContext&gt;, string, string, Action&lt;MongoDbContextOptionsBuilder&gt;?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Extensions/MongoDbContextOptionsExtensions.cs/#L39"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Configures the <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext">DbContext</a> subclass to connect to a MongoDB database.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public static DbContextOptionsBuilder&lt;TContext&gt; UseMongoDB&lt;TContext&gt;(this DbContextOptionsBuilder&lt;TContext&gt; optionsBuilder, string connectionString, string databaseName, Action&lt;MongoDbContextOptionsBuilder&gt;? optionsAction = null) where TContext : DbContext</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>optionsBuilder</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder-1">DbContextOptionsBuilder</a>&lt;TContext&gt;</dt>
-    <dd><p>The builder being used to configure the context.</p>
-</dd>
-    <dt><code>connectionString</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The connection string used to identify the MongoDB server to use.</p>
-</dd>
-    <dt><code>databaseName</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The name of the database to use on the MongoDB server.</p>
-</dd>
-    <dt><code>optionsAction</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.action-1">Action</a>&lt;<a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.html">MongoDbContextOptionsBuilder</a>&gt;</dt>
-    <dd><p>An optional action to allow additional MongoDB-specific configuration.</p>
-</dd>
-  </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder-1">DbContextOptionsBuilder</a>&lt;TContext&gt;</dt>
-    <dd><p>The options builder so that further configuration can be chained.</p>
-</dd>
-  </dl>
-
-  <h4 class="section">Type Parameters</h4>
-  <dl class="parameters">
-    <dt><code>TContext</code></dt>
-    <dd><p>The type of context to be configured.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
 
 
 

@@ -164,92 +164,23 @@ functionality for owned entity collections.</p>
 
 
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_ValueGeneration_MongoValueGeneratorSelector__ctor_" data-uid="MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_ValueGeneration_MongoValueGeneratorSelector__ctor_Microsoft_EntityFrameworkCore_ValueGeneration_ValueGeneratorSelectorDependencies_" data-uid="MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.#ctor(Microsoft.EntityFrameworkCore.ValueGeneration.ValueGeneratorSelectorDependencies)">
-  MongoValueGeneratorSelector(ValueGeneratorSelectorDependencies)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/ValueGeneration/MongoValueGeneratorSelector.cs/#L33"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Create a new <a class="xref" href="MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.html">MongoValueGeneratorSelector</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public MongoValueGeneratorSelector(ValueGeneratorSelectorDependencies dependencies)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>dependencies</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.valuegeneration.valuegeneratorselectordependencies">ValueGeneratorSelectorDependencies</a></dt>
-    <dd><p>The <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.valuegeneration.valuegeneratorselectordependencies">ValueGeneratorSelectorDependencies</a> to use.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.-ctor.html#MongoDB_EntityFrameworkCore_ValueGeneration_MongoValueGeneratorSelector__ctor_Microsoft_EntityFrameworkCore_ValueGeneration_ValueGeneratorSelectorDependencies_">MongoValueGeneratorSelector(ValueGeneratorSelectorDependencies)</a></dt>
+    <dd><p>Create a new <a class="xref" href="MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.html">MongoValueGeneratorSelector</a>.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_ValueGeneration_MongoValueGeneratorSelector_FindForType_" data-uid="MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.FindForType*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_ValueGeneration_MongoValueGeneratorSelector_FindForType_Microsoft_EntityFrameworkCore_Metadata_IProperty_Microsoft_EntityFrameworkCore_Metadata_ITypeBase_System_Type_" data-uid="MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.FindForType(Microsoft.EntityFrameworkCore.Metadata.IProperty,Microsoft.EntityFrameworkCore.Metadata.ITypeBase,System.Type)">
-  FindForType(IProperty, ITypeBase, Type)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/ValueGeneration/MongoValueGeneratorSelector.cs/#L39"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Creates a new value generator for the given property and type, where the property may have a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.valueconversion.valueconverter">ValueConverter</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">protected override ValueGenerator? FindForType(IProperty property, ITypeBase typeBase, Type clrType)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>property</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.iproperty">IProperty</a></dt>
-    <dd><p>The property to get the value generator for.</p>
-</dd>
-    <dt><code>typeBase</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.itypebase">ITypeBase</a></dt>
-    <dd><p>The entity type that the value generator will be used for. When called on inherited properties on derived entity types,
-this entity type may be different from the declared entity type on <code class="paramref">property</code></p>
-</dd>
-    <dt><code>clrType</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.type">Type</a></dt>
-    <dd><p>The type, which may be the provider type after conversion, rather than the property type.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.FindForType.html#MongoDB_EntityFrameworkCore_ValueGeneration_MongoValueGeneratorSelector_FindForType_Microsoft_EntityFrameworkCore_Metadata_IProperty_Microsoft_EntityFrameworkCore_Metadata_ITypeBase_System_Type_">FindForType(IProperty, ITypeBase, Type)</a></dt>
+    <dd><p>Creates a new value generator for the given property and type, where the property may have a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.valueconversion.valueconverter">ValueConverter</a>.</p>
 </dd>
   </dl>
-
-  <h4 class="section">Returns</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.valuegeneration.valuegenerator">ValueGenerator</a></dt>
-    <dd><p>The newly created value generator.</p>
-</dd>
-  </dl>
-
-
-
-
-
-
-
-
-
 
 
 

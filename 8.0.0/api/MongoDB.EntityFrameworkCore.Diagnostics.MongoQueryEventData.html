@@ -157,154 +157,33 @@ Class MongoQueryEventData  <a class="header-action link-secondary" title="View s
   <div class="markdown level0 remarks"><p>See <a href="https://aka.ms/efcore-docs-diagnostics">Logging, events, and diagnostics</a> for more information and examples.</p>
 </div>
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData__ctor_" data-uid="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData__ctor_Microsoft_EntityFrameworkCore_Diagnostics_EventDefinitionBase_System_Func_Microsoft_EntityFrameworkCore_Diagnostics_EventDefinitionBase_Microsoft_EntityFrameworkCore_Diagnostics_EventData_System_String__MongoDB_Driver_CollectionNamespace_System_String_System_Boolean_" data-uid="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.#ctor(Microsoft.EntityFrameworkCore.Diagnostics.EventDefinitionBase,System.Func{Microsoft.EntityFrameworkCore.Diagnostics.EventDefinitionBase,Microsoft.EntityFrameworkCore.Diagnostics.EventData,System.String},MongoDB.Driver.CollectionNamespace,System.String,System.Boolean)">
-  MongoQueryEventData(EventDefinitionBase, Func&lt;EventDefinitionBase, EventData, string&gt;, CollectionNamespace, string, bool)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Diagnostics/MongoQueryEventData.cs/#L39"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Constructs the event payload.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public MongoQueryEventData(EventDefinitionBase eventDefinition, Func&lt;EventDefinitionBase, EventData, string&gt; messageGenerator, CollectionNamespace collectionNamespace, string queryMql, bool logSensitiveData)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>eventDefinition</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.diagnostics.eventdefinitionbase">EventDefinitionBase</a></dt>
-    <dd><p>The event definition.</p>
-</dd>
-    <dt><code>messageGenerator</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.func-3">Func</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.diagnostics.eventdefinitionbase">EventDefinitionBase</a>, <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.diagnostics.eventdata">EventData</a>, <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a>&gt;</dt>
-    <dd><p>A delegate that generates a log message for this event.</p>
-</dd>
-    <dt><code>collectionNamespace</code> <span class="xref">CollectionNamespace</span></dt>
-    <dd><p>The <a class="xref" href="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.html#MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_CollectionNamespace">CollectionNamespace</a> being queried.</p>
-</dd>
-    <dt><code>queryMql</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd><p>The MQL representing the query.</p>
-</dd>
-    <dt><code>logSensitiveData</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a></dt>
-    <dd><p>Indicates whether the application allows logging of sensitive data.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.-ctor.html#MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData__ctor_Microsoft_EntityFrameworkCore_Diagnostics_EventDefinitionBase_System_Func_Microsoft_EntityFrameworkCore_Diagnostics_EventDefinitionBase_Microsoft_EntityFrameworkCore_Diagnostics_EventData_System_String__MongoDB_Driver_CollectionNamespace_System_String_System_Boolean_">MongoQueryEventData(EventDefinitionBase, Func&lt;EventDefinitionBase, EventData, string&gt;, CollectionNamespace, string, bool)</a></dt>
+    <dd><p>Constructs the event payload.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="properties">Properties
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_CollectionNamespace_" data-uid="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.CollectionNamespace*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_CollectionNamespace" data-uid="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.CollectionNamespace">
-  CollectionNamespace
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Diagnostics/MongoQueryEventData.cs/#L55"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>The <a class="xref" href="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.html#MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_CollectionNamespace">CollectionNamespace</a> being queried.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public virtual CollectionNamespace CollectionNamespace { get; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><span class="xref">CollectionNamespace</span></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.CollectionNamespace.html#MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_CollectionNamespace">CollectionNamespace</a></dt>
+    <dd><p>The <a class="xref" href="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.CollectionNamespace.html#MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_CollectionNamespace">CollectionNamespace</a> being queried.</p>
+</dd>
   </dl>
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_LogSensitiveData_" data-uid="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.LogSensitiveData*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_LogSensitiveData" data-uid="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.LogSensitiveData">
-  LogSensitiveData
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Diagnostics/MongoQueryEventData.cs/#L65"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Indicates whether the application allows logging of sensitive data.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public virtual bool LogSensitiveData { get; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.boolean">bool</a></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.LogSensitiveData.html#MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_LogSensitiveData">LogSensitiveData</a></dt>
+    <dd><p>Indicates whether the application allows logging of sensitive data.</p>
+</dd>
   </dl>
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_QueryMql_" data-uid="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.QueryMql*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_QueryMql" data-uid="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.QueryMql">
-  QueryMql
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Diagnostics/MongoQueryEventData.cs/#L60"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>The MQL representing the query.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public virtual string QueryMql { get; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.string">string</a></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.QueryMql.html#MongoDB_EntityFrameworkCore_Diagnostics_MongoQueryEventData_QueryMql">QueryMql</a></dt>
+    <dd><p>The MQL representing the query.</p>
+</dd>
   </dl>
-
-
-
-
-
-
 
 
 

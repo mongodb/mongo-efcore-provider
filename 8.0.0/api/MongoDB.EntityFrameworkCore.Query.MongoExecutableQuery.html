@@ -151,184 +151,39 @@ A query ready to be executed by the MongoDB LINQ provider.</p>
 
 
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery__ctor_" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery__ctor_System_Linq_Expressions_Expression_Microsoft_EntityFrameworkCore_Query_ResultCardinality_System_Linq_IQueryProvider_MongoDB_Driver_CollectionNamespace_" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.#ctor(System.Linq.Expressions.Expression,Microsoft.EntityFrameworkCore.Query.ResultCardinality,System.Linq.IQueryProvider,MongoDB.Driver.CollectionNamespace)">
-  MongoExecutableQuery(Expression, ResultCardinality, IQueryProvider, CollectionNamespace)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Query/MongoExecutableQuery.cs/#L31"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Internal use only.
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.-ctor.html#MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery__ctor_System_Linq_Expressions_Expression_Microsoft_EntityFrameworkCore_Query_ResultCardinality_System_Linq_IQueryProvider_MongoDB_Driver_CollectionNamespace_">MongoExecutableQuery(Expression, ResultCardinality, IQueryProvider, CollectionNamespace)</a></dt>
+    <dd><p>Internal use only.
 A query ready to be executed by the MongoDB LINQ provider.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public MongoExecutableQuery(Expression Query, ResultCardinality Cardinality, IQueryProvider Provider, CollectionNamespace CollectionNamespace)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>Query</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.expressions.expression">Expression</a></dt>
-    <dd><p>A LINQ query <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.expressions.expression">Expression</a> compatible with the MongoDB LINQ provider.</p>
-</dd>
-    <dt><code>Cardinality</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.query.resultcardinality">ResultCardinality</a></dt>
-    <dd><p>Whether many or a single result are expected (or enforced) as a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.query.resultcardinality">ResultCardinality</a>.</p>
-</dd>
-    <dt><code>Provider</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.iqueryprovider">IQueryProvider</a></dt>
-    <dd><p>The MongoDB V3 LINQ <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.iqueryprovider">IQueryProvider</a> that will execute this query.</p>
-</dd>
-    <dt><code>CollectionNamespace</code> <span class="xref">CollectionNamespace</span></dt>
-    <dd><p>The <a class="xref" href="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.html#MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_CollectionNamespace">CollectionNamespace</a> this query will run against.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="properties">Properties
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Cardinality_" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Cardinality*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Cardinality" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Cardinality">
-  Cardinality
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Query/MongoExecutableQuery.cs/#L31"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Whether many or a single result are expected (or enforced) as a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.query.resultcardinality">ResultCardinality</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public ResultCardinality Cardinality { get; init; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.query.resultcardinality">ResultCardinality</a></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Cardinality.html#MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Cardinality">Cardinality</a></dt>
+    <dd><p>Whether many or a single result are expected (or enforced) as a <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.query.resultcardinality">ResultCardinality</a>.</p>
+</dd>
   </dl>
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_CollectionNamespace_" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.CollectionNamespace*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_CollectionNamespace" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.CollectionNamespace">
-  CollectionNamespace
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Query/MongoExecutableQuery.cs/#L31"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>The <a class="xref" href="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.html#MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_CollectionNamespace">CollectionNamespace</a> this query will run against.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public CollectionNamespace CollectionNamespace { get; init; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><span class="xref">CollectionNamespace</span></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.CollectionNamespace.html#MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_CollectionNamespace">CollectionNamespace</a></dt>
+    <dd><p>The <a class="xref" href="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.CollectionNamespace.html#MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_CollectionNamespace">CollectionNamespace</a> this query will run against.</p>
+</dd>
   </dl>
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Provider_" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Provider*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Provider" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Provider">
-  Provider
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Query/MongoExecutableQuery.cs/#L31"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>The MongoDB V3 LINQ <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.iqueryprovider">IQueryProvider</a> that will execute this query.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public IQueryProvider Provider { get; init; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.iqueryprovider">IQueryProvider</a></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Provider.html#MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Provider">Provider</a></dt>
+    <dd><p>The MongoDB V3 LINQ <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.iqueryprovider">IQueryProvider</a> that will execute this query.</p>
+</dd>
   </dl>
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Query_" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Query*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Query" data-uid="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Query">
-  Query
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Query/MongoExecutableQuery.cs/#L31"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>A LINQ query <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.expressions.expression">Expression</a> compatible with the MongoDB LINQ provider.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public Expression Query { get; init; }</code></pre>
-  </div>
-
-
-
-
-
-  <h4 class="section">Property Value</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.expressions.expression">Expression</a></dt>
-    <dd></dd>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Query.html#MongoDB_EntityFrameworkCore_Query_MongoExecutableQuery_Query">Query</a></dt>
+    <dd><p>A LINQ query <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.linq.expressions.expression">Expression</a> compatible with the MongoDB LINQ provider.</p>
+</dd>
   </dl>
-
-
-
-
-
-
 
 
 

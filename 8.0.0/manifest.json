@@ -7,7 +7,77 @@
       "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.yml",
       "output": {
         ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.UseMongoDB.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/Microsoft.EntityFrameworkCore.MongoDbContextOptionsExtensions.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.Clone.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.Validate.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.ApplyServices.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.WithMongoClient.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.MongoClient.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.WithDatabaseName.html"
         }
       },
       "version": ""
@@ -24,10 +94,150 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.WithConnectionString.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.ConnectionString.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.Info.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoOptionsExtension.DatabaseName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyBuilderExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyBuilderExtensions.HasElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyBuilderExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyBuilderExtensions.HasDateTimeKind.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyBuilderExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyBuilderExtensions.CanSetElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyBuilderExtensions.yml",
       "output": {
         ".html": {
           "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyBuilderExtensions.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.GetElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.GetElementNameConfigurationSource.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.SetElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.SetDateTimeKind.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.GetDateTimeKind.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.EntityFrameworkCore.MongoPropertyExtensions.IsOwnedTypeKey.html"
         }
       },
       "version": ""
@@ -64,10 +274,50 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddEntityFrameworkMongoDB.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/Microsoft.Extensions.DependencyInjection.MongoServiceCollectionExtensions.AddMongoDB.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/Microsoft.Extensions.DependencyInjection.yml",
       "output": {
         ".html": {
           "relative_path": "api/Microsoft.Extensions.DependencyInjection.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.CollectionAttribute.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.CollectionAttribute.Name.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.CollectionAttribute.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.CollectionAttribute.-ctor.html"
         }
       },
       "version": ""
@@ -87,7 +337,97 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.Elapsed.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.LogSensitiveData.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.DocumentsDeleted.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.DocumentsModified.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.CollectionNamespace.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoBulkWriteEventData.DocumentsInserted.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoEventId.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoEventId.ExecutedBulkWrite.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoEventId.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoEventId.ExecutedMqlQuery.html"
         }
       },
       "version": ""
@@ -107,7 +447,67 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoLoggingDefinitions.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoLoggingDefinitions.LogExecutedMqlQuery.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoLoggingDefinitions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoLoggingDefinitions.LogExecutedBulkWrite.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoLoggingDefinitions.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoLoggingDefinitions.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.CollectionNamespace.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.QueryMql.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Diagnostics.MongoQueryEventData.LogSensitiveData.html"
         }
       },
       "version": ""
@@ -137,7 +537,67 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.HasElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.CanSetElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.CanSetCollection.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.SetCollectionName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeBuilderExtensions.ToCollection.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.SetCollectionName.html"
         }
       },
       "version": ""
@@ -148,6 +608,76 @@
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.GetContainingElementNameConfigurationSource.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.SetContainingElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.GetContainingElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.IsDocumentRoot.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.GetDefaultCollectionName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoEntityTypeExtensions.GetCollectionName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoNavigationExtensions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Extensions.MongoNavigationExtensions.IsEmbedded.html"
         }
       },
       "version": ""
@@ -177,6 +707,16 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.IMongoDbContextOptionsBuilderInfrastructure.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.IMongoDbContextOptionsBuilderInfrastructure.OptionsBuilder.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.IMongoDbContextOptionsBuilderInfrastructure.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.IMongoDbContextOptionsBuilderInfrastructure.html"
         }
       },
@@ -187,7 +727,57 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.OptionsBuilder.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.Validate.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.ValidateNoMutableKeys.html"
         }
       },
       "version": ""
@@ -217,6 +807,16 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonBsonTimeSpanOptionsPropertyAttributeConvention.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonBsonTimeSpanOptionsPropertyAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonBsonTimeSpanOptionsPropertyAttributeConvention.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonBsonTimeSpanOptionsPropertyAttributeConvention.html"
         }
       },
@@ -227,7 +827,37 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDateTimeOptionsAttributeConvention.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDateTimeOptionsAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDateTimeOptionsAttributeConvention.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDateTimeOptionsAttributeConvention.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDateTimeOptionsAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDateTimeOptionsAttributeConvention.ProcessPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDefaultValueAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDefaultValueAttributeConvention.-ctor.html"
         }
       },
       "version": ""
@@ -247,7 +877,27 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDictionaryOptionsAttributeConvention.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDictionaryOptionsAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDictionaryOptionsAttributeConvention.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonDictionaryOptionsAttributeConvention.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.ProcessPropertyAdded.html"
         }
       },
       "version": ""
@@ -264,10 +914,50 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.ProcessNavigationAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonElementAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonExtraElementsAttributeConvention.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonExtraElementsAttributeConvention.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonExtraElementsAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonExtraElementsAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonGuidRepresentationAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonGuidRepresentationAttributeConvention.-ctor.html"
         }
       },
       "version": ""
@@ -287,7 +977,67 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIdPropertyAttributeConvention.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIdPropertyAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIdPropertyAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIdPropertyAttributeConvention.ProcessPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIdPropertyAttributeConvention.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIdPropertyAttributeConvention.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreAttributeConvention.ProcessComplexPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreAttributeConvention.Dependencies.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreAttributeConvention.ProcessEntityTypeAdded.html"
         }
       },
       "version": ""
@@ -314,10 +1064,40 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreIfDefaultAttributePropertyAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreIfDefaultAttributePropertyAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreIfNullAttributePropertyAttributeConvention.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreIfNullAttributePropertyAttributeConvention.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreIfNullAttributePropertyAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonIgnoreIfNullAttributePropertyAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonRepresentationAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonRepresentationAttributeConvention.-ctor.html"
         }
       },
       "version": ""
@@ -344,6 +1124,46 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonRequiredPropertyAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonRequiredPropertyAttributeConvention.ProcessPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonRequiredPropertyAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonRequiredPropertyAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonSerializationOptionsAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonSerializationOptionsAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonSerializationOptionsAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonSerializationOptionsAttributeConvention.ProcessPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonSerializationOptionsAttributeConvention.yml",
       "output": {
         ".html": {
@@ -364,10 +1184,50 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonSerializerPropertyConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.BsonSerializerPropertyConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CamelCaseElementNameConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CamelCaseElementNameConvention.ProcessEntityTypeAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CamelCaseElementNameConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CamelCaseElementNameConvention.ProcessPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CamelCaseElementNameConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CamelCaseElementNameConvention.Dependencies.html"
         }
       },
       "version": ""
@@ -384,10 +1244,50 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CamelCaseElementNameConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CamelCaseElementNameConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionAttributeConvention.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionAttributeConvention.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionAttributeConvention.ProcessEntityTypeAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionNameFromDbSetConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionNameFromDbSetConvention.-ctor.html"
         }
       },
       "version": ""
@@ -404,6 +1304,26 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionNameFromDbSetConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionNameFromDbSetConvention.ProcessEntityTypeAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionNameFromDbSetConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.CollectionNameFromDbSetConvention.Dependencies.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.ColumnAttributeConvention.yml",
       "output": {
         ".html": {
@@ -414,10 +1334,110 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.ColumnAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.ColumnAttributeConvention.ProcessNavigationAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.ColumnAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.ColumnAttributeConvention.ProcessPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.ColumnAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.ColumnAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.DateTimeKindConvention.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.DateTimeKindConvention.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.DateTimeKindConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.DateTimeKindConvention.ProcessPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.DateTimeKindConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.DateTimeKindConvention.DateTimeKind.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.DateTimeKindConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.DateTimeKindConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.Build.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateConventionSet.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoConventionSetBuilder.CreateModelBuilder.html"
         }
       },
       "version": ""
@@ -444,6 +1464,56 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwned.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwnedType.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention-1.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention-1.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention-1.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention-1.ProcessPropertyAdded.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.NotSupportedPropertyAttributeConvention-1.yml",
       "output": {
         ".html": {
@@ -457,7 +1527,47 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.PrimaryKeyDiscoveryConvention.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.PrimaryKeyDiscoveryConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.PrimaryKeyDiscoveryConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.PrimaryKeyDiscoveryConvention.TryConfigurePrimaryKey.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.PrimaryKeyDiscoveryConvention.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.PrimaryKeyDiscoveryConvention.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.TableAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.TableAttributeConvention.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.TableAttributeConvention.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.Conventions.TableAttributeConvention.ProcessEntityTypeAdded.html"
         }
       },
       "version": ""
@@ -487,7 +1597,57 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.ElementName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.NotSupportedAttributes.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.CollectionName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.Prefix.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.DateTimeKind.html"
         }
       },
       "version": ""
@@ -507,7 +1667,57 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.NamingHelperMethods.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.NamingHelperMethods.ToCamelCase.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.NamingHelperMethods.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.NamingHelperMethods.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.NamingHelperMethods.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.NamingHelperMethods.ToTitleCase.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryCompilationContextFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryCompilationContextFactory.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryCompilationContextFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryCompilationContextFactory.Dependencies.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryCompilationContextFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryCompilationContextFactory.Create.html"
         }
       },
       "version": ""
@@ -527,7 +1737,77 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.Dependencies.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.Create.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryContextFactory.Client.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPostprocessorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPostprocessorFactory.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPostprocessorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPostprocessorFactory.Dependencies.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPostprocessorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPostprocessorFactory.Create.html"
         }
       },
       "version": ""
@@ -554,6 +1834,56 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPreprocessorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPreprocessorFactory.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPreprocessorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPreprocessorFactory.Dependencies.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPreprocessorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryTranslationPreprocessorFactory.Create.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryableMethodTranslatingExpressionVisitorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryableMethodTranslatingExpressionVisitorFactory.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryableMethodTranslatingExpressionVisitorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryableMethodTranslatingExpressionVisitorFactory.Dependencies.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryableMethodTranslatingExpressionVisitorFactory.yml",
       "output": {
         ".html": {
@@ -564,10 +1894,60 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryableMethodTranslatingExpressionVisitorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoQueryableMethodTranslatingExpressionVisitorFactory.Create.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.MongoDependencies.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.Create.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Factories.MongoShapedQueryCompilingExpressionVisitorFactory.Dependencies.html"
         }
       },
       "version": ""
@@ -587,7 +1967,57 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Provider.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.CollectionNamespace.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Cardinality.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.Query.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoExecutableQuery.-ctor.html"
         }
       },
       "version": ""
@@ -604,10 +2034,80 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryCompilationContext.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryCompilationContext.CreateQueryExecutor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryCompilationContext.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryCompilationContext.RegisterRuntimeParameter.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryCompilationContext.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryCompilationContext.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryContext.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryContext.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryContext.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryContext.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryContext.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryContext.MongoClient.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPostprocessor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPostprocessor.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPostprocessor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPostprocessor.Process.html"
         }
       },
       "version": ""
@@ -627,7 +2127,47 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPreprocessor.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPreprocessor.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPreprocessor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPreprocessor.Process.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPreprocessor.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Query.MongoQueryTranslationPreprocessor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies.MongoShapedQueryCompilingExpressionVisitorDependencies.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies.MongoShapedQueryCompilingExpressionVisitorDependencies.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies.MongoShapedQueryCompilingExpressionVisitorDependencies.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies.MongoShapedQueryCompilingExpressionVisitorDependencies.EntitySerializerCache.html"
         }
       },
       "version": ""
@@ -674,10 +2214,60 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Serializers.EntitySerializerCache.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Serializers.EntitySerializerCache.GetOrCreateSerializer.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Serializers.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Serializers.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.SaveUpdatesAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.GetCollection.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.Execute.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.SaveUpdates.html"
         }
       },
       "version": ""
@@ -697,7 +2287,57 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.SaveUpdatesAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.Execute.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.GetCollection.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.SaveUpdates.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.-ctor.html"
         }
       },
       "version": ""
@@ -708,6 +2348,96 @@
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.CanConnectAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureDeletedAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureCreatedAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureCreated.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.EnsureDeleted.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.CanConnect.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseWrapper.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseWrapper.SaveChanges.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseWrapper.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoDatabaseWrapper.SaveChangesAsync.html"
         }
       },
       "version": ""
@@ -727,7 +2457,137 @@
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
       "output": {
         ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CommitTransaction.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.BeginTransactionAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.BeginTransaction.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.ResetStateAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.ResetState.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.RollbackTransactionAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.RollbackTransaction.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.EnlistTransaction.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.EnlistedTransaction.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CurrentTransaction.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.CommitTransactionAsync.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.yml",
+      "output": {
+        ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMapping.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMapping.Clone.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMapping.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMapping.WithComposedConverter.html"
         }
       },
       "version": ""
@@ -744,6 +2604,16 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMapping.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMapping.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMappingSource.yml",
       "output": {
         ".html": {
@@ -754,10 +2624,90 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMappingSource.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMappingSource.FindMapping.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMappingSource.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoTypeMappingSource.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.Model.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.CollectionName.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.CreateAll.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.MongoUpdate.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.MongoValueConverterSelector.Select.html"
         }
       },
       "version": ""
@@ -784,10 +2734,80 @@
     },
     {
       "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.ObjectIdToStringConverter.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.ObjectIdToStringConverter.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.ObjectIdToStringConverter.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.ObjectIdToStringConverter.DefaultInfo.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringObjectIdConverter-2.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringObjectIdConverter-2.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringObjectIdConverter-2.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringObjectIdConverter-2.ToString.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringObjectIdConverter-2.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringObjectIdConverter-2.ToObjectId.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
       "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringObjectIdConverter-2.yml",
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringObjectIdConverter-2.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringToObjectIdConverter.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringToObjectIdConverter.-ctor.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringToObjectIdConverter.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringToObjectIdConverter.DefaultInfo.html"
         }
       },
       "version": ""
@@ -828,6 +2848,26 @@
       "output": {
         ".html": {
           "relative_path": "api/MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.FindForType.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "api/MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.yml",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.EntityFrameworkCore.ValueGeneration.MongoValueGeneratorSelector.-ctor.html"
         }
       },
       "version": ""

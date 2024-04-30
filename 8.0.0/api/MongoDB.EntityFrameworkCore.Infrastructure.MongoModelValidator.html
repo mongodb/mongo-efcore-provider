@@ -220,125 +220,29 @@ Class MongoModelValidator  <a class="header-action link-secondary" title="View s
 
 
 
-
   <h2 class="section" id="constructors">Constructors
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator__ctor_" data-uid="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.#ctor*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator__ctor_Microsoft_EntityFrameworkCore_Infrastructure_ModelValidatorDependencies_" data-uid="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.#ctor(Microsoft.EntityFrameworkCore.Infrastructure.ModelValidatorDependencies)">
-  MongoModelValidator(ModelValidatorDependencies)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Infrastructure/MongoModelValidator.cs/#L56"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Create a <a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.html">MongoModelValidator</a>.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public MongoModelValidator(ModelValidatorDependencies dependencies)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>dependencies</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.infrastructure.modelvalidatordependencies">ModelValidatorDependencies</a></dt>
-    <dd><p>The <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.infrastructure.modelvalidatordependencies">ModelValidatorDependencies</a> required by this validator.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.-ctor.html#MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator__ctor_Microsoft_EntityFrameworkCore_Infrastructure_ModelValidatorDependencies_">MongoModelValidator(ModelValidatorDependencies)</a></dt>
+    <dd><p>Create a <a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.html">MongoModelValidator</a>.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
 
   <h2 class="section" id="methods">Methods
 </h2>
 
-
-  <a id="MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator_Validate_" data-uid="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.Validate*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator_Validate_Microsoft_EntityFrameworkCore_Metadata_IModel_Microsoft_EntityFrameworkCore_Diagnostics_IDiagnosticsLogger_Microsoft_EntityFrameworkCore_DbLoggerCategory_Model_Validation__" data-uid="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.Validate(Microsoft.EntityFrameworkCore.Metadata.IModel,Microsoft.EntityFrameworkCore.Diagnostics.IDiagnosticsLogger{Microsoft.EntityFrameworkCore.DbLoggerCategory.Model.Validation})">
-  Validate(IModel, IDiagnosticsLogger&lt;Validation&gt;)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Infrastructure/MongoModelValidator.cs/#L67"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Validate that the <code class="paramref">model</code> is correct and can be used by the
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.Validate.html#MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator_Validate_Microsoft_EntityFrameworkCore_Metadata_IModel_Microsoft_EntityFrameworkCore_Diagnostics_IDiagnosticsLogger_Microsoft_EntityFrameworkCore_DbLoggerCategory_Model_Validation__">Validate(IModel, IDiagnosticsLogger&lt;Validation&gt;)</a></dt>
+    <dd><p>Validate that the <code class="paramref">model</code> is correct and can be used by the
 MongoDB provider.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">public override void Validate(IModel model, IDiagnosticsLogger&lt;DbLoggerCategory.Model.Validation&gt; logger)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>model</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.imodel">IModel</a></dt>
-    <dd><p>The <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.imodel">IModel</a> to validate for correctness.</p>
-</dd>
-    <dt><code>logger</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.diagnostics.idiagnosticslogger-1">IDiagnosticsLogger</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbloggercategory">DbLoggerCategory</a>.<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbloggercategory.model">Model</a>.<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbloggercategory.model.validation">Validation</a>&gt;</dt>
-    <dd><p>A logger to receive validation diagnostic information.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-
-
-
-  <a id="MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator_ValidateNoMutableKeys_" data-uid="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.ValidateNoMutableKeys*"></a>
-
-  <h3 id="MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator_ValidateNoMutableKeys_Microsoft_EntityFrameworkCore_Metadata_IModel_Microsoft_EntityFrameworkCore_Diagnostics_IDiagnosticsLogger_Microsoft_EntityFrameworkCore_DbLoggerCategory_Model_Validation__" data-uid="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.ValidateNoMutableKeys(Microsoft.EntityFrameworkCore.Metadata.IModel,Microsoft.EntityFrameworkCore.Diagnostics.IDiagnosticsLogger{Microsoft.EntityFrameworkCore.DbLoggerCategory.Model.Validation})">
-  ValidateNoMutableKeys(IModel, IDiagnosticsLogger&lt;Validation&gt;)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/sanych-sun/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Infrastructure/MongoModelValidator.cs/#L350"><i class="bi bi-code-slash"></i></a>
-  </h3>
-
-  <div class="markdown level1 summary"><p>Validates that the only keys that can actually be changed are shadow keys used by owned entities.</p>
-</div>
-  <div class="markdown level1 conceptual"></div>
-
-  <div class="codewrapper">
-    <pre><code class="lang-csharp hljs">protected override void ValidateNoMutableKeys(IModel model, IDiagnosticsLogger&lt;DbLoggerCategory.Model.Validation&gt; logger)</code></pre>
-  </div>
-
-  <h4 class="section">Parameters</h4>
-  <dl class="parameters">
-    <dt><code>model</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.imodel">IModel</a></dt>
-    <dd><p>The model to validate.</p>
-</dd>
-    <dt><code>logger</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.diagnostics.idiagnosticslogger-1">IDiagnosticsLogger</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbloggercategory">DbLoggerCategory</a>.<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbloggercategory.model">Model</a>.<a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbloggercategory.model.validation">Validation</a>&gt;</dt>
-    <dd><p>The logger to use.</p>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Infrastructure.MongoModelValidator.ValidateNoMutableKeys.html#MongoDB_EntityFrameworkCore_Infrastructure_MongoModelValidator_ValidateNoMutableKeys_Microsoft_EntityFrameworkCore_Metadata_IModel_Microsoft_EntityFrameworkCore_Diagnostics_IDiagnosticsLogger_Microsoft_EntityFrameworkCore_DbLoggerCategory_Model_Validation__">ValidateNoMutableKeys(IModel, IDiagnosticsLogger&lt;Validation&gt;)</a></dt>
+    <dd><p>Validates that the only keys that can actually be changed are shadow keys used by owned entities.</p>
 </dd>
   </dl>
-
-
-
-
-
-
-
-
-
-  <h4 class="section">Exceptions</h4>
-  <dl class="parameters">
-    <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.invalidoperationexception">InvalidOperationException</a></dt>
-    <dd><p>Thrown if mutable keys exist that aren't part of the shadow indexer on owned entities.</p>
-</dd>
-  </dl>
-
 
 
 
