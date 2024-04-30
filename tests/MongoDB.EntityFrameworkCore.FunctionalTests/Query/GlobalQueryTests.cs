@@ -93,16 +93,20 @@ public class GlobalQueryTests
         db.MaxOrder = 5;
         Assert.Equal(5, db.Planets.Count());
 
+        db.ExceptName = "Earth";
+        Assert.Equal(4, db.Planets.Count());
+
         db.MaxOrder = 2;
         Assert.Equal(2, db.Planets.Count());
     }
 
     class MultiTenantDbContext : DbContext
     {
-
         public DbSet<Planet> Planets { get; set; }
 
         public int MaxOrder { get; set; }
+
+        public string ExceptName { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => base.OnConfiguring(optionsBuilder.UseMongoDB(_mongoDatabase.Client, _mongoDatabase.DatabaseNamespace.DatabaseName));
@@ -110,7 +114,7 @@ public class GlobalQueryTests
         protected override void OnModelCreating(ModelBuilder mb)
         {
             mb.Entity<Planet>()
-                .HasQueryFilter(p => p.orderFromSun <= MaxOrder)
+                .HasQueryFilter(p => p.orderFromSun <= MaxOrder && p.name != ExceptName)
                 .ToCollection("planets");
         }
     }
