@@ -25,15 +25,26 @@ public static class TableAttributeConventionTests
     [Fact]
     public static void TableAttribute_specified_names_are_used_as_Table_names()
     {
-        using var context = new BaseDbContext();
-        Assert.Equal("attributeSpecifiedName", GetCollectionName<Customer>(context));
+        using var db = new BaseDbContext();
+        Assert.Equal("attributeSpecifiedName", GetCollectionName<Customer>(db));
     }
 
     [Fact]
     public static void ModelBuilder_specified_collection_names_override_TableAttribute_names()
     {
-        using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("fluentSpecifiedName", GetCollectionName<Customer>(context));
+        using var db = new ModelBuilderSpecifiedDbContext();
+        Assert.Equal("fluentSpecifiedName", GetCollectionName<Customer>(db));
+    }
+
+    [Fact]
+    public static void TableAttribute_causes_not_supported_exception_when_schema_specified()
+    {
+        using var db = SingleEntityDbContext.Create<SchemaSpecifiedEntity>();
+
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.First());
+        Assert.Contains(nameof(SchemaSpecifiedEntity), ex.Message);
+        Assert.Contains(nameof(TableAttribute), ex.Message);
+        Assert.Contains(nameof(TableAttribute.Schema), ex.Message);
     }
 
     static string GetCollectionName<TEntity>(DbContext context) =>
@@ -41,6 +52,13 @@ public static class TableAttributeConventionTests
 
     [Table("attributeSpecifiedName")]
     class Customer
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+    }
+
+    [Table("attributeSpecifiedName", Schema = "not-allowed")]
+    class SchemaSpecifiedEntity
     {
         public int Id { get; set; }
         public string Name { get; set; }

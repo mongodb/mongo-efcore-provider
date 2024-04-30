@@ -50,6 +50,14 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
         public string name { get; set; }
     }
 
+    class TypeNameSpecifyingEntity
+    {
+        public ObjectId _id { get; set; }
+
+        [Column("name", TypeName = "varchar(255)")]
+        public string TypeNameNotPermitted { get; set; }
+    }
+
     class OwnedEntityRemappingEntity
     {
         public ObjectId _id { get; set; }
@@ -78,14 +86,14 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
             var dbContext = SingleEntityDbContext.Create(collection);
             dbContext.Entities.Add(new OwnedEntityRemappingEntity
             {
-                _id = id,
-                Location = location
+                _id = id, Location = location
             });
             dbContext.SaveChanges();
         }
 
         {
-            var actual = collection.Database.GetCollection<IntendedOwnedEntityRemappingEntity>(collection.CollectionNamespace.CollectionName);
+            var actual = collection.Database.GetCollection<IntendedOwnedEntityRemappingEntity>(collection.CollectionNamespace
+                .CollectionName);
             var directFound = actual.Find(f => f._id == id).Single();
             Assert.Equal(location, directFound.otherLocation);
         }
@@ -101,7 +109,10 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(new NonKeyRemappingEntity {_id = id, RemapThisToName = name});
+            dbContext.Entities.Add(new NonKeyRemappingEntity
+            {
+                _id = id, RemapThisToName = name
+            });
             dbContext.SaveChanges();
         }
 
@@ -122,7 +133,10 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(new KeyRemappingEntity {_id = id, name = name});
+            dbContext.Entities.Add(new KeyRemappingEntity
+            {
+                _id = id, name = name
+            });
             dbContext.SaveChanges();
         }
 
@@ -143,7 +157,10 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
 
         {
             var dbContext = SingleEntityDbContext.Create(collection);
-            var entity = new KeyRemappingEntity {_id = id, name = name};
+            var entity = new KeyRemappingEntity
+            {
+                _id = id, name = name
+            };
             dbContext.Entities.Add(entity);
             dbContext.SaveChanges();
 
@@ -155,5 +172,18 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
             var actual = collection.Database.GetCollection<IntendedStorageEntity>(collection.CollectionNamespace.CollectionName);
             Assert.Equal(0, actual.AsQueryable().Count());
         }
+    }
+
+    [Fact]
+    public void ColumnAttribute_throws_if_type_name_specified()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<TypeNameSpecifyingEntity>();
+
+        var dbContext = SingleEntityDbContext.Create(collection);
+
+        var ex = Assert.Throws<NotSupportedException>(() => dbContext.Entities.FirstOrDefault());
+        Assert.Contains(nameof(ColumnAttribute.TypeName), ex.Message);
+        Assert.Contains(nameof(TypeNameSpecifyingEntity), ex.Message);
+        Assert.Contains(nameof(TypeNameSpecifyingEntity.TypeNameNotPermitted), ex.Message);
     }
 }

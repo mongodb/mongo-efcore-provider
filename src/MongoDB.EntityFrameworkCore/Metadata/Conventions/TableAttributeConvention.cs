@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
@@ -51,6 +52,14 @@ public class TableAttributeConvention : TypeAttributeConventionBase<TableAttribu
         if (!string.IsNullOrWhiteSpace(attribute.Name))
         {
             entityTypeBuilder.ToCollection(attribute.Name, fromDataAnnotation: true);
+        }
+
+        if (!string.IsNullOrWhiteSpace(attribute.Schema))
+        {
+            var meta = entityTypeBuilder.Metadata;
+            throw new NotSupportedException($"Entity '{meta.ShortName()}' specifies a "
+                                            + $"{nameof(TableAttribute)}.{nameof(TableAttribute.Schema)} which is not supported by "
+                                            + $"MongoDB.");
         }
     }
 }
