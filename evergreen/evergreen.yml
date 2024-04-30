@@ -493,7 +493,7 @@ buildvariants:
 - matrix_name: test-packages
   matrix_spec:
     version: "latest"
-    os: "*"
+    os: ["windows-64", "ubuntu-2004"]
     driver: "latest"
     target_runtime: "*"
     build-target: "release"
@@ -506,18 +506,18 @@ buildvariants:
         - name: pack-packages
           variant: .pack-packages
 
-- matrix_name: generate-apidocs
-  matrix_spec:
-    build-target: "release"
-  display_name: "Generate API Documentation"
-  run_on: ubuntu2004-small
-  tags: ["generate-apidocs", "release_tag"]
-  tasks:
-    - name: generate-apidocs
-      git_tag_only: true
-      depends_on:
-        - name: packages-tests
-          variant: .package-tests
+#- matrix_name: generate-apidocs
+#  matrix_spec:
+#    build-target: "release"
+#  display_name: "Generate API Documentation"
+#  run_on: ubuntu2004-small
+#  tags: ["generate-apidocs", "release_tag"]
+#  tasks:
+#    - name: generate-apidocs
+#      git_tag_only: true
+#      depends_on:
+#        - name: packages-tests
+#          variant: .package-tests
 
 - matrix_name: push-packages
   matrix_spec:
@@ -533,5 +533,5 @@ buildvariants:
           variant: .pack-packages
         - name: packages-tests
           variant: .package-tests
-        - name: generate-apidocs
-          variant: .generate-apidocs
+#        - name: generate-apidocs
+#          variant: .generate-apidocs
