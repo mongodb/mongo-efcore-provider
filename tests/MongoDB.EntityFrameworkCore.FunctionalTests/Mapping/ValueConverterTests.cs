@@ -636,6 +636,56 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Theory]
+    [InlineData(["1.1234"])]
+    [InlineData(["-123.213"])]
+    [InlineData(["0"])]
+    public void Double_can_deserialize_from_string_with_default_converter(string amount)
+    {
+        var expected = new AmountIsString
+        {
+            amount = amount, _id = ObjectId.GenerateNewId()
+        };
+        var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
+            nameof(Double_can_deserialize_from_string_with_default_converter) + "_" + amount);
+        docs.InsertOne(expected);
+
+        var collection = GetCollection<AmountIsDouble>(docs.CollectionNamespace.CollectionName);
+        var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<AmountIsDouble>().Property(e => e.amount).HasConversion<string>();
+        });
+
+        var found = db.Entities.First();
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(amount, found.amount.ToString());
+    }
+
+    [Theory]
+    [InlineData(["1.1234"])]
+    [InlineData(["-123.213"])]
+    [InlineData(["0"])]
+    public void Double_can_query_against_string_with_default_converter(string amount)
+    {
+        var expected = new AmountIsString
+        {
+            amount = amount, _id = ObjectId.GenerateNewId()
+        };
+        var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
+            nameof(Double_can_query_against_string_with_default_converter) + "_" + amount);
+        docs.InsertOne(expected);
+
+        var collection = GetCollection<AmountIsDouble>(docs.CollectionNamespace.CollectionName);
+        var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<AmountIsDouble>().Property(e => e.amount).HasConversion<string>();
+        });
+
+        var found = db.Entities.First(e => e.amount.ToString() == amount);
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(amount, found.amount.ToString());
+    }
+
+    [Theory]
     [InlineData([1.1234f])]
     [InlineData([-123.213f])]
     [InlineData([0f])]
@@ -664,6 +714,58 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     class AmountIsGuid : IdIsObjectId
     {
         public Guid amount { get; set; }
+    }
+
+    [Theory]
+    [InlineData(["6ec635e0-06e0-11ef-93e0-325096b39f47"])]
+    [InlineData(["380bb5de-fb71-4f6d-a349-2b83908ab43b"])]
+    [InlineData(["018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff"])]
+    [InlineData(["00000000-0000-0000-0000-000000000000"])]
+    public void Guid_can_deserialize_from_string_with_default_converter(string amount)
+    {
+        var expected = new AmountIsString
+        {
+            amount = amount, _id = ObjectId.GenerateNewId()
+        };
+        var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
+            nameof(Guid_can_deserialize_from_string_with_default_converter) + "_" + amount);
+        docs.InsertOne(expected);
+
+        var collection = GetCollection<AmountIsGuid>(docs.CollectionNamespace.CollectionName);
+        var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>();
+        });
+
+        var found = db.Entities.First();
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(amount, found.amount.ToString());
+    }
+
+    [Theory]
+    [InlineData(["6ec635e0-06e0-11ef-93e0-325096b39f47"])]
+    [InlineData(["380bb5de-fb71-4f6d-a349-2b83908ab43b"])]
+    [InlineData(["018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff"])]
+    [InlineData(["00000000-0000-0000-0000-000000000000"])]
+    public void Guid_can_query_against_string_with_default_converter(string amount)
+    {
+        var expected = new AmountIsString
+        {
+            amount = amount, _id = ObjectId.GenerateNewId()
+        };
+        var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
+            nameof(Guid_can_query_against_string_with_default_converter) + "_" + amount);
+        docs.InsertOne(expected);
+
+        var collection = GetCollection<AmountIsGuid>(docs.CollectionNamespace.CollectionName);
+        var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>();
+        });
+
+        var found = db.Entities.First(e => e.amount.ToString() == amount);
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(amount, found.amount.ToString());
     }
 
     [Theory]
