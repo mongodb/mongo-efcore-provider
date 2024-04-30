@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.EntityFrameworkCore.ValueGeneration;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
@@ -29,6 +30,7 @@ using MongoDB.EntityFrameworkCore.Query.Factories;
 using MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies;
 using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
+using MongoDB.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.EntityFrameworkCore.ValueGeneration;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
@@ -110,6 +112,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IDatabaseCreator, MongoDatabaseCreator>()
             .TryAdd<IQueryContextFactory, MongoQueryContextFactory>()
             .TryAdd<ITypeMappingSource, MongoTypeMappingSource>()
+            .TryAdd<IValueConverterSelector, MongoValueConverterSelector>()
             .TryAdd<IQueryTranslationPreprocessorFactory, MongoQueryTranslationPreprocessorFactory>()
             .TryAdd<IQueryCompilationContextFactory, MongoQueryCompilationContextFactory>()
             .TryAdd<IQueryTranslationPostprocessorFactory, MongoQueryTranslationPostprocessorFactory>()
