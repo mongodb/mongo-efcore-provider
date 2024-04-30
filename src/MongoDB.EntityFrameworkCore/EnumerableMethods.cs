@@ -32,6 +32,10 @@ internal static class EnumerableMethods
             typeof(IEnumerable)
         ]);
 
+        Select = GetMethod(
+            nameof(Enumerable.Select), 2,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], types[1])]);
+
         SelectWithOrdinal = GetMethod(
             nameof(Enumerable.Select), 2,
             types =>
@@ -42,13 +46,14 @@ internal static class EnumerableMethods
         MethodInfo GetMethod(string name, int genericParameterCount, Func<Type[], Type[]> parameterGenerator)
         {
             return queryableMethodGroups[name].Single(
-                mi => ((genericParameterCount == 0 && !mi.IsGenericMethod)
-                       || (mi.IsGenericMethod && mi.GetGenericArguments().Length == genericParameterCount))
+                mi => (genericParameterCount == 0 && !mi.IsGenericMethod
+                       || mi.IsGenericMethod && mi.GetGenericArguments().Length == genericParameterCount)
                       && mi.GetParameters().Select(e => e.ParameterType).SequenceEqual(
-                          parameterGenerator(mi.IsGenericMethod ? mi.GetGenericArguments() : Array.Empty<Type>())));
+                          parameterGenerator(mi.IsGenericMethod ? mi.GetGenericArguments() : [])));
         }
     }
 
     public static MethodInfo Cast { get; }
+    public static MethodInfo Select { get; }
     public static MethodInfo SelectWithOrdinal { get; }
 }
