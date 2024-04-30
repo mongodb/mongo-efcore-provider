@@ -9,4 +9,4 @@ fi
 echo Creating nuget package...
 
 dotnet clean ./MongoDB.EFCoreProvider.sln
-dotnet pack ./MongoDB.EFCoreProvider.sln -o ./artifacts/nuget -c Release -p:Version="$PACKAGE_VERSION" --include-symbols -p:SymbolPackageFormat=snupkg
+dotnet pack ./MongoDB.EFCoreProvider.sln -o ./artifacts/nuget -c Release -p:Version="$PACKAGE_VERSION" --include-symbols -p:SymbolPackageFormat=snupkg -p:ContinuousIntegrationBuild=true

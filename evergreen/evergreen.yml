@@ -46,7 +46,7 @@ functions:
           fi
 
           if [ "${BUILD_TARGET}" = "release" ]; then
-            PACKAGE_VERSION=$(BUILD_TARGET="${BUILD_TARGET}" sh ./evergreen/generate-version.sh)
+            PACKAGE_VERSION=$(BUILD_TARGET="${BUILD_TARGET}" bash ./evergreen/generate-version.sh)
           fi
 
           export DRIVERS_TOOLS="$(pwd)/../drivers-tools"
@@ -155,7 +155,7 @@ functions:
           MONGODB_VERSION=${VERSION} \
           STORAGE_ENGINE=${STORAGE_ENGINE} \
           ORCHESTRATION_FILE=${ORCHESTRATION_FILE} \
-            sh ${DRIVERS_TOOLS}/.evergreen/run-orchestration.sh
+            bash ${DRIVERS_TOOLS}/.evergreen/run-orchestration.sh
     # run-orchestration generates expansion file with the MONGODB_URI for the cluster
     - command: expansions.update
       params:
