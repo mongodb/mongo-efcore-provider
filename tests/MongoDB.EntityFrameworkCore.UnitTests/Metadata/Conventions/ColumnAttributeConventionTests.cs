@@ -16,6 +16,7 @@
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions;
@@ -57,7 +58,8 @@ public static class ColumnAttributeConventionTests
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => optionsBuilder
-                .UseMongoDB("mongodb://localhost:27017", "UnitTests");
+                .UseMongoDB("mongodb://localhost:27017", "UnitTests")
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
     }
 
     class ModelBuilderSpecifiedDbContext : BaseDbContext

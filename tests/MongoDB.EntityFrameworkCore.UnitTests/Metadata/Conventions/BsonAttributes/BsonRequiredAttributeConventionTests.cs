@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions.BsonAttributes;
@@ -53,7 +54,9 @@ public static class BsonRequiredAttributeConventionTests
         public DbSet<Customer> Customers { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-            => optionsBuilder.UseMongoDB("mongodb://localhost:27017", "UnitTests");
+            => optionsBuilder
+                .UseMongoDB("mongodb://localhost:27017", "UnitTests")
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
     }
 
     class ModelBuilderSpecifiedDbContext : BaseDbContext
