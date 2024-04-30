@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.TestModels.ConferencePlanner;
 using Microsoft.Extensions.DependencyInjection;
@@ -72,6 +73,7 @@ public static class MongoDbContextOptionsExtensionsTest
         var options = new DbContextOptionsBuilder()
             .UseMongoDB(connectionString, databaseName)
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;
 
         var context = new DbContext(options);
@@ -87,7 +89,8 @@ public static class MongoDbContextOptionsExtensionsTest
         var optionsBuilder = new DbContextOptionsBuilder()
             .UseMongoDB(
                 "mongodb://myDbUsr:NotActuallyAP%40ssw0rd@m0.example.com:27017,m2.example.com:27017,m2.example.com:27017/?authSource=admin",
-                "db");
+                "db")
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
         var extension = optionsBuilder.Options.FindExtension<MongoOptionsExtension>();
         var logFragment = extension?.Info.LogFragment;

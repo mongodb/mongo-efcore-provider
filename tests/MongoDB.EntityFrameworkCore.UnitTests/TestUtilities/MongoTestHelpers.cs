@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -31,5 +32,7 @@ public sealed class MongoTestHelpers : TestHelpers
         => services.AddEntityFrameworkMongoDB();
 
     public override DbContextOptionsBuilder UseProviderOptions(DbContextOptionsBuilder optionsBuilder)
-        => optionsBuilder.UseMongoDB("mongodb://localhost:27017", "UnitTests");
+        => optionsBuilder
+            .UseMongoDB("mongodb://localhost:27017", "UnitTests")
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 }
