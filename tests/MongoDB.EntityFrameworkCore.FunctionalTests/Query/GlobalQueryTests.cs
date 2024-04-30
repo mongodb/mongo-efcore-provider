@@ -15,13 +15,15 @@
 
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(SampleGuidesFixture))]
 public class GlobalQueryTests
 {
-    private readonly IMongoDatabase _mongoDatabase;
+    private static IMongoDatabase _mongoDatabase;
 
     public GlobalQueryTests(SampleGuidesFixture fixture)
     {
@@ -31,7 +33,7 @@ public class GlobalQueryTests
     [Fact]
     public void Global_query_filter_applies()
     {
-        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
+        using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
         {
             mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true);
         });
@@ -44,7 +46,7 @@ public class GlobalQueryTests
     [Fact]
     public void Global_query_filter_combines_with_where()
     {
-        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
+        using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
         {
             mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true);
         });
@@ -58,7 +60,7 @@ public class GlobalQueryTests
     [Fact]
     public void Global_query_filter_applies_to_first()
     {
-        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
+        using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
         {
             mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true);
         });
@@ -71,14 +73,45 @@ public class GlobalQueryTests
     [Fact]
     public void Global_query_filter_can_be_ignored()
     {
-        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
+        using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
         {
-            mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true);
+            mb.Entity<WhereTests.PlanetListVersion>()
+                .HasQueryFilter(p => p.hasRings == true);
         });
 
         var results = db.Entities.IgnoreQueryFilters().Where(e => e.orderFromSun < 7).ToList();
 
         Assert.Equal(6, results.Count);
         Assert.All(results, p => Assert.True(p.orderFromSun < 7));
+    }
+
+    [Fact]
+    public void Global_query_filter_against_the_dbcontext()
+    {
+        using var db = new MultiTenantDbContext();
+
+        db.MaxOrder = 5;
+        Assert.Equal(5, db.Planets.Count());
+
+        db.MaxOrder = 2;
+        Assert.Equal(2, db.Planets.Count());
+    }
+
+    class MultiTenantDbContext : DbContext
+    {
+
+        public DbSet<Planet> Planets { get; set; }
+
+        public int MaxOrder { get; set; }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            => base.OnConfiguring(optionsBuilder.UseMongoDB(_mongoDatabase.Client, _mongoDatabase.DatabaseNamespace.DatabaseName));
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            mb.Entity<Planet>()
+                .HasQueryFilter(p => p.orderFromSun <= MaxOrder)
+                .ToCollection("planets");
+        }
     }
 }
