@@ -19,12 +19,7 @@ using MongoDB.Bson.Serialization;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
-internal interface IDifferentStorageType
-{
-    public Type StorageType { get; }
-}
-
-internal class ValueConverterSerializer<TActual, TStorage> : IBsonSerializer<TActual>, IDifferentStorageType
+internal class ValueConverterSerializer<TActual, TStorage> : IBsonSerializer<TActual>
 {
     private readonly ValueConverter<TActual, TStorage> _valueConverter;
     private readonly IBsonSerializer<TStorage> _storageSerializer;
