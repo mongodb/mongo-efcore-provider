@@ -795,4 +795,92 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount.ToString(), found.amount);
     }
+
+    [Theory]
+    [InlineData(["507f1f77bcf86cd799439011"])]
+    [InlineData(["507f191e810c19729de860ea"])]
+    public void String_can_deserialize_from_ObjectId_with_default_converter(string id)
+    {
+        var docs = tempDatabase.CreateTemporaryCollection<IdIsObjectId>(
+            nameof(String_can_deserialize_from_ObjectId_with_default_converter) + "_" + id);
+        docs.InsertOne(new IdIsObjectId
+        {
+            _id = ObjectId.Parse(id)
+        });
+
+        var collection = GetCollection<IdIsString>(docs.CollectionNamespace.CollectionName);
+        var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
+        });
+
+        var found = db.Entities.First();
+        Assert.Equal(id, found._id);
+    }
+
+    [Theory]
+    [InlineData(["507f1f77bcf86cd799439011"])]
+    [InlineData(["507f191e810c19729de860ea"])]
+    public void String_can_query_against_ObjectId_with_default_converter(string id)
+    {
+        var docs = tempDatabase.CreateTemporaryCollection<IdIsObjectId>(
+            nameof(String_can_query_against_ObjectId_with_default_converter) + "_" + id);
+        docs.InsertOne(new IdIsObjectId
+        {
+            _id = ObjectId.Parse(id)
+        });
+
+        var collection = GetCollection<IdIsString>(docs.CollectionNamespace.CollectionName);
+        var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
+        });
+
+        var found = db.Entities.First(e => e._id == id);
+        Assert.Equal(id, found._id);
+    }
+
+    [Theory]
+    [InlineData(["507f1f77bcf86cd799439011"])]
+    [InlineData(["507f191e810c19729de860ea"])]
+    public void String_can_serialize_to_ObjectId_with_default_converter(string id)
+    {
+        var docs = tempDatabase.CreateTemporaryCollection<IdIsString>(
+            nameof(String_can_serialize_to_ObjectId_with_default_converter) + "_" + id);
+        var db = SingleEntityDbContext.Create(docs, mb =>
+        {
+            mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
+        });
+        var original = new IdIsString
+        {
+            _id = id
+        };
+        db.Entities.Add(original);
+        db.SaveChanges();
+
+        var found = GetCollection<IdIsObjectId>(docs.CollectionNamespace.CollectionName).AsQueryable().First();
+        Assert.Equal(original._id, found._id.ToString());
+    }
+
+    [Theory]
+    [InlineData(["507f1f77bcf86cd799439011"])]
+    [InlineData(["507f191e810c19729de860ea"])]
+    public void ObjectId_can_deserialize_from_string_with_default_converter(string id)
+    {
+        var docs = tempDatabase.CreateTemporaryCollection<IdIsString>(
+            nameof(ObjectId_can_deserialize_from_string_with_default_converter) + "_" + id);
+        docs.InsertOne(new IdIsString
+        {
+            _id = id
+        });
+
+        var collection = GetCollection<IdIsObjectId>(docs.CollectionNamespace.CollectionName);
+        var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<IdIsObjectId>().Property(e => e._id).HasConversion<string>();
+        });
+
+        var found = db.Entities.First();
+        Assert.Equal(id, found._id.ToString());
+    }
 }
