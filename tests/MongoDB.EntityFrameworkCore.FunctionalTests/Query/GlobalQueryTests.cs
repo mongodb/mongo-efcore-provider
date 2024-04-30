@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
@@ -109,7 +110,10 @@ public class GlobalQueryTests
         public string ExceptName { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-            => base.OnConfiguring(optionsBuilder.UseMongoDB(_mongoDatabase.Client, _mongoDatabase.DatabaseNamespace.DatabaseName));
+            => base.OnConfiguring(optionsBuilder
+                .UseMongoDB(_mongoDatabase.Client, _mongoDatabase.DatabaseNamespace.DatabaseName)
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            );
 
         protected override void OnModelCreating(ModelBuilder mb)
         {

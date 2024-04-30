@@ -403,13 +403,13 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData([1])]
     [InlineData([-123])]
     [InlineData([0])]
-    public void String_can_deserialize_from_int_with_default_converter(int days)
+    public void String_can_deserialize_from_int_default(int days)
     {
         var expected = new DaysIsInt
         {
             days = days, _id = ObjectId.GenerateNewId()
         };
-        var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(String_can_deserialize_from_int_with_default_converter)
+        var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(String_can_deserialize_from_int_default)
                                                                      + "_" + days);
         docs.InsertOne(expected);
 
@@ -639,14 +639,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(["1.1234"])]
     [InlineData(["-123.213"])]
     [InlineData(["0"])]
-    public void Double_can_deserialize_from_string_with_default_converter(string amount)
+    public void Double_can_deserialize_from_string_default(string amount)
     {
         var expected = new AmountIsString
         {
             amount = amount, _id = ObjectId.GenerateNewId()
         };
         var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
-            nameof(Double_can_deserialize_from_string_with_default_converter) + "_" + amount);
+            nameof(Double_can_deserialize_from_string_default) + "_" + amount);
         docs.InsertOne(expected);
 
         var collection = GetCollection<AmountIsDouble>(docs.CollectionNamespace.CollectionName);
@@ -664,14 +664,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(["1.1234"])]
     [InlineData(["-123.213"])]
     [InlineData(["0"])]
-    public void Double_can_query_against_string_with_default_converter(string amount)
+    public void Double_can_query_against_string_default(string amount)
     {
         var expected = new AmountIsString
         {
             amount = amount, _id = ObjectId.GenerateNewId()
         };
         var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
-            nameof(Double_can_query_against_string_with_default_converter) + "_" + amount);
+            nameof(Double_can_query_against_string_default) + "_" + amount);
         docs.InsertOne(expected);
 
         var collection = GetCollection<AmountIsDouble>(docs.CollectionNamespace.CollectionName);
@@ -689,10 +689,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData([1.1234f])]
     [InlineData([-123.213f])]
     [InlineData([0f])]
-    public void Double_can_serialize_to_string_with_default_converter(double amount)
+    public void Double_can_serialize_to_string_default(double amount)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<AmountIsDouble>(nameof(Double_can_serialize_to_string_with_default_converter)
+            tempDatabase.CreateTemporaryCollection<AmountIsDouble>(nameof(Double_can_serialize_to_string_default)
                                                                    + "_" + amount);
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
@@ -721,14 +721,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(["380bb5de-fb71-4f6d-a349-2b83908ab43b"])]
     [InlineData(["018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff"])]
     [InlineData(["00000000-0000-0000-0000-000000000000"])]
-    public void Guid_can_deserialize_from_string_with_default_converter(string amount)
+    public void Guid_can_deserialize_from_string_default(string amount)
     {
         var expected = new AmountIsString
         {
             amount = amount, _id = ObjectId.GenerateNewId()
         };
         var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
-            nameof(Guid_can_deserialize_from_string_with_default_converter) + "_" + amount);
+            nameof(Guid_can_deserialize_from_string_default) + "_" + amount.Substring(6));
         docs.InsertOne(expected);
 
         var collection = GetCollection<AmountIsGuid>(docs.CollectionNamespace.CollectionName);
@@ -747,14 +747,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(["380bb5de-fb71-4f6d-a349-2b83908ab43b"])]
     [InlineData(["018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff"])]
     [InlineData(["00000000-0000-0000-0000-000000000000"])]
-    public void Guid_can_query_against_string_with_default_converter(string amount)
+    public void Guid_can_query_against_string_default(string amount)
     {
         var expected = new AmountIsString
         {
             amount = amount, _id = ObjectId.GenerateNewId()
         };
         var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
-            nameof(Guid_can_query_against_string_with_default_converter) + "_" + amount);
+            nameof(Guid_can_query_against_string_default) + "_" + amount.Substring(6));
         docs.InsertOne(expected);
 
         var collection = GetCollection<AmountIsGuid>(docs.CollectionNamespace.CollectionName);
@@ -773,12 +773,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(["380bb5de-fb71-4f6d-a349-2b83908ab43b"])]
     [InlineData(["018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff"])]
     [InlineData(["00000000-0000-0000-0000-000000000000"])]
-    public void Guid_can_serialize_to_string_with_default_converter(string amountString)
+    public void Guid_can_serialize_to_string_default(string amountString)
     {
         var amount = Guid.Parse(amountString);
         var collection =
-            tempDatabase.CreateTemporaryCollection<AmountIsGuid>(nameof(Guid_can_serialize_to_string_with_default_converter) + "_"
-                + amountString);
+            tempDatabase.CreateTemporaryCollection<AmountIsGuid>(nameof(Guid_can_serialize_to_string_default) + "_"
+                + amountString.Substring(6));
         var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>();
@@ -799,10 +799,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [Theory]
     [InlineData(["507f1f77bcf86cd799439011"])]
     [InlineData(["507f191e810c19729de860ea"])]
-    public void String_can_deserialize_from_ObjectId_with_default_converter(string id)
+    public void String_can_deserialize_from_ObjectId_default(string id)
     {
         var docs = tempDatabase.CreateTemporaryCollection<IdIsObjectId>(
-            nameof(String_can_deserialize_from_ObjectId_with_default_converter) + "_" + id);
+            nameof(String_can_deserialize_from_ObjectId_default) + "_" + id.Substring(6));
         docs.InsertOne(new IdIsObjectId
         {
             _id = ObjectId.Parse(id)
@@ -821,10 +821,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [Theory]
     [InlineData(["507f1f77bcf86cd799439011"])]
     [InlineData(["507f191e810c19729de860ea"])]
-    public void String_can_query_against_ObjectId_with_default_converter(string id)
+    public void String_can_query_against_ObjectId_default(string id)
     {
         var docs = tempDatabase.CreateTemporaryCollection<IdIsObjectId>(
-            nameof(String_can_query_against_ObjectId_with_default_converter) + "_" + id);
+            nameof(String_can_query_against_ObjectId_default) + "_" + id.Substring(6));
         docs.InsertOne(new IdIsObjectId
         {
             _id = ObjectId.Parse(id)
@@ -843,10 +843,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [Theory]
     [InlineData(["507f1f77bcf86cd799439011"])]
     [InlineData(["507f191e810c19729de860ea"])]
-    public void String_can_serialize_to_ObjectId_with_default_converter(string id)
+    public void String_can_serialize_to_ObjectId_default(string id)
     {
         var docs = tempDatabase.CreateTemporaryCollection<IdIsString>(
-            nameof(String_can_serialize_to_ObjectId_with_default_converter) + "_" + id);
+            nameof(String_can_serialize_to_ObjectId_default) + "_" + id.Substring(6));
         var db = SingleEntityDbContext.Create(docs, mb =>
         {
             mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
@@ -865,10 +865,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     [Theory]
     [InlineData(["507f1f77bcf86cd799439011"])]
     [InlineData(["507f191e810c19729de860ea"])]
-    public void ObjectId_can_deserialize_from_string_with_default_converter(string id)
+    public void ObjectId_can_deserialize_from_string_default(string id)
     {
         var docs = tempDatabase.CreateTemporaryCollection<IdIsString>(
-            nameof(ObjectId_can_deserialize_from_string_with_default_converter) + "_" + id);
+            nameof(ObjectId_can_deserialize_from_string_default) + "_" + id.Substring(6));
         docs.InsertOne(new IdIsString
         {
             _id = id
