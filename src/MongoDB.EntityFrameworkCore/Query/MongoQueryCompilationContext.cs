@@ -16,6 +16,7 @@
 using System;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Query;
@@ -39,10 +40,16 @@ public class MongoQueryCompilationContext : QueryCompilationContext
     }
 
     /// <inheritdoc />
-    public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression query)
+    public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression originalQuery)
     {
-        query = Dependencies.QueryTranslationPreprocessorFactory.Create(this).Process(query);
+        var query = Dependencies.QueryTranslationPreprocessorFactory.Create(this).Process(originalQuery);
         query = Dependencies.QueryableMethodTranslatingExpressionVisitorFactory.Create(this).Visit(query);
+
+        if (query == NotTranslatedExpression)
+        {
+            throw new InvalidOperationException(CoreStrings.TranslationFailed(originalQuery.Print()));
+        }
+
         query = Dependencies.QueryTranslationPostprocessorFactory.Create(this).Process(query);
         query = Dependencies.ShapedQueryCompilingExpressionVisitorFactory.Create(this).Visit(query);
 
