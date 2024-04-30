@@ -1,17 +1,17 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
@@ -24,15 +24,26 @@ public static class TableAttributeConventionTests
     [Fact]
     public static void TableAttribute_specified_names_are_used_as_Table_names()
     {
-        using var context = new BaseDbContext();
-        Assert.Equal("attributeSpecifiedName", GetCollectionName<Customer>(context));
+        using var db = new BaseDbContext();
+        Assert.Equal("attributeSpecifiedName", GetCollectionName<Customer>(db));
     }
 
     [Fact]
     public static void ModelBuilder_specified_collection_names_override_TableAttribute_names()
     {
-        using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("fluentSpecifiedName", GetCollectionName<Customer>(context));
+        using var db = new ModelBuilderSpecifiedDbContext();
+        Assert.Equal("fluentSpecifiedName", GetCollectionName<Customer>(db));
+    }
+
+    [Fact]
+    public static void TableAttribute_causes_not_supported_exception_when_schema_specified()
+    {
+        using var db = SingleEntityDbContext.Create<SchemaSpecifiedEntity>();
+
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.First());
+        Assert.Contains(nameof(SchemaSpecifiedEntity), ex.Message);
+        Assert.Contains(nameof(TableAttribute), ex.Message);
+        Assert.Contains(nameof(TableAttribute.Schema), ex.Message);
     }
 
     static string GetCollectionName<TEntity>(DbContext context) =>
@@ -40,6 +51,13 @@ public static class TableAttributeConventionTests
 
     [Table("attributeSpecifiedName")]
     class Customer
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+    }
+
+    [Table("attributeSpecifiedName", Schema = "not-allowed")]
+    class SchemaSpecifiedEntity
     {
         public int Id { get; set; }
         public string Name { get; set; }

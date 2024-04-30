@@ -93,7 +93,7 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
         switch (keys.Length)
         {
             case > 1:
-                throw new NotSupportedException("Alternate keys not supported at this time.");
+                throw new NotSupportedException("Alternate keys are not supported by the MongoDB EF Core Provider.");
             case 1:
                 keys[0].Properties[0].SetElementName("_id");
                 break;
