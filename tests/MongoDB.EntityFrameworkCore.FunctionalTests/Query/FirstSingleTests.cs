@@ -19,7 +19,7 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(SampleGuidesFixture))]
-public class FirstSingleTests
+public class FirstSingleTests : IDisposable, IAsyncDisposable
 {
     private readonly GuidesDbContext _db;
 
@@ -111,4 +111,10 @@ public class FirstSingleTests
         var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.Single(p => p.orderFromSun > 5));
         Assert.Equal("Sequence contains more than one element", ex.Message);
     }
+    
+    public void Dispose()
+        => _db.Dispose();
+
+    public async ValueTask DisposeAsync()
+        => await _db.DisposeAsync();
 }

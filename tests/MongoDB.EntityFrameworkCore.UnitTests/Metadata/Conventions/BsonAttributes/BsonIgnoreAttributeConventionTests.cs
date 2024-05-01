@@ -24,9 +24,9 @@ public static class BsonIgnoreAttributeConventionTests
     [Fact]
     public static void BsonIgnored_specified_properties_are_unmapped()
     {
-        using var context = new BaseDbContext();
+        using var db = new BaseDbContext();
 
-        var property = context.GetProperty((Customer c) => c.IgnoreMe);
+        var property = db.GetProperty((Customer c) => c.IgnoreMe);
 
         Assert.Null(property);
     }
@@ -34,9 +34,9 @@ public static class BsonIgnoreAttributeConventionTests
     [Fact]
     public static void ModelBuilder_specified_names_override_BsonIgnored_attribute()
     {
-        using var context = new ModelBuilderSpecifiedDbContext();
+        using var db = new ModelBuilderSpecifiedDbContext();
 
-        var property = context.GetProperty((Customer c) => c.IgnoreMe);
+        var property = db.GetProperty((Customer c) => c.IgnoreMe);
 
         Assert.NotNull(property);
     }

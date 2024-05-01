@@ -42,8 +42,8 @@ public static class MongoQueryExpressionTests
     [Fact]
     public static void Set_collection_to_entity_passed_in_constructor()
     {
-        var context = new QueryDbContext();
-        var expectedEntityType = context.Model.GetEntityTypes().First();
+        using var db = new QueryDbContext();
+        var expectedEntityType = db.Model.GetEntityTypes().First();
 
         var actual = new MongoQueryExpression(expectedEntityType);
 

@@ -72,7 +72,7 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
         };
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
             dbContext.Entities.Add(new RenamedKeyElement {PrimaryKey = id, Name = expectedName});
             dbContext.SaveChanges();
         }
@@ -86,7 +86,7 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             // Find with EF
-            var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
             var found = dbContext.Entities.Single(f => f.PrimaryKey == id);
             Assert.Equal(expectedName, found.Name);
         }
@@ -108,7 +108,7 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
         };
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
             dbContext.Entities.Add(
                 new RenamedNonKeyElements {_id = id, FirstName = expectedFirstName, LastName = expectedLastName});
             dbContext.SaveChanges();
@@ -124,7 +124,7 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
 
         {
             // Find with EF
-            var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
             var found = dbContext.Entities.Single(f => f._id == id);
             Assert.Equal(expectedFirstName, found.FirstName);
             Assert.Equal(expectedLastName, found.LastName);

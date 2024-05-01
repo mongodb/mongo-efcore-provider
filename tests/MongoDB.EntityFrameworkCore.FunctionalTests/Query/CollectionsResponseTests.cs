@@ -4,7 +4,7 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(SampleGuidesFixture))]
-public class CollectionsResponseTests
+public class CollectionsResponseTests : IDisposable, IAsyncDisposable
 {
     private readonly GuidesDbContext _db;
 
@@ -40,4 +40,10 @@ public class CollectionsResponseTests
         var result = await _db.Planets.ToArrayAsync();
         Assert.Equal(8, result.Length);
     }
+    
+    public void Dispose()
+        => _db.Dispose();
+
+    public async ValueTask DisposeAsync()
+        => await _db.DisposeAsync();
 }

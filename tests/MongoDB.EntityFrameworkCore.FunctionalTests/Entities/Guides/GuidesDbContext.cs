@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -32,6 +33,7 @@ internal class GuidesDbContext(DbContextOptions options) : DbContext(options)
         bool sensitiveDataLogging = true) =>
         new(new DbContextOptionsBuilder<GuidesDbContext>()
             .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .LogTo(l => logAction?.Invoke(l))
             .UseLoggerFactory(loggerFactory)
             .EnableSensitiveDataLogging(sensitiveDataLogging)

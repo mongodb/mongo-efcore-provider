@@ -34,7 +34,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCity
             {
                 Id = 1, Name = "John"
@@ -61,7 +61,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCity
             {
                 Id = 1,
@@ -93,7 +93,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCity
             {
                 Id = 1,
@@ -128,7 +128,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCity
             {
                 Id = 1,
@@ -166,7 +166,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCity
             {
                 Id = 1,
@@ -201,7 +201,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCities
             {
                 Id = 1, Name = "John"
@@ -228,7 +228,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCities
             {
                 Id = 1,
@@ -269,7 +269,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCities
             {
                 Id = 1,
@@ -312,7 +312,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCities
             {
                 Id = 1,
@@ -333,13 +333,12 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             db.Entities.Add(person);
             db.SaveChanges();
 
-            person.Cities = person.Cities.Concat(new List<City>
-            {
+            person.Cities = person.Cities.Concat([
                 new City
                 {
                     Id = 3, Name = "Denver"
                 }
-            }).ToList();
+            ]).ToList();
             db.SaveChanges();
         }
 
@@ -362,7 +361,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCities
             {
                 Id = 1,
@@ -404,7 +403,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
 
         {
-            var db = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var person = new PersonWithCities
             {
                 Id = 1,

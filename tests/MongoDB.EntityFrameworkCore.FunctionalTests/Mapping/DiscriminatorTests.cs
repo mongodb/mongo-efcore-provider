@@ -50,7 +50,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture tempDatabase)
     public void Discriminators_throw_not_supported_if_configured()
     {
         var collection = tempDatabase.CreateTemporaryCollection<Vehicle>();
-        var db = SingleEntityDbContext.Create(collection, mb =>
+        using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<Vehicle>().HasDiscriminator(v => v.VehicleType);
         });

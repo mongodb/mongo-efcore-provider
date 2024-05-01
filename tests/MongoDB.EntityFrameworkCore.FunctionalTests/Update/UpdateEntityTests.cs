@@ -58,17 +58,19 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
         };
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(entity);
+            db.SaveChanges();
             entity.name = "After";
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
-        var newDbContext = SingleEntityDbContext.Create(collection);
-        var foundEntity = newDbContext.Entities.Single();
-        Assert.Equal(entity._id, foundEntity._id);
-        Assert.Equal("After", foundEntity.name);
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var foundEntity = db.Entities.Single();
+            Assert.Equal(entity._id, foundEntity._id);
+            Assert.Equal("After", foundEntity.name);
+        }
     }
 
     [Fact]
@@ -85,21 +87,23 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
         };
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(entity);
+            db.SaveChanges();
             entity.session = Guid.NewGuid();
             entity.lastCount++;
             entity.lastModified = DateTime.UtcNow;
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
-        var newDbContext = SingleEntityDbContext.Create(collection);
-        var foundEntity = newDbContext.Entities.Single();
-        Assert.Equal(entity._id, foundEntity._id);
-        Assert.Equal(entity.session, foundEntity.session);
-        Assert.Equal(entity.lastCount, foundEntity.lastCount);
-        Assert.Equal(entity.lastModified.ToExpectedPrecision(), foundEntity.lastModified.ToExpectedPrecision());
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var foundEntity = db.Entities.Single();
+            Assert.Equal(entity._id, foundEntity._id);
+            Assert.Equal(entity.session, foundEntity.session);
+            Assert.Equal(entity.lastCount, foundEntity.lastCount);
+            Assert.Equal(entity.lastModified.ToExpectedPrecision(), foundEntity.lastModified.ToExpectedPrecision());
+        }
     }
 
     [Theory]
@@ -108,7 +112,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [InlineData(typeof(TestEnum?), TestEnum.Value0, TestEnum.Value1)]
     public void Entity_update_tests(Type valueType, object initialValue, object updatedValue)
     {
-        var methodInfo = this.GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic);
+        var methodInfo = GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic)!;
         methodInfo.MakeGenericMethod(valueType).Invoke(this, [initialValue, updatedValue]);
     }
 
@@ -124,20 +128,20 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
             _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var entity = new Entity<TValue>
             {
                 _id = ObjectId.GenerateNewId(), Value = initialValue
             };
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
             entity.Value = updatedValue;
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {
-            var newDbContext = SingleEntityDbContext.Create(collection);
-            var foundEntity = newDbContext.Entities.Single();
+            using var db = SingleEntityDbContext.Create(collection);
+            var foundEntity = db.Entities.Single();
             Assert.Equal(updatedValue, foundEntity.Value);
         }
     }

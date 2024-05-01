@@ -75,7 +75,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_BsonRepresentationAttribute_is_on_entity_property()
     {
-        var db = SingleEntityDbContext.Create<UnsupportedBsonRepresentationEntity>();
+        using var db = SingleEntityDbContext.Create<UnsupportedBsonRepresentationEntity>();
 
         var ex = Assert.Throws<NotSupportedException>(() => db.Model);
         Assert.Contains(
@@ -87,7 +87,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_multiple_properties_attributed_to_same_element_name()
     {
-        var db = SingleEntityDbContext.Create<EntityWithTwoUnderscoreIds>();
+        using var db = SingleEntityDbContext.Create<EntityWithTwoUnderscoreIds>();
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
         Assert.Contains($"'{nameof(EntityWithTwoUnderscoreIds)}'", ex.Message);
@@ -99,7 +99,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_multiple_properties_configured_to_same_element_name()
     {
-        var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
             dneBuilder.Property(p => p.name1).HasElementName("name");
@@ -116,7 +116,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_property_element_name_starts_with_dollar_sign()
     {
-        var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
             dneBuilder.Property(p => p.name1).HasElementName("$something");
@@ -131,7 +131,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_succeeds_if_property_element_name_ends_with_dollar_sign()
     {
-        var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
             dneBuilder.Property(p => p.name1).HasElementName("something$");
@@ -143,7 +143,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_succeeds_if_property_element_name_contains_dollar_sign_not_at_the_start()
     {
-        var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
             dneBuilder.Property(p => p.name1).HasElementName("some$thing");
@@ -155,7 +155,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_property_element_name_starts_with_dot()
     {
-        var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
             dneBuilder.Property(p => p.name1).HasElementName(".something");
@@ -170,7 +170,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_property_element_name_ends_with_dot()
     {
-        var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
             dneBuilder.Property(p => p.name1).HasElementName("something.");
@@ -185,7 +185,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_property_element_name_contains_dot()
     {
-        var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
             dneBuilder.Property(p => p.name1).HasElementName("some.thing");
@@ -200,7 +200,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_multiple_navigations_configured_to_same_element_name()
     {
-        var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
+        using var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
         {
             var dneBuilder = mb.Entity<WithTwoOwnedEntities>();
             dneBuilder.OwnsOne(p => p.First, r => r.HasElementName("location"));
@@ -217,7 +217,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_navigation_element_name_starts_with_dollar_sign()
     {
-        var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
+        using var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
         {
             var dneBuilder = mb.Entity<WithTwoOwnedEntities>();
             dneBuilder.OwnsOne(p => p.First).HasElementName("$something");
@@ -232,7 +232,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_succeeds_if_navigation_element_name_ends_with_dollar_sign()
     {
-        var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
+        using var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
         {
             var dneBuilder = mb.Entity<WithTwoOwnedEntities>();
             dneBuilder.OwnsOne(p => p.First).HasElementName("something$");
@@ -244,7 +244,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_succeeds_if_navigation_element_name_contains_dollar_sign_not_at_the_start()
     {
-        var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
+        using var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
         {
             var dneBuilder = mb.Entity<WithTwoOwnedEntities>();
             dneBuilder.OwnsOne(p => p.First).HasElementName("some$thing");
@@ -256,7 +256,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_navigation_element_name_starts_with_dot()
     {
-        var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
+        using var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
         {
             var dneBuilder = mb.Entity<WithTwoOwnedEntities>();
             dneBuilder.OwnsOne(p => p.First).HasElementName(".why");
@@ -271,7 +271,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_navigation_element_name_ends_with_dot()
     {
-        var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
+        using var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
         {
             var dneBuilder = mb.Entity<WithTwoOwnedEntities>();
             dneBuilder.OwnsOne(p => p.First).HasElementName("notokay.");
@@ -286,7 +286,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_navigation_element_name_contains_dot()
     {
-        var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
+        using var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
         {
             var dneBuilder = mb.Entity<WithTwoOwnedEntities>();
             dneBuilder.OwnsOne(p => p.First).HasElementName("one.dot.is.too.many");
@@ -301,7 +301,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_navigation_and_property_configured_to_same_element_name()
     {
-        var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
+        using var db = SingleEntityDbContext.Create<WithTwoOwnedEntities>(mb =>
         {
             var dneBuilder = mb.Entity<WithTwoOwnedEntities>();
             dneBuilder.OwnsOne(p => p.First, r => r.HasElementName("someTarget"));
@@ -318,7 +318,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_succeeds_when_primary_key_configured_correctly()
     {
-        var db = SingleEntityDbContext.Create<ConfiguredIdNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<ConfiguredIdNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<ConfiguredIdNamedEntity>();
             dneBuilder.HasKey(e => e.ThisWillBePrimaryKey);
@@ -331,7 +331,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_primary_key_conflicts_with_different_id_mapped_property()
     {
-        var db = SingleEntityDbContext.Create<ConfiguredIdNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<ConfiguredIdNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<ConfiguredIdNamedEntity>();
             dneBuilder.HasKey(e => e.ThisWillBePrimaryKey);
@@ -347,7 +347,7 @@ public static class MongoModelValidatorTests
     [Fact]
     public static void Validate_throws_when_entity_has_shadow_properties()
     {
-        var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
+        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
         {
             var dneBuilder = mb.Entity<DoubleNamedEntity>();
             dneBuilder.Property<DateTime>("ShadowDateTime");

@@ -24,9 +24,9 @@ public static class BsonRequiredAttributeConventionTests
     [Fact]
     public static void BsonRequired_specified_properties_are_required()
     {
-        using var context = new BaseDbContext();
+        using var db = new BaseDbContext();
 
-        var property = context.GetProperty((Customer c) => c.RequireMe);
+        var property = db.GetProperty((Customer c) => c.RequireMe);
 
         Assert.False(property?.IsNullable);
     }
@@ -34,9 +34,9 @@ public static class BsonRequiredAttributeConventionTests
     [Fact]
     public static void ModelBuilder_specified_not_required_override_BsonRequired_attribute()
     {
-        using var context = new ModelBuilderSpecifiedDbContext();
+        using var db = new ModelBuilderSpecifiedDbContext();
 
-        var property = context.GetProperty((Customer c) => c.RequireMe);
+        var property = db.GetProperty((Customer c) => c.RequireMe);
 
         Assert.True(property?.IsNullable);
     }

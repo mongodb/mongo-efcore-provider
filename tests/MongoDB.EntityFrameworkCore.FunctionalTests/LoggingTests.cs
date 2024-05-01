@@ -23,13 +23,13 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests;
 [XUnitCollection(nameof(SampleGuidesFixture))]
 public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOutputHelper)
 {
-    private readonly string DbName = fixture.MongoDatabase.DatabaseNamespace.DatabaseName;
+    private readonly string _dbName = fixture.MongoDatabase.DatabaseNamespace.DatabaseName;
 
     [Fact]
     public void Query_writes_log_via_LogTo_with_mql_when_sensitive_logging()
     {
         List<string> logs = [];
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);
@@ -40,14 +40,14 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.NotEmpty(items);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs,
-            l => l.Contains(DbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])"));
+            l => l.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])"));
     }
 
     [Fact]
     public void First_writes_log_via_LogTo_with_mql_when_sensitive_logging()
     {
         List<string> logs = [];
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);
@@ -58,7 +58,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs,
-            l => l.Contains(DbName
+            l => l.Contains(_dbName
                             + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : NumberLong(1) }])"));
     }
 
@@ -66,7 +66,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void Single_writes_log_via_LogTo_with_mql_when_sensitive_logging()
     {
         List<string> logs = [];
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);
@@ -77,7 +77,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs,
-            l => l.Contains(DbName
+            l => l.Contains(_dbName
                             + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])"));
     }
 
@@ -85,7 +85,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void Query_writes_log_via_LogTo_without_mql_when_no_sensitive_logging()
     {
         List<string> logs = [];
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);
@@ -95,7 +95,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotEmpty(items);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs, l => l.Contains($"{DbName}.moons.aggregate([?])"));
+        Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
         Assert.DoesNotContain(logs, l => l.Contains("yearOfDiscovery"));
     }
 
@@ -103,7 +103,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void First_writes_log_via_LogTo_without_mql_when_no_sensitive_logging()
     {
         List<string> logs = [];
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);
@@ -113,7 +113,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs, l => l.Contains($"{DbName}.moons.aggregate([?])"));
+        Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
         Assert.DoesNotContain(logs, l => l.Contains("yearOfDiscovery"));
     }
 
@@ -121,7 +121,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void Single_writes_log_via_LogTo_without_mql_when_no_sensitive_logging()
     {
         List<string> logs = [];
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);
@@ -131,7 +131,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs, l => l.Contains($"{DbName}.moons.aggregate([?])"));
+        Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
         Assert.DoesNotContain(logs, l => l.Contains("yearOfDiscovery"));
     }
 
@@ -139,7 +139,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void Query_writes_event_via_LoggerFactory_with_mql_when_sensitive_logging()
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
 
         var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
 
@@ -153,7 +153,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         ).message;
 
         Assert.Contains("Executed MQL query", message);
-        Assert.Contains(DbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])",
+        Assert.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])",
             message);
     }
 
@@ -162,7 +162,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void First_writes_event_via_LoggerFactory_with_mql_when_sensitive_logging()
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
 
         var item = db.Moons.First(m => m.yearOfDiscovery > 1900);
 
@@ -177,7 +177,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.Contains("Executed MQL query", message);
         Assert.Contains(
-            DbName
+            _dbName
             + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : NumberLong(1) }])",
             message);
     }
@@ -186,7 +186,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void Single_writes_event_via_LoggerFactory_with_mql_when_sensitive_logging()
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
 
         var item = db.Moons.Single(m => m.yearOfDiscovery == 1949);
 
@@ -201,7 +201,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.Contains("Executed MQL query", message);
         Assert.Contains(
-            DbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])",
+            _dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])",
             message);
     }
 
@@ -209,7 +209,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void Query_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
         var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
 
@@ -223,7 +223,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         ).message;
 
         Assert.Contains("Executed MQL query", message);
-        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
+        Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
         Assert.DoesNotContain("yearOfDiscovery", message);
     }
 
@@ -231,7 +231,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void First_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
         var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > 1900);
 
@@ -245,7 +245,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         ).message;
 
         Assert.Contains("Executed MQL query", message);
-        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
+        Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
         Assert.DoesNotContain("yearOfDiscovery", message);
     }
 
@@ -253,7 +253,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     public void Single_writes_event_via_LoggerFactory_without_mql_when_no_sensitive_logging()
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
-        var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
         var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery > 1900);
 
@@ -267,7 +267,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         ).message;
 
         Assert.Contains("Executed MQL query", message);
-        Assert.Contains($"{DbName}.moons.aggregate([?])", message);
+        Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
         Assert.DoesNotContain("yearOfDiscovery", message);
     }
 
@@ -277,7 +277,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         List<string> logs = [];
 
         using var guidesFixture = new SampleGuidesFixture();
-        var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);
@@ -309,7 +309,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
 
         using var guidesFixture = new SampleGuidesFixture();
-        var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+        using var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
         db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
         foreach (var planet in db.Planets.Where(m => m.hasRings))

@@ -19,7 +19,7 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(SampleGuidesFixture))]
-public class TopScalarTests
+public class TopScalarTests : IDisposable, IAsyncDisposable
 {
     private readonly GuidesDbContext _db;
 
@@ -196,4 +196,10 @@ public class TopScalarTests
         var result = await _db.Planets.Where(p => p.orderFromSun < 5).AnyAsync(p => p.hasRings);
         Assert.False(result);
     }
+
+    public void Dispose()
+        => _db.Dispose();
+
+    public async ValueTask DisposeAsync()
+        => await _db.DisposeAsync();
 }

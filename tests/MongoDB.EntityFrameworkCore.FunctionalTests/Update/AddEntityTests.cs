@@ -70,17 +70,17 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_generated_ObjectId()
     {
-        IMongoCollection<SimpleEntity> collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
-        SingleEntityDbContext<SimpleEntity> dbContext = SingleEntityDbContext.Create(collection);
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        using var db = SingleEntityDbContext.Create(collection);
 
-        SimpleEntity expected = new()
+        var expected = new SimpleEntity
         {
             _id = ObjectId.GenerateNewId(), name = "Generated"
         };
-        dbContext.Entities.Add(expected);
-        dbContext.SaveChanges();
+        db.Entities.Add(expected);
+        db.SaveChanges();
 
-        Assert.Same(expected, dbContext.Entities.First());
+        Assert.Same(expected, db.Entities.First());
 
         // Check with C# Driver for second opinion
         var directFound = collection.Find(f => f._id == expected._id).Single();
@@ -91,17 +91,17 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_unset_ObjectId()
     {
-        IMongoCollection<SimpleEntity> collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
-        SingleEntityDbContext<SimpleEntity> dbContext = SingleEntityDbContext.Create(collection);
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        using var db = SingleEntityDbContext.Create(collection);
 
-        SimpleEntity expected = new()
+        var expected = new SimpleEntity
         {
             name = "Not Set"
         };
-        dbContext.Entities.Add(expected);
-        dbContext.SaveChanges();
+        db.Entities.Add(expected);
+        db.SaveChanges();
 
-        Assert.Same(expected, dbContext.Entities.First());
+        Assert.Same(expected, db.Entities.First());
 
         // Check with C# Driver for second opinion
         var directFound = collection.Find(f => f._id == expected._id).Single();
@@ -114,17 +114,17 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_empty_ObjectId()
     {
-        IMongoCollection<SimpleEntity> collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
-        SingleEntityDbContext<SimpleEntity> dbContext = SingleEntityDbContext.Create(collection);
+        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        using var db = SingleEntityDbContext.Create(collection);
 
-        SimpleEntity expected = new()
+        var expected = new SimpleEntity
         {
             _id = ObjectId.Empty, name = "Empty"
         };
-        dbContext.Entities.Add(expected);
-        dbContext.SaveChanges();
+        db.Entities.Add(expected);
+        db.SaveChanges();
 
-        Assert.Same(expected, dbContext.Entities.First());
+        Assert.Same(expected, db.Entities.First());
 
         // Check with C# Driver for second opinion
         var directFound = collection.Find(f => f._id == expected._id).Single();
@@ -137,9 +137,9 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_numeric_types_entity()
     {
-        IMongoCollection<NumericTypesEntity> collection = _tempDatabase.CreateTemporaryCollection<NumericTypesEntity>();
+        var collection = _tempDatabase.CreateTemporaryCollection<NumericTypesEntity>();
 
-        NumericTypesEntity expected = new()
+        var expected = new NumericTypesEntity
         {
             _id = Random.Next(),
             aDecimal = Random.NextDecimal(),
@@ -152,14 +152,14 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
         };
 
         {
-            SingleEntityDbContext<NumericTypesEntity> dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(expected);
-            dbContext.SaveChanges();
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(expected);
+            db.SaveChanges();
         }
 
         {
-            SingleEntityDbContext<NumericTypesEntity> newDbContext = SingleEntityDbContext.Create(collection);
-            var foundEntity = newDbContext.Entities.Single();
+            using var db = SingleEntityDbContext.Create(collection);
+            var foundEntity = db.Entities.Single();
             Assert.Equal(expected._id, foundEntity._id);
             Assert.Equal(expected.aDecimal, foundEntity.aDecimal);
             Assert.Equal(expected.aSingle, foundEntity.aSingle);
@@ -174,9 +174,9 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_clr_types_entity()
     {
-        IMongoCollection<OtherClrTypeEntity> collection = _tempDatabase.CreateTemporaryCollection<OtherClrTypeEntity>();
+        var collection = _tempDatabase.CreateTemporaryCollection<OtherClrTypeEntity>();
 
-        OtherClrTypeEntity expected = new()
+        var expected = new OtherClrTypeEntity
         {
             _id = Guid.NewGuid(),
             aString = "Some kind of string",
@@ -186,14 +186,14 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
         };
 
         {
-            SingleEntityDbContext<OtherClrTypeEntity> dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(expected);
-            dbContext.SaveChanges();
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(expected);
+            db.SaveChanges();
         }
 
         {
-            SingleEntityDbContext<OtherClrTypeEntity> newDbContext = SingleEntityDbContext.Create(collection);
-            var foundEntity = newDbContext.Entities.Single();
+            using var db = SingleEntityDbContext.Create(collection);
+            var foundEntity = db.Entities.Single();
             Assert.Equal(expected._id, foundEntity._id);
             Assert.Equal(expected.aString, foundEntity.aString);
             Assert.Equal(expected.aChar, foundEntity.aChar);
@@ -205,22 +205,22 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_mongo_types_entity()
     {
-        IMongoCollection<MongoSpecificTypeEntity> collection = _tempDatabase.CreateTemporaryCollection<MongoSpecificTypeEntity>();
+        var collection = _tempDatabase.CreateTemporaryCollection<MongoSpecificTypeEntity>();
 
-        MongoSpecificTypeEntity expected = new()
+        var expected = new MongoSpecificTypeEntity
         {
             _id = ObjectId.GenerateNewId(), aDecimal128 = new Decimal128(Random.NextDecimal())
         };
 
         {
-            SingleEntityDbContext<MongoSpecificTypeEntity> dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(expected);
-            dbContext.SaveChanges();
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(expected);
+            db.SaveChanges();
         }
 
         {
-            SingleEntityDbContext<MongoSpecificTypeEntity> newDbContext = SingleEntityDbContext.Create(collection);
-            var foundEntity = newDbContext.Entities.Single();
+            using var db = SingleEntityDbContext.Create(collection);
+            var foundEntity = db.Entities.Single();
             Assert.Equal(expected._id, foundEntity._id);
             Assert.Equal(expected.aDecimal128, foundEntity.aDecimal128);
         }
@@ -285,17 +285,17 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
         var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityAddTestImpl", typeof(TValue), value);
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(new Entity<TValue>
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new Entity<TValue>
             {
                 _id = ObjectId.GenerateNewId(), Value = value
             });
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {
-            var newDbContext = SingleEntityDbContext.Create(collection);
-            Entity<TValue> foundEntity = newDbContext.Entities.Single();
+            using var db = SingleEntityDbContext.Create(collection);
+            var foundEntity = db.Entities.Single();
             Assert.Equal(value, foundEntity.Value);
         }
     }

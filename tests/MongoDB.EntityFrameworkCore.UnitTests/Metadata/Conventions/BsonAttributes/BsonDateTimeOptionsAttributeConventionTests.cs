@@ -24,11 +24,11 @@ public static class BsonDateTimeOptionsAttributeConventionTests
     [Fact]
     public static void BsonDateTimeOptions_specified_properties_are_of_a_specified_kind()
     {
-        using var context = new BaseDbContext();
+        using var db = new BaseDbContext();
 
-        var local = context.GetProperty((DatesEntity d) => d.Local);
-        var utc = context.GetProperty((DatesEntity d) => d.Utc);
-        var unspecified = context.GetProperty((DatesEntity d) => d.Unspecified);
+        var local = db.GetProperty((DatesEntity d) => d.Local);
+        var utc = db.GetProperty((DatesEntity d) => d.Utc);
+        var unspecified = db.GetProperty((DatesEntity d) => d.Unspecified);
 
         Assert.Equal(DateTimeKind.Local, local?.GetDateTimeKind());
         Assert.Equal(DateTimeKind.Utc, utc?.GetDateTimeKind());
@@ -38,11 +38,11 @@ public static class BsonDateTimeOptionsAttributeConventionTests
     [Fact]
     public static void ModelBuilder_specified_kind_override_BsonDateTimeOptions_attribute()
     {
-        using var context = new ModelBuilderSpecifiedDbContext();
+        using var db = new ModelBuilderSpecifiedDbContext();
 
-        var localToUtc = context.GetProperty((DatesEntity d) => d.Local);
-        var utcToUnspecified = context.GetProperty((DatesEntity d) => d.Utc);
-        var unspecifiedToLocal = context.GetProperty((DatesEntity d) => d.Unspecified);
+        var localToUtc = db.GetProperty((DatesEntity d) => d.Local);
+        var utcToUnspecified = db.GetProperty((DatesEntity d) => d.Utc);
+        var unspecifiedToLocal = db.GetProperty((DatesEntity d) => d.Unspecified);
 
         Assert.Equal(DateTimeKind.Utc, localToUtc?.GetDateTimeKind());
         Assert.Equal(DateTimeKind.Unspecified, utcToUnspecified?.GetDateTimeKind());

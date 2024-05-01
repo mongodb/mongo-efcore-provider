@@ -24,15 +24,15 @@ public static class CollectionNameFromDbSetConventionTests
     [Fact]
     public static void DbSet_names_are_used_as_collection_names()
     {
-        using var context = new UnnamedCollectionsDbContext();
-        Assert.Equal("Customers", context.GetCollectionName<Customer>());
+        using var db = new UnnamedCollectionsDbContext();
+        Assert.Equal("Customers", db.GetCollectionName<Customer>());
     }
 
     [Fact]
     public static void Explicit_collection_names_can_be_set()
     {
-        using var context = new NamedCollectionsDbContext();
-        Assert.Equal("customersCollection", context.GetCollectionName<Customer>());
+        using var db = new NamedCollectionsDbContext();
+        Assert.Equal("customersCollection", db.GetCollectionName<Customer>());
     }
 
     class Customer
