@@ -26,15 +26,15 @@ public static class ColumnAttributeConventionTests
     [Fact]
     public static void ColumnAttribute_specified_names_are_used_as_element_names()
     {
-        using var context = new BaseDbContext();
-        Assert.Equal("attributeSpecifiedName", GetElementName(context, (Customer c) => c.Name));
+        using var db = new BaseDbContext();
+        Assert.Equal("attributeSpecifiedName", GetElementName(db, (Customer c) => c.Name));
     }
 
     [Fact]
     public static void ModelBuilder_specified_field_names_override_ColumnAttribute_names()
     {
-        using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("fluentSpecifiedName", GetElementName(context, (Customer c) => c.Name));
+        using var db = new ModelBuilderSpecifiedDbContext();
+        Assert.Equal("fluentSpecifiedName", GetElementName(db, (Customer c) => c.Name));
     }
 
     static string GetElementName<TEntity, TProperty>(DbContext context, Expression<Func<TEntity, TProperty>> propertyExpression)

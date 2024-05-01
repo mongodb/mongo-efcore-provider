@@ -52,9 +52,9 @@ public static class MongoCollectionExpressionTests
     [Fact]
     public static void Can_set_properties_from_constructor()
     {
-        var context = new CollectionDbContext();
+        using var db = new CollectionDbContext();
 
-        foreach (var entityType in context.Model.GetEntityTypes())
+        foreach (var entityType in db.Model.GetEntityTypes())
         {
             var actual = new MongoCollectionExpression(entityType);
             Assert.Equal(entityType, actual.EntityType);

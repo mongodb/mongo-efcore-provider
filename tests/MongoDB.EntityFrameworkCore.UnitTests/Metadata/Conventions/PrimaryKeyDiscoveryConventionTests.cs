@@ -24,10 +24,9 @@ public static class PrimaryKeyDiscoveryConventionTests
     [Fact]
     public static void Id_fields_are_identified_as_primary_keys_when_strings()
     {
-        using var context = new MyDbContext();
+        using var db = new MyDbContext();
 
-        var keys = context.Model.FindEntityType(typeof(Vendor))!.GetKeys().ToArray();
-
+        var keys = db.Model.FindEntityType(typeof(Vendor))!.GetKeys().ToArray();
         var expectedProperty = Utilities.GetPropertyInfo((Vendor v) => v._id);
 
         Assert.Single(keys);
@@ -37,10 +36,9 @@ public static class PrimaryKeyDiscoveryConventionTests
     [Fact]
     public static void Id_field_are_identified_as_primary_keys_when_objectids()
     {
-        using var context = new MyDbContext();
+        using var db = new MyDbContext();
 
-        var keys = context.Model.FindEntityType(typeof(Customer))!.GetKeys().ToArray();
-
+        var keys = db.Model.FindEntityType(typeof(Customer))!.GetKeys().ToArray();
         var expectedProperty = Utilities.GetPropertyInfo((Customer c) => c._id);
 
         Assert.Single(keys);

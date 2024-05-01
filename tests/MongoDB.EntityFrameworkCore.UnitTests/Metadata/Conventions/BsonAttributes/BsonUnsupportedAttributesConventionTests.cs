@@ -24,10 +24,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonSerializer_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonSerializerProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonSerializerProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonSerializerProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonSerializerProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonSerializerProperty)}.{nameof(EntityWithBsonSerializerProperty.AttributedSerializer)}'",
             ex.Message);
@@ -45,10 +45,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonExtraElements_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonExtraElementsProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonExtraElementsProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonExtraElementsProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonExtraElementsProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonExtraElementsProperty)}.{nameof(EntityWithBsonExtraElementsProperty.AttributedSerializer)}'",
             ex.Message);
@@ -66,10 +66,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonRepresentation_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonRepresentationProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonRepresentationProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonRepresentationProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonRepresentationProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonRepresentationProperty)}.{nameof(EntityWithBsonRepresentationProperty.AttributedSerializer)}'",
             ex.Message);
@@ -87,10 +87,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonDefaultValue_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonDefaultValueProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonDefaultValueProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonDefaultValueProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonDefaultValueProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonDefaultValueProperty)}.{nameof(EntityWithBsonDefaultValueProperty.AttributedSerializer)}'",
             ex.Message);
@@ -108,10 +108,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonGuidRepresentation_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonGuidRepresentationProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonGuidRepresentationProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonGuidRepresentationProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonGuidRepresentationProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonGuidRepresentationProperty)}.{
                 nameof(EntityWithBsonGuidRepresentationProperty.AttributedSerializer)}'", ex.Message);
@@ -129,10 +129,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonTimeSpanOptions_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonTimeSpanOptionsProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonTimeSpanOptionsProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonTimeSpanOptionsProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonTimeSpanOptionsProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonTimeSpanOptionsProperty)}.{nameof(EntityWithBsonTimeSpanOptionsProperty.AttributedSerializer)
             }'", ex.Message);
@@ -150,10 +150,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonDictionaryOptions_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonDictionaryOptionsProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonDictionaryOptionsProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonDictionaryOptionsProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonDictionaryOptionsProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonDictionaryOptionsProperty)}.{
                 nameof(EntityWithBsonDictionaryOptionsProperty.AttributedSerializer)}'", ex.Message);
@@ -171,10 +171,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonIgnoreIfDefault_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonIgnoreIfDefaultProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonIgnoreIfDefaultProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonIgnoreIfDefaultProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonIgnoreIfDefaultProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonIgnoreIfDefaultProperty)}.{nameof(EntityWithBsonIgnoreIfDefaultProperty.AttributedSerializer)
             }'", ex.Message);
@@ -192,10 +192,10 @@ public static class BsonUnsupportedAttributeConventionTests
     [Fact]
     public static void BsonIgnoreIfNull_is_not_supported_on_property()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonIgnoreIfNullProperty>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonIgnoreIfNullProperty>();
 
         var ex = Assert.Throws<NotSupportedException>(()
-            => context.GetProperty((EntityWithBsonIgnoreIfNullProperty e) => e.AttributedSerializer));
+            => db.GetProperty((EntityWithBsonIgnoreIfNullProperty e) => e.AttributedSerializer));
         Assert.Contains(
             $"'{nameof(EntityWithBsonIgnoreIfNullProperty)}.{nameof(EntityWithBsonIgnoreIfNullProperty.AttributedSerializer)}'",
             ex.Message);

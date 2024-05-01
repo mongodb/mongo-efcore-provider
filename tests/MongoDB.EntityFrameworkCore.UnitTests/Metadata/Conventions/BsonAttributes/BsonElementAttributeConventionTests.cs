@@ -24,15 +24,15 @@ public static class BsonElementAttributeConventionTests
     [Fact]
     public static void BsonElement_specified_names_are_used_as_element_names()
     {
-        using var context = new BaseDbContext();
-        Assert.Equal("attributeSpecifiedName", context.GetProperty((Customer c) => c.Name)?.GetElementName());
+        using var db = new BaseDbContext();
+        Assert.Equal("attributeSpecifiedName", db.GetProperty((Customer c) => c.Name)?.GetElementName());
     }
 
     [Fact]
     public static void ModelBuilder_specified_names_override_BsonElement_names()
     {
-        using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("fluentSpecifiedName", context.GetProperty((Customer c) => c.Name)?.GetElementName());
+        using var db = new ModelBuilderSpecifiedDbContext();
+        Assert.Equal("fluentSpecifiedName", db.GetProperty((Customer c) => c.Name)?.GetElementName());
     }
 
     class Customer

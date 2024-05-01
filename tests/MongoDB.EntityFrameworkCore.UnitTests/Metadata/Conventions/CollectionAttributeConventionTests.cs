@@ -24,15 +24,15 @@ public static class CollectionAttributeConventionTests
     [Fact]
     public static void Collection_attribute_specified_names_are_used_as_collection_names()
     {
-        using var context = new BaseDbContext();
-        Assert.Equal("attributedCollection", context.GetCollectionName<Customer>());
+        using var db = new BaseDbContext();
+        Assert.Equal("attributedCollection", db.GetCollectionName<Customer>());
     }
 
     [Fact]
     public static void Model_builder_specified_names_override_collection_attribute_names()
     {
-        using var context = new ModelBuilderSpecifiedDbContext();
-        Assert.Equal("namedCollection", context.GetCollectionName<Customer>());
+        using var db = new ModelBuilderSpecifiedDbContext();
+        Assert.Equal("namedCollection", db.GetCollectionName<Customer>());
     }
 
     [Collection("attributedCollection")]

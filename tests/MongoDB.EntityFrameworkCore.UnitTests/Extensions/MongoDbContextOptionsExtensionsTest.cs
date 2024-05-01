@@ -30,7 +30,7 @@ public static class MongoDbContextOptionsExtensionsTest
     public static void Can_configure_connection_string_and_database_name(string connectionString, string databaseName)
     {
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddMongoDB<ApplicationDbContext>(connectionString, databaseName, mongoOptions => { },
+        serviceCollection.AddMongoDB<ApplicationDbContext>(connectionString, databaseName, _ => { },
             dbContextOptions => { dbContextOptions.EnableDetailedErrors(); });
 
         var services = serviceCollection.BuildServiceProvider(validateScopes: true);
@@ -54,7 +54,7 @@ public static class MongoDbContextOptionsExtensionsTest
         var mongoClient = new MongoClient();
 
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddMongoDB<ApplicationDbContext>(mongoClient, databaseName, mongoOptions => { },
+        serviceCollection.AddMongoDB<ApplicationDbContext>(mongoClient, databaseName, _ => { },
             dbContextOptions => { dbContextOptions.EnableDetailedErrors(); });
 
         var services = serviceCollection.BuildServiceProvider(validateScopes: true);

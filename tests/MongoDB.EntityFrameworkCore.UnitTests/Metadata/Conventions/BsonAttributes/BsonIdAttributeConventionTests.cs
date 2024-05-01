@@ -23,15 +23,15 @@ public static class BsonIdAttributeConventionTests
     [Fact]
     public static void BsonId_specified_properties_sets_property_to_key()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonId>();
+        using var db = SingleEntityDbContext.Create<EntityWithBsonId>();
 
-        var attributedProperty = context.GetProperty((EntityWithBsonId e) => e.AttributedKey);
+        var attributedProperty = db.GetProperty((EntityWithBsonId e) => e.AttributedKey);
 
         Assert.NotNull(attributedProperty);
         Assert.Equal("_id", attributedProperty.GetElementName());
         Assert.True(attributedProperty.IsKey());
 
-        var unattributedProperty = context.GetProperty((EntityWithBsonId e) => e.UnattributedKey);
+        var unattributedProperty = db.GetProperty((EntityWithBsonId e) => e.UnattributedKey);
         Assert.NotNull(unattributedProperty);
         Assert.Equal("UnattributedKey", unattributedProperty.GetElementName());
         Assert.False(unattributedProperty.IsKey());
@@ -40,20 +40,20 @@ public static class BsonIdAttributeConventionTests
     [Fact]
     public static void ModelBuilder_specified_names_override_BsonId_key()
     {
-        using var context = SingleEntityDbContext.Create<EntityWithBsonId>(mb => mb.Entity<EntityWithBsonId>(e =>
+        using var db = SingleEntityDbContext.Create<EntityWithBsonId>(mb => mb.Entity<EntityWithBsonId>(e =>
         {
             e.Property(p => p.UnattributedKey).HasElementName("_id");
             e.HasKey(p => p.UnattributedKey);
             e.Property(p => p.AttributedKey).HasElementName("notId");
         }));
 
-        var attributedProperty = context.GetProperty((EntityWithBsonId e) => e.AttributedKey);
+        var attributedProperty = db.GetProperty((EntityWithBsonId e) => e.AttributedKey);
 
         Assert.NotNull(attributedProperty);
         Assert.Equal("notId", attributedProperty.GetElementName());
         Assert.False(attributedProperty.IsKey());
 
-        var unattributedProperty = context.GetProperty((EntityWithBsonId e) => e.UnattributedKey);
+        var unattributedProperty = db.GetProperty((EntityWithBsonId e) => e.UnattributedKey);
         Assert.NotNull(unattributedProperty);
         Assert.Equal("_id", unattributedProperty.GetElementName());
         Assert.True(unattributedProperty.IsKey());
