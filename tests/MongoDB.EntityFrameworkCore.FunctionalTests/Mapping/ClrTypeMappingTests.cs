@@ -118,7 +118,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aGuid = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -136,7 +136,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aString = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -154,7 +154,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt16 = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -171,7 +171,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt16 = 0
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -189,7 +189,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt16 = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -207,7 +207,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt32 = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -224,7 +224,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt32 = 0
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -242,7 +242,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt32 = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -260,7 +260,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt64 = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -277,7 +277,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt64 = 0
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -295,7 +295,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), anInt64 = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -313,7 +313,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aByte = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -331,7 +331,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aChar = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -352,7 +352,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aDecimal = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -369,7 +369,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aDecimal = 0m
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -390,7 +390,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aDecimal = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -408,7 +408,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aSingle = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -425,7 +425,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aSingle = 0
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -443,7 +443,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aSingle = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -461,7 +461,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aDouble = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -478,7 +478,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aDouble = 0
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -496,7 +496,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aDouble = expected
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -512,7 +512,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aList = []
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -532,7 +532,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aList = expected
         };
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         db.Entities.Add(item);
         db.SaveChanges();
 
@@ -550,7 +550,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aList = []
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
@@ -570,7 +570,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), aList = expected
         };
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         db.Entities.Add(item);
         db.SaveChanges();
 
@@ -677,7 +677,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.GenerateNewId(), Value = value
         });
 
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);

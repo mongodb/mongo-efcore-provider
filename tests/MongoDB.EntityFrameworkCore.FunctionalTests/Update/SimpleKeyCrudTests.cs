@@ -35,13 +35,13 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id));
             });
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
         }
 
         {
@@ -62,23 +62,23 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id));
             });
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
         }
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id));
             });
 
-            var actual = dbContext.Entities.Single();
+            var actual = db.Entities.Single();
 
             Assert.Equal(entity.Id, actual.Id);
             Assert.Equal(entity.Data, actual.Data);
@@ -92,16 +92,16 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id));
             });
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
 
             entity.Data = "updated text";
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {
@@ -120,17 +120,17 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     {
         var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id));
             });
             var entity = new Entity {Id = "key", Data = "some text"};
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
 
-            dbContext.Remove(entity);
-            dbContext.SaveChanges();
+            db.Remove(entity);
+            db.SaveChanges();
         }
 
         {

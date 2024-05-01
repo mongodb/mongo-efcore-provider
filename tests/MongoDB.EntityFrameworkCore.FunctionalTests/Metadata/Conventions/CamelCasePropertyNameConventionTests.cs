@@ -15,6 +15,7 @@
 
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
@@ -43,6 +44,7 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         public static CamelCaseDbContext Create(IMongoCollection<RemappedEntity> collection) =>
             new(new DbContextOptionsBuilder<CamelCaseDbContext>()
                 .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options, collection.CollectionNamespace.CollectionName);
 
         public CamelCaseDbContext(DbContextOptions options, string collectionName)
@@ -119,8 +121,8 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         const string subChangedText = "Changed as first word needs to be lower cased inside an owned entity";
 
         {
-            var dbContext = CamelCaseDbContext.Create(collection);
-            dbContext.Remapped.Add(new RemappedEntity
+            using var db = CamelCaseDbContext.Create(collection);
+            db.Remapped.Add(new RemappedEntity
             {
                 _id = id,
                 unchanged = unchangedText,
@@ -131,7 +133,7 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
                 numeric123separator = numericText,
                 OwnedEntity = new OwnedEntity {subUnchanged = subUnchanged, SubChanged = subChangedText}
             });
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {

@@ -56,12 +56,12 @@ public class BsonIgnoreAttributeConventionTests(TemporaryDatabaseFixture tempDat
         const string name = "The quick brown fox";
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(new IgnoredPropertiesEntity
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new IgnoredPropertiesEntity
             {
                 _id = id, KeepMe = name, IgnoreMe = "a", AndMe = true
             });
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {

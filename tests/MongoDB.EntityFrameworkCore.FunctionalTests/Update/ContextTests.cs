@@ -24,7 +24,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public void SaveChanges_includes_insertion_counts()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
+        using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         const int insertCount = 10;
 
@@ -38,7 +38,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public async Task SaveChangesAsync_includes_insertion_counts()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
+        await using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         const int insertCount = 9;
 
@@ -52,7 +52,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public void SaveChanges_includes_update_counts()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
+        using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         const int updateCount = 8;
         var items = Enumerable.Range(0, updateCount * 2)
@@ -72,7 +72,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public async Task SaveChangesAsync_includes_update_counts()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
+        await using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         const int updateCount = 7;
         var items = Enumerable.Range(0, updateCount * 2)
@@ -92,7 +92,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public void SaveChanges_includes_delete_counts()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
+        using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         const int deleteCount = 6;
         var items = Enumerable.Range(0, deleteCount + 10)
@@ -111,7 +111,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public async Task SaveChangesAsync_includes_delete_counts()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
+        await using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         const int deleteCount = 6;
         var items = Enumerable.Range(0, deleteCount * 2)
@@ -130,7 +130,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public void SaveChanges_combines_counts()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
+        using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         var items = Enumerable.Range(0, 4)
             .Select(i => new Customer("Generated " + i))
@@ -151,7 +151,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public async Task SaveChangesAsync_combines_counts()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
+        await using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<Customer>());
 
         var items = Enumerable.Range(0, 4)
             .Select(i => new Customer("Generated " + i))
@@ -172,7 +172,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public void SaveChanges_counts_only_documents_not_owned_entities()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<PeopleOnMoons>());
+        using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<PeopleOnMoons>());
 
         var item = new PeopleOnMoons("Space Adventurer");
         db.Entities.Add(item);
@@ -188,7 +188,7 @@ public class ContextTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture
     [Fact]
     public async Task SaveChangesAsync_counts_only_documents_not_owned_entities()
     {
-        var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<PeopleOnMoons>());
+        await using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<PeopleOnMoons>());
 
         var item1 = new PeopleOnMoons("Captain A");
         var item2 = new PeopleOnMoons("Captain B");

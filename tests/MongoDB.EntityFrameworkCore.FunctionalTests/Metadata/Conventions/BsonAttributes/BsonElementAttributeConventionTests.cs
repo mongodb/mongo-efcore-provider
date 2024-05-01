@@ -71,13 +71,13 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
         var location = new Geolocation(1.1, 2.2);
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(new OwnedEntityRemappingEntity
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new OwnedEntityRemappingEntity
             {
                 _id = id,
                 Location = location
             });
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {
@@ -96,12 +96,12 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
         const string name = "The quick brown fox";
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(new NonKeyRemappingEntity
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new NonKeyRemappingEntity
             {
                 _id = id, RemapThisToName = name
             });
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {
@@ -120,12 +120,12 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
         const string name = "The quick brown fox";
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
-            dbContext.Entities.Add(new KeyRemappingEntity
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new KeyRemappingEntity
             {
                 _id = id, name = name
             });
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {
@@ -144,16 +144,16 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
         const string name = "The quick brown fox";
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection);
+            using var db = SingleEntityDbContext.Create(collection);
             var entity = new KeyRemappingEntity
             {
                 _id = id, name = name
             };
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
 
-            dbContext.Entities.Remove(entity);
-            dbContext.SaveChanges();
+            db.Entities.Remove(entity);
+            db.SaveChanges();
         }
 
         {

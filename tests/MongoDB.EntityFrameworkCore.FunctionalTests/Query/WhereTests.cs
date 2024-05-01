@@ -20,7 +20,7 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(SampleGuidesFixture))]
-public class WhereTests
+public class WhereTests : IDisposable, IAsyncDisposable
 {
     private readonly IMongoDatabase _mongoDatabase;
     private readonly GuidesDbContext _db;
@@ -218,7 +218,7 @@ public class WhereTests
     [Fact]
     public void Where_string_list_contains()
     {
-        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
+        using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
         var results = db.Entities.Where(p => p.mainAtmosphere.Contains("H2")).ToArray();
         Assert.Equal(4, results.Length);
         Assert.All(results, p => Assert.Contains("H2", p.mainAtmosphere));
@@ -227,7 +227,7 @@ public class WhereTests
     [Fact]
     public void Where_string_list_not_contains()
     {
-        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
+        using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
         var results = db.Entities.Where(p => !p.mainAtmosphere.Contains("H2")).ToArray();
         Assert.Equal(4, results.Length);
         Assert.All(results, p => Assert.DoesNotContain("H2", p.mainAtmosphere));
@@ -236,7 +236,7 @@ public class WhereTests
     [Fact]
     public void Where_string_list_count()
     {
-        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
+        using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
         var results = db.Entities.Where(p => p.mainAtmosphere.Count == 2).ToArray();
         Assert.Single(results);
         Assert.Equal(2, results[0].mainAtmosphere.Count);
@@ -245,9 +245,15 @@ public class WhereTests
     [Fact]
     public void Where_string_list_any()
     {
-        var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
+        using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<PlanetListVersion>("planets"));
         var results = db.Entities.Where(p => p.mainAtmosphere.Any()).ToArray();
         Assert.Equal(7, results.Length);
         Assert.All(results, p => Assert.NotEmpty(p.mainAtmosphere));
     }
+
+    public void Dispose()
+        => _db.Dispose();
+
+    public async ValueTask DisposeAsync()
+        => await _db.DisposeAsync();
 }

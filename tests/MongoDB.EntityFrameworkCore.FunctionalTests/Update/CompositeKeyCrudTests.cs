@@ -35,13 +35,13 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
         }
 
         {
@@ -62,13 +62,13 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
         }
 
         {
@@ -93,16 +93,16 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
 
             entity.Data = "updated text";
-            dbContext.SaveChanges();
+            db.SaveChanges();
         }
 
         {
@@ -121,17 +121,17 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     {
         var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var db = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
             });
             var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
-            dbContext.Entities.Add(entity);
-            dbContext.SaveChanges();
+            db.Entities.Add(entity);
+            db.SaveChanges();
 
-            dbContext.Remove(entity);
-            dbContext.SaveChanges();
+            db.Remove(entity);
+            db.SaveChanges();
         }
 
         {

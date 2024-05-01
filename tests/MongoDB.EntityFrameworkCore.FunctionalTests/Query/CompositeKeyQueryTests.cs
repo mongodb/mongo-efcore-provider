@@ -31,9 +31,9 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_query_by_key_component()
     {
-        var dbContext = CreateContext();
+        using var db = CreateContext();
 
-        var result = dbContext.Entities.Where(e => e.Key1 == "two").ToList();
+        var result = db.Entities.Where(e => e.Key1 == "two").ToList();
 
         Assert.Equal(2, result.Count);
         Assert.All(result, e => Assert.Equal("two", e.Key1));
@@ -42,9 +42,9 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_query_by_key_components()
     {
-        var dbContext = CreateContext();
+        using var db = CreateContext();
 
-        var result = dbContext.Entities.Where(e => e.Key1 == "two" && e.Key2 == 3).ToList();
+        var result = db.Entities.Where(e => e.Key1 == "two" && e.Key2 == 3).ToList();
 
         Assert.Single(result);
         Assert.All(result, e => Assert.Equal("two", e.Key1));
@@ -54,9 +54,9 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_query_by_key_component_with_gt()
     {
-        var dbContext = CreateContext();
+        using var db = CreateContext();
 
-        var result = dbContext.Entities.Where(e => e.Key2 > 2).ToList();
+        var result = db.Entities.Where(e => e.Key2 > 2).ToList();
 
         Assert.Single(result);
         Assert.All(result, e => Assert.True(e.Key2 > 2));
@@ -67,8 +67,8 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
         var collection = _temporaryDatabase.CreateTemporaryCollection<Entity>(name);
 
         {
-            var context = SingleEntityDbContext.Create(collection, ConfigureContext);
-            context.Entities.AddRange(
+            using var db = SingleEntityDbContext.Create(collection, ConfigureContext);
+            db.Entities.AddRange(
             [
                 new Entity
                 {
@@ -84,7 +84,7 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
                 }
             ]);
 
-            context.SaveChanges();
+            db.SaveChanges();
         }
 
         return SingleEntityDbContext.Create(collection, ConfigureContext);
