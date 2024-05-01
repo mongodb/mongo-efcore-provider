@@ -19,8 +19,8 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 
 /// <summary>
-/// Recognized <see cref="BsonTimeSpanOptionsAttribute"/> applied to properties of an entity
-/// to ensure the model throw later as it is not supported in the EF provider.
+/// Recognize <see cref="BsonTimeSpanOptionsAttribute"/> when applied to properties of an entity
+/// to ensure the model will throw as the attribute is not supported in the EF provider.
 /// </summary>
 /// <param name="dependencies">The <see cref="ProviderConventionSetBuilderDependencies"/> conventions depend upon.</param>
 public sealed class BsonBsonTimeSpanOptionsPropertyAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)
