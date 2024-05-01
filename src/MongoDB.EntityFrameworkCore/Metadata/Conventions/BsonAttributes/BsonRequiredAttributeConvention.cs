@@ -24,9 +24,6 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 /// <summary>
 ///  A convention that configures properties as required if they have the <see cref="BsonRequiredAttribute" /> applied.
 /// </summary>
-/// <remarks>
-///     See <see href="https://aka.ms/efcore-docs-conventions">Model building conventions</see> for more information and examples.
-/// </remarks>
 public sealed class BsonRequiredPropertyAttributeConvention : PropertyAttributeConventionBase<BsonRequiredAttribute>,
     IComplexPropertyAddedConvention,
     IComplexPropertyFieldChangedConvention
