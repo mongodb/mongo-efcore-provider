@@ -61,8 +61,8 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 
 They are:
 
-- Select projections
-- Sum, Average, Min, Max etc.
+- Select projections must only contain server-translatable expressions
+- Sum, Average, Min, Max etc. are not supported at top level
 - Transactions
 - Type discriminators
 - Additional mapping configuration options
