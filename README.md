@@ -94,7 +94,8 @@ They are:
 ## Documentation
 
 - [MongoDB](https://www.mongodb.com/docs)
-- [Documentation](https://www.mongodb.com/docs/entity-framework/current/)
+- [EF Provider Guide](https://www.mongodb.com/docs/entity-framework/current/)
+- [EF Provider API Docs](https://mongodb.github.io/mongo-efcore-provider/8.0.0/api/index.html)
 
 ## Questions/Bug Reports
 
