@@ -59,13 +59,14 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 A number of Entity Framework Core features are not currently supported but planned for future release. If you require use of these facilities
 in the mean-time consider using the existing [MongoDB C# Driver's](https://github.com/mongodb/mongo-csharp-driver) LINQ provider which supports them.
 
-They are:
+### Planned for next release
 
 - Select projections must only contain server-translatable expressions
 - Sum, Average, Min, Max etc. are not supported at top level
 - Transactions
 - Type discriminators
 - Additional mapping configuration options
+- Database Creator/Seeding
 
 ### Not supported but considering for future releases
 
