@@ -66,7 +66,7 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Transactions
 - Type discriminators
 - Additional mapping configuration options
-- Database Creator/Seeding
+- EnsureCreated & EnsureDeleted operations
 
 ### Not supported but considering for future releases
 
