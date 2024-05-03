@@ -80,6 +80,9 @@ public class TemporaryDatabaseFixture : IDisposable
         _mongoClient.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
     }
 
+    public IMongoClient Client
+        => _mongoClient;
+
     private static string? GetLastConstructorTypeNameFromStack()
     {
         return new System.Diagnostics.StackTrace()

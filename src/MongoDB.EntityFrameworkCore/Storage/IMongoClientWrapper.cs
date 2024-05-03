@@ -25,7 +25,7 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// <summary>
 /// For internal use only. Interface may change between minor versions.
 /// Provides the interface between the MongoDB Entity Framework provider
-/// and the underlying <see cref="IMongoClient"/>.
+/// and the underlying <see cref="IMongoClient"/> for a given database.
 /// </summary>
 public interface IMongoClientWrapper
 {
@@ -60,4 +60,64 @@ public interface IMongoClientWrapper
     /// <param name="cancellationToken"></param>
     /// <returns>A task that when completed gives the number of affected documents.</returns>
     public Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Create a new database with the name specified in the connection options.
+    /// </summary>
+    /// <remarks>
+    /// The database is not actually created until the first document is inserted.
+    /// </remarks>
+    /// <returns><c>true</c> if the database was created, <c>false</c> if it already existed.</returns>
+    public bool CreateDatabase();
+
+    /// <summary>
+    /// Create a new database with the name specified in the connection options asynchronously.
+    /// </summary>
+    /// <remarks>
+    /// The database is not actually created until the first document is inserted.
+    /// </remarks>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>
+    /// A <see cref="Task"/> that, when resolved, will be
+    /// <c>true</c> if the database was created, <c>false</c> if it already existed.
+    /// </returns>
+    public Task<bool> CreateDatabaseAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Delete the database specified in the connection options.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="CreateDatabase"/> the database is actually deleted immediately.
+    /// </remarks>
+    /// <returns><c>true</c> if the database was deleted, <c>false</c> if it did not exist.</returns>
+    public bool DeleteDatabase();
+
+    /// <summary>
+    /// Delete the database specified in the connection options asynchronously.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="CreateDatabaseAsync"/> the database is actually deleted immediately.
+    /// </remarks>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>
+    /// A <see cref="Task"/> that, when resolved, will be
+    /// <c>true</c> if the database was deleted, <c>false</c> if it already existed.
+    /// </returns>
+    public Task<bool> DeleteDatabaseAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Determine if the database already exists or not.
+    /// </summary>
+    /// <returns><c>true</c> if the database exists, <c>false</c> if it does not.</returns>
+    public bool DatabaseExists();
+
+    /// <summary>
+    /// Determine if the database already exists or not asynchronously.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>
+    /// A <see cref="Task"/> that, when resolved, will be
+    /// <c>true</c> if the database exists, <c>false</c> if it does not.
+    /// </returns>
+    public Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default);
 }
