@@ -41,6 +41,7 @@ public class MongoClientWrapper : IMongoClientWrapper
     private readonly IMongoClient _client;
     private readonly IMongoDatabase _database;
     private PropertyInfo? _getLoggedStages;
+    private string DatabaseName => _database.DatabaseNamespace.DatabaseName;
 
     /// <summary>
     /// Create a new instance of <see cref="MongoClientWrapper"/> with the supplied parameters.
@@ -134,7 +135,7 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// </summary>
     /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
-    /// <returns>A <see cref="Task"/> that when resolved gives the number of documents modified.</returns>
+    /// <returns>A <see cref="Task"/> that, when resolved, gives the number of documents modified.</returns>
     public async Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
     {
         var stopwatch = new Stopwatch();
@@ -152,6 +153,50 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
 
         return documentsAffected;
+    }
+
+    /// <inheritdoc />
+    public bool CreateDatabase()
+        => !DatabaseExists();
+
+    /// <inheritdoc />
+    public async Task<bool> CreateDatabaseAsync(CancellationToken cancellationToken = default)
+        => !await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public bool DeleteDatabase()
+    {
+        if (!DatabaseExists()) return false;
+
+        _client.DropDatabase(DatabaseName);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> DeleteDatabaseAsync(CancellationToken cancellationToken = default)
+    {
+        if (!await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false)) return false;
+
+        await _client.DropDatabaseAsync(DatabaseName, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <inheritdoc/>
+    public bool DatabaseExists()
+    {
+        using var cursor = _client.ListDatabaseNames(new ListDatabaseNamesOptions {
+            Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)
+        });
+        return cursor.Any();
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default)
+    {
+        using var cursor = await _client.ListDatabaseNamesAsync(new ListDatabaseNamesOptions {
+            Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)
+        }, cancellationToken).ConfigureAwait(false);
+        return await cursor.AnyAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)

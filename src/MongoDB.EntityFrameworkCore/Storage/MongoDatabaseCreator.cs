@@ -13,8 +13,6 @@
  * limitations under the License.
  */
 
-using System;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -22,35 +20,56 @@ using Microsoft.EntityFrameworkCore.Storage;
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Placeholder for a MongoDB <see cref="IDatabaseCreator"/> that is a required
-/// dependency of the <see cref="MongoTransactionManager"/> placeholder.
+/// Creates and deletes databases on MongoDB servers.
 /// </summary>
-public class MongoDatabaseCreator : IDatabaseCreator
+/// <remarks>
+/// This class is not typically used directly from application code.
+/// </remarks>
+public class MongoDatabaseCreator(IMongoClientWrapper clientWrapper) : IDatabaseCreator
 {
     /// <inheritdoc/>
     public bool EnsureDeleted()
-        => throw CreateNotSupportedException();
+        => clientWrapper.DeleteDatabase();
 
     /// <inheritdoc/>
     public Task<bool> EnsureDeletedAsync(CancellationToken cancellationToken = new())
-        => throw CreateNotSupportedException();
+        => clientWrapper.DeleteDatabaseAsync(cancellationToken);
 
     /// <inheritdoc/>
     public bool EnsureCreated()
-        => throw CreateNotSupportedException();
+        => clientWrapper.CreateDatabase();
 
     /// <inheritdoc/>
     public Task<bool> EnsureCreatedAsync(CancellationToken cancellationToken = new())
-        => throw CreateNotSupportedException();
+        => clientWrapper.CreateDatabaseAsync(cancellationToken);
 
     /// <inheritdoc/>
     public bool CanConnect()
-        => throw CreateNotSupportedException();
+    {
+        try
+        {
+            // Do anything that causes an actual database connection with no side effects
+            clientWrapper.DatabaseExists();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <inheritdoc/>
-    public Task<bool> CanConnectAsync(CancellationToken cancellationToken = new())
-        => throw CreateNotSupportedException();
-
-    private static NotSupportedException CreateNotSupportedException([CallerMemberName] string? method = null)
-        => new($"The MongoDB EF Core Provider does not support '{method}' of '{nameof(MongoDatabaseCreator)}'.");
+    public async Task<bool> CanConnectAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Do anything that causes an actual database connection with no side effects
+            await clientWrapper.DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
