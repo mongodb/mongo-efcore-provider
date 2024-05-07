@@ -14,6 +14,7 @@
  */
 
 using System;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.ValueGeneration;
 using MongoDB.Bson;
@@ -39,9 +40,9 @@ public class MongoValueGeneratorSelector : ValueGeneratorSelector
     protected override ValueGenerator? FindForType(IProperty property, ITypeBase typeBase, Type clrType)
     {
         // Required to ensure we generate unique IDs for owned entity collections
-        if (typeBase.ContainingEntityType.IsOwned() && clrType == typeof(int) && property.IsShadowProperty())
+        if (typeBase.ContainingEntityType.IsOwned() && property.IsOwnedCollectionShadowKey())
         {
-            return new OwnedEntityIndexValueGenerator();
+            return new TemporaryNumberValueGeneratorFactory().Create(property, typeBase);
         }
 
         // Allow ObjectId's to be automatically generated

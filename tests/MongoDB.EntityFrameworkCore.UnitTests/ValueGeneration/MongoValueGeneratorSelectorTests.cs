@@ -15,6 +15,7 @@
 
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.ValueGeneration;
+using Microsoft.EntityFrameworkCore.ValueGeneration.Internal;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.ValueGeneration;
 
@@ -41,14 +42,14 @@ public class MongoValueGeneratorSelectorTests
     [Fact]
     public void Create_returns_OwnedEntityIndexValueGenerator_for_mapped_int()
     {
-        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("_unique")!, _entityType);
-        Assert.IsType<OwnedEntityIndexValueGenerator>(generator);
+        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("Id")!, _entityType);
+        Assert.IsType<TemporaryIntValueGenerator>(generator);
     }
 
     [Fact]
     public void Create_returns_ObjectIdValueGenerator_for_mapped_ObjectId()
     {
-        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("_id")!, _entityType);
+        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("Id")!, _entityType);
         Assert.IsType<ObjectIdValueGenerator>(generator);
     }
 

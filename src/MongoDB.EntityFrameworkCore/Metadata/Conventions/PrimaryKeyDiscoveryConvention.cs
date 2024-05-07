@@ -62,7 +62,7 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
                 if (!ownership.IsUnique)
                 {
                     var uniqueShadowKeyProperty = entityTypeBuilder
-                        .CreateUniqueProperty(typeof(int), "_unique", required: true)!
+                        .CreateUniqueProperty(typeof(int), "Id", required: true)!
                         .Metadata;
                     keyProperties.Add(uniqueShadowKeyProperty);
                 }
