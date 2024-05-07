@@ -152,11 +152,13 @@ public static class MongoPropertyExtensions
         var dateTimeKindAnnotation = property.FindAnnotation(MongoAnnotationNames.DateTimeKind);
         return dateTimeKindAnnotation?.Value == null ? DateTimeKind.Unspecified : (DateTimeKind)dateTimeKindAnnotation.Value;
     }
+
     internal static bool IsOwnedCollectionShadowKey(this IReadOnlyProperty property)
     {
         return property.FindContainingPrimaryKey()
                 is {Properties.Count: > 1} && !property.IsForeignKey()
                                            && property.ClrType == typeof(int)
-                                           && (property.ValueGenerated & ValueGenerated.OnAdd) != 0;
+                                           && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
+                                           && property.GetElementName().Length == 0;
     }
 }
