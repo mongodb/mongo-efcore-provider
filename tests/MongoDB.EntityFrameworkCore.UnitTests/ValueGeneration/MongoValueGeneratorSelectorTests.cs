@@ -49,7 +49,7 @@ public class MongoValueGeneratorSelectorTests
     [Fact]
     public void Create_returns_ObjectIdValueGenerator_for_mapped_ObjectId()
     {
-        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("Id")!, _entityType);
+        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("_id")!, _entityType);
         Assert.IsType<ObjectIdValueGenerator>(generator);
     }
 
