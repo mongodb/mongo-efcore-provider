@@ -398,6 +398,36 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     }
 
     [Fact]
+    public void Should_reload_changed_values_correctly()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCountries>();
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var person = new PersonWithCountries()
+        {
+            Id = 1,
+            Name = "John",
+            Countries =
+            [
+                new Country()
+                {
+                    Name = "New York"
+                },
+                new Country()
+                {
+                    Name = "Washington"
+                }
+            ]
+        };
+
+        db.Entities.Add(person);
+        db.SaveChanges();
+
+        var newPerson = db.Entities.First(e => e.Id == person.Id);
+        Assert.Equal(2, newPerson.Countries.Count);
+    }
+
+    [Fact]
     public void Should_update_owned_navigation_collection_update_value()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
@@ -444,13 +474,17 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     private class Person
     {
         public int Id { get; set; }
-
         public string Name { get; set; }
     }
 
     private class City
     {
         public int Id { get; set; }
+        public string Name { get; set; }
+    }
+
+    private class Country
+    {
         public string Name { get; set; }
     }
 
@@ -462,5 +496,10 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     private class PersonWithCities : Person
     {
         public List<City> Cities { get; set; }
+    }
+
+    private class PersonWithCountries : Person
+    {
+        public List<Country> Countries { get; set; }
     }
 }

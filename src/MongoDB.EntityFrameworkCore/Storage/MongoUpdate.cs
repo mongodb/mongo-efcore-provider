@@ -134,7 +134,10 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
 
         foreach (var navigation in entry.EntityType.GetNavigations())
         {
-            if (!navigation.IsEmbedded())
+            var fk = navigation.ForeignKey;
+            if (!fk.IsOwnership
+                || navigation.IsOnDependent
+                || fk.DeclaringEntityType.IsDocumentRoot())
             {
                 continue;
             }
@@ -151,12 +154,22 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
                 if (navigation.IsCollection)
                 {
                     writer.WriteStartArray();
+                    var ordinal = 1;
                     foreach (var dependent in (IEnumerable)embeddedValue)
                     {
                         var embeddedEntry =
                             ((InternalEntityEntry)entry).StateManager.TryGetEntry(dependent,
                                 navigation.ForeignKey.DeclaringEntityType)!;
+
+                        // Owned entities have a synthetic key based on order, apply that here
+                        var ordinalKeyProperty = FindOrdinalKeyProperty(embeddedEntry.EntityType);
+                        if (ordinalKeyProperty != null && embeddedEntry.HasTemporaryValue(ordinalKeyProperty))
+                        {
+                            embeddedEntry.SetStoreGeneratedValue(ordinalKeyProperty, ordinal);
+                        }
+
                         WriteEntity(writer, embeddedEntry, _ => true);
+                        ordinal++;
                     }
 
                     writer.WriteEndArray();
@@ -173,6 +186,10 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
 
         writer.WriteEndDocument();
     }
+
+    private static IProperty? FindOrdinalKeyProperty(IEntityType entityType)
+        => entityType.FindPrimaryKey()!.Properties.FirstOrDefault(
+            p => p.GetElementName().Length == 0 && p.IsOwnedCollectionShadowKey());
 
     private static void AcceptTemporaryValues(IUpdateEntry entry)
     {
