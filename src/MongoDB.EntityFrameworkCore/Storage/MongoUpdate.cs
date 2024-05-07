@@ -153,6 +153,9 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
             {
                 if (navigation.IsCollection)
                 {
+                    // Set temporary ordinals if existing ones are invalid
+                    SetTemporaryOrdinals(entry, fk, embeddedValue);
+
                     writer.WriteStartArray();
                     var ordinal = 1;
                     foreach (var dependent in (IEnumerable)embeddedValue)
@@ -244,6 +247,46 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
             writer.WriteName(elementName);
             var root = BsonSerializationContext.CreateRoot(writer);
             serializationInfo.Serializer.Serialize(root, entry.GetCurrentValue(property));
+        }
+    }
+
+    private static void SetTemporaryOrdinals(
+        IUpdateEntry entry,
+        IForeignKey fk,
+        object embeddedValue)
+    {
+        var embeddedOrdinal = 1;
+        var ordinalKeyProperty = FindOrdinalKeyProperty(fk.DeclaringEntityType);
+        if (ordinalKeyProperty == null) return;
+
+        var stateManager = ((InternalEntityEntry)entry).StateManager;
+        var shouldSetTemporaryKeys = false;
+        foreach (var dependent in (IEnumerable)embeddedValue)
+        {
+            var embeddedEntry = stateManager.TryGetEntry(dependent, fk.DeclaringEntityType)!;
+
+            if ((int)embeddedEntry.GetCurrentValue(ordinalKeyProperty)! != embeddedOrdinal
+                && !embeddedEntry.HasTemporaryValue(ordinalKeyProperty))
+            {
+                // We have old persisted ordinals that are no longer valid
+                // Set temporary ones to avoid key conflicts when creating new
+                // non-temporary keys.
+                shouldSetTemporaryKeys = true;
+                break;
+            }
+
+            embeddedOrdinal++;
+        }
+
+        if (shouldSetTemporaryKeys)
+        {
+            var temporaryOrdinal = -1;
+            foreach (var dependent in (IEnumerable)embeddedValue)
+            {
+                var embeddedEntry = stateManager.TryGetEntry(dependent, fk.DeclaringEntityType)!;
+                embeddedEntry.SetTemporaryValue(ordinalKeyProperty, temporaryOrdinal, setModified: false);
+                temporaryOrdinal--;
+            }
         }
     }
 }
