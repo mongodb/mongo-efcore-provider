@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
@@ -79,6 +80,11 @@ internal class MongoValueGenerationConvention : ValueGenerationConvention, IEnti
             {
                 return ValueGenerated.OnAdd;
             }
+        }
+
+        if (property.DeclaringType.ContainingEntityType.IsOwned() && property.IsOwnedCollectionShadowKey())
+        {
+            return ValueGenerated.OnAddOrUpdate;
         }
 
         return base.GetValueGenerated(property);
