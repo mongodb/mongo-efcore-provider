@@ -16,6 +16,7 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Reflection;
 
 // ReSharper disable once CheckNamespace
 namespace System;
@@ -56,7 +57,21 @@ internal static class TypeExtensions
         return implementations.Length != 1 ? null : implementations[0].GenericTypeArguments.FirstOrDefault();
     }
 
-    private static IEnumerable<Type> GetGenericTypeImplementations(
+    internal static ConstructorInfo? GetDeclaredConstructor(
+        [DynamicallyAccessedMembers(
+            DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)]
+        this Type type,
+        Type[]? types)
+    {
+        types ??= [];
+
+        return type.GetTypeInfo().DeclaredConstructors
+            .SingleOrDefault(
+                c => !c.IsStatic
+                     && c.GetParameters().Select(p => p.ParameterType).SequenceEqual(types))!;
+    }
+
+    internal static IEnumerable<Type> GetGenericTypeImplementations(
         this Type type,
         Type interfaceOrBaseType)
     {
@@ -89,13 +104,28 @@ internal static class TypeExtensions
             : typeof(Nullable<>).MakeGenericType(type);
 
     /// <summary>
-    /// Check with a type is nullable or not.
+    /// Get the underlying type of a nullable <see cref="Type"/> or just the type itself
+    /// if it is not nullable.
+    /// </summary>
+    /// <param name="type">The <see cref="Type"/> to be considered.</param>
+    /// <returns>The <see cref="Type"/> of <see cref="Nullable{T}"/> if it is nullable
+    /// or the direct type that was passed in if not nullable.</returns>
+    public static Type UnwrapNullableType(this Type type)
+        => Nullable.GetUnderlyingType(type) ?? type;
+
+    /// <summary>
+    /// Check if a type is nullable or not.
     /// </summary>
     /// <param name="type">The <see cref="Type"/> to check.</param>
     /// <returns><see langref="true"/> is the object is nullable, otherwise <see langref="false"/>.</returns>
     public static bool IsNullableType(this Type type)
         => !type.IsValueType || type.IsNullableValueType();
 
+    /// <summary>
+    /// Check if a value type is nullable or not.
+    /// </summary>
+    /// <param name="type">The value <see cref="Type"/> to check.</param>
+    /// <returns><see langref="true"/> is the object is nullable, otherwise <see langref="false"/>.</returns>
     public static bool IsNullableValueType(this Type type)
         => type.IsConstructedGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>);
 

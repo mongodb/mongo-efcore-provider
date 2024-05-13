@@ -48,11 +48,7 @@ public class DateTimeKindConvention : IPropertyAddedConvention
         IConventionPropertyBuilder propertyBuilder,
         IConventionContext<IConventionPropertyBuilder> context)
     {
-        var clrType = propertyBuilder.Metadata.ClrType;
-        if (clrType.IsNullableValueType())
-        {
-            clrType = Nullable.GetUnderlyingType(clrType);
-        }
+        var clrType = propertyBuilder.Metadata.ClrType.UnwrapNullableType();
 
         if (clrType != typeof(DateTime))
         {

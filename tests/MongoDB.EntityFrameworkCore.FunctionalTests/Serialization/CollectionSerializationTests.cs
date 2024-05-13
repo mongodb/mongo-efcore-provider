@@ -334,15 +334,15 @@ public class CollectionSerializationTests : BaseSerializationTests
         var collection = TempDatabase.CreateTemporaryCollection<IEnumerableEntity>();
 
         using var db = SingleEntityDbContext.Create(collection);
-        db.Entities.Add(new IEnumerableEntity
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Add(new IEnumerableEntity
         {
             anEnumerable = EnumerableOnlyWrapper.Wrap(new[]
             {
                 1, 2, 3
             })
-        });
+        }));
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.SaveChanges());
         Assert.Contains(nameof(EnumerableOnlyWrapper<int>), ex.Message);
     }
 }
