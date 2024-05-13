@@ -53,25 +53,25 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - Value converters using `HasConversion`
 - Query and update logging including MQL (sensitive mode only)
 - Some mapping configuration options for DateTime
+- EnsureCreated & EnsureDeleted operations
 
 ## Limitations
 
 A number of Entity Framework Core features are not currently supported but planned for future release. If you require use of these facilities
 in the mean-time consider using the existing [MongoDB C# Driver's](https://github.com/mongodb/mongo-csharp-driver) LINQ provider which supports them.
 
-### Planned for next release
+### Planned for next releases
 
 - Select projections must only contain server-translatable expressions
 - Sum, Average, Min, Max etc. are not supported at top level
 - Transactions
 - Type discriminators
 - Additional mapping configuration options
-- EnsureCreated & EnsureDeleted operations
+- Properties of Dictionary type
 
 ### Not supported but considering for future releases
 
 - ExecuteUpdate & ExecuteDelete
-- Properties of Dictionary type
 - Binary/byte array properties
 - Additional CLR types (DateOnly, TimeOnly etc).
 - EF shadow properties
