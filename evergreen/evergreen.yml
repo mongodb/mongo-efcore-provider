@@ -313,11 +313,12 @@ functions:
           GITHUB_APIKEY: ${github_apikey}
         script: |
           ${PREPARE_SHELL}
-          if ! [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
-            echo "Cannot upload api docs generating for the patch release"
-            exit 1
+          if [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "Uploading Api docs..."
+            ./evergreen/upload-apidocs.sh
+          else
+            echo "Skip uploading Api docs for the patch release"
           fi
-          ./evergreen/upload-apidocs.sh
 
 pre:
   - func: fetch-source
