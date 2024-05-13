@@ -16,7 +16,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -40,7 +39,6 @@ public class MongoClientWrapper : IMongoClientWrapper
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
     private readonly IMongoClient _client;
     private readonly IMongoDatabase _database;
-    private PropertyInfo? _getLoggedStages;
     private string DatabaseName => _database.DatabaseNamespace.DatabaseName;
 
     /// <summary>
@@ -88,8 +86,8 @@ public class MongoClientWrapper : IMongoClientWrapper
         var result = executableQuery.Provider.Execute<T>(executableQuery.Query);
 
         // We need to get this via reflection from the Mongo C# Driver for now.
-        _getLoggedStages ??= executableQuery.Provider.GetType().GetProperty("LoggedStages");
-        if (_getLoggedStages?.GetValue(executableQuery.Provider) is BsonDocument[] loggedStages)
+        var getLoggedStages = executableQuery.Provider.GetType().GetProperty("LoggedStages");
+        if (getLoggedStages?.GetValue(executableQuery.Provider) is BsonDocument[] loggedStages)
         {
             _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
         }
