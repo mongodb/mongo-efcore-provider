@@ -224,6 +224,7 @@ functions:
 
   pack-packages:
     - command: shell.exec
+      type: test
       params:
         working_dir: mongo-efcore-provider
         script: |
@@ -232,6 +233,7 @@ functions:
 
   packages-smoke-tests:
     - command: shell.exec
+      type: test
       params:
         working_dir: mongo-efcore-provider
         script: |
@@ -244,6 +246,7 @@ functions:
 
   push-packages:
     - command: shell.exec
+      type: test
       params:
         working_dir: mongo-efcore-provider
         env:
@@ -291,19 +294,17 @@ functions:
 
   build-apidocs:
     - command: shell.exec
+      type: test
       params:
         shell: bash
         working_dir: mongo-efcore-provider
         script: |
           ${PREPARE_SHELL}
-          if ! [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
-            echo "Skip api docs generating for the patch release"
-            exit 0
-          fi
           ./evergreen/build-apidocs.sh
 
   upload-apidocs:
     - command: shell.exec
+      type: test
       params:
         shell: bash
         working_dir: mongo-efcore-provider
@@ -313,8 +314,8 @@ functions:
         script: |
           ${PREPARE_SHELL}
           if ! [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
-            echo "Skip api docs generating for the patch release"
-            exit 0
+            echo "Cannot upload api docs generating for the patch release"
+            exit 1
           fi
           ./evergreen/upload-apidocs.sh
 
@@ -351,6 +352,10 @@ tasks:
         vars:
           PACKAGE_ID: "MongoDB.EntityFrameworkCore"
       - func: packages-smoke-tests
+
+  - name: validate-apidocs
+    commands:
+      - func: build-apidocs
 
   - name: generate-apidocs
     commands:
@@ -461,8 +466,6 @@ buildvariants:
     build-target: "tests"
   display_name: "${target_runtime} ${driver} Driver on ${os} with ${version} Server"
   tags: ["tests-variant"]
-  expansions:
-    BUILD_TARGET: "tests"
   tasks:
     - name: main-tests
 
@@ -475,10 +478,17 @@ buildvariants:
   display_name: "${target_runtime} ${driver} Driver on Ubuntu-1804 with ${version} Server"
   run_on: ubuntu1804-small
   tags: ["tests-variant"]
-  expansions:
-    BUILD_TARGET: "tests"
   tasks:
     - name: main-tests
+
+- matrix_name: validate-apidocs
+  matrix_spec:
+    build-target: "tests"
+  display_name: "Validate API Documentation generation"
+  run_on: ubuntu2004-small
+  tags: ["generate-apidocs", "tests-variant"]
+  tasks:
+    - name: validate-apidocs
 
 - matrix_name: pack-packages
   matrix_spec:
@@ -489,6 +499,7 @@ buildvariants:
   tasks:
     - name: pack-packages
       git_tag_only: true
+      priority: 10
 
 - matrix_name: test-packages
   matrix_spec:
@@ -502,22 +513,24 @@ buildvariants:
   tasks:
     - name: packages-tests
       git_tag_only: true
+      priority: 10
       depends_on:
         - name: pack-packages
           variant: .pack-packages
 
-#- matrix_name: generate-apidocs
-#  matrix_spec:
-#    build-target: "release"
-#  display_name: "Generate API Documentation"
-#  run_on: ubuntu2004-small
-#  tags: ["generate-apidocs", "release_tag"]
-#  tasks:
-#    - name: generate-apidocs
-#      git_tag_only: true
-#      depends_on:
-#        - name: packages-tests
-#          variant: .package-tests
+- matrix_name: generate-apidocs
+  matrix_spec:
+    build-target: "release"
+  display_name: "Generate API Documentation"
+  run_on: ubuntu2004-small
+  tags: ["generate-apidocs", "release_tag"]
+  tasks:
+    - name: generate-apidocs
+      git_tag_only: true
+      priority: 10
+      depends_on:
+        - name: packages-tests
+          variant: .package-tests
 
 - matrix_name: push-packages
   matrix_spec:
@@ -528,10 +541,9 @@ buildvariants:
   tasks:
     - name: push-packages
       git_tag_only: true
+      priority: 10
       depends_on:
         - name: pack-packages
           variant: .pack-packages
         - name: packages-tests
           variant: .package-tests
-#        - name: generate-apidocs
-#          variant: .generate-apidocs
