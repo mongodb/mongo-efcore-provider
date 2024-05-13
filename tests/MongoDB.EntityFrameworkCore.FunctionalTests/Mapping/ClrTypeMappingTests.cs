@@ -91,9 +91,79 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         public List<string>? aList { get; set; }
     }
 
+    class ReadOnlyCollectionEntity : IdEntity
+    {
+        public ReadOnlyCollection<string> aCollection { get; set; }
+    }
+
+    class CollectionEntity : IdEntity
+    {
+        public Collection<string> aCollection { get; set; }
+    }
+
+    class ObservableCollectionEntity : IdEntity
+    {
+        public ObservableCollection<string> aCollection { get; set; }
+    }
+
+    class IReadOnlyListEntity : IdEntity
+    {
+        public IReadOnlyList<string> aList { get; set; }
+    }
+
+    class IEnumerableEntity : IdEntity
+    {
+        public IEnumerable<string> anEnumerable { get; set; }
+    }
+
     class IListEntity : IdEntity
     {
         public IList<string>? aList { get; set; }
+    }
+
+    class ListOfListEntity : IdEntity
+    {
+        public List<List<string>>? aListOfLists { get; set; }
+    }
+
+    class ListOfOwnedEntityListEntity : IdEntity
+    {
+        public List<List<SomeOwnedEntity>>? aListOfLists { get; set; }
+    }
+
+    class SomeOwnedEntity
+    {
+        public string name { get; set; }
+    }
+
+    class IListOfListEntity : IdEntity
+    {
+        public IList<List<string>>? aListOfLists { get; set; }
+    }
+
+    class ListSubclassOfListSubclassEntity : IdEntity
+    {
+        public ListSubclass<ListSubclass<string>>? aListOfLists { get; set; }
+    }
+
+    class DictionaryStringValuesEntity : IdEntity
+    {
+        public Dictionary<string, string>? aDictionary { get; set; }
+    }
+
+    class DictionaryIntValuesEntity : IdEntity
+    {
+        public Dictionary<string, int>? aDictionary { get; set; }
+    }
+
+    class IDictionaryObjectValuesEntity : IdEntity
+    {
+        public Dictionary<string, object>? aDictionary { get; set; }
+    }
+
+    class DictionaryOfListsEntity : IdEntity
+    {
+        public Dictionary<string, List<string>>? aDictionary { get; set; }
     }
 
     class ListSubclass<T> : List<T>
@@ -504,41 +574,31 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Fact]
-    public void IList_read_empty()
-    {
-        var collection = tempDatabase.CreateTemporaryCollection<IListEntity>();
-        collection.InsertOne(new IListEntity
-        {
-            _id = ObjectId.GenerateNewId(), aList = []
-        });
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Empty(actual.aList);
-    }
-
-    [Fact]
-    public void List_read_write_with_items()
+    public void List_write_read_with_items()
     {
         var collection = tempDatabase.CreateTemporaryCollection<ListEntity>();
         var expected = new List<string>
         {
             "a", "b", "c"
         };
-        var item = new ListEntity
+
         {
-            _id = ObjectId.GenerateNewId(), aList = expected
-        };
+            var item = new ListEntity
+            {
+                _id = ObjectId.GenerateNewId(), aList = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aList);
+        }
 
-        using var db = SingleEntityDbContext.Create(collection);
-        db.Entities.Add(item);
-        db.SaveChanges();
-
-        var actual = db.Entities.FirstOrDefault();
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aList);
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aList);
+        }
     }
 
     [Fact]
@@ -558,25 +618,323 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Fact]
-    public void IList_read_write_with_items()
+    public void IList_write_read_with_items()
     {
         var collection = tempDatabase.CreateTemporaryCollection<IListEntity>();
         var expected = new List<string>
         {
             "a", "b", "c"
         };
-        var item = new IListEntity
+
         {
-            _id = ObjectId.GenerateNewId(), aList = expected
-        };
+            var item = new IListEntity
+            {
+                _id = ObjectId.GenerateNewId(), aList = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aList);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aList);
+        }
+    }
+
+    [Fact]
+    public void IList_read_empty()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<IListEntity>();
+        collection.InsertOne(new IListEntity
+        {
+            _id = ObjectId.GenerateNewId(), aList = []
+        });
 
         using var db = SingleEntityDbContext.Create(collection);
-        db.Entities.Add(item);
-        db.SaveChanges();
-
         var actual = db.Entities.FirstOrDefault();
+
         Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aList);
+        Assert.Empty(actual.aList);
+    }
+
+    [Fact]
+    public void IList_read_null()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<IListEntity>();
+        collection.InsertOne(new IListEntity
+        {
+            _id = ObjectId.GenerateNewId(), aList = null
+        });
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Null(actual.aList);
+    }
+
+    [Fact]
+    public void ListOfLists_read_empty()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<ListOfListEntity>();
+        collection.InsertOne(new ListOfListEntity
+        {
+            _id = ObjectId.GenerateNewId(), aListOfLists = []
+        });
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Empty(actual.aListOfLists);
+    }
+
+    [Fact]
+    public void ListOfLists_write_read_with_items()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<ListOfListEntity>();
+        var expected = new List<List<string>>
+        {
+            new() {"a", "e", "i", "o", "u" },
+            new() { "b", "c", "d", "f", "g", "h" }
+        };
+
+        {
+            var item = new ListOfListEntity
+            {
+                _id = ObjectId.GenerateNewId(), aListOfLists = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aListOfLists);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aListOfLists);
+        }
+    }
+
+    [Fact]
+    public void IListOfLists_read_empty()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<IListOfListEntity>();
+        collection.InsertOne(new IListOfListEntity
+        {
+            _id = ObjectId.GenerateNewId(), aListOfLists = []
+        });
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Empty(actual.aListOfLists);
+    }
+
+    [Fact]
+    private void IListOfLists_write_read_with_items()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<IListOfListEntity>();
+        var expected = new List<List<string>>
+        {
+            new() {"a", "e", "i", "o", "u" },
+            new() { "b", "c", "d", "f", "g", "h" }
+        };
+
+        {
+            var item = new IListOfListEntity
+            {
+                _id = ObjectId.GenerateNewId(), aListOfLists = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aListOfLists);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aListOfLists);
+        }
+    }
+
+    [Fact]
+    public void ListSubclassOfListSubclass_read_empty()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<ListSubclassOfListSubclassEntity>();
+        collection.InsertOne(new ListSubclassOfListSubclassEntity
+        {
+            _id = ObjectId.GenerateNewId(), aListOfLists = []
+        });
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Empty(actual.aListOfLists);
+    }
+
+    [Fact]
+    private void ListSubclassOfListSubclass_write_read_with_items()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<ListSubclassOfListSubclassEntity>();
+        var expected = new ListSubclass<ListSubclass<string>>
+        {
+            new() {"a", "e", "i", "o", "u" },
+            new() { "b", "c", "d", "f", "g", "h" }
+        };
+
+        {
+            var item = new ListSubclassOfListSubclassEntity
+            {
+                _id = ObjectId.GenerateNewId(), aListOfLists = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aListOfLists);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aListOfLists);
+        }
+    }
+
+    [Fact]
+    public void ReadOnlyCollection_write_read_with_items()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<ReadOnlyCollectionEntity>();
+        var expected = new ReadOnlyCollection<string>(["z", "x", "y", "1", "2", "3"]);
+
+        {
+            var item = new ReadOnlyCollectionEntity
+            {
+                _id = ObjectId.GenerateNewId(), aCollection = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aCollection);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aCollection);
+        }
+    }
+
+    [Fact]
+    public void Collection_write_read_with_items()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<CollectionEntity>();
+        var expected = new Collection<string>(["z", "x", "y", "1", "2", "3"]);
+
+        {
+            var item = new CollectionEntity
+            {
+                _id = ObjectId.GenerateNewId(), aCollection = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aCollection);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aCollection);
+        }
+    }
+
+    [Fact]
+    public void ObservableCollection_write_read_with_items()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<ObservableCollectionEntity>();
+        var expected = new ObservableCollection<string>(["z", "x", "y", "1", "2", "3"]);
+
+        {
+            var item = new ObservableCollectionEntity
+            {
+                _id = ObjectId.GenerateNewId(), aCollection = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aCollection);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aCollection);
+        }
+    }
+
+    [Fact]
+    public void IReadOnlyList_write_read_with_items()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<IReadOnlyListEntity>();
+        var expected = new List<string>(["z", "x", "y", "1", "2", "3"]).AsReadOnly();
+
+        {
+            var item = new IReadOnlyListEntity
+            {
+                _id = ObjectId.GenerateNewId(), aList = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aList);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aList);
+        }
+    }
+
+    [Fact]
+    public void IEnumerable_write_read_with_items()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<IEnumerableEntity>();
+        var expected = new List<string>(["z", "x", "y", "1", "2", "3"]).AsEnumerable();
+
+        {
+            var item = new IEnumerableEntity
+            {
+                _id = ObjectId.GenerateNewId(), anEnumerable = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.anEnumerable);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.anEnumerable);
+        }
     }
 
     [Theory]
