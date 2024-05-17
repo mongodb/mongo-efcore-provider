@@ -26,7 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Storage.ValueConversion;
 /// </summary>
 /// <typeparam name="TModel">The type in the entity model.</typeparam>
 /// <typeparam name="TProvider">The type to use in the provider.</typeparam>
-public class StringObjectIdConverter<TModel, TProvider> : ValueConverter<TModel, TProvider>
+public abstract class StringObjectIdConverter<TModel, TProvider> : ValueConverter<TModel, TProvider>
 {
     /// <summary>
     /// Creates a new instance of the <see cref="StringObjectIdConverter{TModel, TProvider}"/> class.
@@ -34,7 +34,7 @@ public class StringObjectIdConverter<TModel, TProvider> : ValueConverter<TModel,
     /// <param name="convertToProviderExpression">The expression to convert from the model to the provider.</param>
     /// <param name="convertFromProviderExpression">The expression to convert from the provider to the model.</param>
     /// <param name="mappingHints">Optional <see cref="ConverterMappingHints"/> that may be considered.</param>
-    public StringObjectIdConverter(
+    protected StringObjectIdConverter(
         Expression<Func<TModel, TProvider>> convertToProviderExpression,
         Expression<Func<TProvider, TModel>> convertFromProviderExpression,
         ConverterMappingHints? mappingHints = null)
@@ -49,13 +49,13 @@ public class StringObjectIdConverter<TModel, TProvider> : ValueConverter<TModel,
     /// An expression to convert from a <see cref="string"/> to an <see cref="ObjectId"/>.
     /// </summary>
     /// <returns>The expression that performs the conversion.</returns>
-    protected static new Expression<Func<ObjectId, string>> ToString()
+    protected static Expression<Func<ObjectId, string>> ConvertToString()
         => v => v.ToString();
 
     /// <summary>
     /// An expression to convert from an <see cref="ObjectId"/> to a <see cref="string"/>.
     /// </summary>
     /// <returns>The expression that performs the conversion.</returns>
-    protected static Expression<Func<string, ObjectId>> ToObjectId()
+    protected static Expression<Func<string, ObjectId>> ConvertToObjectId()
         => v => ObjectId.Parse(v);
 }

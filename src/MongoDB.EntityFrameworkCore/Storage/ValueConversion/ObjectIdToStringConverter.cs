@@ -44,8 +44,8 @@ public class ObjectIdToStringConverter : StringObjectIdConverter<ObjectId, strin
     /// </param>
     public ObjectIdToStringConverter(ConverterMappingHints? mappingHints = null)
         : base(
-            ToString(),
-            ToObjectId(),
+            ConvertToString(),
+            ConvertToObjectId(),
             mappingHints)
     {
     }
