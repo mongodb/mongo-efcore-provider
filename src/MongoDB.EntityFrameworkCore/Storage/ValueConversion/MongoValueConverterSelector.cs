@@ -42,24 +42,24 @@ public class MongoValueConverterSelector : ValueConverterSelector
         Type modelClrType,
         Type? providerClrType = null)
     {
-        if (modelClrType == typeof(ObjectId))
+        if (modelClrType == typeof(ObjectId) && (providerClrType == typeof(string) || providerClrType == null))
         {
-            if (providerClrType == null
-                || providerClrType == typeof(string))
-            {
-                yield return _mongoConverters.GetOrAdd(
-                    (modelClrType, typeof(string)),
-                    _ => ObjectIdToStringConverter.DefaultInfo);
-            }
+            yield return _mongoConverters.GetOrAdd((modelClrType, typeof(string)), _ => ObjectIdToStringConverter.DefaultInfo);
         }
-        else if (modelClrType == typeof(string))
+
+        if (modelClrType == typeof(string) && providerClrType == typeof(ObjectId))
         {
-            if (providerClrType == typeof(ObjectId))
-            {
-                yield return _mongoConverters.GetOrAdd(
-                    (modelClrType, typeof(ObjectId)),
-                    _ => StringToObjectIdConverter.DefaultInfo);
-            }
+            yield return _mongoConverters.GetOrAdd((modelClrType, typeof(ObjectId)), _ => StringToObjectIdConverter.DefaultInfo);
+        }
+
+        if (modelClrType == typeof(Decimal128) && providerClrType == typeof(decimal))
+        {
+            yield return _mongoConverters.GetOrAdd((modelClrType, typeof(decimal)), _ => Decimal128ToDecimalConverter.DefaultInfo);
+        }
+
+        if (modelClrType == typeof(decimal) && providerClrType == typeof(Decimal128))
+        {
+            yield return _mongoConverters.GetOrAdd((modelClrType, typeof(ObjectId)), _ => DecimalToDecimal128Converter.DefaultInfo);
         }
 
         foreach (var converter in base.Select(modelClrType, providerClrType))

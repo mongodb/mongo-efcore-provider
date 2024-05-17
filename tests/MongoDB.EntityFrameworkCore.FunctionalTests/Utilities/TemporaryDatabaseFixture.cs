@@ -75,6 +75,15 @@ public class TemporaryDatabaseFixture : IDisposable
         return MongoDatabase.GetCollection<T>(name);
     }
 
+    public IMongoCollection<T> GetExistingTemporaryCollection<T>([CallerMemberName] string? name = null)
+    {
+        if (name == ".ctor")
+            name = GetLastConstructorTypeNameFromStack()
+                   ?? throw new InvalidOperationException(
+                       "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
+        return MongoDatabase.GetCollection<T>(name);
+    }
+
     public void Dispose()
     {
         _mongoClient.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
