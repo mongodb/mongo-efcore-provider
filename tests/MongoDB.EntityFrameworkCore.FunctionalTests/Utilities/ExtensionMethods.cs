@@ -37,10 +37,8 @@ internal static class ExtensionMethods
         => (short)random.Next(1, short.MaxValue);
 
     public static string ToExpectedPrecision(this DateTime dateTime)
-        =>  dateTime.ToString("yyyy-MM-ddTHH:mm:ss.fff");
+        =>  dateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
 
     public static void WriteTestDocs<T>(this IMongoCollection<T> collection, IEnumerable<T> docs)
-    {
-        collection.BulkWrite(docs.Select(p => new InsertOneModel<T>(p)));
-    }
+        => collection.BulkWrite(docs.Select(p => new InsertOneModel<T>(p)));
 }

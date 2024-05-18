@@ -26,12 +26,10 @@ public class TemporaryDatabaseFixture : IDisposable
     private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
     private static int Count;
 
-    private readonly IMongoClient _mongoClient;
-
     public TemporaryDatabaseFixture()
     {
-        _mongoClient = TestServer.GetClient();
-        MongoDatabase = _mongoClient.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
+        Client = TestServer.GetClient();
+        MongoDatabase = Client.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
     }
 
     public IMongoDatabase MongoDatabase { get; }
@@ -75,20 +73,26 @@ public class TemporaryDatabaseFixture : IDisposable
         return MongoDatabase.GetCollection<T>(name);
     }
 
-    public void Dispose()
+    public IMongoCollection<T> GetExistingTemporaryCollection<T>([CallerMemberName] string? name = null)
     {
-        _mongoClient.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
+        if (name == ".ctor")
+            name = GetLastConstructorTypeNameFromStack()
+                   ?? throw new InvalidOperationException(
+                       "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
+        return MongoDatabase.GetCollection<T>(name);
     }
 
-    public IMongoClient Client
-        => _mongoClient;
+    public void Dispose()
+    {
+        Client.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
+    }
+
+    public IMongoClient Client { get; }
 
     private static string? GetLastConstructorTypeNameFromStack()
-    {
-        return new System.Diagnostics.StackTrace()
+        => new System.Diagnostics.StackTrace()
             .GetFrames()
             .Select(f => f.GetMethod())
             .FirstOrDefault(f => f?.Name == ".ctor")
             ?.DeclaringType?.Name;
-    }
 }

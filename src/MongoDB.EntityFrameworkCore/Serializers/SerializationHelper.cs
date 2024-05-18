@@ -124,7 +124,7 @@ internal static class SerializationHelper
         var dateTimeKind = property?.GetDateTimeKind() ?? DateTimeKind.Unspecified;
         return dateTimeKind == DateTimeKind.Unspecified
             ? new DateTimeSerializer()
-            : new DateTimeSerializer(DateTimeKind.Local);
+            : new DateTimeSerializer(dateTimeKind);
     }
 
     private static IBsonSerializer CreateNullableSerializer(Type elementType)

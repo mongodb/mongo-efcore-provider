@@ -14,34 +14,29 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class DateAndTimeSerializationTests : BaseSerializationTests
+public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase)
+    : BaseSerializationTests(tempDatabase)
 {
-    public DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
-
     [Fact]
     public void DateTime_round_trips_as_utc_with_expected_precision()
     {
         var expected = DateTime.UtcNow;
-        var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
 
         {
+            var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new DateTimeEntity
-            {
-                aDateTime = expected
-            });
+            db.Entities.Add(new DateTimeEntity {aDateTime = expected});
             db.SaveChanges();
         }
 
         {
-            using var db = SingleEntityDbContext.Create(collection);
-            var result = db.Entities.FirstOrDefault();
+            var collection = TempDatabase.GetExistingTemporaryCollection<UtcDateTimeEntity>();
+            var result = collection.AsQueryable().First();
             Assert.NotNull(result);
             Assert.Equal(expected.ToExpectedPrecision(), result.aDateTime.ToExpectedPrecision());
         }
@@ -51,22 +46,18 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
     public void DateTime_round_trips_as_local()
     {
         var expected = DateTime.Now;
-        var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
 
         {
+            var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
             using var db = SingleEntityDbContext.Create(collection,
                 model => model.Entity<DateTimeEntity>().Property(e => e.aDateTime).HasDateTimeKind(DateTimeKind.Local));
-            db.Entities.Add(new DateTimeEntity
-            {
-                aDateTime = expected
-            });
+            db.Entities.Add(new DateTimeEntity {aDateTime = expected});
             db.SaveChanges();
         }
 
         {
-            using var db = SingleEntityDbContext.Create(collection,
-                model => model.Entity<DateTimeEntity>().Property(e => e.aDateTime).HasDateTimeKind(DateTimeKind.Local));
-            var result = db.Entities.FirstOrDefault();
+            var collection = TempDatabase.GetExistingTemporaryCollection<LocalDateTimeEntity>();
+            var result = collection.AsQueryable().First();
             Assert.NotNull(result);
             Assert.Equal(expected.ToExpectedPrecision(), result.aDateTime.ToExpectedPrecision());
         }
@@ -86,6 +77,18 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
         public DateTime aDateTime { get; set; }
     }
 
+    class LocalDateTimeEntity : BaseIdEntity
+    {
+        [BsonDateTimeOptions(Kind = DateTimeKind.Local)]
+        public DateTime aDateTime { get; set; }
+    }
+
+    class UtcDateTimeEntity : BaseIdEntity
+    {
+        [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+        public DateTime aDateTime { get; set; }
+    }
+
     [Fact]
     public void Nullable_DateTime_round_trips_as_utc_with_expected_precision()
     {
@@ -94,10 +97,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableDateTimeEntity
-            {
-                aNullableDateTime = expected
-            });
+            db.Entities.Add(new NullableDateTimeEntity {aNullableDateTime = expected});
             db.SaveChanges();
         }
 
@@ -117,10 +117,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableDateTimeEntity
-            {
-                aNullableDateTime = expected
-            });
+            db.Entities.Add(new NullableDateTimeEntity {aNullableDateTime = expected});
             db.SaveChanges();
         }
 
@@ -156,10 +153,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new DateTimeOffsetEntity
-            {
-                aDateTimeOffset = expected
-            });
+            db.Entities.Add(new DateTimeOffsetEntity {aDateTimeOffset = expected});
             db.SaveChanges();
         }
 
@@ -193,10 +187,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableDateTimeOffsetEntity
-            {
-                aNullableDateTimeOffset = expected
-            });
+            db.Entities.Add(new NullableDateTimeOffsetEntity {aNullableDateTimeOffset = expected});
             db.SaveChanges();
         }
 
@@ -216,10 +207,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableDateTimeOffsetEntity
-            {
-                aNullableDateTimeOffset = expected
-            });
+            db.Entities.Add(new NullableDateTimeOffsetEntity {aNullableDateTimeOffset = expected});
             db.SaveChanges();
         }
 
@@ -256,10 +244,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new TimeSpanEntity
-            {
-                aTimeSpan = expected
-            });
+            db.Entities.Add(new TimeSpanEntity {aTimeSpan = expected});
             db.SaveChanges();
         }
 
@@ -298,10 +283,7 @@ public class DateAndTimeSerializationTests : BaseSerializationTests
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableTimeSpanEntity
-            {
-                aNullableTimeSpan = expected
-            });
+            db.Entities.Add(new NullableTimeSpanEntity {aNullableTimeSpan = expected});
             db.SaveChanges();
         }
 
