@@ -231,6 +231,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [InlineData(typeof(TestEnum), TestEnum.EnumValue1)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue0)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
+    [InlineData(typeof(TestEnum?), null)]
     [InlineData(typeof(int[]), null)]
     [InlineData(typeof(int[]), new[]
     {
