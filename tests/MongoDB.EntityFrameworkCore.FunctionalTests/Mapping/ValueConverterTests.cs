@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -50,7 +49,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         };
         tempDatabase.CreateTemporaryCollection<IdIsString>().InsertOne(expected);
 
-        var collection = GetCollection<IdIsObjectId>();
+        var collection = tempDatabase.GetExistingTemporaryCollection<IdIsObjectId>();
         using var db = SingleEntityDbContext.Create(collection, ClrObjectIdToMongoString);
 
         var found = db.Entities.First();
@@ -67,7 +66,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         };
         tempDatabase.CreateTemporaryCollection<IdIsString>().InsertOne(expected);
 
-        var collection = GetCollection<IdIsObjectId>();
+        var collection = tempDatabase.GetExistingTemporaryCollection<IdIsObjectId>();
         using var db = SingleEntityDbContext.Create(collection, ClrObjectIdToMongoString);
 
         var found = db.Entities.First(e => e._id == expectedId);
@@ -84,7 +83,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<IdIsString>().AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<IdIsString>().AsQueryable().First();
         Assert.Equal(original._id.ToString(), found._id);
     }
 
@@ -103,7 +102,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         };
         tempDatabase.CreateTemporaryCollection<IdIsObjectId>().InsertOne(expected);
 
-        var collection = GetCollection<IdIsString>();
+        var collection = tempDatabase.GetExistingTemporaryCollection<IdIsString>();
         using var db = SingleEntityDbContext.Create(collection, ClrStringToMongoObjectId);
 
         var found = db.Entities.First();
@@ -119,7 +118,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         };
         tempDatabase.CreateTemporaryCollection<IdIsObjectId>().InsertOne(expected);
 
-        var collection = GetCollection<IdIsString>();
+        var collection = tempDatabase.GetExistingTemporaryCollection<IdIsString>();
         using var db = SingleEntityDbContext.Create(collection, ClrStringToMongoObjectId);
 
         var found = db.Entities.First(e => e._id == expected._id.ToString());
@@ -139,7 +138,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<IdIsObjectId>().AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<IdIsObjectId>().AsQueryable().First();
         Assert.Equal(original._id, found._id.ToString());
     }
 
@@ -171,7 +170,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var docs = tempDatabase.CreateTemporaryCollection<ActiveIsString>(nameof(Bool_can_deserialize_from_string) + "_" + active);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<ActiveIsBool>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<ActiveIsBool>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, ClrBoolToMongoString);
 
         var found = db.Entities.First();
@@ -191,7 +190,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var docs = tempDatabase.CreateTemporaryCollection<ActiveIsString>(nameof(Bool_can_query_against_string) + "_" + active);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<ActiveIsBool>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<ActiveIsBool>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, ClrBoolToMongoString);
 
         var found = db.Entities.First(e => e.active == active);
@@ -214,7 +213,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<ActiveIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<ActiveIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(active.ToString(), found.active);
     }
@@ -248,7 +247,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var docs = tempDatabase.CreateTemporaryCollection<DaysIsString>(nameof(Int_can_deserialize_from_string) + "_" + days);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, ClrIntToMongoString);
 
         var found = db.Entities.First();
@@ -269,7 +268,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var docs = tempDatabase.CreateTemporaryCollection<DaysIsString>(nameof(Int_can_query_against_string) + "_" + days);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, ClrIntToMongoString);
 
         var found = db.Entities.First(e => e.days == days);
@@ -293,7 +292,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<DaysIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<DaysIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(days.ToString(), found.days);
     }
@@ -322,7 +321,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(TimeSpan_can_deserialize_from_int) + "_" + days);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<DaysIsTimeSpan>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<DaysIsTimeSpan>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, ClrTimeSpanToMongoInt);
 
         var found = db.Entities.First();
@@ -343,7 +342,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(TimeSpan_can_query_against_int) + "_" + days);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<DaysIsInt>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, ClrTimeSpanToMongoInt);
 
         var found = db.Entities.First(e => e.days == days);
@@ -367,10 +366,16 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<DaysIsInt>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<DaysIsInt>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(days, found.days);
     }
+
+    private static readonly Action<ModelBuilder>? ClrStringToMongoIntDefault = mb =>
+    {
+        mb.Entity<DaysIsString>()
+            .Property(e => e.days).HasConversion<int>();
+    };
 
     private static readonly Action<ModelBuilder>? ClrStringToMongoInt = mb =>
     {
@@ -379,20 +384,23 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     };
 
     [Theory]
-    [InlineData([1])]
-    [InlineData([-123])]
-    [InlineData([0])]
-    public void String_can_deserialize_from_int(int days)
+    [InlineData([1, true])]
+    [InlineData([-123, true])]
+    [InlineData([0, true])]
+    [InlineData([1, false])]
+    [InlineData([-123, false])]
+    [InlineData([0, false])]
+    public void String_can_deserialize_from_int(int days, bool defaultConversion)
     {
         var expected = new DaysIsInt
         {
             days = days, _id = ObjectId.GenerateNewId()
         };
-        var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(String_can_deserialize_from_int) + "_" + days);
+        var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(String_can_deserialize_from_int) + "_" + days + defaultConversion);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<DaysIsString>(docs.CollectionNamespace.CollectionName);
-        using var db = SingleEntityDbContext.Create(collection, ClrStringToMongoInt);
+        var collection = tempDatabase.GetExistingTemporaryCollection<DaysIsString>(docs.CollectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrStringToMongoIntDefault : ClrStringToMongoInt);
 
         var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
@@ -400,45 +408,23 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Theory]
-    [InlineData([1])]
-    [InlineData([-123])]
-    [InlineData([0])]
-    public void String_can_deserialize_from_int_default(int days)
+    [InlineData([1, true])]
+    [InlineData([-123, true])]
+    [InlineData([0, true])]
+    [InlineData([1, false])]
+    [InlineData([-123, false])]
+    [InlineData([0, false])]
+    public void String_can_query_against_int(int days, bool defaultConversion)
     {
         var expected = new DaysIsInt
         {
             days = days, _id = ObjectId.GenerateNewId()
         };
-        var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(String_can_deserialize_from_int_default)
-                                                                     + "_" + days);
+        var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(String_can_query_against_int) + "_" + days + defaultConversion);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<DaysIsString>(docs.CollectionNamespace.CollectionName);
-        using var db = SingleEntityDbContext.Create(collection, mb =>
-        {
-            mb.Entity<DaysIsString>().Property(d => d.days).HasConversion<int>();
-        });
-
-        var found = db.Entities.First();
-        Assert.Equal(expected._id, found._id);
-        Assert.Equal(days.ToString(), found.days);
-    }
-
-    [Theory]
-    [InlineData([1])]
-    [InlineData([-123])]
-    [InlineData([0])]
-    public void String_can_query_against_int(int days)
-    {
-        var expected = new DaysIsInt
-        {
-            days = days, _id = ObjectId.GenerateNewId()
-        };
-        var docs = tempDatabase.CreateTemporaryCollection<DaysIsInt>(nameof(String_can_query_against_int) + "_" + days);
-        docs.InsertOne(expected);
-
-        var collection = GetCollection<DaysIsString>(docs.CollectionNamespace.CollectionName);
-        using var db = SingleEntityDbContext.Create(collection, ClrStringToMongoInt);
+        var collection = tempDatabase.GetExistingTemporaryCollection<DaysIsString>(docs.CollectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrStringToMongoIntDefault : ClrStringToMongoInt);
 
         var found = db.Entities.First(e => e.days == days.ToString());
         Assert.Equal(expected._id, found._id);
@@ -446,13 +432,16 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Theory]
-    [InlineData([1])]
-    [InlineData([-123])]
-    [InlineData([0])]
-    public void String_can_serialize_to_int(int days)
+    [InlineData([1, true])]
+    [InlineData([-123, true])]
+    [InlineData([0, true])]
+    [InlineData([1, false])]
+    [InlineData([-123, false])]
+    [InlineData([0, false])]
+    public void String_can_serialize_to_int(int days, bool defaultConversion)
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DaysIsString>(nameof(String_can_serialize_to_int) + "_" + days);
-        using var db = SingleEntityDbContext.Create(collection, ClrStringToMongoInt);
+        var collection = tempDatabase.CreateTemporaryCollection<DaysIsString>(nameof(String_can_serialize_to_int) + "_" + days + defaultConversion);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrStringToMongoIntDefault : ClrStringToMongoInt);
 
         var original = new DaysIsString
         {
@@ -461,7 +450,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<DaysIsInt>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<DaysIsInt>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(days, found.days);
     }
@@ -476,6 +465,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         public Decimal128 amount { get; set; }
     }
 
+    private static readonly Action<ModelBuilder>? ClrDecimalToMongoDecimal128Default = mb =>
+    {
+        mb.Entity<AmountIsDecimal>()
+            .Property(e => e.amount).HasConversion<Decimal128>();
+    };
+
     private static readonly Action<ModelBuilder>? ClrDecimalToMongoDecimal128 = mb =>
     {
         mb.Entity<AmountIsDecimal>()
@@ -483,10 +478,13 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     };
 
     [Theory]
-    [InlineData(["1.1234"])]
-    [InlineData(["-123.213"])]
-    [InlineData(["0"])]
-    public void Decimal_can_deserialize_from_Decimal128(string amountString)
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal_can_deserialize_from_Decimal128(string amountString, bool defaultConversion)
     {
         var amount = decimal.Parse(amountString);
         var expected = new AmountIsDecimal128
@@ -494,11 +492,11 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             amount = new Decimal128(amount), _id = ObjectId.GenerateNewId()
         };
         var docs = tempDatabase.CreateTemporaryCollection<AmountIsDecimal128>(nameof(Decimal_can_deserialize_from_Decimal128) + "_"
-            + amount);
+            + amount + defaultConversion);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
-        using var db = SingleEntityDbContext.Create(collection, ClrDecimalToMongoDecimal128);
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimalToMongoDecimal128Default : ClrDecimalToMongoDecimal128);
 
         var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
@@ -506,10 +504,13 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Theory]
-    [InlineData(["1.1234"])]
-    [InlineData(["-123.213"])]
-    [InlineData(["0"])]
-    public void Decimal_can_query_against_Decimal128(string amountString)
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal_can_query_against_Decimal128(string amountString, bool defaultConversion)
     {
         var amount = decimal.Parse(amountString);
         var expected = new AmountIsDecimal128
@@ -517,11 +518,11 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             amount = new Decimal128(amount), _id = ObjectId.GenerateNewId()
         };
         var docs = tempDatabase.CreateTemporaryCollection<AmountIsDecimal128>(nameof(Decimal_can_query_against_Decimal128) + "_"
-            + amount);
+            + amount + defaultConversion);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
-        using var db = SingleEntityDbContext.Create(collection, ClrDecimalToMongoDecimal128);
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimalToMongoDecimal128Default : ClrDecimalToMongoDecimal128);
 
         var found = db.Entities.First(e => e.amount == amount);
         Assert.Equal(expected._id, found._id);
@@ -529,15 +530,18 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Theory]
-    [InlineData(["1.1234"])]
-    [InlineData(["-123.213"])]
-    [InlineData(["0"])]
-    public void Decimal_can_serialize_to_Decimal128(string amountString)
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal_can_serialize_to_Decimal128(string amountString, bool defaultConversion)
     {
         var amount = decimal.Parse(amountString);
         var collection =
-            tempDatabase.CreateTemporaryCollection<AmountIsDecimal>(nameof(Decimal_can_serialize_to_Decimal128) + "_" + amount);
-        using var db = SingleEntityDbContext.Create(collection, ClrDecimalToMongoDecimal128);
+            tempDatabase.CreateTemporaryCollection<AmountIsDecimal>(nameof(Decimal_can_serialize_to_Decimal128) + "_" + amount + defaultConversion);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimalToMongoDecimal128Default : ClrDecimalToMongoDecimal128);
 
         var original = new AmountIsDecimal
         {
@@ -546,7 +550,97 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<AmountIsDecimal128>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<AmountIsDecimal128>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        Assert.Equal(original._id, found._id);
+        Assert.Equal(amount, found.amount);
+    }
+
+    private static readonly Action<ModelBuilder>? ClrDecimal128ToMongoDecimalDefault = mb =>
+    {
+        mb.Entity<AmountIsDecimal128>()
+            .Property(e => e.amount).HasConversion<decimal>();
+    };
+
+    private static readonly Action<ModelBuilder>? ClrDecimal128ToMongoDecimal = mb =>
+    {
+        mb.Entity<AmountIsDecimal128>()
+            .Property(e => e.amount).HasConversion(v => Decimal128.ToDecimal(v), v => new Decimal128(v));
+    };
+
+    [Theory]
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal128_can_deserialize_from_Decimal(string amountString, bool defaultConversion)
+    {
+        var amount = decimal.Parse(amountString);
+        var expected = new AmountIsDecimal
+        {
+            amount = amount, _id = ObjectId.GenerateNewId()
+        };
+        var docs = tempDatabase.CreateTemporaryCollection<AmountIsDecimal>(nameof(Decimal128_can_deserialize_from_Decimal) + "_"
+            + amount + defaultConversion);
+        docs.InsertOne(expected);
+
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimal128ToMongoDecimalDefault : ClrDecimal128ToMongoDecimal);
+
+        var found = db.Entities.First();
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(amount, found.amount);
+    }
+
+    [Theory]
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal128_can_query_against_Decimal(string amountString, bool defaultConversion)
+    {
+        var amount = decimal.Parse(amountString);
+        var expected = new AmountIsDecimal
+        {
+            amount = amount, _id = ObjectId.GenerateNewId()
+        };
+        var docs = tempDatabase.CreateTemporaryCollection<AmountIsDecimal>(nameof(Decimal128_can_query_against_Decimal) + "_"
+            + amount + defaultConversion);
+        docs.InsertOne(expected);
+
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsDecimal128>(docs.CollectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimal128ToMongoDecimalDefault : ClrDecimal128ToMongoDecimal);
+
+        var found = db.Entities.First(e => e.amount == amount);
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(amount, found.amount);
+    }
+
+    [Theory]
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal128_can_serialize_to_Decimal(string amountString, bool defaultConversion)
+    {
+        var amount = decimal.Parse(amountString);
+        var collection =
+            tempDatabase.CreateTemporaryCollection<AmountIsDecimal128>(nameof(Decimal128_can_serialize_to_Decimal) + "_" + amount + defaultConversion);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimal128ToMongoDecimalDefault : ClrDecimal128ToMongoDecimal);
+
+        var original = new AmountIsDecimal128
+        {
+            amount = amount
+        };
+        db.Entities.Add(original);
+        db.SaveChanges();
+
+        var found = tempDatabase.GetExistingTemporaryCollection<AmountIsDecimal>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount, found.amount);
     }
@@ -556,6 +650,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         public string amount { get; set; }
     }
 
+    private static readonly Action<ModelBuilder> ClrDecimalToStringDefault = mb =>
+    {
+        mb.Entity<AmountIsString>()
+            .Property(e => e.amount).HasConversion<string>();
+    };
+
     private static readonly Action<ModelBuilder> ClrDecimalToString = mb =>
     {
         mb.Entity<AmountIsString>()
@@ -563,21 +663,24 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     };
 
     [Theory]
-    [InlineData(["1.1234"])]
-    [InlineData(["-123.213"])]
-    [InlineData(["0"])]
-    public void Decimal_can_deserialize_from_string(string amount)
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal_can_deserialize_from_string(string amount, bool defaultConversion)
     {
         var expected = new AmountIsString
         {
             amount = amount, _id = ObjectId.GenerateNewId()
         };
         var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(
-            nameof(Decimal_can_deserialize_from_string) + "_" + amount);
+            nameof(Decimal_can_deserialize_from_string) + "_" + amount + defaultConversion);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
-        using var db = SingleEntityDbContext.Create(collection, ClrDecimalToString);
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimalToStringDefault : ClrDecimalToString);
 
         var found = db.Entities.First();
         Assert.Equal(expected._id, found._id);
@@ -585,20 +688,23 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Theory]
-    [InlineData(["1.1234"])]
-    [InlineData(["-123.213"])]
-    [InlineData(["0"])]
-    public void Decimal_can_query_against_string(string amount)
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal_can_query_against_string(string amount, bool defaultConversion)
     {
         var expected = new AmountIsString
         {
             amount = amount, _id = ObjectId.GenerateNewId()
         };
-        var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(nameof(Decimal_can_query_against_string) + "_" + amount);
+        var docs = tempDatabase.CreateTemporaryCollection<AmountIsString>(nameof(Decimal_can_query_against_string) + "_" + amount + defaultConversion);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
-        using var db = SingleEntityDbContext.Create(collection, ClrDecimalToString);
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsDecimal>(docs.CollectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimalToStringDefault : ClrDecimalToString);
 
         var found = db.Entities.First(e => e.amount == decimal.Parse(amount));
         Assert.Equal(expected._id, found._id);
@@ -606,14 +712,17 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Theory]
-    [InlineData(["1.1234"])]
-    [InlineData(["-123.213"])]
-    [InlineData(["0"])]
-    public void Decimal_can_serialize_to_string(string amount)
+    [InlineData(["1.1234", true])]
+    [InlineData(["-123.213", true])]
+    [InlineData(["0", true])]
+    [InlineData(["1.1234", false])]
+    [InlineData(["-123.213", false])]
+    [InlineData(["0", false])]
+    public void Decimal_can_serialize_to_string(string amount, bool defaultConversion)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<AmountIsDecimal>(nameof(Decimal_can_serialize_to_string) + "_" + amount);
-        using var db = SingleEntityDbContext.Create(collection, ClrDecimalToString);
+            tempDatabase.CreateTemporaryCollection<AmountIsDecimal>(nameof(Decimal_can_serialize_to_string) + "_" + amount + defaultConversion);
+        using var db = SingleEntityDbContext.Create(collection, defaultConversion ? ClrDecimalToStringDefault : ClrDecimalToString);
 
         var original = new AmountIsDecimal
         {
@@ -622,13 +731,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<AmountIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<AmountIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount, found.amount);
     }
-
-    IMongoCollection<T> GetCollection<T>([CallerMemberName] string? name = null)
-        => tempDatabase.MongoDatabase.GetCollection<T>(name);
 
     class AmountIsDouble : IdIsObjectId
     {
@@ -649,7 +755,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             nameof(Double_can_deserialize_from_string_default) + "_" + amount);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<AmountIsDouble>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsDouble>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<AmountIsDouble>().Property(e => e.amount).HasConversion<string>();
@@ -674,7 +780,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             nameof(Double_can_query_against_string_default) + "_" + amount);
         docs.InsertOne(expected);
 
-        var collection = GetCollection<AmountIsDouble>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsDouble>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<AmountIsDouble>().Property(e => e.amount).HasConversion<string>();
@@ -706,7 +812,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<AmountIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<AmountIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount.ToString(), found.amount);
     }
@@ -731,7 +837,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             nameof(Guid_can_deserialize_from_string_default) + "_" + amount.Substring(6));
         docs.InsertOne(expected);
 
-        var collection = GetCollection<AmountIsGuid>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsGuid>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>();
@@ -757,7 +863,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             nameof(Guid_can_query_against_string_default) + "_" + amount.Substring(6));
         docs.InsertOne(expected);
 
-        var collection = GetCollection<AmountIsGuid>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<AmountIsGuid>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>();
@@ -791,7 +897,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<AmountIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<AmountIsString>(collection.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount.ToString(), found.amount);
     }
@@ -808,7 +914,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.Parse(id)
         });
 
-        var collection = GetCollection<IdIsString>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<IdIsString>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
@@ -830,7 +936,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             _id = ObjectId.Parse(id)
         });
 
-        var collection = GetCollection<IdIsString>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<IdIsString>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
@@ -858,7 +964,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = GetCollection<IdIsObjectId>(docs.CollectionNamespace.CollectionName).AsQueryable().First();
+        var found = tempDatabase.GetExistingTemporaryCollection<IdIsObjectId>(docs.CollectionNamespace.CollectionName).AsQueryable().First();
         Assert.Equal(original._id, found._id.ToString());
     }
 
@@ -874,7 +980,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
             _id = id
         });
 
-        var collection = GetCollection<IdIsObjectId>(docs.CollectionNamespace.CollectionName);
+        var collection = tempDatabase.GetExistingTemporaryCollection<IdIsObjectId>(docs.CollectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<IdIsObjectId>().Property(e => e._id).HasConversion<string>();

@@ -22,19 +22,19 @@ namespace MongoDB.EntityFrameworkCore.Storage.ValueConversion;
 
 /// <summary>
 /// A base <see cref="ValueConverter{TModel,TProvider}"/> for converting between
-/// <see cref="ObjectId"/> and <see cref="string"/>.
+/// <see cref="Decimal128"/> and <see cref="decimal"/>.
 /// </summary>
 /// <typeparam name="TModel">The type in the entity model.</typeparam>
 /// <typeparam name="TProvider">The type to use in the provider.</typeparam>
-public abstract class StringObjectIdConverter<TModel, TProvider> : ValueConverter<TModel, TProvider>
+public abstract class Decimal128DecimalConverter<TModel, TProvider> : ValueConverter<TModel, TProvider>
 {
     /// <summary>
-    /// Creates a new instance of the <see cref="StringObjectIdConverter{TModel, TProvider}"/> class.
+    /// Creates a new instance of the <see cref="Decimal128DecimalConverter{TModel, TProvider}"/> class.
     /// </summary>
     /// <param name="convertToProviderExpression">The expression to convert from the model to the provider.</param>
     /// <param name="convertFromProviderExpression">The expression to convert from the provider to the model.</param>
     /// <param name="mappingHints">Optional <see cref="ConverterMappingHints"/> that may be considered.</param>
-    protected StringObjectIdConverter(
+    protected Decimal128DecimalConverter(
         Expression<Func<TModel, TProvider>> convertToProviderExpression,
         Expression<Func<TProvider, TModel>> convertFromProviderExpression,
         ConverterMappingHints? mappingHints = null)
@@ -46,16 +46,16 @@ public abstract class StringObjectIdConverter<TModel, TProvider> : ValueConverte
     }
 
     /// <summary>
-    /// An expression to convert from a <see cref="string"/> to an <see cref="ObjectId"/>.
+    /// An expression to convert from a <see cref="decimal"/> to a <see cref="Decimal128"/>.
     /// </summary>
     /// <returns>The expression that performs the conversion.</returns>
-    protected static Expression<Func<ObjectId, string>> ConvertToString()
-        => v => v.ToString();
+    protected static Expression<Func<decimal, Decimal128>> ConvertToDecimal128()
+        => v => new Decimal128(v);
 
     /// <summary>
-    /// An expression to convert from an <see cref="ObjectId"/> to a <see cref="string"/>.
+    /// An expression to convert from an <see cref="Decimal128"/> to a <see cref="decimal"/>.
     /// </summary>
     /// <returns>The expression that performs the conversion.</returns>
-    protected static Expression<Func<string, ObjectId>> ConvertToObjectId()
-        => v => ObjectId.Parse(v);
+    protected static Expression<Func<Decimal128, decimal>> ConvertToDecimal()
+        => v => Decimal128.ToDecimal(v);
 }

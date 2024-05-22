@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.Bson;
 
@@ -43,8 +44,8 @@ public class StringToObjectIdConverter : StringObjectIdConverter<string, ObjectI
     /// </param>
     public StringToObjectIdConverter(ConverterMappingHints? mappingHints = null)
         : base(
-            ToObjectId(),
-            ToString(),
+            ConvertToObjectId(),
+            ConvertToString(),
             mappingHints)
     {
     }
