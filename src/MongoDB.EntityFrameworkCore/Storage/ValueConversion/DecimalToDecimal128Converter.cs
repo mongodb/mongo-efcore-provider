@@ -20,32 +20,32 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.Storage.ValueConversion;
 
 /// <summary>
-/// Converts a <see cref="ObjectId" /> to and from <see cref="string"/> values.
+/// Converts a <see cref="decimal"/> to and from <see cref="Decimal128" /> values.
 /// </summary>
 /// <remarks>
 /// See <see href="https://aka.ms/efcore-docs-value-converters">EF Core value converters</see> for more information and examples.
 /// </remarks>
-public class ObjectIdToStringConverter : StringObjectIdConverter<ObjectId, string>
+public class DecimalToDecimal128Converter : Decimal128DecimalConverter<decimal, Decimal128>
 {
     /// <summary>
-    /// Creates a new instance of the <see cref="ObjectIdToStringConverter"/> class.
+    /// Creates a new instance of the <see cref="StringToObjectIdConverter"/> class.
     /// </summary>
-    public ObjectIdToStringConverter()
+    public DecimalToDecimal128Converter()
         : this(null)
     {
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="ObjectIdToStringConverter"/> class.
+    /// Creates a new instance of the <see cref="DecimalToDecimal128Converter"/> class.
     /// </summary>
     /// <param name="mappingHints">
     /// Hints that can be used by the <see cref="ITypeMappingSource" /> to create data types with appropriate
     /// facets for the converted data.
     /// </param>
-    public ObjectIdToStringConverter(ConverterMappingHints? mappingHints = null)
+    public DecimalToDecimal128Converter(ConverterMappingHints? mappingHints = null)
         : base(
-            ConvertToString(),
-            ConvertToObjectId(),
+            ConvertToDecimal128(),
+            ConvertToDecimal(),
             mappingHints)
     {
     }
@@ -54,5 +54,5 @@ public class ObjectIdToStringConverter : StringObjectIdConverter<ObjectId, strin
     /// A <see cref="ValueConverterInfo" /> for the default use of this converter.
     /// </summary>
     public static ValueConverterInfo DefaultInfo { get; }
-        = new(typeof(ObjectId), typeof(string), i => new ObjectIdToStringConverter(i.MappingHints));
+        = new(typeof(string), typeof(ObjectId), i => new DecimalToDecimal128Converter(i.MappingHints));
 }
