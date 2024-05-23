@@ -956,10 +956,12 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(typeof(TestEnum), TestEnum.EnumValue1)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue0)]
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
+    [InlineData(typeof(TestEnum?), null)]
     [InlineData(typeof(TestByteEnum), TestByteEnum.EnumValue0)]
     [InlineData(typeof(TestByteEnum), TestByteEnum.EnumValue1)]
     [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue0)]
     [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue1)]
+    [InlineData(typeof(TestByteEnum?), null)]
     [InlineData(typeof(int[]), null)]
     [InlineData(typeof(int[]), new[]
     {

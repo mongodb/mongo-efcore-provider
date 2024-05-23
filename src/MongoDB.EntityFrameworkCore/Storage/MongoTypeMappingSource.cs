@@ -47,7 +47,7 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
     private MongoTypeMapping? FindPrimitiveMapping(in TypeMappingInfo mappingInfo)
     {
         var clrType = mappingInfo.ClrType!;
-        if (clrType is {IsValueType: true, IsEnum: false} || clrType == typeof(string))
+        if (clrType is {IsValueType: true} || clrType == typeof(string))
         {
             return new MongoTypeMapping(clrType);
         }

@@ -110,7 +110,9 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [InlineData(typeof(TestEnum), TestEnum.Value0, TestEnum.Value1)]
     [InlineData(typeof(TestEnum), TestEnum.Value1, TestEnum.Value0)]
     [InlineData(typeof(TestEnum?), TestEnum.Value0, TestEnum.Value1)]
-    public void Entity_update_tests(Type valueType, object initialValue, object updatedValue)
+    [InlineData(typeof(TestEnum?), TestEnum.Value0, null)]
+    [InlineData(typeof(TestEnum?), null, TestEnum.Value1)]
+    public void Entity_update_tests(Type valueType, object? initialValue, object? updatedValue)
     {
         var methodInfo = GetType().GetMethod(nameof(EntityAddTestImpl), BindingFlags.Instance | BindingFlags.NonPublic)!;
         methodInfo.MakeGenericMethod(valueType).Invoke(this, [initialValue, updatedValue]);
