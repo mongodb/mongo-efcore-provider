@@ -38,7 +38,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
             var collection = TempDatabase.GetExistingTemporaryCollection<UtcDateTimeEntity>();
             var result = collection.AsQueryable().First();
             Assert.NotNull(result);
-            Assert.Equal(expected.ToExpectedPrecision(), result.aDateTime.ToExpectedPrecision());
+            Assert.Equal(expected.ToBsonPrecision(), result.aDateTime.ToBsonPrecision());
         }
     }
 
@@ -59,7 +59,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
             var collection = TempDatabase.GetExistingTemporaryCollection<LocalDateTimeEntity>();
             var result = collection.AsQueryable().First();
             Assert.NotNull(result);
-            Assert.Equal(expected.ToExpectedPrecision(), result.aDateTime.ToExpectedPrecision());
+            Assert.Equal(expected.ToBsonPrecision(), result.aDateTime.ToBsonPrecision());
         }
     }
 
@@ -105,7 +105,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
             using var db = SingleEntityDbContext.Create(collection);
             var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
-            Assert.Equal(expected.Value.ToExpectedPrecision(), result.aNullableDateTime.Value.ToExpectedPrecision());
+            Assert.Equal(expected.Value.ToBsonPrecision(), result.aNullableDateTime.Value.ToBsonPrecision());
         }
     }
 

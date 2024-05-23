@@ -1,20 +1,21 @@
 ﻿/* Copyright 2023-present MongoDB Inc.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 using System;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Metadata;
 
 // ReSharper disable once CheckNamespace
@@ -53,34 +54,6 @@ public static class MongoPropertyBuilderExtensions
         => (PropertyBuilder<TProperty>)HasElementName((PropertyBuilder)propertyBuilder, name);
 
     /// <summary>
-    /// Configures the <see cref="DateTimeKind"/> for the property.
-    /// </summary>
-    /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
-    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static PropertyBuilder HasDateTimeKind(
-        this PropertyBuilder propertyBuilder,
-        DateTimeKind dateTimeKind)
-    {
-        propertyBuilder.Metadata.SetDateTimeKind(dateTimeKind);
-        return propertyBuilder;
-    }
-
-    /// <summary>
-    /// Configures the <see cref="DateTimeKind"/> for the property.
-    /// </summary>
-    /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
-    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static IConventionPropertyBuilder HasDateTimeKind(
-        this IConventionPropertyBuilder propertyBuilder,
-        DateTimeKind dateTimeKind)
-    {
-        propertyBuilder.Metadata.SetDateTimeKind(dateTimeKind);
-        return propertyBuilder;
-    }
-
-    /// <summary>
     /// Configures the document element that the property is mapped to when targeting MongoDB.
     /// If an empty string is supplied then the property will not be persisted.
     /// </summary>
@@ -114,4 +87,94 @@ public static class MongoPropertyBuilderExtensions
         string? name,
         bool fromDataAnnotation = false)
         => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
+
+    /// <summary>
+    /// Configures the <see cref="BsonType"/> that the property is stored as when targeting MongoDB.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> to store this property as.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder HasBsonType(
+        this PropertyBuilder propertyBuilder,
+        BsonType bsonType)
+    {
+        ArgumentNullException.ThrowIfNull(bsonType);
+        propertyBuilder.Metadata.SetBsonType(bsonType);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the <see cref="BsonType"/> that the property is stored as when targeting MongoDB.
+    /// </summary>
+    /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> to store this property as.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder<TProperty> HasBsonType<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        BsonType bsonType)
+        => (PropertyBuilder<TProperty>)HasBsonType((PropertyBuilder)propertyBuilder, bsonType);
+
+    /// <summary>
+    /// Configures the <see cref="BsonType"/> that the property is stored as when targeting MongoDB.
+    /// If a null value is supplied then a default storage type based on the property type will be used.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> to store this property as.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.</returns>
+    public static IConventionPropertyBuilder? HasBsonType(
+        this IConventionPropertyBuilder propertyBuilder,
+        BsonType? bsonType,
+        bool fromDataAnnotation = false)
+    {
+        if (!CanSetBsonType(propertyBuilder, bsonType, fromDataAnnotation))
+        {
+            return null;
+        }
+
+        propertyBuilder.Metadata.SetBsonType(bsonType, fromDataAnnotation);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Returns a value indicating whether the given <see cref="BsonType"/> can be set.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> to store this property as.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns><see langword="true" /> if the <see cref="BsonType"/> can be set, <see langword="false"/> if not.</returns>
+    public static bool CanSetBsonType(
+        this IConventionPropertyBuilder propertyBuilder,
+        BsonType? bsonType,
+        bool fromDataAnnotation = false)
+        => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.BsonType, bsonType, fromDataAnnotation);
+
+    /// <summary>
+    /// Configures the <see cref="DateTimeKind"/> for the property.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder HasDateTimeKind(
+        this PropertyBuilder propertyBuilder,
+        DateTimeKind dateTimeKind)
+    {
+        propertyBuilder.Metadata.SetDateTimeKind(dateTimeKind);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the <see cref="DateTimeKind"/> for the property.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static IConventionPropertyBuilder HasDateTimeKind(
+        this IConventionPropertyBuilder propertyBuilder,
+        DateTimeKind dateTimeKind)
+    {
+        propertyBuilder.Metadata.SetDateTimeKind(dateTimeKind);
+        return propertyBuilder;
+    }
 }

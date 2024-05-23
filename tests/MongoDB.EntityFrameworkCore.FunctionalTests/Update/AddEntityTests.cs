@@ -198,7 +198,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
             Assert.Equal(expected.aString, foundEntity.aString);
             Assert.Equal(expected.aChar, foundEntity.aChar);
             Assert.Equal(expected.aGuid, foundEntity.aGuid);
-            Assert.Equal(expected.aDateTime.ToExpectedPrecision(), foundEntity.aDateTime.ToExpectedPrecision());
+            Assert.Equal(expected.aDateTime.ToBsonPrecision(), foundEntity.aDateTime.ToBsonPrecision());
         }
     }
 

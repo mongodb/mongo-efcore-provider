@@ -16,6 +16,7 @@
 using System;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 
@@ -56,7 +57,15 @@ public static class MongoPropertyExtensions
         return property.Name;
     }
 
-    public static bool IsOwnedTypeKey(this IProperty property)
+    /// <summary>
+    /// Returns the <see cref="BsonType"/> the property is stored as when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the element name for.</param>
+    /// <returns>Returns the <see cref="BsonType"/> the property is stored as.</returns>
+    public static BsonType? GetBsonType(this IReadOnlyProperty property)
+        => (BsonType?)property[MongoAnnotationNames.BsonType];
+
+    internal static bool IsOwnedTypeKey(this IProperty property)
     {
         var entityType = (IReadOnlyEntityType)property.DeclaringType;
         if (entityType.IsDocumentRoot())
@@ -108,6 +117,36 @@ public static class MongoPropertyExtensions
     public static ConfigurationSource? GetElementNameConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.ElementName)?.GetConfigurationSource();
 
+    /// <summary>
+    /// Sets the document <see cref="BsonType"/> that the property is stored as to when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the element name for.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> this property should be stored as.</param>
+    public static void SetBsonType(this IMutableProperty property, BsonType? bsonType)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.BsonType, bsonType);
+
+    /// <summary>
+    /// Sets the document <see cref="BsonType"/> that the property is stored as to when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the element name for.</param>
+    /// <param name="bsonType">The name of the element that should be used.</param>
+    /// <param name="fromDataAnnotation"><see langword="true"/> if the configuration was specified using a data annotation, <see langword="false"/> if not.</param>
+    /// <returns>The configured <see cref="BsonType"/> the property will be stored as.</returns>
+    public static BsonType? SetBsonType(
+        this IConventionProperty property,
+        BsonType? bsonType,
+        bool fromDataAnnotation = false)
+        => (BsonType?)property.SetOrRemoveAnnotation(MongoAnnotationNames.BsonType, bsonType, fromDataAnnotation)?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> the <see cref="BsonType"/> that the property stored as to when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the storage <see cref="BsonType"/> for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the <see cref="BsonType"/> was specified by for this property.
+    /// </returns>
+    public static ConfigurationSource? GetBsonTypeConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.BsonType)?.GetConfigurationSource();
 
     /// <summary>
     /// Sets the <see cref="DateTimeKind"/> of the DateTime property is mapped to when targeting MongoDB.
