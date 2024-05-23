@@ -26,12 +26,10 @@ public class TemporaryDatabaseFixture : IDisposable
     private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
     private static int Count;
 
-    private readonly IMongoClient _mongoClient;
-
     public TemporaryDatabaseFixture()
     {
-        _mongoClient = TestServer.GetClient();
-        MongoDatabase = _mongoClient.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
+        Client = TestServer.GetClient();
+        MongoDatabase = Client.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
     }
 
     public IMongoDatabase MongoDatabase { get; }
@@ -86,18 +84,15 @@ public class TemporaryDatabaseFixture : IDisposable
 
     public void Dispose()
     {
-        _mongoClient.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
+        Client.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
     }
 
-    public IMongoClient Client
-        => _mongoClient;
+    public IMongoClient Client { get; }
 
     private static string? GetLastConstructorTypeNameFromStack()
-    {
-        return new System.Diagnostics.StackTrace()
+        => new System.Diagnostics.StackTrace()
             .GetFrames()
             .Select(f => f.GetMethod())
             .FirstOrDefault(f => f?.Name == ".ctor")
             ?.DeclaringType?.Name;
-    }
 }
