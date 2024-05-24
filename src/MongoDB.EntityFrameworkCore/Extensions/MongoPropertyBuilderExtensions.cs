@@ -92,13 +92,13 @@ public static class MongoPropertyBuilderExtensions
     /// Configures the <see cref="BsonType"/> that the property is stored as when targeting MongoDB.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="bsonType">The <see cref="BsonType"/> to store this property as.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> to store this property as
+    /// or <see langword="null" /> to unset the configuration and use the default.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder HasBsonType(
         this PropertyBuilder propertyBuilder,
-        BsonType bsonType)
+        BsonType? bsonType)
     {
-        ArgumentNullException.ThrowIfNull(bsonType);
         propertyBuilder.Metadata.SetBsonType(bsonType);
         return propertyBuilder;
     }
@@ -108,11 +108,12 @@ public static class MongoPropertyBuilderExtensions
     /// </summary>
     /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
-    /// <param name="bsonType">The <see cref="BsonType"/> to store this property as.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> to store this property as
+    /// or <see langword="null" /> to unset the configuration and use the default.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder<TProperty> HasBsonType<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
-        BsonType bsonType)
+        BsonType? bsonType)
         => (PropertyBuilder<TProperty>)HasBsonType((PropertyBuilder)propertyBuilder, bsonType);
 
     /// <summary>

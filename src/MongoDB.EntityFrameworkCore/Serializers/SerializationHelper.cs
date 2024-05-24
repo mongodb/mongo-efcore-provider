@@ -88,7 +88,7 @@ internal static class SerializationHelper
 
         var typeSerializer = CreateTypeSerializer(property.ClrType, property);
 
-        // Apple HasBsonType configuration if set
+        // Apply HasBsonType configuration if set
         var bsonType = property.GetBsonType();
         if (bsonType != null && typeSerializer is IRepresentationConfigurable representationConfigurable)
         {
@@ -101,7 +101,6 @@ internal static class SerializationHelper
     private static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty property = null)
         => type switch
         {
-            // CLR Types
             _ when type == typeof(bool) => BooleanSerializer.Instance,
             _ when type == typeof(byte) => new ByteSerializer(),
             _ when type == typeof(char) => new CharSerializer(),
@@ -113,6 +112,7 @@ internal static class SerializationHelper
             _ when type == typeof(short) => new Int16Serializer(),
             _ when type == typeof(int) => Int32Serializer.Instance,
             _ when type == typeof(long) => Int64Serializer.Instance,
+            _ when type == typeof(ObjectId) => ObjectIdSerializer.Instance,
             _ when type == typeof(TimeSpan) => new TimeSpanSerializer(),
             _ when type == typeof(sbyte) => new SByteSerializer(),
             _ when type == typeof(float) => new SingleSerializer(),
@@ -120,17 +120,10 @@ internal static class SerializationHelper
             _ when type == typeof(ushort) => new UInt16Serializer(),
             _ when type == typeof(uint) => new UInt32Serializer(),
             _ when type == typeof(ulong) => new UInt64Serializer(),
+            _ when type == typeof(Decimal128) => new Decimal128Serializer(),
             _ when type.IsEnum => EnumSerializer.Create(type),
-
-            // Nullable
             {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
                 => CreateNullableSerializer(type.GetGenericArguments()[0]),
-
-            // Mongo structs
-            _ when type == typeof(ObjectId) => ObjectIdSerializer.Instance,
-            _ when type == typeof(Decimal128) => new Decimal128Serializer(),
-
-            // Lists & Arrays
             {IsGenericType: true} or {IsArray: true} => new CollectionSerializationProvider().GetSerializer(type),
 
             _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'."),

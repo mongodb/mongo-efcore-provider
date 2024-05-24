@@ -14,11 +14,29 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Extensions;
 
 public class MongoPropertyBuilderExtensionsTests
 {
+    [Theory]
+    [InlineData(BsonType.String)]
+    [InlineData(BsonType.Double)]
+    [InlineData(BsonType.Decimal128)]
+    [InlineData(BsonType.Int64)]
+    [InlineData(null)]
+    public void HasBsonType_can_set_value_on_property(BsonType? value)
+    {
+        var model = new ModelBuilder();
+        var entity = model.Entity<TestEntity>();
+
+        entity.Property(e => e.DateTimeProperty).HasBsonType(value);
+
+        var property = entity.Metadata.GetProperty(nameof(TestEntity.DateTimeProperty));
+        Assert.Equal(value, property.GetBsonType());
+    }
+
     [Theory]
     [InlineData(DateTimeKind.Local)]
     [InlineData(DateTimeKind.Utc)]

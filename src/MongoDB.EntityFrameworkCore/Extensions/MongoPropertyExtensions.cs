@@ -120,16 +120,18 @@ public static class MongoPropertyExtensions
     /// <summary>
     /// Sets the document <see cref="BsonType"/> that the property is stored as to when targeting MongoDB.
     /// </summary>
-    /// <param name="property">The <see cref="IMutableProperty"/> to set the element name for.</param>
-    /// <param name="bsonType">The <see cref="BsonType"/> this property should be stored as.</param>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the BsonType for.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> this property should be stored as
+    /// or <see langword="null" /> to unset the value and use the default.</param>
     public static void SetBsonType(this IMutableProperty property, BsonType? bsonType)
         => property.SetOrRemoveAnnotation(MongoAnnotationNames.BsonType, bsonType);
 
     /// <summary>
     /// Sets the document <see cref="BsonType"/> that the property is stored as to when targeting MongoDB.
     /// </summary>
-    /// <param name="property">The <see cref="IConventionProperty"/> to set the element name for.</param>
-    /// <param name="bsonType">The name of the element that should be used.</param>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the BsonType for.</param>
+    /// <param name="bsonType">The <see cref="BsonType"/> this property should be stored as
+    /// or <see langword="null" /> to unset the value and use the default.</param>
     /// <param name="fromDataAnnotation"><see langword="true"/> if the configuration was specified using a data annotation, <see langword="false"/> if not.</param>
     /// <returns>The configured <see cref="BsonType"/> the property will be stored as.</returns>
     public static BsonType? SetBsonType(
