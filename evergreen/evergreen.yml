@@ -418,11 +418,11 @@ axes:
         variables:
           OS: "ubuntu-2004"
         run_on: ubuntu2004-small
-      - id: "macos-1100"
-        display_name: "macOS 11.00"
+      - id: "macos-14"
+        display_name: "macOS 14"
         variables:
-          OS: "macos-1100"
-        run_on: macos-1100
+          OS: "macos-14"
+        run_on: macos-14
 
   - id: driver
     display_name: MongoDB.Driver Version
@@ -504,7 +504,7 @@ buildvariants:
 - matrix_name: test-packages
   matrix_spec:
     version: "latest"
-    os: ["windows-64", "ubuntu-2004"]
+    os: "*"
     driver: "latest"
     target_runtime: "*"
     build-target: "release"
