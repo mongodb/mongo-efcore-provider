@@ -319,6 +319,17 @@ functions:
           fi
           ./evergreen/upload-apidocs.sh
 
+  trace-artifacts:
+    - command: papertrail.trace
+      params:
+        key_id: ${papertrail_key_id}
+        secret_key: ${papertrail_secret_key}
+        product: efcore-provider
+        version: ${PACKAGE_VERSION}
+        filenames:
+          - "mongo-efcore-provider/artifacts/nuget/MongoDB.EntityFrameworkCore.${PACKAGE_VERSION}.nupkg"
+          - "mongo-efcore-provider/artifacts/nuget/MongoDB.EntityFrameworkCore.${PACKAGE_VERSION}.snupkg"
+
 pre:
   - func: fetch-source
   - func: prepare-resources
@@ -371,6 +382,7 @@ tasks:
         vars:
           PACKAGES_SOURCE: "https://api.nuget.org/v3/index.json"
           PACKAGES_SOURCE_KEY: ${nuget_api_key}
+      - func: trace-artifacts
 
 axes:
   - id: version
