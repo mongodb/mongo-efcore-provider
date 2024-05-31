@@ -60,30 +60,22 @@ namespace MongoDB.EntityFrameworkCore.Serializers
                 return;
             }
 
+            var storedKeyProperties = GetStoredKeyProperties();
+            if (storedKeyProperties.Any())
+            {
+                // Has key, throw and indicate user should compare by key
+                var keys = string.Join(", ", storedKeyProperties.Select(p => "'" + p.Name + "'"));
+                throw new NotSupportedException($"Entity to entity comparison is not supported when entities have keys. Compare '{_entityType.DisplayName()}' entities by {keys} instead.");
+            }
+
+            // No key, no identity, so compare by value
             context.Writer.WriteStartDocument();
-            WriteKey(context.Writer, value);
-            WriteProperties(context.Writer, value, _entityType.GetProperties().Where(p => !p.IsPrimaryKey() && _isStored(p)));
+            WriteProperties(context.Writer, value, _entityType.GetProperties().Where(p => _isStored(p)));
             context.Writer.WriteEndDocument();
         }
 
-        private void WriteKey(IBsonWriter writer, TValue entry)
-        {
-            var keyProperties = _entityType.FindPrimaryKey()?.Properties.Where(_isStored).ToArray() ?? [];
-
-            var hasCompoundKey = keyProperties.Length > 1;
-            if (hasCompoundKey)
-            {
-                writer.WriteName("_id");
-                writer.WriteStartDocument();
-            }
-
-            WriteProperties(writer, entry, keyProperties);
-
-            if (hasCompoundKey)
-            {
-                writer.WriteEndDocument();
-            }
-        }
+        private IReadOnlyProperty[] GetStoredKeyProperties()
+            => _entityType.FindPrimaryKey()?.Properties.Where(_isStored).ToArray() ?? [];
 
         private static void WriteProperties(IBsonWriter writer, TValue entry, IEnumerable<IReadOnlyProperty> properties)
         {
@@ -92,8 +84,8 @@ namespace MongoDB.EntityFrameworkCore.Serializers
                 var serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
                 var elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
                 writer.WriteName(elementName);
-                var root = BsonSerializationContext.CreateRoot(writer);
-                serializationInfo.Serializer.Serialize(root, property.PropertyInfo.GetValue(entry));
+                var context = BsonSerializationContext.CreateRoot(writer);
+                serializationInfo.Serializer.Serialize(context, property.PropertyInfo.GetValue(entry));
             }
         }
 
