@@ -86,7 +86,16 @@ internal static class SerializationHelper
             return serializer ?? throw new InvalidOperationException($"Unable to create serializer to handle '{converter.GetType().ShortDisplayName()}'");
         }
 
-        return CreateTypeSerializer(property.ClrType, property);
+        var typeSerializer = CreateTypeSerializer(property.ClrType, property);
+
+        // Apply HasBsonType configuration if set
+        var bsonType = property.GetBsonType();
+        if (bsonType != null && typeSerializer is IRepresentationConfigurable representationConfigurable)
+        {
+            typeSerializer = representationConfigurable.WithRepresentation(bsonType.Value);
+        }
+
+        return typeSerializer;
     }
 
     private static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty property = null)
@@ -116,6 +125,7 @@ internal static class SerializationHelper
             {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
                 => CreateNullableSerializer(type.GetGenericArguments()[0]),
             {IsGenericType: true} or {IsArray: true} => new CollectionSerializationProvider().GetSerializer(type),
+
             _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'."),
         };
 

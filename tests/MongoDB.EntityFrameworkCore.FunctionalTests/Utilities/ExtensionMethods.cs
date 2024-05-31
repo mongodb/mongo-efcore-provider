@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
@@ -36,9 +37,12 @@ internal static class ExtensionMethods
     public static short NextInt16(this Random random)
         => (short)random.Next(1, short.MaxValue);
 
-    public static string ToExpectedPrecision(this DateTime dateTime)
-        =>  dateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
-
     public static void WriteTestDocs<T>(this IMongoCollection<T> collection, IEnumerable<T> docs)
         => collection.BulkWrite(docs.Select(p => new InsertOneModel<T>(p)));
+
+    public static DateTime ToBsonPrecision(this DateTime dateTime)
+    {
+        var bsonDateTime = new BsonDateTime(dateTime);
+        return dateTime.Kind == DateTimeKind.Utc ? bsonDateTime.ToUniversalTime() : bsonDateTime.ToLocalTime();
+    }
 }

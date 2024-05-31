@@ -102,7 +102,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
             Assert.Equal(entity._id, foundEntity._id);
             Assert.Equal(entity.session, foundEntity.session);
             Assert.Equal(entity.lastCount, foundEntity.lastCount);
-            Assert.Equal(entity.lastModified.ToExpectedPrecision(), foundEntity.lastModified.ToExpectedPrecision());
+            Assert.Equal(entity.lastModified.ToBsonPrecision(), foundEntity.lastModified.ToBsonPrecision());
         }
     }
 
