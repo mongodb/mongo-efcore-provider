@@ -164,7 +164,16 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
             {
                 EntityFrameworkEventSource.Log.QueryExecuting();
 
-                _enumerator = _queryContext.MongoClient.Execute<TSource>(_executableQuery, out logAction).GetEnumerator();
+                try
+                {
+                    _enumerator = _queryContext.MongoClient.Execute<TSource>(_executableQuery, out logAction).GetEnumerator();
+                }
+                catch
+                {
+                    // Ensure we log the query even when C# Driver throws
+                    logAction?.Invoke();
+                    throw;
+                }
 
                 _queryContext.InitializeStateManager(_standAloneStateManager);
             }

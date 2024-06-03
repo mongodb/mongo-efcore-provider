@@ -83,16 +83,30 @@ public class MongoClientWrapper : IMongoClientWrapper
 
     private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
     {
-        var result = executableQuery.Provider.Execute<T>(executableQuery.Query);
-
-        // We need to get this via reflection from the Mongo C# Driver for now.
-        var getLoggedStages = executableQuery.Provider.GetType().GetProperty("LoggedStages");
-        if (getLoggedStages?.GetValue(executableQuery.Provider) is BsonDocument[] loggedStages)
+        T? result;
+        try
         {
-            _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
+            result = executableQuery.Provider.Execute<T>(executableQuery.Query);
+        }
+        catch
+        {
+            // Ensure we log the query even when C# Driver throws
+            LogQuery();
+            throw;
         }
 
+        LogQuery();
         return [result];
+
+        void LogQuery()
+        {
+            // We need to get this via reflection from the Mongo C# Driver for now.
+            var getLoggedStages = executableQuery.Provider.GetType().GetProperty("LoggedStages");
+            if (getLoggedStages?.GetValue(executableQuery.Provider) is BsonDocument[] loggedStages)
+            {
+                _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
+            }
+        }
     }
 
     /// <summary>
