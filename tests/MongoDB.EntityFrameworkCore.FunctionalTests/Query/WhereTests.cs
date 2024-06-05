@@ -251,7 +251,7 @@ public class WhereTests : IDisposable, IAsyncDisposable
         Assert.All(results, p => Assert.NotEmpty(p.mainAtmosphere));
     }
 
-    [Fact]
+    [Fact(Skip = "Errors wiuth MongoDB < 5.0")]
     public void Where_entity_equal_null()
     {
         var actual = _db.Planets.FirstOrDefault(p => p == null);
