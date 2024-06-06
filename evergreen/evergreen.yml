@@ -324,11 +324,37 @@ functions:
       params:
         key_id: ${papertrail_key_id}
         secret_key: ${papertrail_secret_key}
-        product: efcore-provider
+        product: mongo-efcore-provider
         version: ${PACKAGE_VERSION}
         filenames:
           - "mongo-efcore-provider/artifacts/nuget/MongoDB.EntityFrameworkCore.${PACKAGE_VERSION}.nupkg"
           - "mongo-efcore-provider/artifacts/nuget/MongoDB.EntityFrameworkCore.${PACKAGE_VERSION}.snupkg"
+
+  generate-ssdlc-report:
+    - command: shell.exec
+      params:
+        working_dir: mongo-efcore-provider
+        env:
+          PRODUCT_NAME: mongo-efcore-provider
+          github_commit: ${github_commit}
+        script: |
+          ${PREPARE_SHELL}
+          ./evergreen/generate-ssdlc-report.sh
+    - command: ec2.assume_role
+      params:
+        role_arn: ${UPLOAD_SSDLC_RELEASE_ASSETS_ROLE_ARN}
+    - command: s3.put
+      params:
+        aws_key: ${AWS_ACCESS_KEY_ID}
+        aws_secret: ${AWS_SECRET_ACCESS_KEY}
+        aws_session_token: ${AWS_SESSION_TOKEN}
+        local_file: ./mongo-efcore-provider/artifacts/ssdlc/ssdlc_compliance_report.md
+        remote_file: mongo-efcore-provider/${PACKAGE_VERSION}/ssdlc_compliance_report.md
+        bucket: csharp-driver-release-assets
+        region: us-west-2
+        permissions: private
+        content_type: text/markdown
+        display_name: ssdlc_compliance_report.md
 
 pre:
   - func: fetch-source
@@ -382,7 +408,14 @@ tasks:
         vars:
           PACKAGES_SOURCE: "https://api.nuget.org/v3/index.json"
           PACKAGES_SOURCE_KEY: ${nuget_api_key}
+
+  - name: generate-ssdlc-reports
+    commands:
+      - func: download-package
+        vars:
+          PACKAGE_ID: "MongoDB.EntityFrameworkCore"
       - func: trace-artifacts
+      - func: generate-ssdlc-report
 
 axes:
   - id: version
@@ -559,3 +592,15 @@ buildvariants:
           variant: .pack-packages
         - name: packages-tests
           variant: .package-tests
+
+- matrix_name: ssdlc-reports
+  matrix_spec:
+    os: "ubuntu-2004"
+  display_name: "SSDLC Reports"
+  tags: ["release-tag"]
+  tasks:
+    - name: generate-ssdlc-reports
+      git_tag_only: true
+      depends_on:
+        - name: push-packages-nuget
+          variant: ".push-packages"
