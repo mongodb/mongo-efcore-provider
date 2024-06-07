@@ -59,7 +59,8 @@ public class SerializationHelperTests
         var modelBuilder = new ModelBuilder(conventions);
         modelBuilder.Entity<TestEntity>();
 
-        var entity = modelBuilder.Model.FindEntityType(typeof(TestEntity))!;
+        var entity = modelBuilder.Model.FindEntityType(typeof(TestEntity));
+        Assert.NotNull(entity);
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ IntProperty: 12 }");
 
@@ -75,7 +76,8 @@ public class SerializationHelperTests
         var modelBuilder = new ModelBuilder(conventions);
         modelBuilder.Entity<TestEntity>();
 
-        var entity = modelBuilder.Model.FindEntityType(typeof(TestEntity))!;
+        var entity = modelBuilder.Model.FindEntityType(typeof(TestEntity));
+        Assert.NotNull(entity);
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ property: 12 }");
 
@@ -90,7 +92,8 @@ public class SerializationHelperTests
         var modelBuilder = new ModelBuilder(conventions);
         modelBuilder.Entity<TestEntity>();
 
-        var entity = modelBuilder.Model.FindEntityType(typeof(TestEntity))!;
+        var entity = modelBuilder.Model.FindEntityType(typeof(TestEntity));
+        Assert.NotNull(entity);
         var property = entity.GetProperty(nameof(TestEntity.NullableProperty));
 
         var document = BsonDocument.Parse("{ somevalue: 12 }");

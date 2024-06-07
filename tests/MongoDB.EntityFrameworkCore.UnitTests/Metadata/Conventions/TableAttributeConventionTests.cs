@@ -47,8 +47,8 @@ public static class TableAttributeConventionTests
         Assert.Contains(nameof(TableAttribute.Schema), ex.Message);
     }
 
-    static string GetCollectionName<TEntity>(DbContext context) =>
-        context.Model.FindEntityType(typeof(TEntity))!.GetCollectionName();
+    static string? GetCollectionName<TEntity>(DbContext context) =>
+        context.Model.FindEntityType(typeof(TEntity))?.GetCollectionName();
 
     [Table("attributeSpecifiedName")]
     class Customer
