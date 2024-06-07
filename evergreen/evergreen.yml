@@ -602,5 +602,5 @@ buildvariants:
     - name: generate-ssdlc-reports
       git_tag_only: true
       depends_on:
-        - name: push-packages-nuget
+        - name: push-packages
           variant: ".push-packages"
