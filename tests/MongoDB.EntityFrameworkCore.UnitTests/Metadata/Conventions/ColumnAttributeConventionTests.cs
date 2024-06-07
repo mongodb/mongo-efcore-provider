@@ -39,7 +39,8 @@ public static class ColumnAttributeConventionTests
 
     static string GetElementName<TEntity, TProperty>(DbContext context, Expression<Func<TEntity, TProperty>> propertyExpression)
     {
-        var entityType = context.Model.FindEntityType(typeof(TEntity))!;
+        var entityType = context.Model.FindEntityType(typeof(TEntity));
+        Assert.NotNull(entityType);
         var property = entityType.FindProperty(propertyExpression.GetMemberAccess())!;
         return property.GetElementName();
     }
