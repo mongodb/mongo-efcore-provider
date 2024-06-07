@@ -42,7 +42,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
-    public void OwnedEntity_nested_one_level_where_null()
+    public void OwnedEntity_nested_one_level_where_not_null()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
@@ -56,7 +56,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
-    public void OwnedEntity_nested_one_level_where_not_null()
+    public void OwnedEntity_nested_one_level_where_null()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithOptionalLocation>();
         collection.WriteTestDocs([new PersonWithOptionalLocation { _id = ObjectId.GenerateNewId(), name = "Milton" }]);
