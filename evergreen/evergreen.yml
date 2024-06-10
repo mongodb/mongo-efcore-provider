@@ -29,10 +29,10 @@ functions:
     - command: git.get_project
       params:
         directory: mongo-efcore-provider
-    # Applies the subitted patch, if any
+    # Applies the submitted patch, if any
     # Deprecated. Should be removed. But still needed for certain agents (ZAP)
     - command: git.apply_patch
-    # Make an evergreen exapanstion file with dynamic values
+    # Make an evergreen expansion file with dynamic values
     - command: shell.exec
       params:
         shell: bash
@@ -437,14 +437,6 @@ axes:
         display_name: "5.0"
         variables:
           VERSION: "5.0"
-      - id: "4.4"
-        display_name: "4.4"
-        variables:
-          VERSION: "4.4"
-      - id: "4.2"
-        display_name: "4.2"
-        variables:
-          VERSION: "4.2"
 
   - id: os
     display_name: OS
@@ -468,10 +460,6 @@ axes:
   - id: driver
     display_name: MongoDB.Driver Version
     values:
-      - id: "2.25.0"
-        display_name: "2.25.0"
-        variables:
-          DRIVER_VERSION: "2.25.0"
       - id: "latest"
         display_name: "Latest"
         variables:
@@ -500,24 +488,12 @@ axes:
 buildvariants:
 - matrix_name: main-tests
   matrix_spec:
-    version: ["4.4", "5.0", "6.0", "7.0", "latest"]
+    version: ["5.0", "6.0", "7.0", "latest"]
     os: "*"
     driver: "*"
     target_runtime: "*"
     build-target: "tests"
   display_name: "${target_runtime} ${driver} Driver on ${os} with ${version} Server"
-  tags: ["tests-variant"]
-  tasks:
-    - name: main-tests
-
-- matrix_name: main-tests-ubuntu1804"
-  matrix_spec:
-    version: ["4.2"]
-    driver: "*"
-    target_runtime: "*"
-    build-target: "tests"
-  display_name: "${target_runtime} ${driver} Driver on Ubuntu-1804 with ${version} Server"
-  run_on: ubuntu1804-small
   tags: ["tests-variant"]
   tasks:
     - name: main-tests
