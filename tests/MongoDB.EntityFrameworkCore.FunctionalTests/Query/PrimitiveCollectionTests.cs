@@ -44,7 +44,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
                 items = []
             }
         ]);
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entities.First();
         Assert.Empty(actual.items);
@@ -55,7 +55,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
     {
         var collection = tempDatabase.CreateTemporaryCollection<MissingPrimitiveList>();
         collection.WriteTestDocs([new MissingPrimitiveList()]);
-        var db = SingleEntityDbContext.Create<MissingPrimitiveList, NonNullablePrimitiveArray>(collection);
+        using var db = SingleEntityDbContext.Create<MissingPrimitiveList, NonNullablePrimitiveArray>(collection);
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.First());
         Assert.Contains("null", ex.Message);
@@ -73,7 +73,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
                 items = null
             }
         ]);
-        var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection);
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.First());
         Assert.Contains("null", ex.Message);
