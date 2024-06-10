@@ -19,19 +19,13 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
+public class CompositeKeyCrudTests(TemporaryDatabaseFixture tempDatabase)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public CompositeKeyCrudTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     [Fact]
     public void Should_insert_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = tempDatabase.CreateTemporaryCollection<Entity>();
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
@@ -58,7 +52,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_read_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = tempDatabase.CreateTemporaryCollection<Entity>();
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
@@ -72,7 +66,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
         }
 
         {
-            var dbContext = SingleEntityDbContext.Create(collection, builder =>
+            using var dbContext = SingleEntityDbContext.Create(collection, builder =>
             {
                 builder.Entity<Entity>()
                     .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
@@ -89,7 +83,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_update_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = tempDatabase.CreateTemporaryCollection<Entity>();
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
@@ -119,7 +113,7 @@ public class CompositeKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_delete_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = tempDatabase.CreateTemporaryCollection<Entity>();
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
             {

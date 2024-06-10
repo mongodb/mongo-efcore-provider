@@ -117,6 +117,7 @@ public class GlobalQueryTests
 
         protected override void OnModelCreating(ModelBuilder mb)
         {
+            base.OnModelCreating(mb);
             mb.Entity<Planet>()
                 .HasQueryFilter(p => p.orderFromSun <= MaxOrder && p.name != ExceptName)
                 .ToCollection("planets");

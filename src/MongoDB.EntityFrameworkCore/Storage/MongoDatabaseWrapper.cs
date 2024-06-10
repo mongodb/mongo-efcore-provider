@@ -101,7 +101,9 @@ public class MongoDatabaseWrapper : Database
         while (true)
         {
             var stateManager = entry.StateManager;
-            var ownership = entry.EntityType.FindOwnership()!;
+            var ownership = entry.EntityType.FindOwnership();
+            if (ownership == null) continue;
+
             var principal = stateManager.FindPrincipal(entry, ownership);
             if (principal == null)
             {

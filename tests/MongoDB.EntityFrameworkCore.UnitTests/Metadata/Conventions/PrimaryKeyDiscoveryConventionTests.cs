@@ -26,7 +26,9 @@ public static class PrimaryKeyDiscoveryConventionTests
     {
         using var db = new MyDbContext();
 
-        var keys = db.Model.FindEntityType(typeof(Vendor))!.GetKeys().ToArray();
+        var entityType = db.Model.FindEntityType(typeof(Vendor));
+        Assert.NotNull(entityType);
+        var keys = entityType.GetKeys().ToArray();
         var expectedProperty = Utilities.GetPropertyInfo((Vendor v) => v._id);
 
         Assert.Single(keys);
@@ -38,7 +40,9 @@ public static class PrimaryKeyDiscoveryConventionTests
     {
         using var db = new MyDbContext();
 
-        var keys = db.Model.FindEntityType(typeof(Customer))!.GetKeys().ToArray();
+        var entityType = db.Model.FindEntityType(typeof(Customer));
+        Assert.NotNull(entityType);
+        var keys = entityType.GetKeys().ToArray();
         var expectedProperty = Utilities.GetPropertyInfo((Customer c) => c._id);
 
         Assert.Single(keys);

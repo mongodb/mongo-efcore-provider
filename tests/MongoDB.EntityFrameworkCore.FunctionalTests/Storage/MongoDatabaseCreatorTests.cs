@@ -76,7 +76,7 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public void EnsureDeleted_returns_false_when_it_does_not_exist()
     {
-        var database = new TemporaryDatabaseFixture();
+        using var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         Assert.False(db.Database.EnsureDeleted());

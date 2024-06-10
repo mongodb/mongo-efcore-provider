@@ -36,7 +36,9 @@ public class MongoValueGeneratorSelectorTests
         var model = (IModel)builder.Model;
         var serviceProvider = instance.CreateServiceProvider();
         _valueGeneratorSelector = (IValueGeneratorSelector)serviceProvider.GetService(typeof(IValueGeneratorSelector))!;
-        _entityType = model.FindEntityType(typeof(EntityWithDifferentTypes))!;
+        var foundEntityType = model.FindEntityType(typeof(EntityWithDifferentTypes));
+        Assert.NotNull(foundEntityType);
+        _entityType = foundEntityType;
     }
 
     [Fact]
