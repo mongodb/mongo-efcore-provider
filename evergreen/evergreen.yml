@@ -231,6 +231,21 @@ functions:
           ${PREPARE_SHELL}
           . ./evergreen/pack-packages.sh
 
+  sign-packages:
+    - command: shell.exec
+      params:
+        shell: bash
+        working_dir: mongo-csharp-driver
+        include_expansions_in_env:
+          - "ARTIFACTORY_PASSWORD"
+          - "ARTIFACTORY_USERNAME"
+          - "AZURE_NUGET_SIGN_TENANT_ID"
+          - "AZURE_NUGET_SIGN_CLIENT_ID"
+          - "AZURE_NUGET_SIGN_CLIENT_SECRET"
+        script: |
+          ${PREPARE_SHELL}
+          . ./evergreen/sign-packages.sh
+
   packages-smoke-tests:
     - command: shell.exec
       type: test
@@ -374,6 +389,7 @@ tasks:
   - name: pack-packages
     commands:
       - func: pack-packages
+      - func: sign-packages
       - func: upload-package
         vars:
           PACKAGE_ID: "MongoDB.EntityFrameworkCore"

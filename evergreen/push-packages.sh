@@ -43,6 +43,7 @@ if [ -z "$PACKAGE_VERSION" ]; then
   exit 1
 fi
 
+dotnet nuget verify ./artifacts/nuget/MongoDB.EntityFrameworkCore."$PACKAGE_VERSION".nupkg --certificate-fingerprint "$NUGET_SIGN_CERTIFICATE_FINGERPRINT"
 dotnet nuget push --source "$PACKAGES_SOURCE" --api-key "$PACKAGES_SOURCE_KEY" ./artifacts/nuget/MongoDB.EntityFrameworkCore."$PACKAGE_VERSION".nupkg
 
 wait_until_package_is_available "MongoDB.EntityFrameworkCore" "$PACKAGE_VERSION"
