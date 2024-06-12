@@ -14,11 +14,9 @@
  */
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
-using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
 using MongoDB.EntityFrameworkCore.Extensions;
 
@@ -60,34 +58,22 @@ namespace MongoDB.EntityFrameworkCore.Serializers
                 return;
             }
 
-            var storedKeyProperties = GetStoredKeyProperties();
-            if (storedKeyProperties.Any())
-            {
-                // Has key, throw and indicate user should compare by key
-                var keys = string.Join(", ", storedKeyProperties.Select(p => "'" + p.Name + "'"));
-                throw new NotSupportedException($"Entity to entity comparison is not supported when entities have keys. Compare '{_entityType.DisplayName()}' entities by {keys} instead.");
-            }
+            // We do not support direct entity serialization right now because:
+            //  - Matching owned entities by example or expression may mismatch because of unmapped fields/default values
+            //    (we will likely configurable policy for this)
+            //  - Matching root/entities with keys should be done by key fields, not by entity comparison
+            //    (we will rewrite the expression tree to do this automatically in a future update)
 
-            // No key, no identity, so compare by value
-            context.Writer.WriteStartDocument();
-            WriteProperties(context.Writer, value, _entityType.GetProperties().Where(p => _isStored(p)));
-            context.Writer.WriteEndDocument();
+            var storedKeyProperties = GetStoredKeyProperties();
+            var uniqueness = storedKeyProperties.Any()
+                ? string.Join(", ", storedKeyProperties.Select(p => "'" + p.Name + "'"))
+                : "unique fields";
+
+            throw new NotSupportedException($"Entity to entity comparison is not supported. Compare '{_entityType.DisplayName()}' entities by {uniqueness} instead.");
         }
 
         private IReadOnlyProperty[] GetStoredKeyProperties()
             => _entityType.FindPrimaryKey()?.Properties.Where(_isStored).ToArray() ?? [];
-
-        private static void WriteProperties(IBsonWriter writer, TValue entry, IEnumerable<IReadOnlyProperty> properties)
-        {
-            foreach (var property in properties)
-            {
-                var serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
-                var elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
-                writer.WriteName(elementName);
-                var context = BsonSerializationContext.CreateRoot(writer);
-                serializationInfo.Serializer.Serialize(context, property.PropertyInfo.GetValue(entry));
-            }
-        }
 
         void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
             => Serialize(context, args, (TValue)value);

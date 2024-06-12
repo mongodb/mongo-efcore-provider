@@ -69,7 +69,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
-    public void OwnedEntity_nested_one_level_first_matching_location()
+    public void OwnedEntity_nested_one_level_first_matching_location_throws()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
@@ -77,15 +77,14 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         using var db = SingleEntityDbContext.Create(collection);
 
         var location = db.Entities.First(p => p.name == "Carmen").location;
-        var actual = db.Entities.First(p => p.location == location && p.name != "Carmen");
 
-        Assert.Equal("Milton", actual.name);
-        Assert.Equal(Location1.latitude, actual.location.latitude);
-        Assert.Equal(Location1.longitude, actual.location.longitude);
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.First(p => p.location == location && p.name != "Carmen"));
+        Assert.Contains(nameof(Location), ex.Message);
+        Assert.Contains("unique fields", ex.Message);
     }
 
     [Fact]
-    public void OwnedEntity_nested_one_level_first_no_matching_location()
+    public void OwnedEntity_nested_one_level_first_no_matching_location_throws()
     {
         var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
@@ -93,9 +92,10 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         using var db = SingleEntityDbContext.Create(collection);
 
         var location = db.Entities.First(p => p.name == "Carmen").location;
-        var actual = db.Entities.FirstOrDefault(p => p.location != location);
 
-        Assert.Null(actual);
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.FirstOrDefault(p => p.location != location));
+        Assert.Contains(nameof(Location), ex.Message);
+        Assert.Contains("unique fields", ex.Message);
     }
 
     [Fact]
