@@ -42,6 +42,103 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
+    public void OwnedEntity_nested_one_level_where_not_null()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        collection.WriteTestDocs(PersonWithLocation1);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entities.Where(e => e.location != null).First();
+
+        Assert.Equal("Carmen", actual.name);
+        Assert.Equal(Location1.latitude, actual.location.latitude);
+        Assert.Equal(Location1.longitude, actual.location.longitude);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_where_null()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithOptionalLocation>();
+        collection.WriteTestDocs([new PersonWithOptionalLocation { _id = ObjectId.GenerateNewId(), name = "Milton" }]);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entities.Where(e => e.location == null).First();
+
+        Assert.Equal("Milton", actual.name);
+        Assert.Null(actual.location);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_first_matching_location_throws()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        collection.WriteTestDocs(PersonWithLocation1);
+        collection.WriteTestDocs(Person2WithLocation1);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var location = db.Entities.First(p => p.name == "Carmen").location;
+
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.First(p => p.location == location && p.name != "Carmen"));
+        Assert.Contains(nameof(Location), ex.Message);
+        Assert.Contains("unique fields", ex.Message);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_first_no_matching_location_throws()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        collection.WriteTestDocs(PersonWithLocation1);
+        collection.WriteTestDocs(Person2WithLocation1);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var location = db.Entities.First(p => p.name == "Carmen").location;
+
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.FirstOrDefault(p => p.location != location));
+        Assert.Contains(nameof(Location), ex.Message);
+        Assert.Contains("unique fields", ex.Message);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_first_match_location_property()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        collection.WriteTestDocs(PersonWithLocation1);
+        collection.WriteTestDocs(Person2WithLocation1);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var location = db.Entities.First(p => p.name == "Carmen").location;
+        var actual = db.Entities.FirstOrDefault(p => p.location.latitude == location.latitude && p.name != "Carmen");
+
+        Assert.Equal("Milton", actual.name);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_collection_match()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        collection.WriteTestDocs(PersonWithLocations1);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var location = db.Entities.First().locations[1];
+        var actual = db.Entities.FirstOrDefault(p => p.locations.Contains(location));
+
+        Assert.Equal("Damien", actual.name);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_collection_not_match()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        collection.WriteTestDocs(PersonWithLocations1);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var location = db.Entities.First().locations[1];
+        var actual = db.Entities.FirstOrDefault(p => !p.locations.Contains(location));
+
+        Assert.Equal("Carmen", actual.name);
+    }
+
+    [Fact]
     public void OwnedEntity_missing_document_element_does_not_throw()
     {
         _tempDatabase.CreateTemporaryCollection<Person>("personNoLocation").WriteTestDocs([
@@ -799,6 +896,14 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         new()
         {
             name = "Carmen", location = Location1
+        }
+    ];
+
+    private static readonly PersonWithLocation[] Person2WithLocation1 =
+    [
+        new()
+        {
+            name = "Milton", location = Location1
         }
     ];
 
