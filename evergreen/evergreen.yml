@@ -45,9 +45,7 @@ functions:
             CURRENT_VERSION=latest
           fi
 
-          if [ "${BUILD_TARGET}" = "release" ]; then
-            PACKAGE_VERSION=$(BUILD_TARGET="${BUILD_TARGET}" bash ./evergreen/generate-version.sh)
-          fi
+          PACKAGE_VERSION=$(bash ./evergreen/generate-version.sh)
 
           export DRIVERS_TOOLS="$(pwd)/../drivers-tools"
           export DOTNET_SDK_PATH="$(pwd)/../.dotnet"
@@ -235,7 +233,7 @@ functions:
     - command: shell.exec
       params:
         shell: bash
-        working_dir: mongo-csharp-driver
+        working_dir: mongo-efcore-provider
         include_expansions_in_env:
           - "ARTIFACTORY_PASSWORD"
           - "ARTIFACTORY_USERNAME"
@@ -254,6 +252,7 @@ functions:
         script: |
           ${PREPARE_SHELL}
           DRIVER_VERSION=${DRIVER_VERSION} \
+          MONGODB_URI="${MONGODB_URI}" \
           MONGODB_URI="${MONGODB_URI}" \
           TARGET_RUNTIME="${TARGET_RUNTIME}" \
           PACKAGE_VERSION="${PACKAGE_VERSION}" \
@@ -349,6 +348,7 @@ functions:
         env:
           PRODUCT_NAME: mongo-efcore-provider
           github_commit: ${github_commit}
+          NUGET_SIGN_CERTIFICATE_FINGERPRINT: ${NUGET_SIGN_CERTIFICATE_FINGERPRINT}
         script: |
           ${PREPARE_SHELL}
           ./evergreen/generate-ssdlc-report.sh
@@ -412,7 +412,7 @@ tasks:
       - func: build-apidocs
       - func: upload-apidocs
 
-  - name: push-packages
+  - name: push-packages-nuget
     commands:
       - func: download-package
         vars:
@@ -421,6 +421,19 @@ tasks:
         vars:
           PACKAGES_SOURCE: "https://api.nuget.org/v3/index.json"
           PACKAGES_SOURCE_KEY: ${nuget_api_key}
+          NUGET_SIGN_CERTIFICATE_FINGERPRINT: ${NUGET_SIGN_CERTIFICATE_FINGERPRINT}
+
+
+  - name: push-packages-myget
+    commands:
+      - func: download-package
+        vars:
+          PACKAGE_ID: "MongoDB.EntityFrameworkCore"
+      - func: push-packages
+        vars:
+          PACKAGES_SOURCE: "https://www.myget.org/F/mongodb/api/v3/index.json"
+          PACKAGES_SOURCE_KEY: ${myget_api_key}
+          NUGET_SIGN_CERTIFICATE_FINGERPRINT: ${NUGET_SIGN_CERTIFICATE_FINGERPRINT}
 
   - name: generate-ssdlc-reports
     commands:
@@ -490,18 +503,6 @@ axes:
         variables:
           TARGET_RUNTIME: "net80"
 
-  - id: build-target
-    display_name: CI build target
-    values:
-      - id: "tests"
-        display_name: "tests"
-        variables:
-          BUILD_TARGET: "tests"
-      - id: "release"
-        display_name: "release"
-        variables:
-          BUILD_TARGET: "release"
-
 buildvariants:
 - matrix_name: main-tests
   matrix_spec:
@@ -509,7 +510,6 @@ buildvariants:
     os: "*"
     driver: "*"
     target_runtime: "*"
-    build-target: "tests"
   display_name: "${target_runtime} ${driver} Driver on ${os} with ${version} Server"
   tags: ["tests-variant"]
   tasks:
@@ -517,23 +517,19 @@ buildvariants:
 
 - matrix_name: validate-apidocs
   matrix_spec:
-    build-target: "tests"
+    os: "ubuntu-2004"
   display_name: "Validate API Documentation generation"
-  run_on: ubuntu2004-small
   tags: ["generate-apidocs", "tests-variant"]
   tasks:
     - name: validate-apidocs
 
 - matrix_name: pack-packages
   matrix_spec:
-    build-target: "release"
+    os: "ubuntu-2004"
   display_name: "Package Pack"
-  run_on: ubuntu2004-small
   tags: ["pack-packages", "release_tag"]
   tasks:
     - name: pack-packages
-      git_tag_only: true
-      priority: 10
 
 - matrix_name: test-packages
   matrix_spec:
@@ -541,7 +537,6 @@ buildvariants:
     os: "*"
     driver: "latest"
     target_runtime: "*"
-    build-target: "release"
   display_name: "${target_runtime} smoke tests on ${os}"
   tags: ["package-tests", "release_tag"]
   tasks:
@@ -554,9 +549,8 @@ buildvariants:
 
 - matrix_name: generate-apidocs
   matrix_spec:
-    build-target: "release"
+    os: "ubuntu-2004"
   display_name: "Generate API Documentation"
-  run_on: ubuntu2004-small
   tags: ["generate-apidocs", "release_tag"]
   tasks:
     - name: generate-apidocs
@@ -566,14 +560,13 @@ buildvariants:
         - name: packages-tests
           variant: .package-tests
 
-- matrix_name: push-packages
+- matrix_name: push-packages-nuget
   matrix_spec:
-    build-target: "release"
-  display_name: "Package Push"
-  run_on: ubuntu2004-small
+    os: "ubuntu-2004"
+  display_name: "Package Push (nuget)"
   tags: ["push-packages", "release_tag"]
   tasks:
-    - name: push-packages
+    - name: push-packages-nuget
       git_tag_only: true
       priority: 10
       depends_on:
@@ -581,6 +574,17 @@ buildvariants:
           variant: .pack-packages
         - name: packages-tests
           variant: .package-tests
+
+- matrix_name: push-packages-myget
+  matrix_spec:
+    os: "ubuntu-2004"
+  display_name: "Package Push (myget)"
+  tags: ["push-packages", "release_tag"]
+  tasks:
+    - name: push-packages-myget
+      depends_on:
+        - name: pack-packages
+          variant: .pack-packages
 
 - matrix_name: ssdlc-reports
   matrix_spec:
@@ -591,5 +595,5 @@ buildvariants:
     - name: generate-ssdlc-reports
       git_tag_only: true
       depends_on:
-        - name: push-packages
+        - name: push-packages-nuget
           variant: ".push-packages"

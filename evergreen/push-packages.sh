@@ -43,6 +43,17 @@ if [ -z "$PACKAGE_VERSION" ]; then
   exit 1
 fi
 
+if [ -z "$NUGET_SIGN_CERTIFICATE_FINGERPRINT" ]; then
+  echo "NUGET_SIGN_CERTIFICATE_FINGERPRINT variable should be set"
+  exit 1
+fi
+
+clear_version_rx='^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$'
+if [ "$PACKAGES_SOURCE" = "https://api.nuget.org/v3/index.json" ] && [[ ! "$PACKAGE_VERSION" =~ $clear_version_rx ]]; then
+  echo "Cannot push dev version to nuget.org: '$PACKAGE_VERSION'"
+  exit 1
+fi
+
 dotnet nuget verify ./artifacts/nuget/MongoDB.EntityFrameworkCore."$PACKAGE_VERSION".nupkg --certificate-fingerprint "$NUGET_SIGN_CERTIFICATE_FINGERPRINT"
 dotnet nuget push --source "$PACKAGES_SOURCE" --api-key "$PACKAGES_SOURCE_KEY" ./artifacts/nuget/MongoDB.EntityFrameworkCore."$PACKAGE_VERSION".nupkg
 
