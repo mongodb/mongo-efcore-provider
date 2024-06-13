@@ -26,15 +26,45 @@ public class MongoPropertyBuilderExtensionsTests
     [InlineData(BsonType.Decimal128)]
     [InlineData(BsonType.Int64)]
     [InlineData(null)]
-    public void HasBsonType_can_set_value_on_property(BsonType? value)
+    public void HasBsonRepresentation_can_set_type_on_property(BsonType? bsonType)
     {
         var model = new ModelBuilder();
         var entity = model.Entity<TestEntity>();
 
-        entity.Property(e => e.DateTimeProperty).HasBsonType(value);
+        entity.Property(e => e.DateTimeProperty).HasBsonRepresentation(bsonType);
 
         var property = entity.Metadata.GetProperty(nameof(TestEntity.DateTimeProperty));
-        Assert.Equal(value, property.GetBsonType());
+        var representation = property.GetBsonRepresentation();
+        if (bsonType == null)
+        {
+            Assert.Null(representation);
+        }
+        else
+        {
+            Assert.NotNull(representation);
+            Assert.Equal(bsonType, representation.BsonType);
+        }
+    }
+
+    [Theory]
+    [InlineData(BsonType.String, false, true)]
+    [InlineData(BsonType.Double, false, false)]
+    [InlineData(BsonType.Decimal128, null, false)]
+    [InlineData(BsonType.Int64, true, true)]
+    public void HasBsonRepresentation_can_set_type_overflow_and_truncation_on_property(BsonType? bsonType, bool? allowOverflow, bool? allowTruncation)
+    {
+        var model = new ModelBuilder();
+        var entity = model.Entity<TestEntity>();
+
+        entity.Property(e => e.DateTimeProperty).HasBsonRepresentation(bsonType, allowOverflow, allowTruncation);
+
+        var property = entity.Metadata.GetProperty(nameof(TestEntity.DateTimeProperty));
+        var representation = property.GetBsonRepresentation();
+
+        Assert.NotNull(representation);
+        Assert.Equal(bsonType, representation.BsonType);
+        Assert.Equal(allowOverflow, representation.AllowOverflow);
+        Assert.Equal(allowTruncation, representation.AllowTruncation);
     }
 
     [Theory]

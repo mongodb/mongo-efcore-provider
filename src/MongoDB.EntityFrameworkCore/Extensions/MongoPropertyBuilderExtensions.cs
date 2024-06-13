@@ -89,52 +89,64 @@ public static class MongoPropertyBuilderExtensions
         => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
 
     /// <summary>
-    /// Configures the <see cref="BsonType"/> that the property is stored as when targeting MongoDB.
+    /// Configures the BSON representation that the property is stored as when targeting MongoDB.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="bsonType">The <see cref="BsonType"/> to store this property as
     /// or <see langword="null" /> to unset the configuration and use the default.</param>
+    /// <param name="allowOverflow">Whether to allow overflow or not.</param>
+    /// <param name="allowTruncation">Whether to allow truncation or not.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static PropertyBuilder HasBsonType(
+    public static PropertyBuilder HasBsonRepresentation(
         this PropertyBuilder propertyBuilder,
-        BsonType? bsonType)
+        BsonType? bsonType,
+        bool? allowOverflow = null,
+        bool? allowTruncation = null)
     {
-        propertyBuilder.Metadata.SetBsonType(bsonType);
+        propertyBuilder.Metadata.SetBsonRepresentation(bsonType, allowOverflow, allowTruncation);
         return propertyBuilder;
     }
 
     /// <summary>
-    /// Configures the <see cref="BsonType"/> that the property is stored as when targeting MongoDB.
+    /// Configures the BSON representation that the property is stored as when targeting MongoDB.
     /// </summary>
     /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="bsonType">The <see cref="BsonType"/> to store this property as
     /// or <see langword="null" /> to unset the configuration and use the default.</param>
+    /// <param name="allowOverflow">Whether to allow overflow or not.</param>
+    /// <param name="allowTruncation">Whether to allow truncation or not.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static PropertyBuilder<TProperty> HasBsonType<TProperty>(
+    public static PropertyBuilder<TProperty> HasBsonRepresentation<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
-        BsonType? bsonType)
-        => (PropertyBuilder<TProperty>)HasBsonType((PropertyBuilder)propertyBuilder, bsonType);
+        BsonType? bsonType,
+        bool? allowOverflow = null,
+        bool? allowTruncation = null)
+        => (PropertyBuilder<TProperty>)HasBsonRepresentation((PropertyBuilder)propertyBuilder, bsonType, allowOverflow, allowTruncation);
 
     /// <summary>
-    /// Configures the <see cref="BsonType"/> that the property is stored as when targeting MongoDB.
-    /// If a null value is supplied then a default storage type based on the property type will be used.
+    /// Configures the BSON representation that the property is stored as when targeting MongoDB.
+    /// If a null <see cref="BsonType"/> is supplied then a default storage type based on the property type will be used.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="bsonType">The <see cref="BsonType"/> to store this property as.</param>
+    /// <param name="allowOverflow">Whether to allow overflow or not.</param>
+    /// <param name="allowTruncation">Whether to allow truncation or not.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.</returns>
-    public static IConventionPropertyBuilder? HasBsonType(
+    public static IConventionPropertyBuilder? HasBsonRepresentation(
         this IConventionPropertyBuilder propertyBuilder,
         BsonType? bsonType,
+        bool? allowOverflow = null,
+        bool? allowTruncation = null,
         bool fromDataAnnotation = false)
     {
-        if (!CanSetBsonType(propertyBuilder, bsonType, fromDataAnnotation))
+        if (!CanSetBsonRepresentation(propertyBuilder, bsonType, fromDataAnnotation))
         {
             return null;
         }
 
-        propertyBuilder.Metadata.SetBsonType(bsonType, fromDataAnnotation);
+        propertyBuilder.Metadata.SetBsonRepresentation(bsonType, allowOverflow, allowTruncation, fromDataAnnotation);
         return propertyBuilder;
     }
 
@@ -145,11 +157,11 @@ public static class MongoPropertyBuilderExtensions
     /// <param name="bsonType">The <see cref="BsonType"/> to store this property as.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns><see langword="true" /> if the <see cref="BsonType"/> can be set, <see langword="false"/> if not.</returns>
-    public static bool CanSetBsonType(
+    public static bool CanSetBsonRepresentation(
         this IConventionPropertyBuilder propertyBuilder,
         BsonType? bsonType,
         bool fromDataAnnotation = false)
-        => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.BsonType, bsonType, fromDataAnnotation);
+        => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.BsonRepresentation, bsonType, fromDataAnnotation);
 
     /// <summary>
     /// Configures the <see cref="DateTimeKind"/> for the property.
