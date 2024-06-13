@@ -178,7 +178,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture tempDatabase)
         Assert.Equal(active, found.active);
     }
 
-    [Theory(Skip = "Currently not able to map CLR bool in C# Driver to non-bool types when querying")]
+    [Theory]
     [InlineData([true])]
     [InlineData([false])]
     public void Bool_can_query_against_string(bool active)

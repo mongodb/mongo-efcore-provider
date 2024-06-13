@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
@@ -31,6 +32,11 @@ using BulkWriteEventDefinition = EventDefinition<string, CollectionNamespace, lo
 /// </summary>
 internal static class MongoLoggerExtensions
 {
+    internal static void ExecutedMqlQuery(
+        this IDiagnosticsLogger<DbLoggerCategory.Database.Command> diagnostics,
+        MongoExecutableQuery mongoExecutableQuery)
+        => ExecutedMqlQuery(diagnostics, mongoExecutableQuery.CollectionNamespace, mongoExecutableQuery.Provider.LoggedStages);
+
     public static void ExecutedMqlQuery(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Command> diagnostics,
         CollectionNamespace collectionNamespace,
