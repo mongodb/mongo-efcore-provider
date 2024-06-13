@@ -58,7 +58,7 @@ Coverity static analysis report is available <a href="https://coverity.corp.mong
 Packages are signed with certificate with fingerprint: ${NUGET_SIGN_CERTIFICATE_FINGERPRINT}.
 Signature can be validated by running ```dotnet nuget verify``` command.
 
-For example signature of ```Mongodb.Driver.${PACKAGE_VERSION}.nupkg``` package can be verified by running:
+For example signature of ```MongoDB.EntityFrameworkCore.${PACKAGE_VERSION}.nupkg``` package can be verified by running:
 ```
-dotnet nuget verify MongoDB.Driver.${PACKAGE_VERSION}.nupkg --certificate-fingerprint ${NUGET_SIGN_CERTIFICATE_FINGERPRINT}
+dotnet nuget verify MongoDB.EntityFrameworkCore.${PACKAGE_VERSION}.nupkg --certificate-fingerprint ${NUGET_SIGN_CERTIFICATE_FINGERPRINT}
 ```

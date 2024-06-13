@@ -253,7 +253,6 @@ functions:
           ${PREPARE_SHELL}
           DRIVER_VERSION=${DRIVER_VERSION} \
           MONGODB_URI="${MONGODB_URI}" \
-          MONGODB_URI="${MONGODB_URI}" \
           TARGET_RUNTIME="${TARGET_RUNTIME}" \
           PACKAGE_VERSION="${PACKAGE_VERSION}" \
           . ./evergreen/run-smoke-tests.sh
@@ -422,7 +421,6 @@ tasks:
           PACKAGES_SOURCE: "https://api.nuget.org/v3/index.json"
           PACKAGES_SOURCE_KEY: ${nuget_api_key}
           NUGET_SIGN_CERTIFICATE_FINGERPRINT: ${NUGET_SIGN_CERTIFICATE_FINGERPRINT}
-
 
   - name: push-packages-myget
     commands:
