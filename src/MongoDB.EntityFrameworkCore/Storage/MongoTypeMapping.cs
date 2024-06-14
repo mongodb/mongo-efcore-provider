@@ -14,10 +14,13 @@
  */
 
 using System;
+using System.Linq.Expressions;
+using System.Reflection;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Storage.Json;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -26,6 +29,8 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// </summary>
 public class MongoTypeMapping : CoreTypeMapping
 {
+    public static MongoTypeMapping Default { get; } = new(typeof(object));
+
     /// <summary>
     /// Create a <see cref="MongoTypeMapping"/> with the supplied CLR type and value comparers.
     /// </summary>
@@ -50,6 +55,18 @@ public class MongoTypeMapping : CoreTypeMapping
     protected override CoreTypeMapping Clone(CoreTypeMappingParameters parameters)
         => new MongoTypeMapping(parameters);
 
+
+    /// <inheritdoc/>
+    public override Expression GenerateCodeLiteral(object value)
+    {
+        return value switch
+        {
+            ObjectId => Expression.Call(ObjectIdParseStringMethod, Expression.Constant(value.ToString())),
+            Decimal128 => Expression.Call(Decimal128ParseStringMethod, Expression.Constant(value.ToString())),
+            _ => base.GenerateCodeLiteral(value)
+        };
+    }
+
     /// <inheritdoc/>
     public override CoreTypeMapping WithComposedConverter(
         ValueConverter? converter,
@@ -59,4 +76,10 @@ public class MongoTypeMapping : CoreTypeMapping
         JsonValueReaderWriter? jsonValueReaderWriter = null)
         => new MongoTypeMapping(Parameters.WithComposedConverter(converter, comparer, keyComparer, elementMapping,
             jsonValueReaderWriter));
+
+    private static readonly MethodInfo ObjectIdParseStringMethod
+        = typeof(ObjectId).GetRuntimeMethod(nameof(ObjectId.Parse), [typeof(string)])!;
+
+    private static readonly MethodInfo Decimal128ParseStringMethod
+        = typeof(Decimal128).GetRuntimeMethod(nameof(Decimal128.Parse), [typeof(string)])!;
 }
