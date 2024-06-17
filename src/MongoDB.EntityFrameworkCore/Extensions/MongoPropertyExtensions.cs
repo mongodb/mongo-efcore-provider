@@ -23,6 +23,8 @@ using MongoDB.EntityFrameworkCore.Metadata;
 // ReSharper disable once CheckNamespace
 namespace Microsoft.EntityFrameworkCore;
 
+using BsonRepresentation = (BsonType BsonType, BsonAllowOverflow AllowOverflow, BsonAllowTruncation AllowTruncation);
+
 /// <summary>
 /// Property extension methods for MongoDB metadata.
 /// </summary>
@@ -58,12 +60,14 @@ public static class MongoPropertyExtensions
     }
 
     /// <summary>
-    /// Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as when targeting MongoDB.
+    /// Returns the <see cref="BsonRepresentation"/> the property is stored as when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the element name for.</param>
-    /// <returns>Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as.</returns>
-    public static BsonRepresentationConfiguration? GetBsonRepresentation(this IReadOnlyProperty property)
-        => (BsonRepresentationConfiguration?)property[MongoAnnotationNames.BsonRepresentation];
+    /// <returns>Returns the <see cref="BsonRepresentation"/> the property is stored as.</returns>
+    public static BsonRepresentation? GetBsonRepresentation(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.BsonRepresentation] is BsonRepresentation value
+            ? value
+            : null;
 
     internal static bool IsOwnedTypeKey(this IProperty property)
     {
@@ -137,7 +141,7 @@ public static class MongoPropertyExtensions
             return;
         }
 
-        var representation = new BsonRepresentationConfiguration(bsonType.Value, allowOverflow, allowTruncation);
+        var representation = new BsonRepresentation(bsonType.Value, BsonAllowOverflowHelper.FromNullableBool(allowOverflow), BsonAllowTruncationHelper.FromNullableBool(allowTruncation));
         property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation);
     }
 
@@ -150,8 +154,8 @@ public static class MongoPropertyExtensions
     /// <param name="allowOverflow">Whether to allow overflow or not.</param>
     /// <param name="allowTruncation">Whether to allow truncation or not.</param>
     /// <param name="fromDataAnnotation"><see langword="true"/> if the configuration was specified using a data annotation, <see langword="false"/> if not.</param>
-    /// <returns>The configured <see cref="BsonType"/> the property will be stored as.</returns>
-    public static BsonRepresentationConfiguration? SetBsonRepresentation(
+    /// <returns>The configured <see cref="BsonRepresentation"/> the property will be stored as.</returns>
+    public static BsonRepresentation? SetBsonRepresentation(
         this IConventionProperty property,
         BsonType? bsonType,
         bool? allowOverflow,
@@ -164,8 +168,9 @@ public static class MongoPropertyExtensions
             return null;
         }
 
-        var representation = new BsonRepresentationConfiguration(bsonType.Value, allowOverflow, allowTruncation);
-        return (BsonRepresentationConfiguration)property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation, fromDataAnnotation).Value;
+        var representation = new BsonRepresentation(bsonType.Value, BsonAllowOverflowHelper.FromNullableBool(allowOverflow), BsonAllowTruncationHelper.FromNullableBool(allowTruncation));
+        property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation, fromDataAnnotation);
+        return representation;
     }
 
     /// <summary>

@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.ChangeTracking;
+using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Storage;
 
 #pragma warning disable 219, 612, 618
@@ -235,6 +236,27 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (String[] source) => source.ToArray()),
                 clrType: typeof(string[]));
 
+            var anEnum = runtimeEntityType.AddProperty(
+                "anEnum",
+                typeof(CompiledModelTests.TestEnum),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("anEnum", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<anEnum>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: CompiledModelTests.TestEnum.A);
+            anEnum.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<CompiledModelTests.TestEnum>(
+                    (CompiledModelTests.TestEnum v1, CompiledModelTests.TestEnum v2) => object.Equals((object)v1, (object)v2),
+                    (CompiledModelTests.TestEnum v) => v.GetHashCode(),
+                    (CompiledModelTests.TestEnum v) => v),
+                keyComparer: new ValueComparer<CompiledModelTests.TestEnum>(
+                    (CompiledModelTests.TestEnum v1, CompiledModelTests.TestEnum v2) => object.Equals((object)v1, (object)v2),
+                    (CompiledModelTests.TestEnum v) => v.GetHashCode(),
+                    (CompiledModelTests.TestEnum v) => v),
+                providerValueComparer: new ValueComparer<CompiledModelTests.TestEnum>(
+                    (CompiledModelTests.TestEnum v1, CompiledModelTests.TestEnum v2) => object.Equals((object)v1, (object)v2),
+                    (CompiledModelTests.TestEnum v) => v.GetHashCode(),
+                    (CompiledModelTests.TestEnum v) => v),
+                clrType: typeof(CompiledModelTests.TestEnum));
+
             var anInt = runtimeEntityType.AddProperty(
                 "anInt",
                 typeof(int),
@@ -275,6 +297,28 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (List<int> v) => v.GetHashCode(),
                     (List<int> v) => v),
                 clrType: typeof(List<int>));
+
+            var anIntRepresentedAsAString = runtimeEntityType.AddProperty(
+                "anIntRepresentedAsAString",
+                typeof(int),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("anIntRepresentedAsAString", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<anIntRepresentedAsAString>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: 0);
+            anIntRepresentedAsAString.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<int>(
+                    (int v1, int v2) => v1 == v2,
+                    (int v) => v,
+                    (int v) => v),
+                keyComparer: new ValueComparer<int>(
+                    (int v1, int v2) => v1 == v2,
+                    (int v) => v,
+                    (int v) => v),
+                providerValueComparer: new ValueComparer<int>(
+                    (int v1, int v2) => v1 == v2,
+                    (int v) => v,
+                    (int v) => v),
+                clrType: typeof(int));
+            anIntRepresentedAsAString.AddAnnotation("Mongo:BsonRepresentation", (BsonType.String, BsonAllowOverflow.False, BsonAllowTruncation.False));
 
             var key = runtimeEntityType.AddKey(
                 new[] { id });
