@@ -251,6 +251,39 @@ public class WhereTests : IDisposable, IAsyncDisposable
         Assert.All(results, p => Assert.NotEmpty(p.mainAtmosphere));
     }
 
+    [Fact(Skip = "Errors wiuth MongoDB < 5.0")]
+    public void Where_entity_equal_null()
+    {
+        var actual = _db.Planets.FirstOrDefault(p => p == null);
+        Assert.Null(actual);
+    }
+
+    [Fact]
+    public void Where_entity_not_equal_null()
+    {
+        var actual = _db.Planets.First(p => p != null);
+        Assert.NotNull(actual);
+    }
+
+    [Fact]
+    public void Where_entity_equal_throws()
+    {
+        var first = _db.Planets.First();
+        var ex = Assert.Throws<NotSupportedException>(() => _db.Planets.Where(p => p == first).ToList());
+        Assert.Contains(nameof(Planet._id), ex.Message);
+        Assert.Contains(nameof(Planet), ex.Message);
+    }
+
+    [Fact]
+    public void Where_entity_not_equal_throws()
+    {
+        var orderedPlanets = _db.Planets.OrderBy(p => p.name);
+        var first = orderedPlanets.First();
+        var ex = Assert.Throws<NotSupportedException>(() => orderedPlanets.First(p => p != first));
+        Assert.Contains(nameof(Planet._id), ex.Message);
+        Assert.Contains(nameof(Planet), ex.Message);
+    }
+
     public void Dispose()
         => _db.Dispose();
 

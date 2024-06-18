@@ -1,0 +1,7 @@
+{
+  "serialNumber": "urn:uuid:abde4013-504f-45bb-9bdc-2ffa7b4bf591",
+  "version": 1,
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5"
+}

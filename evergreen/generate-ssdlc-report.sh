@@ -31,5 +31,6 @@ sed "${SED_EDIT_IN_PLACE_OPTION[@]}" \
     -e "s/\${PACKAGE_VERSION}/$PACKAGE_VERSION/g" \
     -e "s/\${github_commit}/$github_commit/g" \
     -e "s/\${REPORT_DATE_UTC}/$(date -u +%Y-%m-%d)/g" \
+    -e "s/\${NUGET_SIGN_CERTIFICATE_FINGERPRINT}/${NUGET_SIGN_CERTIFICATE_FINGERPRINT}/g" \
     "${SSDLC_REPORT_PATH}"
 ls "${SSDLC_REPORT_PATH}"

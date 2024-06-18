@@ -22,7 +22,6 @@ using Microsoft.EntityFrameworkCore.Scaffolding;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
-using MongoDB.EntityFrameworkCore.Design;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design;
 
@@ -153,7 +152,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
             Assert.Equal(BsonType.String, representation.BsonType);
 
             scope.Dispose();
-        }
+       }
     }
 
     private static IReadOnlyCollection<ScaffoldedFile> GenerateModel(SimpleContext context)

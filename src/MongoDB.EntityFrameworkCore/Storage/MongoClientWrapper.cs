@@ -77,7 +77,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
 
         var queryable = (IMongoQueryable<T>)executableQuery.Provider.CreateQuery<T>(executableQuery.Query);
-        log = () => _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, queryable.LoggedStages);
+        log = () => _commandLogger.ExecutedMqlQuery(executableQuery);
         return queryable;
     }
 
@@ -90,23 +90,12 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
         catch
         {
-            // Ensure we log the query even when C# Driver throws
-            LogQuery();
+            _commandLogger.ExecutedMqlQuery(executableQuery);
             throw;
         }
 
-        LogQuery();
+        _commandLogger.ExecutedMqlQuery(executableQuery);
         return [result];
-
-        void LogQuery()
-        {
-            // We need to get this via reflection from the Mongo C# Driver for now.
-            var getLoggedStages = executableQuery.Provider.GetType().GetProperty("LoggedStages");
-            if (getLoggedStages?.GetValue(executableQuery.Provider) is BsonDocument[] loggedStages)
-            {
-                _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
-            }
-        }
     }
 
     /// <summary>
