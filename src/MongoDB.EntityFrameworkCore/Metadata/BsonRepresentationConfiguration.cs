@@ -61,8 +61,8 @@ public record BsonRepresentationConfiguration
     /// </summary>
     /// <returns>An IDictionary containing the named properties of this configuration.</returns>
     /// <remarks>Is recreated from this dictionary via <see cref="CreateFrom"/>.</remarks>
-    public IDictionary<string, object> ToDictionary()
-        => new Dictionary<string, object>
+    public IDictionary<string, object?> ToDictionary()
+        => new Dictionary<string, object?>
         {
             { "BsonType", BsonType },
             { "AllowOverflow", AllowOverflow },
@@ -75,11 +75,18 @@ public record BsonRepresentationConfiguration
     /// </summary>
     /// <returns>A <see cref="BsonRepresentationConfiguration"/> with the properties set from the dictionary.</returns>
     /// <remarks>The dictionary passes is typically created by <see cref="ToDictionary"/>.</remarks>
+    /// <exception cref="ArgumentException">Throws if items in the dictionary are missing or the wrong type.</exception>
     public static BsonRepresentationConfiguration CreateFrom(IDictionary<string, object> values)
     {
-        var bsonType = (BsonType?)values["BsonType"] ?? throw new InvalidOperationException("BsonType is required.");
-        var allowOverflow = (bool?)values["AllowOverflow"];
-        var allowTruncation = (bool?)values["AllowTruncation"];
-        return new BsonRepresentationConfiguration(bsonType, allowOverflow, allowTruncation);
+        if (!values.TryGetValue("BsonType", out var bsonType))
+        {
+            throw new ArgumentException("BsonType is required in Dictionary.", nameof(values));
+        }
+
+        // Okay to have these missing, they can default to null which is valid.
+        values.TryGetValue("AllowOverflow", out var allowOverflow);
+        values.TryGetValue("AllowTruncation", out var allowTruncation);
+
+        return new BsonRepresentationConfiguration((BsonType)bsonType, (bool?)allowOverflow, (bool?)allowTruncation);
     }
 }
