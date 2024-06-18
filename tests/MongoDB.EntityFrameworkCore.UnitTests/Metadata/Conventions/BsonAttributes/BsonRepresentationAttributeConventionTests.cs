@@ -22,14 +22,23 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions.BsonAttribu
 public static class BsonRepresentationAttributeConventionTests
 {
     [Fact]
-    public static void BsonRepresentation_specified_properties_are_required()
+    public static void BsonRepresentation_specified_properties_are_set()
     {
         using var db = SingleEntityDbContext.Create<RepresentedEntity>();
 
-        var property = db.GetProperty((RepresentedEntity r) => r.anInt);
-        Assert.NotNull(property);
+        var intProperty = db.GetProperty((RepresentedEntity r) => r.anInt);
+        Assert.NotNull(intProperty);
+        Assert.Equal(BsonType.String, intProperty.GetBsonRepresentation()?.BsonType);
 
-        Assert.Equal(BsonType.String, property.GetBsonRepresentation()?.BsonType);
+        var longProperty = db.GetProperty((RepresentedEntity r) => r.aLong);
+        Assert.NotNull(longProperty);
+
+        var longRepresentation = longProperty.GetBsonRepresentation();
+        Assert.NotNull(longRepresentation);
+
+        Assert.Equal(BsonType.Int32, longRepresentation.BsonType);
+        Assert.True(longRepresentation.AllowOverflow);
+        Assert.True(longRepresentation.AllowTruncation);
     }
 
     [Fact]
@@ -45,18 +54,20 @@ public static class BsonRepresentationAttributeConventionTests
     }
 
     [Fact]
-    public static void ModelBuilder_specified_option_overrides_attribute()
+    public static void ModelBuilder_specified_option_overrides_attribute_entirely()
     {
         using var db = SingleEntityDbContext.Create<RepresentedEntity>(
-            mb => mb.Entity<RepresentedEntity>().Property(r => r.anInt).HasBsonRepresentation(BsonType.Double));
+            mb => mb.Entity<RepresentedEntity>().Property(r => r.aLong).HasBsonRepresentation(BsonType.Double));
 
-        var property = db.GetProperty((RepresentedEntity r) => r.anInt);
+        var property = db.GetProperty((RepresentedEntity r) => r.aLong);
         Assert.NotNull(property);
 
         var representation = property.GetBsonRepresentation();
         Assert.NotNull(representation);
 
-        Assert.Equal(BsonType.Double, representation.Value.BsonType);
+        Assert.Equal(BsonType.Double, representation.BsonType);
+        Assert.Null(representation.AllowOverflow);
+        Assert.Null(representation.AllowTruncation);
     }
 
     class RepresentedEntity
@@ -65,5 +76,8 @@ public static class BsonRepresentationAttributeConventionTests
 
         [BsonRepresentation(BsonType.String)]
         public int anInt { get; set; }
+
+        [BsonRepresentation(BsonType.Int32, AllowOverflow = true, AllowTruncation = true)]
+        public long aLong { get; set; }
     }
 }

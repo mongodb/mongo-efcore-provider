@@ -59,6 +59,9 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
         [BsonRepresentation(BsonType.String)]
         public int anIntRepresentedAsAString { get; set; }
 
+        [BsonRepresentation(BsonType.Int32, AllowOverflow = true, AllowTruncation = true)]
+        public long aLongRepresentedAsAInt { get; set; }
+
         public string[] aStringArray { get; set; }
         public List<int> anIntList { get; set; }
 
@@ -116,6 +119,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
             aFloat = 11.12f,
             aGuid = Guid.NewGuid(),
             aLong = 678901,
+            aLongRepresentedAsAInt = 987654321,
             anInt = 23456,
             aShort = 129,
             aString = "Hello, World!",
@@ -146,7 +150,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
             Assert.NotNull(property);
             var representation = property.GetBsonRepresentation();
             Assert.NotNull(representation);
-            Assert.Equal(BsonType.String, representation.Value.BsonType);
+            Assert.Equal(BsonType.String, representation.BsonType);
 
             scope.Dispose();
         }

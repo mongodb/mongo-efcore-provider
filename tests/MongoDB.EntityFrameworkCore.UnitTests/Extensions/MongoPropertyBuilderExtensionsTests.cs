@@ -15,7 +15,6 @@
 
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
-using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Extensions;
 
@@ -43,7 +42,7 @@ public class MongoPropertyBuilderExtensionsTests
         else
         {
             Assert.NotNull(representation);
-            Assert.Equal(bsonType, representation.Value.BsonType);
+            Assert.Equal(bsonType, representation.BsonType);
         }
     }
 
@@ -63,9 +62,9 @@ public class MongoPropertyBuilderExtensionsTests
         var representation = property.GetBsonRepresentation();
 
         Assert.NotNull(representation);
-        Assert.Equal(bsonType, representation.Value.BsonType);
-        Assert.Equal(allowOverflow, representation.Value.AllowOverflow.ToNullableBool());
-        Assert.Equal(allowTruncation, representation.Value.AllowTruncation.ToNullableBool());
+        Assert.Equal(bsonType, representation.BsonType);
+        Assert.Equal(allowOverflow, representation.AllowOverflow);
+        Assert.Equal(allowTruncation, representation.AllowTruncation);
     }
 
     [Theory]

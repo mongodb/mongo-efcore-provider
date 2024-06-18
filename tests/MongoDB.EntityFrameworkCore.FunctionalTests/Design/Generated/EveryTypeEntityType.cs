@@ -8,7 +8,6 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.ChangeTracking;
-using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Storage;
 
 #pragma warning disable 219, 612, 618
@@ -175,6 +174,28 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (long v) => v),
                 clrType: typeof(long));
 
+            var aLongRepresentedAsAInt = runtimeEntityType.AddProperty(
+                "aLongRepresentedAsAInt",
+                typeof(long),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aLongRepresentedAsAInt", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<aLongRepresentedAsAInt>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: 0L);
+            aLongRepresentedAsAInt.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<long>(
+                    (long v1, long v2) => v1 == v2,
+                    (long v) => v.GetHashCode(),
+                    (long v) => v),
+                keyComparer: new ValueComparer<long>(
+                    (long v1, long v2) => v1 == v2,
+                    (long v) => v.GetHashCode(),
+                    (long v) => v),
+                providerValueComparer: new ValueComparer<long>(
+                    (long v1, long v2) => v1 == v2,
+                    (long v) => v.GetHashCode(),
+                    (long v) => v),
+                clrType: typeof(long));
+            aLongRepresentedAsAInt.AddAnnotation("Mongo:BsonRepresentation", new Dictionary<string, object> { ["BsonType"] = BsonType.Int32, ["AllowOverflow"] = true, ["AllowTruncation"] = true });
+
             var aShort = runtimeEntityType.AddProperty(
                 "aShort",
                 typeof(short),
@@ -318,7 +339,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (int v) => v,
                     (int v) => v),
                 clrType: typeof(int));
-            anIntRepresentedAsAString.AddAnnotation("Mongo:BsonRepresentation", (BsonType.String, BsonAllowOverflow.False, BsonAllowTruncation.False));
+            anIntRepresentedAsAString.AddAnnotation("Mongo:BsonRepresentation", new Dictionary<string, object> { ["BsonType"] = BsonType.String, ["AllowOverflow"] = false, ["AllowTruncation"] = false });
 
             var key = runtimeEntityType.AddKey(
                 new[] { id });

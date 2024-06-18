@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
@@ -22,8 +23,6 @@ using MongoDB.EntityFrameworkCore.Metadata;
 
 // ReSharper disable once CheckNamespace
 namespace Microsoft.EntityFrameworkCore;
-
-using BsonRepresentation = (BsonType BsonType, BsonAllowOverflow AllowOverflow, BsonAllowTruncation AllowTruncation);
 
 /// <summary>
 /// Property extension methods for MongoDB metadata.
@@ -60,13 +59,13 @@ public static class MongoPropertyExtensions
     }
 
     /// <summary>
-    /// Returns the <see cref="BsonRepresentation"/> the property is stored as when targeting MongoDB.
+    /// Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the element name for.</param>
-    /// <returns>Returns the <see cref="BsonRepresentation"/> the property is stored as.</returns>
-    public static BsonRepresentation? GetBsonRepresentation(this IReadOnlyProperty property)
-        => property[MongoAnnotationNames.BsonRepresentation] is BsonRepresentation value
-            ? value
+    /// <returns>Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as.</returns>
+    public static BsonRepresentationConfiguration? GetBsonRepresentation(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.BsonRepresentation] is IDictionary<string, object> value
+            ? BsonRepresentationConfiguration.CreateFrom(value)
             : null;
 
     internal static bool IsOwnedTypeKey(this IProperty property)
@@ -122,7 +121,7 @@ public static class MongoPropertyExtensions
         => property.FindAnnotation(MongoAnnotationNames.ElementName)?.GetConfigurationSource();
 
     /// <summary>
-    /// Sets the <see cref="BsonType"/> that the property is stored as to when targeting MongoDB.
+    /// Sets the BSON representation for the property to configure how it is stored within MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IMutableProperty"/> to set the BsonType for.</param>
     /// <param name="bsonType">The <see cref="BsonType"/> this property should be stored as
@@ -141,12 +140,12 @@ public static class MongoPropertyExtensions
             return;
         }
 
-        var representation = new BsonRepresentation(bsonType.Value, BsonAllowOverflowHelper.FromNullableBool(allowOverflow), BsonAllowTruncationHelper.FromNullableBool(allowTruncation));
-        property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation);
+        var representation = new BsonRepresentationConfiguration(bsonType.Value, allowOverflow, allowTruncation);
+        property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation.ToDictionary());
     }
 
     /// <summary>
-    /// Sets the document <see cref="BsonType"/> that the property is stored as to when targeting MongoDB.
+    /// Sets the BSON representation for the property to configure how it is stored within MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the BsonType for.</param>
     /// <param name="bsonType">The <see cref="BsonType"/> this property should be stored as
@@ -154,8 +153,8 @@ public static class MongoPropertyExtensions
     /// <param name="allowOverflow">Whether to allow overflow or not.</param>
     /// <param name="allowTruncation">Whether to allow truncation or not.</param>
     /// <param name="fromDataAnnotation"><see langword="true"/> if the configuration was specified using a data annotation, <see langword="false"/> if not.</param>
-    /// <returns>The configured <see cref="BsonRepresentation"/> the property will be stored as.</returns>
-    public static BsonRepresentation? SetBsonRepresentation(
+    /// <returns>The <see cref="BsonRepresentationConfiguration"/> configured how data on the property will be stored within MongoDB.</returns>
+    public static BsonRepresentationConfiguration? SetBsonRepresentation(
         this IConventionProperty property,
         BsonType? bsonType,
         bool? allowOverflow,
@@ -168,8 +167,8 @@ public static class MongoPropertyExtensions
             return null;
         }
 
-        var representation = new BsonRepresentation(bsonType.Value, BsonAllowOverflowHelper.FromNullableBool(allowOverflow), BsonAllowTruncationHelper.FromNullableBool(allowTruncation));
-        property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation, fromDataAnnotation);
+        var representation = new BsonRepresentationConfiguration(bsonType.Value, allowOverflow, allowTruncation);
+        property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation.ToDictionary(), fromDataAnnotation);
         return representation;
     }
 

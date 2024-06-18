@@ -25,8 +25,6 @@ using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
-using BsonRepresentation = (Bson.BsonType BsonType, BsonAllowOverflow AllowOverflow, BsonAllowTruncation AllowTruncation);
-
 internal static class SerializationHelper
 {
     public static T? GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
@@ -97,7 +95,7 @@ internal static class SerializationHelper
             : typeSerializer;
     }
 
-    private static IBsonSerializer ApplyBsonRepresentation(BsonRepresentation representation, IBsonSerializer typeSerializer)
+    private static IBsonSerializer ApplyBsonRepresentation(BsonRepresentationConfiguration representation, IBsonSerializer typeSerializer)
     {
         if (typeSerializer is not IRepresentationConfigurable representationConfigurable)
         {
@@ -110,8 +108,8 @@ internal static class SerializationHelper
             return representationTypeSerializer;
         }
 
-        var allowOverflow = representation.AllowOverflow.ToNullableBool() ?? false;
-        var allowTruncation = representation.AllowTruncation.ToNullableBool() ?? representation.BsonType == BsonType.Decimal128;
+        var allowOverflow = representation.AllowOverflow ?? false;
+        var allowTruncation = representation.AllowTruncation ?? representation.BsonType == BsonType.Decimal128;
         return converterConfigurable.WithConverter(new RepresentationConverter(allowOverflow, allowTruncation));
     }
 
