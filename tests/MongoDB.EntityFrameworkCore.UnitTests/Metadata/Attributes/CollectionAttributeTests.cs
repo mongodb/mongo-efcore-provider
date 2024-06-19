@@ -29,8 +29,8 @@ public static class CollectionAttributeTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData(" \t\r\n")]
-    public static void Constructor_throws_argument_exception_when_empty(string name)
+    public static void Constructor_throws_argument_exception_when_empty(string? name)
     {
-        Assert.Throws<ArgumentException>(() => new CollectionAttribute(name));
+        Assert.Throws<ArgumentException>(() => new CollectionAttribute(name!));
     }
 }

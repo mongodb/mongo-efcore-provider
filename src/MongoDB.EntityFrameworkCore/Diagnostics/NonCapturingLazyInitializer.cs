@@ -12,7 +12,7 @@ namespace MongoDB.EntityFrameworkCore.Diagnostics;
 internal static class NonCapturingLazyInitializer
 {
     public static TValue EnsureInitialized<TParam, TValue>(
-        [NotNull] ref TValue? target,
+        ref TValue? target,
         TParam param,
         Func<TParam, TValue> valueFactory)
         where TValue : class

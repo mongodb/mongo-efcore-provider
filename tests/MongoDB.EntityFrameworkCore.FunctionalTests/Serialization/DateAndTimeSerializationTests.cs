@@ -105,6 +105,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
             using var db = SingleEntityDbContext.Create(collection);
             var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
+            Assert.NotNull(result.aNullableDateTime);
             Assert.Equal(expected.Value.ToBsonPrecision(), result.aNullableDateTime.Value.ToBsonPrecision());
         }
     }
@@ -195,6 +196,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
             using var db = SingleEntityDbContext.Create(collection);
             var result = db.Entities.FirstOrDefault();
             Assert.NotNull(result);
+            Assert.NotNull(result.aNullableDateTimeOffset);
             Assert.Equal(expected.Value, result.aNullableDateTimeOffset.Value);
         }
     }

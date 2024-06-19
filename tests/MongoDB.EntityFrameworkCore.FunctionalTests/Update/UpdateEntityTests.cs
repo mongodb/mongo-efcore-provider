@@ -127,7 +127,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
     {
         var collection =
-            _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
+            _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue!, updatedValue!);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

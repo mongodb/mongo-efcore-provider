@@ -46,10 +46,10 @@ internal static class SerializationHelper
         throw new InvalidOperationException($"Document element is missing for required non-nullable property '{property.Name}'.");
     }
 
-    public static T GetElementValue<T>(BsonDocument document, string elementName)
+    public static T? GetElementValue<T>(BsonDocument document, string elementName)
     {
         var serializationInfo = new BsonSerializationInfo(elementName, CreateTypeSerializer(typeof(T)), typeof(T));
-        if (TryReadElementValue(document, serializationInfo, out T value) || typeof(T).IsNullableType())
+        if (TryReadElementValue(document, serializationInfo, out T? value) || typeof(T).IsNullableType())
         {
             return value;
         }
@@ -155,7 +155,7 @@ internal static class SerializationHelper
     private static IBsonSerializer CreateNullableSerializer(Type elementType)
         => (IBsonSerializer)Activator.CreateInstance(typeof(NullableSerializer<>).MakeGenericType(elementType))!;
 
-    private static bool TryReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo, out T value)
+    private static bool TryReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo, out T? value)
     {
         BsonValue? rawValue;
         if (elementSerializationInfo.ElementPath == null)

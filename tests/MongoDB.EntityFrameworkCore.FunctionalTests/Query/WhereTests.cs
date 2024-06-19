@@ -152,7 +152,7 @@ public class WhereTests : IDisposable, IAsyncDisposable
     [Fact]
     public void Where_string_eq_with_param_null()
     {
-        string prm = null;
+        string? prm = null;
         var results = _db.Planets.Where(p => p.name == prm).ToArray();
         Assert.Empty(results);
     }

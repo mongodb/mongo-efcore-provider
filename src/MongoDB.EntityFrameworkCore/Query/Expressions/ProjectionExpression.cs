@@ -15,7 +15,7 @@ internal sealed class ProjectionExpression : Expression
 {
     public ProjectionExpression(
         Expression expression,
-        string alias,
+        string? alias,
         bool required)
     {
         Expression = expression;
@@ -25,7 +25,7 @@ internal sealed class ProjectionExpression : Expression
 
     public Expression Expression { get; }
 
-    public string Alias { get; }
+    public string? Alias { get; }
 
     public bool Required { get; }
 
