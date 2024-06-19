@@ -48,6 +48,19 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
         public DateTime lastModified { get; set; }
     }
 
+    class OwningEntity
+    {
+        public ObjectId _id { get; set; }
+        public string name { get; set; }
+        public OwnedEntity owned { get; set; }
+    }
+
+    class OwnedEntity
+    {
+        public string first { get; set; }
+        public string second { get; set; }
+    }
+
     [Fact]
     public void Update_simple_entity()
     {
@@ -90,6 +103,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(entity);
             db.SaveChanges();
+
             entity.session = Guid.NewGuid();
             entity.lastCount++;
             entity.lastModified = DateTime.UtcNow;
@@ -103,6 +117,52 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
             Assert.Equal(entity.session, foundEntity.session);
             Assert.Equal(entity.lastCount, foundEntity.lastCount);
             Assert.Equal(entity.lastModified.ToBsonPrecision(), foundEntity.lastModified.ToBsonPrecision());
+        }
+    }
+
+    [Fact]
+    public void Update_only_updates_modified_fields()
+    {
+        var collection = _tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+
+        var session2 = Guid.NewGuid();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new RealisticEntity
+            {
+                _id = ObjectId.GenerateNewId(),
+                session = Guid.NewGuid(),
+                lastCount = 1,
+                lastModified = DateTime.UtcNow.Subtract(TimeSpan.FromDays(5))
+            });
+            db.SaveChanges();
+        }
+
+        // Cause two updates to happen interleaved
+        {
+            using var db1 = SingleEntityDbContext.Create(collection);
+            var entity1 = db1.Entities.First();
+            entity1.lastCount++;
+
+            using var db2 = SingleEntityDbContext.Create(collection);
+            var entity2 = db2.Entities.First();
+            entity2.session = session2;
+
+            db1.SaveChanges();
+            db2.SaveChanges();
+
+            Assert.NotEqual(entity1.lastCount, entity2.lastCount);
+            Assert.NotEqual(entity1.session, entity2.session);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var entity = db.Entities.First();
+
+            // Ensure we have data from two interleaved updates
+            Assert.Equal(entity.session, session2);
+            Assert.Equal(2, entity.lastCount);
         }
     }
 
