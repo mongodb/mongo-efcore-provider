@@ -22,6 +22,7 @@ using Microsoft.EntityFrameworkCore.Scaffolding;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.EntityFrameworkCore.Design;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design;
 
