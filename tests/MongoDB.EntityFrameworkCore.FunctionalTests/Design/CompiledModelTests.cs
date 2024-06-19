@@ -21,6 +21,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Scaffolding;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.EntityFrameworkCore.Design;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design;
@@ -29,6 +30,13 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design;
 public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
     : IClassFixture<TemporaryDatabaseFixture>
 {
+    public enum TestEnum
+    {
+        A,
+        B,
+        C
+    }
+
     public class EveryType
     {
         public ObjectId id { get; set; }
@@ -45,6 +53,14 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
         public decimal aDecimal { get; set; }
         public float aFloat { get; set; }
         public double aDouble { get; set; }
+
+        public TestEnum anEnum { get; set; }
+
+        [BsonRepresentation(BsonType.String)]
+        public int anIntRepresentedAsAString { get; set; }
+
+        [BsonRepresentation(BsonType.Int32, AllowOverflow = true, AllowTruncation = true)]
+        public long aLongRepresentedAsAInt { get; set; }
 
         public string[] aStringArray { get; set; }
         public List<int> anIntList { get; set; }
@@ -103,6 +119,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
             aFloat = 11.12f,
             aGuid = Guid.NewGuid(),
             aLong = 678901,
+            aLongRepresentedAsAInt = 987654321,
             anInt = 23456,
             aShort = 129,
             aString = "Hello, World!",
@@ -125,9 +142,18 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
         {
             var (db, scope) = GetDesignTimeConfigured<SimpleContext>(configOptionsBuilder);
             var actual = db.EveryTypes.First(e => e.id == expected.id);
-            scope.Dispose();
             Assert.Equivalent(expected, actual);
-        }
+
+            var entity = db.Model.FindEntityType(typeof(EveryType));
+            Assert.NotNull(entity);
+            var property = entity.GetProperty(nameof(EveryType.anIntRepresentedAsAString));
+            Assert.NotNull(property);
+            var representation = property.GetBsonRepresentation();
+            Assert.NotNull(representation);
+            Assert.Equal(BsonType.String, representation.BsonType);
+
+            scope.Dispose();
+       }
     }
 
     private static IReadOnlyCollection<ScaffoldedFile> GenerateModel(SimpleContext context)

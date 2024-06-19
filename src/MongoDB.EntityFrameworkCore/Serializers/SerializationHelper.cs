@@ -19,7 +19,9 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Options;
 using MongoDB.Bson.Serialization.Serializers;
+using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
@@ -88,17 +90,30 @@ internal static class SerializationHelper
 
         var typeSerializer = CreateTypeSerializer(property.ClrType, property);
 
-        // Apply HasBsonType configuration if set
-        var bsonType = property.GetBsonType();
-        if (bsonType != null && typeSerializer is IRepresentationConfigurable representationConfigurable)
-        {
-            typeSerializer = representationConfigurable.WithRepresentation(bsonType.Value);
-        }
-
-        return typeSerializer;
+        return property.GetBsonRepresentation() is { } bsonRepresentation
+            ? ApplyBsonRepresentation(bsonRepresentation, typeSerializer)
+            : typeSerializer;
     }
 
-    private static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty property = null)
+    private static IBsonSerializer ApplyBsonRepresentation(BsonRepresentationConfiguration representation, IBsonSerializer typeSerializer)
+    {
+        if (typeSerializer is not IRepresentationConfigurable representationConfigurable)
+        {
+            return typeSerializer;
+        }
+
+        var representationTypeSerializer = representationConfigurable.WithRepresentation(representation.BsonType);
+        if (representationTypeSerializer is not IRepresentationConverterConfigurable converterConfigurable)
+        {
+            return representationTypeSerializer;
+        }
+
+        var allowOverflow = representation.AllowOverflow ?? false;
+        var allowTruncation = representation.AllowTruncation ?? representation.BsonType == BsonType.Decimal128;
+        return converterConfigurable.WithConverter(new RepresentationConverter(allowOverflow, allowTruncation));
+    }
+
+    private static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty? property = null)
         => type switch
         {
             _ when type == typeof(bool) => BooleanSerializer.Instance,

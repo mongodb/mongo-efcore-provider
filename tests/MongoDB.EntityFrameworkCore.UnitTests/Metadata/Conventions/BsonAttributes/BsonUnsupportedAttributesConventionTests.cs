@@ -64,27 +64,6 @@ public static class BsonUnsupportedAttributeConventionTests
     }
 
     [Fact]
-    public static void BsonRepresentation_is_not_supported_on_property()
-    {
-        using var db = SingleEntityDbContext.Create<EntityWithBsonRepresentationProperty>();
-
-        var ex = Assert.Throws<NotSupportedException>(()
-            => db.GetProperty((EntityWithBsonRepresentationProperty e) => e.AttributedSerializer));
-        Assert.Contains(
-            $"'{nameof(EntityWithBsonRepresentationProperty)}.{nameof(EntityWithBsonRepresentationProperty.AttributedSerializer)}'",
-            ex.Message);
-        Assert.Contains($"'{nameof(BsonRepresentationAttribute)}'", ex.Message);
-    }
-
-    class EntityWithBsonRepresentationProperty
-    {
-        public int _id { get; set; }
-
-        [BsonRepresentation(BsonType.Binary)]
-        public string AttributedSerializer { get; set; }
-    }
-
-    [Fact]
     public static void BsonDefaultValue_is_not_supported_on_property()
     {
         using var db = SingleEntityDbContext.Create<EntityWithBsonDefaultValueProperty>();

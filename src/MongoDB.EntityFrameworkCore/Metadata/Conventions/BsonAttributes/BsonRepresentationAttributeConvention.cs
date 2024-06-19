@@ -13,15 +13,45 @@
  * limitations under the License.
  */
 
+using System;
+using System.Reflection;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 
 /// <summary>
-/// Recognize <see cref="BsonRepresentationAttribute"/> when applied to properties of an entity
-/// to ensure the model will throw as the attribute is not supported in the EF provider.
+/// A convention that configures the element name for entity properties based on an applied <see cref="BsonElementAttribute" /> for
+/// familiarity with the Mongo C# Driver.
 /// </summary>
-/// <param name="dependencies">The <see cref="ProviderConventionSetBuilderDependencies"/> conventions depend upon.</param>
-public sealed class BsonRepresentationAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)
-    : NotSupportedPropertyAttributeConvention<BsonRepresentationAttribute>(dependencies);
+public sealed class BsonRepresentationAttributeConvention : PropertyAttributeConventionBase<BsonRepresentationAttribute>
+{
+    /// <summary>
+    /// Creates a <see cref="BsonRepresentationAttributeConvention" />.
+    /// </summary>
+    /// <param name="dependencies">Parameter object containing dependencies for this convention.</param>
+    public BsonRepresentationAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)
+        : base(dependencies)
+    {
+    }
+
+    /// <inheritdoc />
+    protected override void ProcessPropertyAdded(
+        IConventionPropertyBuilder propertyBuilder,
+        BsonRepresentationAttribute attribute,
+        MemberInfo clrMember,
+        IConventionContext context)
+    {
+        if (!Enum.IsDefined(attribute.Representation))
+        {
+            throw new NotSupportedException(
+                $"Property '{clrMember.DeclaringType.ShortDisplayName()}.{clrMember.Name}' has {nameof(BsonRepresentationAttribute)} of {attribute.Representation} which a not supported type.");
+        }
+
+        propertyBuilder.HasBsonRepresentation(attribute.Representation, attribute.AllowOverflow, attribute.AllowTruncation);
+    }
+}

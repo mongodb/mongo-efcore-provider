@@ -47,7 +47,7 @@ public static class MongoAnnotationNames
     public const string NotSupportedAttributes = Prefix + nameof(NotSupportedAttributes);
 
     /// <summary>
-    /// The key for BsonType annotations.
+    /// The key for Bson Representation annotations.
     /// </summary>
-    public const string BsonType = Prefix + nameof(BsonType);
+    public const string BsonRepresentation = Prefix + nameof(BsonRepresentation);
 }

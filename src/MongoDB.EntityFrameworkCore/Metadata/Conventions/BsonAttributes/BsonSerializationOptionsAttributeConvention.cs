@@ -36,8 +36,8 @@ public sealed class BsonSerializationOptionsAttributeConvention(ProviderConventi
         MemberInfo clrMember,
         IConventionContext context)
     {
-        // DateTimeOptions are supported and it is a subclass of this so do not treat it as unsupported
-        if (attribute is BsonDateTimeOptionsAttribute) return;
+        // DateTimeOptions & BsonRepresentation are supported and are subclasses so do not treat them as unsupported
+        if (attribute is BsonDateTimeOptionsAttribute or BsonRepresentationAttribute) return;
 
         base.ProcessPropertyAdded(propertyBuilder, attribute, clrMember, context);
     }

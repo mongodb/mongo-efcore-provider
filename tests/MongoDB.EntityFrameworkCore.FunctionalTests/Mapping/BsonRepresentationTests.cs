@@ -30,7 +30,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         => Exerciser.TestConvertedIdRoundTrip(tempDatabase,
             ObjectId.GenerateNewId().ToString(),
             a => new ObjectId(a),
-            mb => mb.Entity<EntityWithId<string>>().Property(e => e._id).HasBsonType(BsonType.ObjectId));
+            mb => mb.Entity<EntityWithId<string>>().Property(e => e._id).HasBsonRepresentation(BsonType.ObjectId));
 
     public static readonly TheoryData<decimal> ConstrainedDecimalData
         = new() {0m, 1m, -1m, 1.1m, -1.1m};
@@ -41,7 +41,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         => Exerciser.TestConvertedValueRoundTrip(tempDatabase,
             expectedValue,
             a => new Decimal128(a),
-            mb => mb.Entity<EntityWithId<ObjectId>>().Property(e => e._id).HasBsonType(BsonType.Decimal128));
+            mb => mb.Entity<EntityWithId<ObjectId>>().Property(e => e._id).HasBsonRepresentation(BsonType.Decimal128));
 
     public static readonly TheoryData<int> IntData
         = new() {0, 1, -1, int.MaxValue, int.MinValue};
@@ -111,7 +111,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
             converter: a => a.ToBsonPrecision().ToUniversalTime(),
             mb => mb.Entity<EntityWithValue<DateTime>>().Property(e => e.value)
                 .HasDateTimeKind(DateTimeKind.Local)
-                .HasBsonType(BsonType.String));
+                .HasBsonRepresentation(BsonType.String));
 
     public static readonly TheoryData<DateTime> UtcDateTimeData
         = new() { DateTime.UtcNow, DateTime.UtcNow.AddYears(500), DateTime.UtcNow.AddYears(-500) };
@@ -124,7 +124,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
             a => a.ToBsonPrecision(),
             mb => mb.Entity<EntityWithValue<DateTime>>().Property(e => e.value)
                 .HasDateTimeKind(DateTimeKind.Utc)
-                .HasBsonType(BsonType.DateTime),
+                .HasBsonRepresentation(BsonType.DateTime),
             d => d.ToBsonPrecision());
 
     private void TestValueRoundTripToString<T>(
@@ -134,7 +134,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         Exerciser.TestConvertedValueRoundTrip(tempDatabase,
             expectedValue,
             a => a?.ToString(),
-            mb => mb.Entity<EntityWithValue<T>>().Property(e => e.value).HasBsonType(BsonType.String),
+            mb => mb.Entity<EntityWithValue<T>>().Property(e => e.value).HasBsonRepresentation(BsonType.String),
             caller: caller);
     }
 }

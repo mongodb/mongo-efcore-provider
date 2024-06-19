@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
@@ -58,12 +59,14 @@ public static class MongoPropertyExtensions
     }
 
     /// <summary>
-    /// Returns the <see cref="BsonType"/> the property is stored as when targeting MongoDB.
+    /// Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the element name for.</param>
-    /// <returns>Returns the <see cref="BsonType"/> the property is stored as.</returns>
-    public static BsonType? GetBsonType(this IReadOnlyProperty property)
-        => (BsonType?)property[MongoAnnotationNames.BsonType];
+    /// <returns>Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as.</returns>
+    public static BsonRepresentationConfiguration? GetBsonRepresentation(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.BsonRepresentation] is IDictionary<string, object> value
+            ? BsonRepresentationConfiguration.CreateFrom(value)
+            : null;
 
     internal static bool IsOwnedTypeKey(this IProperty property)
     {
@@ -118,37 +121,66 @@ public static class MongoPropertyExtensions
         => property.FindAnnotation(MongoAnnotationNames.ElementName)?.GetConfigurationSource();
 
     /// <summary>
-    /// Sets the document <see cref="BsonType"/> that the property is stored as to when targeting MongoDB.
+    /// Sets the BSON representation for the property to configure how it is stored within MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IMutableProperty"/> to set the BsonType for.</param>
     /// <param name="bsonType">The <see cref="BsonType"/> this property should be stored as
     /// or <see langword="null" /> to unset the value and use the default.</param>
-    public static void SetBsonType(this IMutableProperty property, BsonType? bsonType)
-        => property.SetOrRemoveAnnotation(MongoAnnotationNames.BsonType, bsonType);
+    /// <param name="allowOverflow">Whether to allow overflow or not.</param>
+    /// <param name="allowTruncation">Whether to allow truncation or not.</param>
+    public static void SetBsonRepresentation(
+        this IMutableProperty property,
+        BsonType? bsonType,
+        bool? allowOverflow,
+        bool? allowTruncation)
+    {
+        if (bsonType == null)
+        {
+            property.RemoveAnnotation(MongoAnnotationNames.BsonRepresentation);
+            return;
+        }
+
+        var representation = new BsonRepresentationConfiguration(bsonType.Value, allowOverflow, allowTruncation);
+        property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation.ToDictionary());
+    }
 
     /// <summary>
-    /// Sets the document <see cref="BsonType"/> that the property is stored as to when targeting MongoDB.
+    /// Sets the BSON representation for the property to configure how it is stored within MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the BsonType for.</param>
     /// <param name="bsonType">The <see cref="BsonType"/> this property should be stored as
     /// or <see langword="null" /> to unset the value and use the default.</param>
+    /// <param name="allowOverflow">Whether to allow overflow or not.</param>
+    /// <param name="allowTruncation">Whether to allow truncation or not.</param>
     /// <param name="fromDataAnnotation"><see langword="true"/> if the configuration was specified using a data annotation, <see langword="false"/> if not.</param>
-    /// <returns>The configured <see cref="BsonType"/> the property will be stored as.</returns>
-    public static BsonType? SetBsonType(
+    /// <returns>The <see cref="BsonRepresentationConfiguration"/> configured how data on the property will be stored within MongoDB.</returns>
+    public static BsonRepresentationConfiguration? SetBsonRepresentation(
         this IConventionProperty property,
         BsonType? bsonType,
+        bool? allowOverflow,
+        bool? allowTruncation,
         bool fromDataAnnotation = false)
-        => (BsonType?)property.SetOrRemoveAnnotation(MongoAnnotationNames.BsonType, bsonType, fromDataAnnotation)?.Value;
+    {
+        if (bsonType == null)
+        {
+            property.RemoveAnnotation(MongoAnnotationNames.BsonRepresentation);
+            return null;
+        }
+
+        var representation = new BsonRepresentationConfiguration(bsonType.Value, allowOverflow, allowTruncation);
+        property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation.ToDictionary(), fromDataAnnotation);
+        return representation;
+    }
 
     /// <summary>
-    /// Gets the <see cref="ConfigurationSource" /> the <see cref="BsonType"/> that the property stored as to when targeting MongoDB.
+    /// Gets the <see cref="ConfigurationSource" /> of the <see cref="BsonType"/> for the property when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to obtain the storage <see cref="BsonType"/> for.</param>
     /// <returns>
     /// The <see cref="ConfigurationSource" /> the <see cref="BsonType"/> was specified by for this property.
     /// </returns>
-    public static ConfigurationSource? GetBsonTypeConfigurationSource(this IConventionProperty property)
-        => property.FindAnnotation(MongoAnnotationNames.BsonType)?.GetConfigurationSource();
+    public static ConfigurationSource? GetBsonRepresentationConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.BsonRepresentation)?.GetConfigurationSource();
 
     /// <summary>
     /// Sets the <see cref="DateTimeKind"/> of the DateTime property is mapped to when targeting MongoDB.
