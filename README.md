@@ -49,7 +49,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - Properties with typical CLR types (int, string, Guid, decimal), Mongo types (ObjectId, Decimal128)
 - Properties containing arrays and lists of simple CLR types
 - Owned entities (aka value types, sub-documents, embedded documents) both directly and within collections
-- BsonIgnore, BsonId, BsonDateTimeOptions, BsonElement and BsonRequired support
+- BsonIgnore, BsonId, BsonDateTimeOptions, BsonElement, BsonRepresentation and BsonRequired support
 - Value converters using `HasConversion`
 - Query and update logging including MQL (sensitive mode only)
 - Some mapping configuration options for DateTime
@@ -60,10 +60,10 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 A number of Entity Framework Core features are not currently supported but planned for future release. If you require use of these facilities
 in the mean-time consider using the existing [MongoDB C# Driver's](https://github.com/mongodb/mongo-csharp-driver) LINQ provider which supports them.
 
-### Planned for next releases
+### Planned for upcoming releases
 
-- Select projections must only contain server-translatable expressions
-- Sum, Average, Min, Max etc. are not supported at top level
+- Select projections with client-side operations
+- Sum, Average, Min, Max etc. support at top level
 - Transactions
 - Type discriminators
 - Additional mapping configuration options
