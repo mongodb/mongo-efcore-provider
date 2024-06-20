@@ -19,15 +19,9 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
+public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class Entity<TValue>
     {
         public ObjectId _id { get; set; }
@@ -48,23 +42,10 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
         public DateTime lastModified { get; set; }
     }
 
-    class OwningEntity
-    {
-        public ObjectId _id { get; set; }
-        public string name { get; set; }
-        public OwnedEntity owned { get; set; }
-    }
-
-    class OwnedEntity
-    {
-        public string first { get; set; }
-        public string second { get; set; }
-    }
-
     [Fact]
     public void Update_simple_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<SimpleEntity>();
         var entity = new SimpleEntity
         {
             _id = ObjectId.GenerateNewId(), name = "Before"
@@ -89,7 +70,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Update_realistic_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<RealisticEntity>();
 
         var entity = new RealisticEntity
         {
@@ -123,7 +104,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Update_only_updates_modified_fields()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<RealisticEntity>();
 
         var session2 = Guid.NewGuid();
 
@@ -186,8 +167,11 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
     {
+        ArgumentNullException.ThrowIfNull(initialValue);
+        ArgumentNullException.ThrowIfNull(updatedValue);
+
         var collection =
-            _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
+            tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
