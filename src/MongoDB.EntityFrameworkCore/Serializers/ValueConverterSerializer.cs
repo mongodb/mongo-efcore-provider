@@ -34,8 +34,6 @@ internal class ValueConverterSerializer<TActual, TStorage> : IBsonSerializer<TAc
 
     public Type ValueType => typeof(TActual);
 
-    public Type StorageType => typeof(TStorage);
-
     public TActual Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
     {
         var storage = _storageSerializer.Deserialize(context, args);
@@ -49,7 +47,7 @@ internal class ValueConverterSerializer<TActual, TStorage> : IBsonSerializer<TAc
     }
 
     object IBsonSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
-        => Deserialize(context, args);
+        => Deserialize(context, args)!;
 
     void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
         => Serialize(context, args, (TActual)value);

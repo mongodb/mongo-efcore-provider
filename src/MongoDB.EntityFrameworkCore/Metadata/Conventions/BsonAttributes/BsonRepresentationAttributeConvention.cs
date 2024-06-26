@@ -49,7 +49,7 @@ public sealed class BsonRepresentationAttributeConvention : PropertyAttributeCon
         if (!Enum.IsDefined(attribute.Representation))
         {
             throw new NotSupportedException(
-                $"Property '{clrMember.DeclaringType.ShortDisplayName()}.{clrMember.Name}' has {nameof(BsonRepresentationAttribute)} of {attribute.Representation} which a not supported type.");
+                $"Property '{clrMember.DeclaringType!.ShortDisplayName()}.{clrMember.Name}' has {nameof(BsonRepresentationAttribute)} of {attribute.Representation} which a not supported type.");
         }
 
         propertyBuilder.HasBsonRepresentation(attribute.Representation, attribute.AllowOverflow, attribute.AllowTruncation);
