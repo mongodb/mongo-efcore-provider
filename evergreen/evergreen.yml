@@ -612,7 +612,7 @@ buildvariants:
   matrix_spec:
     os: "ubuntu-2004"
   display_name: "SSDLC Reports"
-  tags: ["release-tag"]
+  tags: ["release_tag"]
   tasks:
     - name: generate-ssdlc-reports
       git_tag_only: true
