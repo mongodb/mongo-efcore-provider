@@ -4,4 +4,8 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="8.0.6"/>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.1"/>
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
+  </ItemGroup>
 </Project>
