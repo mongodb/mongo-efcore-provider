@@ -172,7 +172,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
 
         var collection =
             tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
-
+            
         {
             using var db = SingleEntityDbContext.Create(collection);
             var entity = new Entity<TValue>

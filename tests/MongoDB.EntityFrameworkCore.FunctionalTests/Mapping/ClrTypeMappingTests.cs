@@ -614,6 +614,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aList);
         Assert.Empty(actual.aList);
     }
 
@@ -658,6 +659,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aList);
         Assert.Empty(actual.aList);
     }
 
@@ -690,6 +692,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aListOfLists);
         Assert.Empty(actual.aListOfLists);
     }
 
@@ -735,6 +738,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aListOfLists);
         Assert.Empty(actual.aListOfLists);
     }
 
@@ -780,6 +784,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aListOfLists);
         Assert.Empty(actual.aListOfLists);
     }
 
@@ -1031,7 +1036,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
 
     private void ClrTypeMappingTestImpl<TValue>(TValue value)
     {
-        var collection = tempDatabase.CreateTemporaryCollection<Entity<TValue>>("ClrTypeMapping", typeof(TValue), value);
+        var collection = tempDatabase.CreateTemporaryCollection<Entity<TValue>>("ClrTypeMapping", typeof(TValue), value!);
         collection.InsertOne(new Entity<TValue>
         {
             _id = ObjectId.GenerateNewId(), Value = value

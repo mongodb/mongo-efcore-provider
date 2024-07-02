@@ -67,9 +67,9 @@ public class DecimalSerializationTests : BaseSerializationTests
     [InlineData("-912345.6781")]
     [InlineData("0")]
     [InlineData(null)]
-    public void Nullable_Decimal_round_trips(string expectedString)
+    public void Nullable_Decimal_round_trips(string? expectedString)
     {
-        Decimal? expected = Decimal.TryParse(expectedString, out var parsedDecimal) ? parsedDecimal : null;
+        decimal? expected = decimal.TryParse(expectedString, out var parsedDecimal) ? parsedDecimal : null;
 
         var collection =
             TempDatabase.CreateTemporaryCollection<NullableDecimalEntity>(nameof(Nullable_Decimal_round_trips) + expected);

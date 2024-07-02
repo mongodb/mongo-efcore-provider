@@ -70,7 +70,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : I
         collection.WriteTestDocs([
             new NonNullablePrimitiveList
             {
-                items = null
+                items = null!
             }
         ]);
         using var db = SingleEntityDbContext.Create(collection);

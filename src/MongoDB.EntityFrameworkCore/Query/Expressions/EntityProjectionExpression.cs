@@ -119,6 +119,8 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         Type? entityClrType,
         out IPropertyBase? propertyBase)
     {
+        ArgumentNullException.ThrowIfNull(member);
+
         var entityType = EntityType;
         if (entityClrType != null
             && !entityClrType.IsAssignableFrom(entityType.ClrType))
@@ -126,9 +128,11 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
             entityType = entityType.GetDerivedTypes().First(e => entityClrType.IsAssignableFrom(e.ClrType));
         }
 
-        var property = member.MemberInfo == null
-            ? entityType.FindProperty(member.Name)
-            : entityType.FindProperty(member.MemberInfo);
+        var property = member.MemberInfo != null
+            ? entityType.FindProperty(member.MemberInfo)
+            : member.Name != null
+                ? entityType.FindProperty(member.Name)
+                : null;
 
         if (property != null)
         {
@@ -136,9 +140,11 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
             return BindProperty(property);
         }
 
-        var navigation = member.MemberInfo == null
-            ? entityType.FindNavigation(member.Name)
-            : entityType.FindNavigation(member.MemberInfo);
+        var navigation = member.MemberInfo != null
+            ? entityType.FindNavigation(member.MemberInfo)
+            : member.Name != null
+                ? entityType.FindNavigation(member.Name)
+                : null;
 
         if (navigation != null)
         {

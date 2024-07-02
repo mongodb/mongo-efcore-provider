@@ -362,7 +362,7 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
         collection.WriteTestDocs([
             new SimpleNonNullableCollection
             {
-                children = null
+                children = null!
             }
         ]);
         using var db = SingleEntityDbContext.Create(collection);

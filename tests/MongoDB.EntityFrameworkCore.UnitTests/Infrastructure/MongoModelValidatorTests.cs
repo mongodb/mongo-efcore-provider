@@ -15,7 +15,6 @@
 
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
-using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -59,29 +58,6 @@ public static class MongoModelValidatorTests
     {
         public Decimal Longitude { get; set; }
         public Decimal Latitude { get; set; }
-    }
-
-    class UnsupportedBsonRepresentationEntity
-    {
-        public int _id { get; set; }
-
-        [BsonSerializer]
-        public string NoSerializerAllowed { get; set; }
-
-        [BsonRepresentation(BsonType.Array)]
-        public Decimal NoRepresentationAllowed { get; set; }
-    }
-
-    [Fact]
-    public static void Validate_throws_when_BsonRepresentationAttribute_is_on_entity_property()
-    {
-        using var db = SingleEntityDbContext.Create<UnsupportedBsonRepresentationEntity>();
-
-        var ex = Assert.Throws<NotSupportedException>(() => db.Model);
-        Assert.Contains(
-            $"'{nameof(UnsupportedBsonRepresentationEntity)}.{nameof(UnsupportedBsonRepresentationEntity.NoRepresentationAllowed)
-            }'", ex.Message);
-        Assert.Contains($"'{nameof(BsonRepresentationAttribute)}'", ex.Message);
     }
 
     [Fact]

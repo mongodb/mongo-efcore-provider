@@ -174,7 +174,29 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (long v) => v),
                 clrType: typeof(long));
 
-            var aShort = runtimeEntityType.AddProperty(
+            var aLongRepresentedAsAInt = runtimeEntityType.AddProperty(
+                "aLongRepresentedAsAInt",
+                typeof(long),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aLongRepresentedAsAInt", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<aLongRepresentedAsAInt>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: 0L);
+            aLongRepresentedAsAInt.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<long>(
+                    (long v1, long v2) => v1 == v2,
+                    (long v) => v.GetHashCode(),
+                    (long v) => v),
+                keyComparer: new ValueComparer<long>(
+                    (long v1, long v2) => v1 == v2,
+                    (long v) => v.GetHashCode(),
+                    (long v) => v),
+                providerValueComparer: new ValueComparer<long>(
+                    (long v1, long v2) => v1 == v2,
+                    (long v) => v.GetHashCode(),
+                    (long v) => v),
+                clrType: typeof(long));
+            aLongRepresentedAsAInt.AddAnnotation("Mongo:BsonRepresentation", new Dictionary<string, object> { ["BsonType"] = BsonType.Int32, ["AllowOverflow"] = true, ["AllowTruncation"] = true });
+
+           var aShort = runtimeEntityType.AddProperty(
                 "aShort",
                 typeof(short),
                 propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aShort", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
@@ -235,6 +257,27 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (String[] source) => source.ToArray()),
                 clrType: typeof(string[]));
 
+            var anEnum = runtimeEntityType.AddProperty(
+                "anEnum",
+                typeof(CompiledModelTests.TestEnum),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("anEnum", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<anEnum>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: CompiledModelTests.TestEnum.A);
+            anEnum.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<CompiledModelTests.TestEnum>(
+                    (CompiledModelTests.TestEnum v1, CompiledModelTests.TestEnum v2) => object.Equals((object)v1, (object)v2),
+                    (CompiledModelTests.TestEnum v) => v.GetHashCode(),
+                    (CompiledModelTests.TestEnum v) => v),
+                keyComparer: new ValueComparer<CompiledModelTests.TestEnum>(
+                    (CompiledModelTests.TestEnum v1, CompiledModelTests.TestEnum v2) => object.Equals((object)v1, (object)v2),
+                    (CompiledModelTests.TestEnum v) => v.GetHashCode(),
+                    (CompiledModelTests.TestEnum v) => v),
+                providerValueComparer: new ValueComparer<CompiledModelTests.TestEnum>(
+                    (CompiledModelTests.TestEnum v1, CompiledModelTests.TestEnum v2) => object.Equals((object)v1, (object)v2),
+                    (CompiledModelTests.TestEnum v) => v.GetHashCode(),
+                    (CompiledModelTests.TestEnum v) => v),
+                clrType: typeof(CompiledModelTests.TestEnum));
+
             var anInt = runtimeEntityType.AddProperty(
                 "anInt",
                 typeof(int),
@@ -275,6 +318,28 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (List<int> v) => v.GetHashCode(),
                     (List<int> v) => v),
                 clrType: typeof(List<int>));
+
+            var anIntRepresentedAsAString = runtimeEntityType.AddProperty(
+                "anIntRepresentedAsAString",
+                typeof(int),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("anIntRepresentedAsAString", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<anIntRepresentedAsAString>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: 0);
+            anIntRepresentedAsAString.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<int>(
+                    (int v1, int v2) => v1 == v2,
+                    (int v) => v,
+                    (int v) => v),
+                keyComparer: new ValueComparer<int>(
+                    (int v1, int v2) => v1 == v2,
+                    (int v) => v,
+                    (int v) => v),
+                providerValueComparer: new ValueComparer<int>(
+                    (int v1, int v2) => v1 == v2,
+                    (int v) => v,
+                    (int v) => v),
+                clrType: typeof(int));
+            anIntRepresentedAsAString.AddAnnotation("Mongo:BsonRepresentation", new Dictionary<string, object> { ["BsonType"] = BsonType.String, ["AllowOverflow"] = false, ["AllowTruncation"] = false });
 
             var key = runtimeEntityType.AddKey(
                 new[] { id });

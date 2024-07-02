@@ -112,7 +112,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
             case MethodCallExpression methodCallExpression
                 when methodCallExpression.Method.IsEFPropertyMethod()
                      && methodCallExpression.Arguments[1] is ConstantExpression propertyNameExpression:
-                var source = Visit(methodCallExpression.Arguments[0]);
+                var source = Visit(methodCallExpression.Arguments[0])
+                             ?? throw new InvalidOperationException("Unsupported source to EF.Property expression.");
                 var property = source.Type.GetProperties()
                     .First(prop => prop.Name == propertyNameExpression.GetConstantValue<string>());
                 var propertyExpression = Expression.Property(source, property);

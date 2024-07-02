@@ -107,7 +107,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             db.Entities.Add(person);
             db.SaveChanges();
 
-            person.City = null;
+            person.City = null!;
             db.SaveChanges();
         }
 
@@ -291,7 +291,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             db.Entities.Add(person);
             db.SaveChanges();
 
-            person.Cities = null;
+            person.Cities = null!;
             db.SaveChanges();
         }
 
