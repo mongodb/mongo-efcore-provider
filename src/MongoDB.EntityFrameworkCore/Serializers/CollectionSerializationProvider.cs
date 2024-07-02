@@ -26,7 +26,8 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 
 internal class CollectionSerializationProvider : BsonSerializationProviderBase
 {
-    /// <inheritdoc/>
+    public static readonly CollectionSerializationProvider Instance = new();
+
     public override IBsonSerializer GetSerializer(Type type, IBsonSerializerRegistry serializerRegistry)
     {
         ArgumentNullException.ThrowIfNull(type);

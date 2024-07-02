@@ -93,6 +93,16 @@ internal static class TypeExtensions
         }
     }
 
+    internal static bool HasInterface(this Type type, Type[] interfaces)
+    {
+        var typeToConsider = !type.IsGenericType || type.IsGenericTypeDefinition
+            ? type
+            : type.GetGenericTypeDefinition();
+
+        return interfaces.Contains(typeToConsider) ||
+               typeToConsider.GetInterfaces().Any(i => i.IsGenericType && interfaces.Contains(i.GetGenericTypeDefinition()));
+    }
+
     /// <summary>
     /// Create a nullable version of a <see cref="Type"/>.
     /// </summary>

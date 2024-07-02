@@ -31,6 +31,19 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
     : TypeMappingSource(dependencies)
 {
+    private static readonly Type[] SupportedCollectionInterfaces =
+    [
+        typeof(IList<>),
+        typeof(IReadOnlyList<>),
+        typeof(IEnumerable<>)
+    ];
+
+    private static readonly Type[] SupportedDictionaryInterfaces =
+    [
+        typeof(IDictionary<,>),
+        typeof(IReadOnlyDictionary<,>)
+    ];
+
     /// <inheritdoc/>
     protected override CoreTypeMapping? FindMapping(in TypeMappingInfo mappingInfo)
     {
@@ -76,9 +89,12 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
 
         if (clrType is {IsGenericType: true, IsGenericTypeDefinition: false})
         {
-            var genericTypeDefinition = clrType.GetGenericTypeDefinition();
+            if (clrType.HasInterface(SupportedDictionaryInterfaces))
+            {
+                return CreateDictionaryTypeMapping(clrType);
+            }
 
-            if (IsTypeOrHasInterface(genericTypeDefinition, SupportedCollectionTypes, SupportedCollectionInterfaces))
+            if (clrType.HasInterface(SupportedCollectionInterfaces))
             {
                 return CreateCollectionTypeMapping(clrType, elementType);
             }
@@ -87,39 +103,21 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
         return null;
     }
 
-    private static bool IsTypeOrHasInterface(Type genericTypeDefinition, Type[] supportedTypes, Type[] supportedInterfaces)
-        => supportedTypes.Contains(genericTypeDefinition)
-           || supportedInterfaces.Contains(genericTypeDefinition)
-           || genericTypeDefinition.GetInterfaces().Any(i => i.IsGenericType && supportedInterfaces.Contains(i.GetGenericTypeDefinition()));
-
-    private static readonly Type[] SupportedCollectionTypes =
-    [
-        typeof(List<>),
-        typeof(ReadOnlyCollection<>),
-        typeof(Collection<>),
-        typeof(ObservableCollection<>)
-    ];
-
-    private static readonly Type[] SupportedCollectionInterfaces =
-    [
-        typeof(IList<>),
-        typeof(IReadOnlyList<>),
-        typeof(IEnumerable<>)
-    ];
-
-    private MongoTypeMapping? CreateCollectionTypeMapping(Type clrType, Type elementType)
+    private MongoTypeMapping? CreateCollectionTypeMapping(Type collectionType, Type elementType)
     {
         var elementMappingInfo = new TypeMappingInfo(elementType);
-        var elementMapping = FindPrimitiveMapping(elementMappingInfo) ?? FindCollectionMapping(elementMappingInfo);
+        var elementMapping = FindMapping(elementMappingInfo);
         return elementMapping == null
             ? null
-            : new MongoTypeMapping(clrType, CreateCollectionComparer(elementMapping, clrType, elementType));
+            : new MongoTypeMapping(collectionType, CreateCollectionComparer(elementMapping, collectionType, elementType));
     }
 
-    private static ValueComparer? CreateCollectionComparer(CoreTypeMapping elementMapping, Type collectionType, Type elementType)
+    private static ValueComparer? CreateCollectionComparer(
+        CoreTypeMapping elementMapping,
+        Type collectionType,
+        Type elementType)
     {
-        var modelClrType = collectionType;
-        var typeToInstantiate = FindTypeToInstantiate();
+        var typeToInstantiate = FindCollectionTypeToInstantiate(collectionType, elementType);
 
         return (ValueComparer?)Activator.CreateInstance(
             elementType.IsNullableValueType()
@@ -129,31 +127,68 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
                     ? typeof(ListOfValueTypesComparer<,>).MakeGenericType(typeToInstantiate, elementType)
                     : typeof(ListOfReferenceTypesComparer<,>).MakeGenericType(typeToInstantiate, elementType),
             elementMapping.Comparer.ToNullableComparer(elementType)!);
+    }
 
-        Type FindTypeToInstantiate()
+    private static Type FindCollectionTypeToInstantiate(Type collectionType, Type elementType)
+    {
+        if (collectionType.IsArray)
         {
-            if (modelClrType.IsArray)
-            {
-                return modelClrType;
-            }
-
-            var listOfT = typeof(List<>).MakeGenericType(elementType);
-
-            if (modelClrType.IsAssignableFrom(listOfT))
-            {
-                if (!modelClrType.IsAbstract)
-                {
-                    var constructor = modelClrType.GetDeclaredConstructor(null);
-                    if (constructor?.IsPublic == true)
-                    {
-                        return modelClrType;
-                    }
-                }
-
-                return listOfT;
-            }
-
-            return modelClrType;
+            return collectionType;
         }
+
+        var listOfT = typeof(List<>).MakeGenericType(elementType);
+
+        if (collectionType.IsAssignableFrom(listOfT))
+        {
+            if (!collectionType.IsAbstract)
+            {
+                var constructor = collectionType.GetDeclaredConstructor(null);
+                if (constructor?.IsPublic == true)
+                {
+                    return collectionType;
+                }
+            }
+
+            return listOfT;
+        }
+
+        return collectionType;
+    }
+
+    private MongoTypeMapping? CreateDictionaryTypeMapping(Type dictionaryType)
+    {
+        var genericArguments = dictionaryType.GenericTypeArguments;
+        if (genericArguments[0] != typeof(string))
+        {
+            return null;
+        }
+
+        var elementType = genericArguments[1];
+        var elementMappingInfo = new TypeMappingInfo(elementType);
+        var elementMapping = FindPrimitiveMapping(elementMappingInfo)
+                             ?? FindCollectionMapping(elementMappingInfo);
+
+        var isReadOnly = dictionaryType.GetGenericTypeDefinition() == typeof(ReadOnlyDictionary<,>);
+
+        return elementMapping == null
+            ? null
+            : new MongoTypeMapping(
+                dictionaryType, CreateStringDictionaryComparer(elementMapping, elementType, dictionaryType, isReadOnly));
+    }
+
+    private static ValueComparer CreateStringDictionaryComparer(
+        CoreTypeMapping elementMapping,
+        Type elementType,
+        Type dictType,
+        bool readOnly = false)
+    {
+        var unwrappedType = elementType.UnwrapNullableType();
+
+        return (ValueComparer)Activator.CreateInstance(
+            elementType == unwrappedType
+                ? typeof(StringDictionaryComparer<,>).MakeGenericType(elementType, dictType)
+                : typeof(NullableStringDictionaryComparer<,>).MakeGenericType(unwrappedType, dictType),
+            elementMapping.Comparer,
+            readOnly)!;
     }
 }

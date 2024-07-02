@@ -144,6 +144,45 @@ public class CollectionSerializationTests : BaseSerializationTests
     }
 
 
+    public static readonly TheoryData<string[][]> ArrayOfArraysData =
+    [
+        [],
+        [
+            new [] { "a", "b", "c" },
+            new [] { "d" }
+        ]
+    ];
+
+    [Theory]
+    [MemberData(nameof(ArrayOfArraysData))]
+    public void String_array_of_arrays_round_trips(string[][] expected)
+    {
+        var collection =
+            TempDatabase.CreateTemporaryCollection<StringArrayOfArraysEntity>(nameof(String_array_of_arrays_round_trips)
+                                                                              + expected.Length);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new StringArrayOfArraysEntity
+            {
+                arrayOfStringArray = expected
+            });
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entities.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equal(expected, result.arrayOfStringArray);
+        }
+    }
+
+    class StringArrayOfArraysEntity : BaseIdEntity
+    {
+        public string[][] arrayOfStringArray { get; set; }
+    }
+
     [Theory]
     [InlineData]
     [InlineData("abc", "def", "ghi", "and the rest")]

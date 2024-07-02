@@ -139,7 +139,10 @@ internal static class SerializationHelper
             _ when type.IsEnum => EnumSerializer.Create(type),
             {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
                 => CreateNullableSerializer(type.GetGenericArguments()[0]),
-            {IsGenericType: true} or {IsArray: true} => new CollectionSerializationProvider().GetSerializer(type),
+            {IsGenericType: true} when DictionarySerializationProvider.Supports(type)
+                => DictionarySerializationProvider.Instance.GetSerializer(type),
+            {IsGenericType: true} or {IsArray: true}
+                => CollectionSerializationProvider.Instance.GetSerializer(type),
 
             _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'."),
         };
