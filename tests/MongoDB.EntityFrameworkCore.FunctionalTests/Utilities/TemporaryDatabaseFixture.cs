@@ -34,7 +34,7 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
 
     public IMongoDatabase MongoDatabase { get; }
 
-    public IMongoCollection<T> CreateTemporaryCollection<T>(string prefix, params object[] values)
+    public IMongoCollection<T> CreateTemporaryCollection<T>(string prefix, params object?[] values)
     {
         var valuesSuffix = string.Join('+', values.Select(v =>
         {

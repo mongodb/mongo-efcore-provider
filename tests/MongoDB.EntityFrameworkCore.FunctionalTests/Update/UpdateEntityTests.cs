@@ -167,9 +167,6 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
 
     private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
     {
-        ArgumentNullException.ThrowIfNull(initialValue);
-        ArgumentNullException.ThrowIfNull(updatedValue);
-
         var collection =
             tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
             
