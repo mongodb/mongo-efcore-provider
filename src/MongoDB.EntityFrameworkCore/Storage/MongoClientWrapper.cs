@@ -24,8 +24,10 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -39,6 +41,8 @@ public class MongoClientWrapper : IMongoClientWrapper
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
     private readonly IMongoClient _client;
     private readonly IMongoDatabase _database;
+    private readonly bool _wrapSaveChangesInTransaction;
+
     private string DatabaseName => _database.DatabaseNamespace.DatabaseName;
 
     /// <summary>
@@ -57,6 +61,10 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         _client = GetOrCreateMongoClient(options, serviceProvider);
         _database = _client.GetDatabase(options!.DatabaseName);
+
+        // Ideally this would be in the driver and check version numbers as well
+        var serverSupportsTransactions = _client.Cluster.Description.Type is ClusterType.ReplicaSet or ClusterType.Sharded;
+        _wrapSaveChangesInTransaction = serverSupportsTransactions;
     }
 
     /// <summary>
@@ -72,9 +80,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         log = () => { };
 
         if (executableQuery.Cardinality != ResultCardinality.Enumerable)
-        {
             return ExecuteScalar<T>(executableQuery);
-        }
 
         var queryable = (IMongoQueryable<T>)executableQuery.Provider.CreateQuery<T>(executableQuery.Query);
         log = () => _commandLogger.ExecutedMqlQuery(executableQuery);
@@ -114,20 +120,21 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <returns>The number of documents modified.</returns>
     public long SaveUpdates(IEnumerable<MongoUpdate> updates)
     {
-        var stopwatch = new Stopwatch();
         using var session = _client.StartSession();
-        long documentsAffected = 0;
+        if (_wrapSaveChangesInTransaction) session.StartTransaction();
 
-        foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
+        long documentsAffected;
+        try
         {
-            stopwatch.Restart();
-            var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = collection.BulkWrite(session, batch.Models);
-            stopwatch.Stop();
-            _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
-            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
+            documentsAffected = WriteBatches(updates, session);
+        }
+        catch
+        {
+            if (session.IsInTransaction) session.AbortTransaction();
+            throw;
         }
 
+        if (session.IsInTransaction) session.CommitTransaction();
         return documentsAffected;
     }
 
@@ -139,8 +146,44 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <returns>A <see cref="Task"/> that, when resolved, gives the number of documents modified.</returns>
     public async Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
     {
-        var stopwatch = new Stopwatch();
         using var session = await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (_wrapSaveChangesInTransaction) session.StartTransaction();
+
+        long documentsAffected;
+        try
+        {
+            documentsAffected = await WriteBatchesAsync(updates, session, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (session.IsInTransaction) await session.AbortTransactionAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
+        if (session.IsInTransaction) await session.CommitTransactionAsync(cancellationToken).ConfigureAwait(false);
+        return documentsAffected;
+    }
+
+    private long WriteBatches(IEnumerable<MongoUpdate> updates, IClientSessionHandle session)
+    {
+        var stopwatch = new Stopwatch();
+        long documentsAffected = 0;
+
+        foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
+        {
+            stopwatch.Restart();
+            var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
+            var result = collection.BulkWrite(session, batch.Models);
+            _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
+            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
+        }
+
+        return documentsAffected;
+    }
+
+    private async Task<long> WriteBatchesAsync(IEnumerable<MongoUpdate> updates, IClientSessionHandle session, CancellationToken cancellationToken)
+    {
+        var stopwatch = new Stopwatch();
         long documentsAffected = 0;
 
         foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
@@ -148,7 +191,6 @@ public class MongoClientWrapper : IMongoClientWrapper
             stopwatch.Restart();
             var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
             var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken).ConfigureAwait(false);
-            stopwatch.Stop();
             _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
             documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
         }
