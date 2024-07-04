@@ -118,6 +118,7 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// </summary>
     /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
     /// <returns>The number of documents modified.</returns>
+    /// <exception cref="DbUpdateConcurrencyException">Is thrown when concurrency failures occur during the updates.</exception>
     public long SaveUpdates(IEnumerable<MongoUpdate> updates)
     {
         using var session = _client.StartSession();
@@ -144,6 +145,7 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
     /// <returns>A <see cref="Task"/> that, when resolved, gives the number of documents modified.</returns>
+    /// <exception cref="DbUpdateConcurrencyException">Is thrown when concurrency failures occur during the updates.</exception>
     public async Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
     {
         using var session = await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -175,7 +177,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
             var result = collection.BulkWrite(session, batch.Models);
             _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
-            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
+            documentsAffected += AssertWritesApplied(collection, result, batch);
         }
 
         return documentsAffected;
@@ -192,10 +194,25 @@ public class MongoClientWrapper : IMongoClientWrapper
             var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
             var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken).ConfigureAwait(false);
             _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
-            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
+            documentsAffected += AssertWritesApplied(collection, result, batch);
         }
 
         return documentsAffected;
+    }
+
+    private static long AssertWritesApplied(IMongoCollection<BsonDocument> collection, BulkWriteResult<BsonDocument> result, MongoUpdateBatch batch)
+    {
+        var modifiedVariance = batch.Modified - result.ModifiedCount;
+        var insertedVariance = batch.Inserts - result.InsertedCount;
+        var deletedVariance = batch.Deletes - result.DeletedCount;
+
+        if (deletedVariance != 0 || insertedVariance != 0 || modifiedVariance != 0)
+        {
+            throw new DbUpdateConcurrencyException($"Conflicts were detected when performing updates to '{collection.CollectionNamespace.FullName}'. " +
+                $"Did not perform {modifiedVariance} modifications, {insertedVariance} insertions, and {deletedVariance} deletions.");
+        }
+
+        return result.ModifiedCount + result.InsertedCount + result.DeletedCount;
     }
 
     /// <inheritdoc />
