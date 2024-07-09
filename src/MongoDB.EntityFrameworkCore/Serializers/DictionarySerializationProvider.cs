@@ -67,7 +67,7 @@ internal class DictionarySerializationProvider : BsonSerializationProviderBase
             return CreateGenericSerializer(typeof(DictionaryInterfaceImplementerSerializer<,,>), [concreteType, keyType, valueType], serializerRegistry);
         }
 
-        var readOnlyDictionaryInterface= genericTypeDefinition == typeof(IReadOnlyDictionary<,>)
+        var readOnlyDictionaryInterface = genericTypeDefinition == typeof(IReadOnlyDictionary<,>)
             ? type
             : type.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>));
 
