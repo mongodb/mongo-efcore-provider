@@ -80,29 +80,33 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
     {
         var document = new BsonDocument();
         using var writer = new BsonDocumentWriter(document);
+
+        AcceptTemporaryValues(entry);
+        SetRowVersions(entry);
         WriteEntity(writer, entry);
 
-        var model = new InsertOneModel<BsonDocument>(document);
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), model);
+        return new MongoUpdate(entry.EntityType.GetCollectionName(), new InsertOneModel<BsonDocument>(document));
     }
 
     private static MongoUpdate ConvertDeleted(IUpdateEntry entry)
     {
-        var model = new DeleteOneModel<BsonDocument>(CreateWhereFilter(entry));
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), model);
+        return new MongoUpdate(entry.EntityType.GetCollectionName(), new DeleteOneModel<BsonDocument>(CreateWhereFilter(entry)));
     }
 
     private static MongoUpdate ConvertModified(IUpdateEntry entry)
     {
         var document = new BsonDocument();
         using var writer = new BsonDocumentWriter(document);
+
+        // Write the where filter before row version incrementation
+        var whereFilter = CreateWhereFilter(entry);
+
+        AcceptTemporaryValues(entry);
+        SetRowVersions(entry);
         WriteEntity(writer, entry);
 
-        var updateDocument = new BsonDocument("$set", document);
-        var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(updateDocument);
-
-        var model = new UpdateOneModel<BsonDocument>(CreateWhereFilter(entry), updateDefinition);
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), model);
+        var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>( new BsonDocument("$set", document));
+        return new MongoUpdate(entry.EntityType.GetCollectionName(), new UpdateOneModel<BsonDocument>(whereFilter, updateDefinition));
     }
 
     private static FilterDefinition<BsonDocument> CreateWhereFilter(IUpdateEntry entry)
@@ -112,6 +116,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
 
         var document = new BsonDocument();
         using var writer = new BsonDocumentWriter(document);
+
         writer.WriteStartDocument();
         WriteKeyProperties(writer, entry);
         WriteConcurrencyTokens(writer, entry);
@@ -140,8 +145,6 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
             propertyFilter = entry.IsModified;
         }
 
-        AcceptTemporaryValues(entry);
-
         writer.WriteStartDocument();
         WriteKeyProperties(writer, entry);
         WriteNonKeyProperties(writer, entry, propertyFilter);
@@ -159,6 +162,18 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         {
             if (entry.HasTemporaryValue(property))
                 entry.SetStoreGeneratedValue(property, entry.GetCurrentValue(property));
+        }
+    }
+
+    private static void SetRowVersions(IUpdateEntry entry)
+    {
+        foreach (var property in entry.EntityType.GetProperties())
+        {
+            if (RowVersion.IsARowVersion(property))
+            {
+                var rowVersion = RowVersion.GetFor(entry, property);
+                entry.SetStoreGeneratedValue(property, rowVersion.Next);
+            }
         }
     }
 
