@@ -26,6 +26,7 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
@@ -69,6 +70,7 @@ public class MongoModelValidator : ModelValidator
         base.Validate(model, logger);
 
         ValidateNoTypeDiscriminators(model);
+        ValidateMaximumOneRowVersionPerEntity(model);
         ValidateNoUnsupportedAttributesOrAnnotations(model);
         ValidateElementNames(model);
         ValidateNoShadowProperties(model);
@@ -88,6 +90,25 @@ public class MongoModelValidator : ModelValidator
             if (entityType.FindAnnotation(CoreAnnotationNames.DiscriminatorProperty) is { } property)
                 throw new NotSupportedException($"Type discriminator '{entityType.ShortName()}.{property.Value}' encountered.' "
                                                 + "Type discriminators are not supported.");
+        }
+    }
+
+    /// <summary>
+    /// Validate that each entity has a maximum of one RowVersion.
+    /// </summary>
+    /// <param name="model">The <see cref="IModel"/> to validate for correctness.</param>
+    /// <exception cref="NotSupportedException">When an entity type has more than one RowVersion.</exception>
+    private static void ValidateMaximumOneRowVersionPerEntity(IModel model)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            var rowVersionProperties = entityType.GetProperties().Where(RowVersion.IsARowVersion).ToArray();
+            if (rowVersionProperties.Length > 1)
+            {
+                var propertyNames = string.Join(", ", rowVersionProperties.Select(p => p.Name));
+                throw new NotSupportedException(
+                    $"Entity '{entityType.DisplayName()}' has multiple properties '{propertyNames}' configured as row versions. Only one row version property per entity is supported.");
+            }
         }
     }
 
