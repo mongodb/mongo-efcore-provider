@@ -32,7 +32,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     }
 
     [Fact]
-    public void SaveChanges_throws_DbUpdateConcurrencyException_when_modifing_entity_that_has_been_modified()
+    public void SaveChanges_throws_DbUpdateConcurrencyException_when_modifying_entity_that_has_been_modified()
     {
         var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
 
@@ -201,5 +201,38 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
         db2.Remove(entityInstance2);
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db2.SaveChangesAsync());
         Assert.Contains("1 deletion", ex.Message);
+    }
+
+    class ConcurrentEntity2
+    {
+        public ObjectId _id { get; set; }
+
+        [ConcurrencyCheck]
+        public string TextA { get; set; }
+
+        [ConcurrencyCheck]
+        public string TextB { get; set; }
+    }
+
+    [Fact]
+    public void SaveChanges_throws_DbUpdateConcurrencyException_when_modifying_two_checked_entity_that_has_been_modified()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity2>();
+
+        using var db1 = SingleEntityDbContext.Create(collection);
+        var entityInstance1 = new ConcurrentEntity2 { TextA = "Initial A on instance 1", TextB = "Initial B on instance 1"};
+        db1.Entities.Add(entityInstance1);
+        db1.SaveChanges();
+
+        {
+            using var db2 = SingleEntityDbContext.Create(collection);
+            var entityInstance2 = db2.Entities.First();
+            entityInstance2.TextA = "New A state on instance 2";
+            db2.SaveChanges();
+        }
+
+        entityInstance1.TextB = "Update B via instance 1";
+        var ex = Assert.Throws<DbUpdateConcurrencyException>(() => db1.SaveChanges());
+        Assert.Contains("1 modification", ex.Message);
     }
 }
