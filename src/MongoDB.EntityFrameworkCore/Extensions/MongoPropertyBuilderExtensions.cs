@@ -34,9 +34,8 @@ public static class MongoPropertyBuilderExtensions
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder HasElementName(
         this PropertyBuilder propertyBuilder,
-        string name)
+        string? name)
     {
-        ArgumentNullException.ThrowIfNull(name);
         propertyBuilder.Metadata.SetElementName(name);
         return propertyBuilder;
     }
@@ -50,7 +49,7 @@ public static class MongoPropertyBuilderExtensions
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder<TProperty> HasElementName<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
-        string name)
+        string? name)
         => (PropertyBuilder<TProperty>)HasElementName((PropertyBuilder)propertyBuilder, name);
 
     /// <summary>
