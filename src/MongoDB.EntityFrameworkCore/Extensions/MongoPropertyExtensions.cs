@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Storage;
 
 // ReSharper disable once CheckNamespace
 namespace Microsoft.EntityFrameworkCore;
@@ -53,6 +54,11 @@ public static class MongoPropertyExtensions
             {
                 return "";
             }
+        }
+
+        if (RowVersion.IsARowVersion(property))
+        {
+            return RowVersion.DefaultElementName;
         }
 
         return property.Name;

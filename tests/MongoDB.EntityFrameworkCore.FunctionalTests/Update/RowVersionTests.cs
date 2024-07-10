@@ -216,6 +216,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
         entityInstance1.Text = "Update via instance 1";
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db1.SaveChangesAsync());
         Assert.Contains("1 modification", ex.Message);
+        Assert.Equal("_version", db1.Entities.EntityType.FindProperty("Version")?.GetElementName());
     }
 
     [Fact]
