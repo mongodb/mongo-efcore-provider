@@ -81,8 +81,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         var document = new BsonDocument();
         using var writer = new BsonDocumentWriter(document);
 
-        AcceptTemporaryValues(entry);
-        SetRowVersions(entry);
+        SetStoreGeneratedValues(entry);
         WriteEntity(writer, entry);
 
         return new MongoUpdate(entry.EntityType.GetCollectionName(), new InsertOneModel<BsonDocument>(document));
@@ -98,15 +97,13 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         var document = new BsonDocument();
         using var writer = new BsonDocumentWriter(document);
 
-        // Write the where filter before row version incrementation
-        var whereFilter = CreateWhereFilter(entry);
-
-        AcceptTemporaryValues(entry);
-        SetRowVersions(entry);
+        var whereFilter = CreateWhereFilter(entry); // Before row version incrementation
+        SetStoreGeneratedValues(entry);
         WriteEntity(writer, entry);
 
-        var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>( new BsonDocument("$set", document));
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), new UpdateOneModel<BsonDocument>(whereFilter, updateDefinition));
+        var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(new BsonDocument("$set", document));
+        return new MongoUpdate(entry.EntityType.GetCollectionName(),
+            new UpdateOneModel<BsonDocument>(whereFilter, updateDefinition));
     }
 
     private static FilterDefinition<BsonDocument> CreateWhereFilter(IUpdateEntry entry)
@@ -124,9 +121,10 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
 
         return writer.Document.Elements
             .Select(element => Builders<BsonDocument>.Filter.Eq(element.Name, element.Value))
-            .Aggregate<FilterDefinition<BsonDocument>?, FilterDefinition<BsonDocument>?>(null, (current, nextFilter) => current == null
-                ? nextFilter
-                : Builders<BsonDocument>.Filter.And(current, nextFilter))!;
+            .Aggregate<FilterDefinition<BsonDocument>?, FilterDefinition<BsonDocument>?>(null, (current, nextFilter)
+                => current == null
+                    ? nextFilter
+                    : Builders<BsonDocument>.Filter.And(current, nextFilter))!;
     }
 
     private static void WriteConcurrencyTokens(IBsonWriter writer, IUpdateEntry entry)
@@ -156,23 +154,18 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         => entityType.FindPrimaryKey()!.Properties.FirstOrDefault(
             p => p.GetElementName().Length == 0 && p.IsOwnedCollectionShadowKey());
 
-    private static void AcceptTemporaryValues(IUpdateEntry entry)
+    private static void SetStoreGeneratedValues(IUpdateEntry entry)
     {
         foreach (var property in entry.EntityType.GetProperties())
         {
             if (entry.HasTemporaryValue(property))
-                entry.SetStoreGeneratedValue(property, entry.GetCurrentValue(property));
-        }
-    }
-
-    private static void SetRowVersions(IUpdateEntry entry)
-    {
-        foreach (var property in entry.EntityType.GetProperties())
-        {
-            if (RowVersion.IsARowVersion(property))
             {
-                var rowVersion = RowVersion.GetFor(entry, property);
-                entry.SetStoreGeneratedValue(property, rowVersion.Next);
+                entry.SetStoreGeneratedValue(property, entry.GetCurrentValue(property));
+            }
+
+            if (property.IsRowVersion())
+            {
+                entry.SetStoreGeneratedValue(property, entry.GetRowVersion(property));
             }
         }
     }
@@ -269,6 +262,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
                         WriteEntity(writer, embeddedEntry, _ => true);
                         ordinal++;
                     }
+
                     writer.WriteEndArray();
                 }
                 else

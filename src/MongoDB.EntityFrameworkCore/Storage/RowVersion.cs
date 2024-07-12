@@ -22,15 +22,12 @@ using Microsoft.EntityFrameworkCore.Update;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
-internal struct RowVersion
+internal static class RowVersion
 {
-    public object Current;
-    public object Next;
+    internal static object GetRowVersion(this IUpdateEntry entry, IProperty property)
+        => GetRowVersionInternalMethodInfo.MakeGenericMethod(property.ClrType).Invoke(null, [entry, property])!;
 
-    internal static RowVersion GetFor(IUpdateEntry entry, IProperty property)
-        => (RowVersion)GetForInternalMethodInfo.MakeGenericMethod(property.ClrType).Invoke(null, [entry, property])!;
-
-    internal static bool IsARowVersion(IReadOnlyProperty property)
+    internal static bool IsRowVersion(this IReadOnlyProperty property)
         => property is {IsConcurrencyToken: true, IsNullable: false, ValueGenerated: ValueGenerated.OnAddOrUpdate}
            && SupportedRowVersionTypes.Contains(property.ClrType);
 
@@ -38,13 +35,9 @@ internal struct RowVersion
 
     private static readonly Type[] SupportedRowVersionTypes = [typeof(int), typeof(uint), typeof(long), typeof(ulong)];
 
-    private static RowVersion GetForInternal<T>(IUpdateEntry entry, IProperty property) where T : INumber<T>
-    {
-        var current = entry.GetCurrentValue<T>(property);
-        if (current == T.Zero) current = T.One;
-        return new RowVersion {Current = current, Next = current + T.One};
-    }
+    private static T GetRowVersionInternal<T>(IUpdateEntry entry, IProperty property) where T : INumber<T>
+        => entry.GetCurrentValue<T>(property) + T.One;
 
-    private static readonly MethodInfo GetForInternalMethodInfo =
-        typeof(RowVersion).GetMethod(nameof(GetForInternal), BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly MethodInfo GetRowVersionInternalMethodInfo =
+        typeof(RowVersion).GetMethod(nameof(GetRowVersionInternal), BindingFlags.Static | BindingFlags.NonPublic)!;
 }

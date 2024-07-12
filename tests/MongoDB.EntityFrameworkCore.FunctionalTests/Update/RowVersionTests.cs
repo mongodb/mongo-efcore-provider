@@ -84,6 +84,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
         var entityInstance1 = new T {Text = "Initial state on instance 1"};
         db1.Entities.Add(entityInstance1);
         db1.SaveChanges();
+        var firstVersion = db1.Entry(entityInstance1).Property("Version").CurrentValue;
 
         {
             using var db2 = SingleEntityDbContext.Create(collection, mb);
@@ -95,6 +96,8 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
         entityInstance1.Text = "Update via instance 1";
         var ex = Assert.Throws<DbUpdateConcurrencyException>(() => db1.SaveChanges());
         Assert.Contains("1 modification", ex.Message);
+
+        Assert.Equal(firstVersion, db1.Entry(entityInstance1).Property("Version").CurrentValue);
     }
 
     [Fact]
@@ -126,6 +129,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
         var entityInstance1 = new T {Text = "Initial state on instance 1"};
         await db1.Entities.AddAsync(entityInstance1);
         await db1.SaveChangesAsync();
+        var firstVersion = db1.Entry(entityInstance1).Property("Version").CurrentValue;
 
         {
             await using var db2 = SingleEntityDbContext.Create(collection);
@@ -137,6 +141,8 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
         entityInstance1.Text = "Update via instance 1";
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db1.SaveChangesAsync());
         Assert.Contains("1 modification", ex.Message);
+
+        Assert.Equal(firstVersion, db1.Entry(entityInstance1).Property("Version").CurrentValue);
     }
 
     [Fact]
@@ -205,6 +211,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
         var entityInstance1 = new T {Text = "Initial state on instance 1"};
         await db1.Entities.AddAsync(entityInstance1);
         await db1.SaveChangesAsync();
+        var firstVersion = db1.Entry(entityInstance1).Property("Version").CurrentValue;
 
         {
             await using var db2 = SingleEntityDbContext.Create(collection);
@@ -216,7 +223,9 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
         entityInstance1.Text = "Update via instance 1";
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db1.SaveChangesAsync());
         Assert.Contains("1 modification", ex.Message);
+
         Assert.Equal("_version", db1.Entities.EntityType.FindProperty("Version")?.GetElementName());
+        Assert.Equal(firstVersion, db1.Entry(entityInstance1).Property("Version").CurrentValue);
     }
 
     [Fact]
@@ -370,5 +379,28 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
         db2.Remove(entityInstance2);
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db2.SaveChangesAsync());
         Assert.Contains("1 deletion", ex.Message);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_succeeds_after_rollback_by_setting_rowversion_original_value_to_latest()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<TimestampedULongEntity>("Applying rollbacked TimestampedULongEntity");
+
+        await using var db1 = SingleEntityDbContext.Create(collection);
+        var entityInstance1 = new TimestampedULongEntity {Text = "Original"};
+        await db1.Entities.AddAsync(entityInstance1);
+        await db1.SaveChangesAsync();
+
+        await using var db2 = SingleEntityDbContext.Create(collection);
+        var entityInstance2 = db2.Entities.First();
+
+        entityInstance1.Text = "Modified 1";
+        await db1.SaveChangesAsync();
+
+        entityInstance2.Text = "Modified 2";
+        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db2.SaveChangesAsync());
+
+        db2.Entry(entityInstance2).Property("Version").OriginalValue = entityInstance1.Version;
+        await db2.SaveChangesAsync();
     }
 }

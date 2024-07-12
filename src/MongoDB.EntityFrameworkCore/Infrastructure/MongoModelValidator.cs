@@ -102,7 +102,7 @@ public class MongoModelValidator : ModelValidator
     {
         foreach (var entityType in model.GetEntityTypes())
         {
-            var rowVersionProperties = entityType.GetProperties().Where(RowVersion.IsARowVersion).ToArray();
+            var rowVersionProperties = entityType.GetProperties().Where(RowVersion.IsRowVersion).ToArray();
             if (rowVersionProperties.Length > 1)
             {
                 var propertyNames = string.Join(", ", rowVersionProperties.Select(p => p.Name));

@@ -196,7 +196,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                 clrType: typeof(long));
             aLongRepresentedAsAInt.AddAnnotation("Mongo:BsonRepresentation", new Dictionary<string, object> { ["BsonType"] = BsonType.Int32, ["AllowOverflow"] = true, ["AllowTruncation"] = true });
 
-           var aShort = runtimeEntityType.AddProperty(
+            var aShort = runtimeEntityType.AddProperty(
                 "aShort",
                 typeof(short),
                 propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aShort", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
