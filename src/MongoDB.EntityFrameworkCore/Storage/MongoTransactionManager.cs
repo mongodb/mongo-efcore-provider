@@ -73,5 +73,5 @@ public class MongoTransactionManager : IDbContextTransactionManager, ITransactio
         => null;
 
     private static NotSupportedException CreateNotSupportedException()
-        => new("The MongoDB EF Core Provider does not support transactions.");
+        => new("The MongoDB EF Core Provider does not support explicit transactions at this time. SaveChanges and SaveChangesAsync are transactional by default.");
 }
