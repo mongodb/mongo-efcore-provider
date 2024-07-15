@@ -328,7 +328,8 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     private static string GetLogMessageByEventId(SpyLoggerProvider spyLogger, EventId? eventId = null)
     {
         eventId ??= MongoEventId.ExecutedMqlQuery;
-        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == "Microsoft.EntityFrameworkCore.Database.Command").Value;
+        var key = eventId.Value.Name.Substring(0, eventId.Value.Name.LastIndexOf('.'));
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == key).Value;
 
         return Assert.Single(logger.Records, log =>
             log.LogLevel == LogLevel.Information &&

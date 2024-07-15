@@ -21,7 +21,7 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class TransactionTests(TemporaryDatabaseFixture tempDatabase)
+public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class TextEntity
@@ -176,6 +176,42 @@ public class TransactionTests(TemporaryDatabaseFixture tempDatabase)
         {
             var db = SingleEntityDbContext.Create(collection);
             Assert.Equal(1, await db.Entities.CountAsync());
+            Assert.Equal("Change on 1", (await db.Entities.FirstAsync(e => e._id == idToChange)).text);
+        }
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_does_not_revert_when_transactions_disabled()
+    {
+        var collection = tempDatabase.GetExistingTemporaryCollection<ConcurrencyEntity>();
+        var idToChange = ObjectId.GenerateNewId();
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            await db.AddAsync(new ConcurrencyEntity {_id = idToChange, text = "Initial"});
+            await db.SaveChangesAsync();
+        }
+
+        {
+            var db1 = SingleEntityDbContext.Create(collection);
+            var copy1 = await db1.Entities.FirstAsync(e => e._id == idToChange);
+
+            var db2 = SingleEntityDbContext.Create(collection);
+            db2.Database.AutoTransactionBehavior = AutoTransactionBehavior.Never;
+            var copy2 = await db2.Entities.FirstAsync(e => e._id == idToChange);
+
+            copy1.text = "Change on 1";
+            await db1.SaveChangesAsync();
+
+            copy2.text = "Change on 2";
+            await db2.Entities.AddAsync(new ConcurrencyEntity { _id = ObjectId.GenerateNewId(), text = "Insert" });
+
+            await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db2.SaveChangesAsync());
+        }
+
+        {
+            var db = SingleEntityDbContext.Create(collection);
+            Assert.Equal(2, await db.Entities.CountAsync());
             Assert.Equal("Change on 1", (await db.Entities.FirstAsync(e => e._id == idToChange)).text);
         }
     }

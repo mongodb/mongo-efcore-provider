@@ -15,7 +15,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -24,10 +23,8 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
-using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -41,7 +38,6 @@ public class MongoClientWrapper : IMongoClientWrapper
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
     private readonly IMongoClient _client;
     private readonly IMongoDatabase _database;
-    private readonly bool _wrapSaveChangesInTransaction;
 
     private string DatabaseName => _database.DatabaseNamespace.DatabaseName;
 
@@ -61,10 +57,6 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         _client = GetOrCreateMongoClient(options, serviceProvider);
         _database = _client.GetDatabase(options!.DatabaseName);
-
-        // Ideally this would be in the driver and check version numbers as well
-        var serverSupportsTransactions = _client.Cluster.Description.Type is ClusterType.ReplicaSet or ClusterType.Sharded;
-        _wrapSaveChangesInTransaction = serverSupportsTransactions;
     }
 
     /// <summary>
@@ -113,107 +105,11 @@ public class MongoClientWrapper : IMongoClientWrapper
     public IMongoCollection<T> GetCollection<T>(string collectionName)
         => _database.GetCollection<T>(collectionName);
 
-    /// <summary>
-    /// Save the supplied <see cref="MongoUpdate"/> operations to the database.
-    /// </summary>
-    /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
-    /// <returns>The number of documents modified.</returns>
-    /// <exception cref="DbUpdateConcurrencyException">Is thrown when concurrency failures occur during the updates.</exception>
-    public long SaveUpdates(IEnumerable<MongoUpdate> updates)
-    {
-        using var session = _client.StartSession();
-        if (_wrapSaveChangesInTransaction) session.StartTransaction();
+    public IClientSessionHandle StartSession()
+        => _client.StartSession();
 
-        long documentsAffected;
-        try
-        {
-            documentsAffected = WriteBatches(updates, session);
-        }
-        catch
-        {
-            if (session.IsInTransaction) session.AbortTransaction();
-            throw;
-        }
-
-        if (session.IsInTransaction) session.CommitTransaction();
-        return documentsAffected;
-    }
-
-    /// <summary>
-    /// Save the supplied <see cref="MongoUpdate"/> operations to the database asynchronously.
-    /// </summary>
-    /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
-    /// <returns>A <see cref="Task"/> that, when resolved, gives the number of documents modified.</returns>
-    /// <exception cref="DbUpdateConcurrencyException">Is thrown when concurrency failures occur during the updates.</exception>
-    public async Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
-    {
-        using var session = await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (_wrapSaveChangesInTransaction) session.StartTransaction();
-
-        long documentsAffected;
-        try
-        {
-            documentsAffected = await WriteBatchesAsync(updates, session, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            if (session.IsInTransaction) await session.AbortTransactionAsync(cancellationToken).ConfigureAwait(false);
-            throw;
-        }
-
-        if (session.IsInTransaction) await session.CommitTransactionAsync(cancellationToken).ConfigureAwait(false);
-        return documentsAffected;
-    }
-
-    private long WriteBatches(IEnumerable<MongoUpdate> updates, IClientSessionHandle session)
-    {
-        var stopwatch = new Stopwatch();
-        long documentsAffected = 0;
-
-        foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
-        {
-            stopwatch.Restart();
-            var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = collection.BulkWrite(session, batch.Models);
-            _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
-            documentsAffected += AssertWritesApplied(collection, result, batch);
-        }
-
-        return documentsAffected;
-    }
-
-    private async Task<long> WriteBatchesAsync(IEnumerable<MongoUpdate> updates, IClientSessionHandle session, CancellationToken cancellationToken)
-    {
-        var stopwatch = new Stopwatch();
-        long documentsAffected = 0;
-
-        foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
-        {
-            stopwatch.Restart();
-            var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken).ConfigureAwait(false);
-            _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
-            documentsAffected += AssertWritesApplied(collection, result, batch);
-        }
-
-        return documentsAffected;
-    }
-
-    private static long AssertWritesApplied(IMongoCollection<BsonDocument> collection, BulkWriteResult<BsonDocument> result, MongoUpdateBatch batch)
-    {
-        var modifiedVariance = batch.Modified - result.ModifiedCount;
-        var insertedVariance = batch.Inserts - result.InsertedCount;
-        var deletedVariance = batch.Deletes - result.DeletedCount;
-
-        if (deletedVariance != 0 || insertedVariance != 0 || modifiedVariance != 0)
-        {
-            throw new DbUpdateConcurrencyException($"Conflicts were detected when performing updates to '{collection.CollectionNamespace.FullName}'. " +
-                $"Did not perform {modifiedVariance} modifications, {insertedVariance} insertions, and {deletedVariance} deletions.");
-        }
-
-        return result.ModifiedCount + result.InsertedCount + result.DeletedCount;
-    }
+    public async Task<IClientSessionHandle> StartSessionAsync(CancellationToken cancellationToken = default)
+        => await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
     public bool CreateDatabase()

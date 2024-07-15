@@ -47,21 +47,6 @@ public interface IMongoClientWrapper
     public IEnumerable<T> Execute<T>(MongoExecutableQuery executableQuery, out Action log);
 
     /// <summary>
-    /// Save updates to a MongoDB database.
-    /// </summary>
-    /// <param name="updates">The updates to save to the database.</param>
-    /// <returns>The number of affected documents.</returns>
-    public long SaveUpdates(IEnumerable<MongoUpdate> updates);
-
-    /// <summary>
-    /// Save updates to a MongoDB database asynchronously.
-    /// </summary>
-    /// <param name="updates">The updates to save to the database.</param>
-    /// <param name="cancellationToken"></param>
-    /// <returns>A task that when completed gives the number of affected documents.</returns>
-    public Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken);
-
-    /// <summary>
     /// Create a new database with the name specified in the connection options.
     /// </summary>
     /// <remarks>
@@ -120,4 +105,19 @@ public interface IMongoClientWrapper
     /// <c>true</c> if the database exists, <c>false</c> if it does not.
     /// </returns>
     public Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Start a new client session.
+    /// </summary>
+    /// <returns>The new <see cref="IClientSessionHandle"/>.</returns>
+    public IClientSessionHandle StartSession();
+
+    /// <summary>
+    /// Start a new client session asynchronously.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>
+    /// A <see cref="Task"/> that, when resolved, will contain the new <see cref="IClientSessionHandle"/>.
+    /// </returns>
+    public Task<IClientSessionHandle> StartSessionAsync(CancellationToken cancellationToken = default);
 }

@@ -46,21 +46,16 @@ public static class MongoEventId
     /// This event uses the <see cref="MongoQueryEventData" /> payload when used with a <see cref="DiagnosticSource" />.
     /// </para>
     /// </remarks>
-    public static readonly EventId ExecutedMqlQuery = MakeEventId(Id.ExecutedMqlQuery);
+    public static readonly EventId ExecutedMqlQuery = new((int)Id.ExecutedMqlQuery, DbLoggerCategory.Database.Command.Name + "." + Id.ExecutedMqlQuery);
 
     /// <summary>
     /// An bulk write has been executed.
     /// </summary>
     /// <remarks>
-    /// <para>This event is in the <see cref="DbLoggerCategory.Database.Command" /> category.</para>
+    /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
     /// <para>
     /// This event uses the <see cref="MongoQueryEventData" /> payload when used with a <see cref="DiagnosticSource" />.
     /// </para>
     /// </remarks>
-    public static readonly EventId ExecutedBulkWrite = MakeEventId(Id.ExecutedBulkWrite);
-
-    private static readonly string EventPrefix = DbLoggerCategory.Database.Command.Name + ".";
-
-    private static EventId MakeEventId(Id id)
-        => new((int)id, EventPrefix + id);
+    public static readonly EventId ExecutedBulkWrite = new((int)Id.ExecutedMqlQuery, DbLoggerCategory.Update.Name + "." + Id.ExecutedBulkWrite);
 }
