@@ -24,13 +24,22 @@ namespace MongoDB.EntityFrameworkCore.Diagnostics;
 using BulkWriteEventDefinition = EventDefinition<string, CollectionNamespace, long, long, long>;
 
 /// <summary>
-/// MongoDB-specific logging extensions.
+/// MongoDB-specific logging extensions for operations in the Update category.
 /// </summary>
-internal static partial class MongoLoggerExtensions
+internal static class MongoLoggerUpdateExtensions
 {
+    /// <summary>
+    /// Logs for the <see cref="MongoEventId.ExecutedBulkWrite" /> event.
+    /// </summary>
+    /// <param name="diagnostics">The diagnostics logger to use.</param>
+    /// <param name="duration">The amount of time the operation took.</param>
+    /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> this query is using.</param>
+    /// <param name="documentsInserted">The number of documents inserted.</param>
+    /// <param name="documentedDeleted">The number of documents deleted.</param>
+    /// <param name="documentsModified">The number of documents modified.</param>
     public static void ExecutedBulkWrite(
         this IDiagnosticsLogger<DbLoggerCategory.Update> diagnostics,
-        TimeSpan elapsed,
+        TimeSpan duration,
         CollectionNamespace collectionNamespace,
         long documentsInserted,
         long documentedDeleted,
@@ -42,7 +51,7 @@ internal static partial class MongoLoggerExtensions
         {
             definition.Log(
                 diagnostics,
-                elapsed.TotalMilliseconds.ToString(),
+                duration.TotalMilliseconds.ToString(),
                 collectionNamespace,
                 documentsInserted,
                 documentedDeleted,
@@ -54,7 +63,7 @@ internal static partial class MongoLoggerExtensions
             var eventData = new MongoBulkWriteEventData(
                 definition,
                 ExecutedBulkWrite,
-                elapsed,
+                duration,
                 collectionNamespace,
                 documentsInserted,
                 documentedDeleted,
@@ -78,11 +87,8 @@ internal static partial class MongoLoggerExtensions
     }
 
     private static BulkWriteEventDefinition LogExecutedBulkWrite(IDiagnosticsLogger logger)
-    {
-        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogExecutedBulkWrite;
-        if (definition == null)
-        {
-            definition = NonCapturingLazyInitializer.EnsureInitialized(
+        => (BulkWriteEventDefinition)
+            (((MongoLoggingDefinitions)logger.Definitions).LogExecutedBulkWrite ?? NonCapturingLazyInitializer.EnsureInitialized(
                 ref ((MongoLoggingDefinitions)logger.Definitions).LogExecutedBulkWrite,
                 logger,
                 static logger => new BulkWriteEventDefinition(
@@ -93,12 +99,5 @@ internal static partial class MongoLoggerExtensions
                     level => LoggerMessage.Define<string, CollectionNamespace, long, long, long>(
                         level,
                         MongoEventId.ExecutedBulkWrite,
-                        LogExecuteBulkWriteString)));
-        }
-
-        return (BulkWriteEventDefinition)definition;
-    }
-
-    private const string LogExecuteBulkWriteString =
-        "Executed Bulk Write ({elapsed} ms) Collection='{collectionNamespace}', Inserted={inserted}, Deleted={deleted}, Modified={modified}";
+                        "Executed Bulk Write ({elapsed} ms) Collection='{collectionNamespace}', Inserted={inserted}, Deleted={deleted}, Modified={modified}"))));
 }

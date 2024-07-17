@@ -27,15 +27,21 @@ namespace MongoDB.EntityFrameworkCore.Diagnostics;
 using MqlQueryEventDefinition = EventDefinition<string, CollectionNamespace, string>;
 
 /// <summary>
-/// MongoDB-specific logging extensions.
+/// MongoDB-specific logging extensions for operations in the Database category.
 /// </summary>
-internal static partial class MongoLoggerExtensions
+internal static class MongoLoggerDatabaseExtensions
 {
     internal static void ExecutedMqlQuery(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Command> diagnostics,
         MongoExecutableQuery mongoExecutableQuery)
         => ExecutedMqlQuery(diagnostics, mongoExecutableQuery.CollectionNamespace, mongoExecutableQuery.Provider.LoggedStages);
 
+    /// <summary>
+    /// Logs for the <see cref="MongoEventId.ExecutedMqlQuery" /> event.
+    /// </summary>
+    /// <param name="diagnostics">The diagnostics logger to use.</param>
+    /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> this query is using.</param>
+    /// <param name="loggedStages">The <see cref="BsonDocument"/> array containing the query definition.</param>
     public static void ExecutedMqlQuery(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Command> diagnostics,
         CollectionNamespace collectionNamespace,
@@ -86,26 +92,18 @@ internal static partial class MongoLoggerExtensions
     }
 
     private static MqlQueryEventDefinition LogExecutedMqlQuery(IDiagnosticsLogger logger)
-    {
-        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogExecutedMqlQuery;
-        if (definition == null)
-        {
-            definition = NonCapturingLazyInitializer.EnsureInitialized(
-                ref ((MongoLoggingDefinitions)logger.Definitions).LogExecutedMqlQuery,
-                logger,
-                static logger => new MqlQueryEventDefinition(
-                    logger.Options,
-                    MongoEventId.ExecutedMqlQuery,
-                    LogLevel.Information,
-                    "MongoEventId.ExecutedMqlQuery",
-                    level => LoggerMessage.Define<string, CollectionNamespace, string>(
-                        level,
-                        MongoEventId.ExecutedMqlQuery,
-                        LogExecutedMqlQueryString)));
-        }
-
-        return (MqlQueryEventDefinition)definition;
-    }
-
-    private const string LogExecutedMqlQueryString = "Executed MQL query{newLine}{collectionNamespace}.aggregate([{queryMql}])";
+        => (MqlQueryEventDefinition)
+            (((MongoLoggingDefinitions)logger.Definitions).LogExecutedMqlQuery
+             ?? NonCapturingLazyInitializer.EnsureInitialized(
+                 ref ((MongoLoggingDefinitions)logger.Definitions).LogExecutedMqlQuery,
+                 logger,
+                 static logger => new MqlQueryEventDefinition(
+                     logger.Options,
+                     MongoEventId.ExecutedMqlQuery,
+                     LogLevel.Information,
+                     "MongoEventId.ExecutedMqlQuery",
+                     level => LoggerMessage.Define<string, CollectionNamespace, string>(
+                         level,
+                         MongoEventId.ExecutedMqlQuery,
+                         "Executed MQL query{newLine}{collectionNamespace}.aggregate([{queryMql}])"))));
 }
