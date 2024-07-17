@@ -30,6 +30,6 @@ public class TransactionManagerTests(TemporaryDatabaseFixture tempDatabase)
         using var db = SingleEntityDbContext.Create(tempDatabase.CreateTemporaryCollection<SimpleEntity>());
 
         var ex = Assert.Throws<NotSupportedException>(() => db.Database.BeginTransaction());
-        Assert.Contains("does not support transactions", ex.Message);
+        Assert.Contains("does not support explicit transactions", ex.Message);
     }
 }
