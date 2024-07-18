@@ -13,7 +13,9 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
@@ -152,7 +154,6 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             message);
     }
 
-
     [Fact]
     public void First_writes_event_via_LoggerFactory_with_mql_when_sensitive_logging()
     {
@@ -237,65 +238,6 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     }
 
     [Fact]
-    public void BulkWrite_writes_log_via_LogTo_with_counts()
-    {
-        List<string> logs = [];
-
-        using var guidesFixture = new SampleGuidesFixture();
-        using var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, s =>
-        {
-            logs.Add(s);
-            testOutputHelper.WriteLine(s);
-        });
-
-        db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
-        foreach (var planet in db.Planets.Where(m => m.hasRings))
-        {
-            planet.hasRings = false;
-        }
-
-        db.Planets.Add(new Planet
-        {
-            name = "Proxima Centauri d", hasRings = false, orderFromSun = -1
-        });
-
-        Assert.Equal(7, db.SaveChanges());
-
-        var log = Assert.Single(logs, l => l.Contains("MongoEventId.ExecutedBulkWrite"));
-
-        Assert.Contains("Executed Bulk Write", log);
-        Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", log);
-        Assert.Contains("Inserted=1, Deleted=2, Modified=4", log);
-    }
-
-    [Fact]
-    public void BulkWrite_writes_event_via_LoggerFactory_with_counts()
-    {
-        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
-
-        using var guidesFixture = new SampleGuidesFixture();
-        using var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
-
-        db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
-        foreach (var planet in db.Planets.Where(m => m.hasRings))
-        {
-            planet.hasRings = false;
-        }
-
-        db.Planets.Add(new Planet
-        {
-            name = "Proxima Centauri d", hasRings = false, orderFromSun = -1
-        });
-
-        Assert.Equal(7, db.SaveChanges());
-
-        var message = GetLogMessageByEventId(spyLogger, MongoEventId.ExecutedBulkWrite);
-        Assert.Contains("Executed Bulk Write", message);
-        Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", message);
-        Assert.Contains("Inserted=1, Deleted=2, Modified=4", message);
-    }
-
-    [Fact]
     public void Single_writes_event_via_LoggerFactory_with_mql_even_when_linq_driver_throws()
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
@@ -325,6 +267,161 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             message);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task SaveChanges_writes_events_to_log_via_LogTo_with_counts(bool fail, bool async)
+    {
+        List<string> logs = [];
+
+        await using var guidesFixture = new SampleGuidesFixture();
+        await using var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, s =>
+        {
+            logs.Add(s);
+            testOutputHelper.WriteLine(s);
+        });
+
+        db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
+        foreach (var planet in db.Planets.Where(m => m.hasRings))
+        {
+            planet.hasRings = false;
+        }
+
+        var newPlanetId = fail
+            ? ObjectId.Parse("621ff30d2a3e781873fcb661")
+            : ObjectId.GenerateNewId();
+        db.Planets.Add(new Planet {_id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1});
+
+        if (!fail)
+        {
+            var result = async ? await db.SaveChangesAsync() : db.SaveChanges();
+            Assert.Equal(7, result);
+        }
+        else
+        {
+            if (async)
+            {
+                await Assert.ThrowsAsync<MongoBulkWriteException<BsonDocument>>(() => db.SaveChangesAsync());
+            }
+            else
+            {
+                Assert.Throws<MongoBulkWriteException<BsonDocument>>(() => db.SaveChanges());
+            }
+        }
+
+        var usingTransactions = db.Database.AutoTransactionBehavior != AutoTransactionBehavior.Never;
+        if (usingTransactions)
+        {
+            Assert.Contains("Beginning transaction", AssertSingleLogEntry(logs, MongoEventId.TransactionStarting));
+            Assert.Contains("Began transaction", AssertSingleLogEntry(logs, MongoEventId.TransactionStarted));
+        }
+
+        var executingBulkLog = Assert.Single(logs, l => l.Contains("MongoEventId.ExecutingBulkWrite"));
+        Assert.Contains("Executing Bulk Write", executingBulkLog);
+        Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", executingBulkLog);
+        Assert.Contains("Insertions=1, Deletions=2, Modifications=4", executingBulkLog);
+
+        if (!fail)
+        {
+            var executedBulkLog = Assert.Single(logs, l => l.Contains("MongoEventId.ExecutedBulkWrite"));
+            Assert.Contains("Executed Bulk Write", executedBulkLog);
+            Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", executedBulkLog);
+            Assert.Contains("Inserted=1, Deleted=2, Modified=4", executedBulkLog);
+        }
+
+        if (usingTransactions)
+        {
+            if (fail)
+            {
+                Assert.Contains("Rolling back transaction.", AssertSingleLogEntry(logs, MongoEventId.TransactionRollingBack));
+                Assert.Contains("Rolled back transaction.", AssertSingleLogEntry(logs, MongoEventId.TransactionRolledBack));
+            }
+            else
+            {
+                Assert.Contains("Committing transaction.", AssertSingleLogEntry(logs, MongoEventId.TransactionCommitting));
+                Assert.Contains("Committed transaction.", AssertSingleLogEntry(logs, MongoEventId.TransactionCommitted));
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task SaveChanges_writes_events_via_LoggerFactory_with_counts(bool fail, bool async)
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+
+        await using var guidesFixture = new SampleGuidesFixture();
+        await using var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
+
+        db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));
+        foreach (var planet in db.Planets.Where(m => m.hasRings))
+        {
+            planet.hasRings = false;
+        }
+
+        var newPlanetId = fail
+            ? ObjectId.Parse("621ff30d2a3e781873fcb661")
+            : ObjectId.GenerateNewId();
+        db.Planets.Add(new Planet {_id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1});
+
+        if (!fail)
+        {
+            var result = async ? await db.SaveChangesAsync() : db.SaveChanges();
+            Assert.Equal(7, result);
+        }
+        else
+        {
+            if (async)
+            {
+                await Assert.ThrowsAsync<MongoBulkWriteException<BsonDocument>>(() => db.SaveChangesAsync());
+            }
+            else
+            {
+                Assert.Throws<MongoBulkWriteException<BsonDocument>>(() => db.SaveChanges());
+            }
+        }
+
+        var usingTransactions = db.Database.AutoTransactionBehavior != AutoTransactionBehavior.Never;
+        if (usingTransactions)
+        {
+            Assert.Contains("Beginning transaction", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarting));
+            Assert.Contains("Began transaction", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarted));
+        }
+
+        var executingBulkEvent = GetLogMessageByEventId(spyLogger, MongoEventId.ExecutingBulkWrite);
+        Assert.Contains("Executing Bulk Write", executingBulkEvent);
+        Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", executingBulkEvent);
+        Assert.Contains("Insertions=1, Deletions=2, Modifications=4", executingBulkEvent);
+
+        if (!fail)
+        {
+            var executedBulkEvent = GetLogMessageByEventId(spyLogger, MongoEventId.ExecutedBulkWrite);
+            Assert.Contains("Executed Bulk Write", executedBulkEvent);
+            Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'",
+                executedBulkEvent);
+            Assert.Contains("Inserted=1, Deleted=2, Modified=4", executedBulkEvent);
+        }
+
+        if (usingTransactions)
+        {
+            if (fail)
+            {
+                Assert.Contains("Rolling back transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionRollingBack));
+                Assert.Contains("Rolled back transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionRolledBack));
+            }
+            else
+            {
+                Assert.Contains("Committing transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitting));
+                Assert.Contains("Committed transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitted));
+            }
+        }
+    }
+
     private static string GetLogMessageByEventId(SpyLoggerProvider spyLogger, EventId? eventId = null)
     {
         eventId ??= MongoEventId.ExecutedMqlQuery;
@@ -332,9 +429,11 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var logger = Assert.Single(spyLogger.Loggers, s => s.Key == key).Value;
 
         return Assert.Single(logger.Records, log =>
-            log.LogLevel == LogLevel.Information &&
             log.EventId == eventId &&
             log.Exception == null
         ).message;
     }
+
+    private static string AssertSingleLogEntry(List<string> logs, EventId eventId)
+        => Assert.Single(logs, l => l.Contains(nameof(MongoEventId) + "." + eventId.Name.Split('.').Last()));
 }

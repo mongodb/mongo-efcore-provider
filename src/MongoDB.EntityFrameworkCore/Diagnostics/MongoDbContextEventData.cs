@@ -15,52 +15,34 @@
 
 using System;
 using System.Diagnostics;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using MongoDB.Driver;
-
-namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
 /// <summary>
-/// A <see cref="DiagnosticSource" /> event payload class for MongoDB query events.
+/// A <see cref="DiagnosticSource" /> event payload class for events that reference a <see cref="DbContext" />.
 /// </summary>
 /// <remarks>
 /// See <see href="https://aka.ms/efcore-docs-diagnostics">Logging, events, and diagnostics</see> for more information and examples.
 /// </remarks>
-public class MongoQueryEventData : EventData
+public class MongoDbContextEventData : EventData
 {
     /// <summary>
     /// Constructs the event payload.
     /// </summary>
     /// <param name="eventDefinition">The event definition.</param>
     /// <param name="messageGenerator">A delegate that generates a log message for this event.</param>
-    /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> being queried.</param>
-    /// <param name="queryMql">The MQL representing the query.</param>
-    /// <param name="logSensitiveData">Indicates whether the application allows logging of sensitive data.</param>
-    public MongoQueryEventData(
+    /// <param name="context">The current <see cref="DbContext" />, or <see langword="null" /> if not known.</param>
+    public MongoDbContextEventData(
         EventDefinitionBase eventDefinition,
         Func<EventDefinitionBase, EventData, string> messageGenerator,
-        CollectionNamespace collectionNamespace,
-        string queryMql,
-        bool logSensitiveData)
+        DbContext? context)
         : base(eventDefinition, messageGenerator)
     {
-        CollectionNamespace = collectionNamespace;
-        QueryMql = queryMql;
-        LogSensitiveData = logSensitiveData;
+        Context = context;
     }
 
     /// <summary>
-    /// The <see cref="CollectionNamespace"/> being queried.
+    /// The current <see cref="DbContext" />, or <see langword="null" /> if it is not known.
     /// </summary>
-    public CollectionNamespace CollectionNamespace { get; }
-
-    /// <summary>
-    /// The MQL representing the query.
-    /// </summary>
-    public string QueryMql { get; }
-
-    /// <summary>
-    /// Indicates whether the application allows logging of sensitive data.
-    /// </summary>
-    public bool LogSensitiveData { get; }
+    public DbContext? Context { get; }
 }

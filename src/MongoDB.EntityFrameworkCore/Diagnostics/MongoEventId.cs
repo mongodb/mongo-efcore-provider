@@ -34,8 +34,19 @@ public static class MongoEventId
     private enum Id
     {
         ExecutedMqlQuery = CoreEventId.ProviderDesignBaseId,
-        ExecutedBulkWrite
+        ExecutingBulkWrite,
+        ExecutedBulkWrite,
+        TransactionStarting,
+        TransactionStarted,
+        TransactionCommitting,
+        TransactionCommitted,
+        TransactionRollingBack,
+        TransactionRolledBack,
+        TransactionError
     }
+
+    private static EventId MakeDatabaseCommandId(Id id)
+        => new((int)id, DbLoggerCategory.Database.Command.Name + "." + id);
 
     /// <summary>
     /// An MQL query has been executed.
@@ -46,16 +57,96 @@ public static class MongoEventId
     /// This event uses the <see cref="MongoQueryEventData" /> payload when used with a <see cref="DiagnosticSource" />.
     /// </para>
     /// </remarks>
-    public static readonly EventId ExecutedMqlQuery = new((int)Id.ExecutedMqlQuery, DbLoggerCategory.Database.Command.Name + "." + Id.ExecutedMqlQuery);
+    public static readonly EventId ExecutedMqlQuery = MakeDatabaseCommandId(Id.ExecutedMqlQuery);
+
+    private static EventId MakeUpdateId(Id id)
+        => new((int)id, DbLoggerCategory.Update.Name + "." + id);
 
     /// <summary>
-    /// An bulk write has been executed.
+    /// A bulk write is being executed.
     /// </summary>
     /// <remarks>
     /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
     /// <para>
-    /// This event uses the <see cref="MongoQueryEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
     /// </para>
     /// </remarks>
-    public static readonly EventId ExecutedBulkWrite = new((int)Id.ExecutedMqlQuery, DbLoggerCategory.Update.Name + "." + Id.ExecutedBulkWrite);
+    public static readonly EventId ExecutingBulkWrite = MakeUpdateId(Id.ExecutingBulkWrite);
+
+    /// <summary>
+    /// A bulk write has been executed.
+    /// </summary>
+    /// <remarks>
+    /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
+    /// <para>
+    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// </para>
+    /// </remarks>
+    public static readonly EventId ExecutedBulkWrite = MakeUpdateId(Id.ExecutedBulkWrite);
+
+    private static EventId MakeTransactionId(Id id)
+        => new((int)id, DbLoggerCategory.Database.Transaction.Name + "." + id);
+
+    /// <summary>
+    /// A MongoDB transaction is starting.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Database.Transaction" /> category.</para>
+    ///     <para>This event uses the <see cref="MongoTransactionStartingEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId TransactionStarting = MakeTransactionId(Id.TransactionStarting);
+
+    /// <summary>
+    /// A MongoDB transaction has been started.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Database.Transaction" /> category.</para>
+    ///     <para>This event uses the <see cref="MongoTransactionEndEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId TransactionStarted = MakeTransactionId(Id.TransactionStarted);
+
+    /// <summary>
+    /// A MongoDB transaction is committing.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Database.Transaction" /> category.</para>
+    ///     <para>This event uses the <see cref="MongoTransactionEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId TransactionCommitting = MakeTransactionId(Id.TransactionCommitting);
+
+    /// <summary>
+    /// A MongoDB transaction has been committed.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Database.Transaction" /> category.</para>
+    ///     <para>This event uses the <see cref="MongoTransactionEndEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId TransactionCommitted = MakeTransactionId(Id.TransactionCommitted);
+
+    /// <summary>
+    /// A MongoDB transaction is being rolled back.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Database.Transaction" /> category.</para>
+    ///     <para>This event uses the <see cref="MongoTransactionEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId TransactionRollingBack = MakeTransactionId(Id.TransactionRollingBack);
+
+    /// <summary>
+    /// A MongoDB transaction has been rolled back.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Database.Transaction" /> category.</para>
+    ///     <para>This event uses the <see cref="MongoTransactionEndEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId TransactionRolledBack = MakeTransactionId(Id.TransactionRolledBack);
+
+    /// <summary>
+    /// An error has occurred while using. committing, or rolling back a MongoDB transaction.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Database.Transaction" /> category.</para>
+    ///     <para>This event uses the <see cref="MongoTransactionErrorEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId TransactionError = MakeTransactionId(Id.TransactionError);
 }

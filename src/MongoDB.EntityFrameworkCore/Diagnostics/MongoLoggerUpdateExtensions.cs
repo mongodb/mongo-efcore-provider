@@ -29,23 +29,23 @@ using BulkWriteEventDefinition = EventDefinition<string, CollectionNamespace, lo
 internal static class MongoLoggerUpdateExtensions
 {
     /// <summary>
-    /// Logs for the <see cref="MongoEventId.ExecutedBulkWrite" /> event.
+    /// Logs for the <see cref="MongoEventId.ExecutingBulkWrite" /> event.
     /// </summary>
     /// <param name="diagnostics">The diagnostics logger to use.</param>
     /// <param name="duration">The amount of time the operation took.</param>
     /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> this query is using.</param>
-    /// <param name="documentsInserted">The number of documents inserted.</param>
-    /// <param name="documentedDeleted">The number of documents deleted.</param>
-    /// <param name="documentsModified">The number of documents modified.</param>
-    public static void ExecutedBulkWrite(
+    /// <param name="insertCount">The number of documents to insert.</param>
+    /// <param name="deleteCount">The number of documents to delete.</param>
+    /// <param name="modifyCount">The number of documents to modify.</param>
+    public static void ExecutingBulkWrite(
         this IDiagnosticsLogger<DbLoggerCategory.Update> diagnostics,
         TimeSpan duration,
         CollectionNamespace collectionNamespace,
-        long documentsInserted,
-        long documentedDeleted,
-        long documentsModified)
+        long insertCount,
+        long deleteCount,
+        long modifyCount)
     {
-        var definition = LogExecutedBulkWrite(diagnostics);
+        var definition = LogExecutingBulkWrite(diagnostics);
 
         if (diagnostics.ShouldLog(definition))
         {
@@ -53,9 +53,9 @@ internal static class MongoLoggerUpdateExtensions
                 diagnostics,
                 duration.TotalMilliseconds.ToString(),
                 collectionNamespace,
-                documentsInserted,
-                documentedDeleted,
-                documentsModified);
+                insertCount,
+                deleteCount,
+                modifyCount);
         }
 
         if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
@@ -65,10 +65,69 @@ internal static class MongoLoggerUpdateExtensions
                 ExecutedBulkWrite,
                 duration,
                 collectionNamespace,
-                documentsInserted,
-                documentedDeleted,
-                documentsModified,
-                diagnostics.ShouldLogSensitiveData());
+                insertCount,
+                deleteCount,
+                modifyCount);
+
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static BulkWriteEventDefinition LogExecutingBulkWrite(IDiagnosticsLogger logger)
+        => (BulkWriteEventDefinition)
+            (((MongoLoggingDefinitions)logger.Definitions).LogExecutingBulkWrite ?? NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogExecutingBulkWrite,
+                logger,
+                static logger => new BulkWriteEventDefinition(
+                    logger.Options,
+                    MongoEventId.ExecutingBulkWrite,
+                    LogLevel.Information,
+                    "MongoEventId.ExecutingBulkWrite",
+                    level => LoggerMessage.Define<string, CollectionNamespace, long, long, long>(
+                        level,
+                        MongoEventId.ExecutingBulkWrite,
+                        "Executing Bulk Write ({elapsed} ms) Collection='{collectionNamespace}', Insertions={inserted}, Deletions={deleted}, Modifications={modified}"))));
+
+    /// <summary>
+    /// Logs for the <see cref="MongoEventId.ExecutedBulkWrite" /> event.
+    /// </summary>
+    /// <param name="diagnostics">The diagnostics logger to use.</param>
+    /// <param name="duration">The amount of time the operation took.</param>
+    /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> this query is using.</param>
+    /// <param name="insertCount">The number of documents inserted.</param>
+    /// <param name="deleteCount">The number of documents deleted.</param>
+    /// <param name="modifyCount">The number of documents modified.</param>
+    public static void ExecutedBulkWrite(
+        this IDiagnosticsLogger<DbLoggerCategory.Update> diagnostics,
+        TimeSpan duration,
+        CollectionNamespace collectionNamespace,
+        long insertCount,
+        long deleteCount,
+        long modifyCount)
+    {
+        var definition = LogExecutedBulkWrite(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(
+                diagnostics,
+                duration.TotalMilliseconds.ToString(),
+                collectionNamespace,
+                insertCount,
+                deleteCount,
+                modifyCount);
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new MongoBulkWriteEventData(
+                definition,
+                ExecutedBulkWrite,
+                duration,
+                collectionNamespace,
+                insertCount,
+                deleteCount,
+                modifyCount);
 
             diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
         }
@@ -81,9 +140,9 @@ internal static class MongoLoggerUpdateExtensions
         return d.GenerateMessage(
             p.Elapsed.Milliseconds.ToString(),
             p.CollectionNamespace,
-            p.DocumentsInserted,
-            p.DocumentsDeleted,
-            p.DocumentsModified);
+            p.InsertCount,
+            p.DeleteCount,
+            p.ModifyCount);
     }
 
     private static BulkWriteEventDefinition LogExecutedBulkWrite(IDiagnosticsLogger logger)
