@@ -492,20 +492,20 @@ axes:
           VERSION: "5.0"
 
   - id: topology
-      display_name: Topology
-      values:
-        - id: "standalone"
-          display_name: Standalone
-          variables:
-            TOPOLOGY: "server"
-        - id: "replicaset"
-          display_name: Replica Set
-          variables:
-            TOPOLOGY: "replica_set"
-        - id: "sharded-cluster"
-          display_name: Sharded Cluster
-          variables:
-            TOPOLOGY: "sharded_cluster"
+    display_name: Topology
+    values:
+      - id: "standalone"
+        display_name: Standalone
+        variables:
+          TOPOLOGY: "server"
+      - id: "replicaset"
+        display_name: Replica Set
+        variables:
+          TOPOLOGY: "replica_set"
+      - id: "sharded-cluster"
+        display_name: Sharded Cluster
+        variables:
+          TOPOLOGY: "sharded_cluster"
 
   - id: os
     display_name: OS
