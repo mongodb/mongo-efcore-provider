@@ -15,10 +15,8 @@
 
 using System;
 using System.Diagnostics;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using MongoDB.Driver;
-using MongoDB.Driver.Core.Bindings;
+using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
@@ -35,44 +33,26 @@ public class MongoTransactionEventData : DbContextEventData
     /// </summary>
     /// <param name="eventDefinition">The event definition.</param>
     /// <param name="messageGenerator">A delegate that generates a log message for this event.</param>
-    /// <param name="transaction">The <see cref="CoreTransaction" />.</param>
-    /// <param name="context">The <see cref="DbContext" /> currently in use, or <see langword="null" /> if not known.</param>
-    /// <param name="transactionNumber">A transaction number issued by the MongoDB client.</param>
-    /// <param name="clientSession">The <see cref="IClientSession"/> being used to connect to MongoDB.</param>
+    /// <param name="transaction">The <see cref="MongoTransaction" />.</param>
     /// <param name="async">Indicates whether or not the transaction is being used asynchronously.</param>
     /// <param name="startTime">The start time of this event.</param>
     public MongoTransactionEventData(
         EventDefinitionBase eventDefinition,
         Func<EventDefinitionBase, EventData, string> messageGenerator,
-        CoreTransaction transaction,
-        DbContext? context,
-        long transactionNumber,
-        IClientSession clientSession,
+        MongoTransaction transaction,
         bool async,
         DateTimeOffset startTime)
-        : base(eventDefinition, messageGenerator, context)
+        : base(eventDefinition, messageGenerator, transaction.Context)
     {
         Transaction = transaction;
-        TransactionNumber = transactionNumber;
-        ClientSession = clientSession;
         IsAsync = async;
         StartTime = startTime;
     }
 
     /// <summary>
-    /// The <see cref="CoreTransaction" />.
+    /// The <see cref="MongoTransaction" />.
     /// </summary>
-    public CoreTransaction Transaction { get; }
-
-    /// <summary>
-    /// A transaction number issued by the MongoDB client.
-    /// </summary>
-    public long TransactionNumber { get; }
-
-    /// <summary>
-    /// The <see cref="IClientSession"/> being used to connect to MongoDB.
-    /// </summary>
-    public IClientSession ClientSession { get; }
+    public MongoTransaction Transaction { get; }
 
     /// <summary>
     /// Indicates whether or not the transaction is being used asynchronously.

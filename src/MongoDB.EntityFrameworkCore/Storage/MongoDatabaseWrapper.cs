@@ -26,7 +26,6 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using MongoDB.Driver.Core.Bindings;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 
@@ -49,6 +48,8 @@ public class MongoDatabaseWrapper : Database
     /// <param name="dependencies">The <see cref="DatabaseDependencies"/> this object should use.</param>
     /// <param name="currentDbContext">The <see cref="ICurrentDbContext"/> this should use to interact with the current context.</param>
     /// <param name="mongoClient">The <see cref="IMongoClientWrapper"/> this should use to interact with MongoDB.</param>
+    /// <param name="updateLogger">The <see cref="IDiagnosticsLogger"/> for <see cref="DbLoggerCategory.Update"/>.</param>
+    /// <param name="transactionLogger">The <see cref="IDiagnosticsLogger"/> for <see cref="DbLoggerCategory.Database.Transaction"/>.</param>
     public MongoDatabaseWrapper(
         DatabaseDependencies dependencies,
         ICurrentDbContext currentDbContext,
@@ -109,11 +110,11 @@ public class MongoDatabaseWrapper : Database
         }
         catch
         {
-            RollbackTransaction(session, transaction);
+            transaction.Rollback();
             throw;
         }
 
-        CommitTransaction(session, transaction);
+        transaction.Commit();
 
         return result;
     }
@@ -127,109 +128,31 @@ public class MongoDatabaseWrapper : Database
         {
             result = await operation(cancellationToken).ConfigureAwait(false);
         }
-        catch(Exception ex)
+        catch
         {
-            await RollbackTransactionAsync(session, transaction, cancellationToken).ConfigureAwait(false);
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
 
-        await CommitTransactionAsync(session, transaction, cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return result;
     }
 
-    private CoreTransaction StartTransaction(IClientSession session, bool async)
+    private MongoTransaction StartTransaction(IClientSession session, bool async)
     {
         var context = _currentDbContext.Context;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
+        var transactionId = Guid.NewGuid();
 
-        _transactionLogger.TransactionStarting(session, context, _transactionOptions, startTime);
+        _transactionLogger.TransactionStarting(session, context, _transactionOptions, transactionId, true, startTime);
 
         session.StartTransaction(_transactionOptions);
-        var transaction = session.WrappedCoreSession.CurrentTransaction;
 
-        _transactionLogger.TransactionStarted(session, context, transaction, async, startTime, stopwatch.Elapsed);
+        var transaction = new MongoTransaction(session, context, transactionId, _transactionLogger);
+        _transactionLogger.TransactionStarted(transaction, async, startTime, stopwatch.Elapsed);
+
         return transaction;
-    }
-
-    private void CommitTransaction(IClientSession session, CoreTransaction transaction)
-    {
-        var context = _currentDbContext.Context;
-        var startTime = DateTimeOffset.UtcNow;
-        var stopwatch = new Stopwatch();
-
-        _transactionLogger.TransactionCommitting(session, context, transaction, false, startTime);
-        try
-        {
-            session.CommitTransaction();
-        }
-        catch(Exception ex)
-        {
-            _transactionLogger.TransactionError(session, context, transaction, "Commit", ex, false, startTime, stopwatch.Elapsed);
-            throw;
-        }
-
-        _transactionLogger.TransactionCommitted(session, context, transaction, false, startTime, stopwatch.Elapsed);
-    }
-
-    private async Task CommitTransactionAsync(IClientSession session, CoreTransaction transaction, CancellationToken cancellationToken)
-    {
-        var context = _currentDbContext.Context;
-        var startTime = DateTimeOffset.UtcNow;
-        var stopwatch = new Stopwatch();
-
-        _transactionLogger.TransactionCommitting(session, context, transaction, true, startTime);
-        try
-        {
-            await session.CommitTransactionAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch(Exception ex)
-        {
-            _transactionLogger.TransactionError(session, context, transaction, "Commit", ex, true, startTime, stopwatch.Elapsed);
-            throw;
-        }
-
-        _transactionLogger.TransactionCommitted(session, context, transaction, true, startTime, stopwatch.Elapsed);
-    }
-
-    private void RollbackTransaction(IClientSession session, CoreTransaction transaction)
-    {
-        var context = _currentDbContext.Context;
-        var startTime = DateTimeOffset.UtcNow;
-        var stopwatch = new Stopwatch();
-
-        _transactionLogger.TransactionRollingBack(session, context, transaction, false, startTime);
-        try
-        {
-            session.AbortTransaction();
-        }
-        catch(Exception ex)
-        {
-            _transactionLogger.TransactionError(session, context, transaction, "Rollback", ex, false, startTime, stopwatch.Elapsed);
-            throw;
-        }
-
-        _transactionLogger.TransactionRolledBack(session, context, transaction, false, startTime, stopwatch.Elapsed);
-    }
-
-    private async Task RollbackTransactionAsync(IClientSession session, CoreTransaction transaction, CancellationToken cancellationToken)
-    {
-        var context = _currentDbContext.Context;
-        var startTime = DateTimeOffset.UtcNow;
-        var stopwatch = new Stopwatch();
-
-        _transactionLogger.TransactionRollingBack(session, context, transaction, true, startTime);
-        try
-        {
-            await session.AbortTransactionAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch(Exception ex)
-        {
-            _transactionLogger.TransactionError(session, context, transaction, "Rollback", ex, true, startTime, stopwatch.Elapsed);
-            throw;
-        }
-
-        _transactionLogger.TransactionRolledBack(session, context, transaction, true, startTime, stopwatch.Elapsed);
     }
 
     private int WriteBatches(IEnumerable<MongoUpdate> updates, IClientSessionHandle session)

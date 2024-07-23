@@ -59,14 +59,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         _database = _client.GetDatabase(options!.DatabaseName);
     }
 
-    /// <summary>
-    /// Execute a <see cref="MongoExecutableQuery"/> and return  a <see cref="Action"/>
-    /// that should be executed once the first item has been enumerated.
-    /// </summary>
-    /// <param name="executableQuery">The <see cref="MongoExecutableQuery"/> containing everything needed to run the query.</param>
-    /// <param name="log">The <see cref="Action"/> returned that will perform the MQL log once evaluation has happened.</param>
-    /// <typeparam name="T">The type of items being returned by the query.</typeparam>
-    /// <returns>An <see cref="IEnumerable{T}"/> containing the items returned by the query.</returns>
+    /// <inheritdoc />
     public IEnumerable<T> Execute<T>(MongoExecutableQuery executableQuery, out Action log)
     {
         log = () => { };
@@ -79,35 +72,15 @@ public class MongoClientWrapper : IMongoClientWrapper
         return queryable;
     }
 
-    private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
-    {
-        T? result;
-        try
-        {
-            result = executableQuery.Provider.Execute<T>(executableQuery.Query);
-        }
-        catch
-        {
-            _commandLogger.ExecutedMqlQuery(executableQuery);
-            throw;
-        }
-
-        _commandLogger.ExecutedMqlQuery(executableQuery);
-        return [result];
-    }
-
-    /// <summary>
-    /// Get an <see cref="IMongoCollection{T}"/> associated with a MongoDB collection by name.
-    /// </summary>
-    /// <param name="collectionName">The name of the collection that should be queried.</param>
-    /// <typeparam name="T">The type of items returned by the collection.</typeparam>
-    /// <returns>A <see cref="IMongoCollection{T}"/> for the named collection.</returns>
+    /// <inheritdoc />
     public IMongoCollection<T> GetCollection<T>(string collectionName)
         => _database.GetCollection<T>(collectionName);
 
+    /// <inheritdoc />
     public IClientSessionHandle StartSession()
         => _client.StartSession();
 
+    /// <inheritdoc />
     public async Task<IClientSessionHandle> StartSessionAsync(CancellationToken cancellationToken = default)
         => await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -153,6 +126,23 @@ public class MongoClientWrapper : IMongoClientWrapper
             Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)
         }, cancellationToken).ConfigureAwait(false);
         return await cursor.AnyAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
+    {
+        T? result;
+        try
+        {
+            result = executableQuery.Provider.Execute<T>(executableQuery.Query);
+        }
+        catch
+        {
+            _commandLogger.ExecutedMqlQuery(executableQuery);
+            throw;
+        }
+
+        _commandLogger.ExecutedMqlQuery(executableQuery);
+        return [result];
     }
 
     private static IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)

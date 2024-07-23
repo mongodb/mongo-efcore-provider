@@ -37,6 +37,7 @@ public class MongoTransactionStartingEventData : DbContextEventData
     /// <param name="context">The <see cref="DbContext" /> currently in use, or <see langword="null" /> if not known.</param>
     /// <param name="session">The <see cref="IClientSession"/> being used for this transaction.</param>
     /// <param name="transactionOptions">The transaction options.</param>
+    /// <param name="transactionId">A correlation ID that identifies the Entity Framework transaction being used.</param>
     /// <param name="async">Indicates whether or not the transaction is being used asynchronously.</param>
     /// <param name="startTime">The start time of this event.</param>
     public MongoTransactionStartingEventData(
@@ -45,12 +46,14 @@ public class MongoTransactionStartingEventData : DbContextEventData
         DbContext? context,
         IClientSession session,
         TransactionOptions transactionOptions,
+        Guid transactionId,
         bool async,
         DateTimeOffset startTime)
         : base(eventDefinition, messageGenerator, context)
     {
         Session = session;
         TransactionOptions = transactionOptions;
+        TransactionId = transactionId;
         IsAsync = async;
         StartTime = startTime;
     }
@@ -66,12 +69,17 @@ public class MongoTransactionStartingEventData : DbContextEventData
     public TransactionOptions TransactionOptions { get; }
 
     /// <summary>
+    /// A correlation ID that identifies the Entity Framework transaction being used.
+    /// </summary>
+    public Guid TransactionId { get; }
+
+    /// <summary>
     /// Indicates whether or not the transaction is being used asynchronously.
     /// </summary>
-    public virtual bool IsAsync { get; }
+    public bool IsAsync { get; }
 
     /// <summary>
     /// The start time of this event.
     /// </summary>
-    public virtual DateTimeOffset StartTime { get; }
+    public DateTimeOffset StartTime { get; }
 }

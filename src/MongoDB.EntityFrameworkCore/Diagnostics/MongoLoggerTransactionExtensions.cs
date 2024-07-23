@@ -18,7 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
-using MongoDB.Driver.Core.Bindings;
+using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
@@ -37,12 +37,16 @@ internal static class MongoLoggerTransactionExtensions
     /// <param name="session">The <see cref="IClientSession"/> this transaction is using.</param>
     /// <param name="context">The <see cref="DbContext"/> this transaction is for.</param>
     /// <param name="transactionOptions">The <see cref="TransactionOptions"/> this transaction is using.</param>
+    /// <param name="transactionId">A correlation ID that identifies the Entity Framework transaction being used.</param>
+    /// <param name="async">Indicates whether or not the transaction is being used asynchronously.</param>
     /// <param name="startTime">The time that the operation was started.</param>
     public static void TransactionStarting(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> diagnostics,
         IClientSession session,
         DbContext context,
         TransactionOptions transactionOptions,
+        Guid transactionId,
+        bool async,
         DateTimeOffset startTime)
     {
         var definition = LogBeginningTransaction(diagnostics);
@@ -60,7 +64,8 @@ internal static class MongoLoggerTransactionExtensions
                 context,
                 session,
                 transactionOptions,
-                true,
+                transactionId,
+                async,
                 startTime);
 
             diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
@@ -100,17 +105,13 @@ internal static class MongoLoggerTransactionExtensions
     /// Logs for the <see cref="MongoEventId.TransactionStarted" /> event.
     /// </summary>
     /// <param name="diagnostics">The diagnostics logger to use.</param>
-    /// <param name="session">The <see cref="IClientSession"/> this transaction is using.</param>
-    /// <param name="context">The <see cref="DbContext"/> this transaction is for.</param>
-    /// <param name="transaction">The <see cref="CoreTransaction"/> that was started.</param>
+    /// <param name="transaction">The <see cref="MongoTransaction"/> that was started.</param>
     /// <param name="async">True if this operation is asynchronous, false if it is synchronous.</param>
     /// <param name="startTime">The time that the operation was started.</param>
     /// <param name="duration">The elapsed time from when the operation was started.</param>
     public static void TransactionStarted(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> diagnostics,
-        IClientSession session,
-        DbContext context,
-        CoreTransaction transaction,
+        MongoTransaction transaction,
         bool async,
         DateTimeOffset startTime,
         TimeSpan duration)
@@ -128,9 +129,6 @@ internal static class MongoLoggerTransactionExtensions
                 definition,
                 TransactionStarted,
                 transaction,
-                context,
-                transaction.TransactionNumber,
-                session,
                 async,
                 startTime,
                 duration);
@@ -166,16 +164,12 @@ internal static class MongoLoggerTransactionExtensions
     /// Logs for the <see cref="MongoEventId.TransactionCommitting" /> event.
     /// </summary>
     /// <param name="diagnostics">The diagnostics logger to use.</param>
-    /// <param name="session">The <see cref="IClientSession"/> this transaction is using.</param>
-    /// <param name="context">The <see cref="DbContext"/> this transaction is for.</param>
-    /// <param name="transaction">The <see cref="CoreTransaction"/> that is being committed.</param>
+    /// <param name="transaction">The <see cref="MongoTransaction"/> that is being committed.</param>
     /// <param name="async">True if this operation is asynchronous, false if it is synchronous.</param>
     /// <param name="startTime">The time that the operation was started.</param>
     public static void TransactionCommitting(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> diagnostics,
-        IClientSession session,
-        DbContext context,
-        CoreTransaction transaction,
+        MongoTransaction transaction,
         bool async,
         DateTimeOffset startTime)
     {
@@ -192,9 +186,6 @@ internal static class MongoLoggerTransactionExtensions
                 definition,
                 (d, _) => ((EventDefinition)d).GenerateMessage(),
                 transaction,
-                context,
-                transaction.TransactionNumber,
-                session,
                 async,
                 startTime);
 
@@ -222,17 +213,13 @@ internal static class MongoLoggerTransactionExtensions
     /// Logs for the <see cref="MongoEventId.TransactionCommitted" /> event.
     /// </summary>
     /// <param name="diagnostics">The diagnostics logger to use.</param>
-    /// <param name="session">The <see cref="IClientSession"/> this transaction is using.</param>
-    /// <param name="context">The <see cref="DbContext"/> this transaction is for.</param>
-    /// <param name="transaction">The <see cref="CoreTransaction"/> that was committed.</param>
+    /// <param name="transaction">The <see cref="MongoTransaction"/> that was committed.</param>
     /// <param name="async">True if this operation is asynchronous, false if it is synchronous.</param>
     /// <param name="startTime">The time that the operation was started.</param>
     /// <param name="duration">The elapsed time from when the operation was started.</param>
     public static void TransactionCommitted(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> diagnostics,
-        IClientSession session,
-        DbContext context,
-        CoreTransaction transaction,
+        MongoTransaction transaction,
         bool async,
         DateTimeOffset startTime,
         TimeSpan duration)
@@ -250,9 +237,6 @@ internal static class MongoLoggerTransactionExtensions
                 definition,
                 (d, _) => ((EventDefinition)d).GenerateMessage(),
                 transaction,
-                context,
-                transaction.TransactionNumber,
-                session,
                 async,
                 startTime,
                 duration);
@@ -281,16 +265,12 @@ internal static class MongoLoggerTransactionExtensions
     /// Logs for the <see cref="MongoEventId.TransactionRollingBack" /> event.
     /// </summary>
     /// <param name="diagnostics">The diagnostics logger to use.</param>
-    /// <param name="session">The <see cref="IClientSession"/> this transaction is using.</param>
-    /// <param name="context">The <see cref="DbContext"/> this transaction is for.</param>
-    /// <param name="transaction">The <see cref="CoreTransaction"/> that is being rolled back.</param>
+    /// <param name="transaction">The <see cref="MongoTransaction"/> that is being rolled back.</param>
     /// <param name="async">True if this operation is asynchronous, false if it is synchronous.</param>
     /// <param name="startTime">The time that the operation was started.</param>
     public static void TransactionRollingBack(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> diagnostics,
-        IClientSession session,
-        DbContext context,
-        CoreTransaction transaction,
+        MongoTransaction transaction,
         bool async,
         DateTimeOffset startTime)
     {
@@ -307,9 +287,6 @@ internal static class MongoLoggerTransactionExtensions
                 definition,
                 (d, _) => ((EventDefinition)d).GenerateMessage(),
                 transaction,
-                context,
-                transaction.TransactionNumber,
-                session,
                 async,
                 startTime);
 
@@ -337,17 +314,13 @@ internal static class MongoLoggerTransactionExtensions
     /// Logs for the <see cref="MongoEventId.TransactionRolledBack" /> event.
     /// </summary>
     /// <param name="diagnostics">The diagnostics logger to use.</param>
-    /// <param name="session">The <see cref="IClientSession"/> this transaction is using.</param>
-    /// <param name="context">The <see cref="DbContext"/> this transaction is for.</param>
-    /// <param name="transaction">The <see cref="CoreTransaction"/> that was rolled back.</param>
+    /// <param name="transaction">The <see cref="MongoTransaction"/> that was rolled back.</param>
     /// <param name="async">True if this operation is asynchronous, false if it is synchronous.</param>
     /// <param name="startTime">The time that the operation was started.</param>
     /// <param name="duration">The elapsed time from when the operation was started.</param>
     public static void TransactionRolledBack(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> diagnostics,
-        IClientSession session,
-        DbContext context,
-        CoreTransaction transaction,
+        MongoTransaction transaction,
         bool async,
         DateTimeOffset startTime,
         TimeSpan duration)
@@ -365,9 +338,6 @@ internal static class MongoLoggerTransactionExtensions
                 definition,
                 (d, _) => ((EventDefinition)d).GenerateMessage(),
                 transaction,
-                context,
-                transaction.TransactionNumber,
-                session,
                 async,
                 startTime,
                 duration);
@@ -396,9 +366,7 @@ internal static class MongoLoggerTransactionExtensions
     /// Logs for the <see cref="MongoEventId.TransactionError" /> event.
     /// </summary>
     /// <param name="diagnostics">The diagnostics logger to use.</param>
-    /// <param name="session">The <see cref="IClientSession"/> this transaction is using.</param>
-    /// <param name="context">The <see cref="DbContext"/> this transaction is for.</param>
-    /// <param name="transaction">The <see cref="CoreTransaction"/> that the error occured in.</param>
+    /// <param name="transaction">The <see cref="MongoTransaction"/> that the error occured in.</param>
     /// <param name="action">The action being taken.</param>
     /// <param name="exception">The exception that represents the error.</param>
     /// <param name="async">True if this operation is asynchronous, false if it is synchronous.</param>
@@ -406,9 +374,7 @@ internal static class MongoLoggerTransactionExtensions
     /// <param name="duration">The elapsed time from when the operation was started.</param>
     public static void TransactionError(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> diagnostics,
-        IClientSession session,
-        DbContext context,
-        CoreTransaction transaction,
+        MongoTransaction transaction,
         string action,
         Exception exception,
         bool async,
@@ -428,9 +394,6 @@ internal static class MongoLoggerTransactionExtensions
                 definition,
                 (d, _) => ((EventDefinition)d).GenerateMessage(),
                 transaction,
-                context,
-                transaction.TransactionNumber,
-                session,
                 async,
                 action,
                 exception,

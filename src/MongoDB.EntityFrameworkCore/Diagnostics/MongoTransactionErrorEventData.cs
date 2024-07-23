@@ -15,10 +15,8 @@
 
 using System;
 using System.Diagnostics;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using MongoDB.Driver;
-using MongoDB.Driver.Core.Bindings;
+using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
@@ -35,10 +33,7 @@ public class MongoTransactionErrorEventData : MongoTransactionEndEventData, IErr
     /// </summary>
     /// <param name="eventDefinition">The event definition.</param>
     /// <param name="messageGenerator">A delegate that generates a log message for this event.</param>
-    /// <param name="transaction">The <see cref="CoreTransaction" />.</param>
-    /// <param name="context">The <see cref="DbContext" /> currently being used, or <see langword="null" /> if not known.</param>
-    /// <param name="transactionNumber">A transaction number issued by the MongoDB client.</param>
-    /// <param name="clientSession">The <see cref="IClientSession"/> being used to connect to MongoDB.</param>
+    /// <param name="transaction">The <see cref="MongoTransaction" />.</param>
     /// <param name="async">Indicates whether or not the transaction is being used asynchronously.</param>
     /// <param name="action">One of "Commit" or "Rollback".</param>
     /// <param name="exception">The exception that was thrown when the transaction failed.</param>
@@ -47,16 +42,13 @@ public class MongoTransactionErrorEventData : MongoTransactionEndEventData, IErr
     public MongoTransactionErrorEventData(
         EventDefinitionBase eventDefinition,
         Func<EventDefinitionBase, EventData, string> messageGenerator,
-        CoreTransaction transaction,
-        DbContext? context,
-        long transactionNumber,
-        IClientSession clientSession,
+        MongoTransaction transaction,
         bool async,
         string action,
         Exception exception,
         DateTimeOffset startTime,
         TimeSpan duration)
-        : base(eventDefinition, messageGenerator, transaction, context, transactionNumber, clientSession, async, startTime, duration)
+        : base(eventDefinition, messageGenerator, transaction, async, startTime, duration)
     {
         Action = action;
         Exception = exception;
