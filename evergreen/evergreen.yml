@@ -153,6 +153,7 @@ functions:
           MONGODB_VERSION=${VERSION} \
           STORAGE_ENGINE=${STORAGE_ENGINE} \
           ORCHESTRATION_FILE=${ORCHESTRATION_FILE} \
+          TOPOLOGY=${TOPOLOGY} \
             bash ${DRIVERS_TOOLS}/.evergreen/run-orchestration.sh
     # run-orchestration generates expansion file with the MONGODB_URI for the cluster
     - command: expansions.update
@@ -490,6 +491,22 @@ axes:
         variables:
           VERSION: "5.0"
 
+  - id: topology
+    display_name: Topology
+    values:
+      - id: "standalone"
+        display_name: Standalone
+        variables:
+          TOPOLOGY: "server"
+      - id: "replicaset"
+        display_name: Replica Set
+        variables:
+          TOPOLOGY: "replica_set"
+      - id: "sharded-cluster"
+        display_name: Sharded Cluster
+        variables:
+          TOPOLOGY: "sharded_cluster"
+
   - id: os
     display_name: OS
     values:
@@ -532,7 +549,8 @@ buildvariants:
     os: "*"
     driver: "*"
     target_runtime: "*"
-  display_name: "${target_runtime} ${driver} Driver on ${os} with ${version} Server"
+    topology: "replicaset"
+  display_name: "${target_runtime} ${driver} Driver on ${os} with ${version} ${topology} Server"
   tags: ["tests-variant"]
   tasks:
     - name: main-tests
@@ -559,6 +577,7 @@ buildvariants:
     os: "*"
     driver: "latest"
     target_runtime: "*"
+    topology: "replicaset"
   display_name: "${target_runtime} smoke tests on ${os}"
   tags: ["package-tests", "release_tag"]
   tasks:

@@ -3,6 +3,9 @@
     <Company>MongoDB Inc.</Company>
     <Copyright>Copyright © 2023-present MongoDB Inc.</Copyright>
     <Authors>MongoDB Inc.</Authors>
+    <PackageIcon>packageIcon.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>https://github.com/mongodb/mongo-efcore-provider/releases/tag/v$(Version)</PackageReleaseNotes>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     <PackageProjectUrl>https://www.mongodb.com/docs/entity-framework/</PackageProjectUrl>
     <PackageTags>mongodb;mongo;nosql;efcore</PackageTags>
@@ -23,5 +26,7 @@
 
   <ItemGroup>
     <None Include="..\..\LICENSE.md" Pack="true" PackagePath="$(PackageLicenseFile)"/>
+    <None Include="..\..\packageIcon.png" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath=""/>
   </ItemGroup>
 </Project>

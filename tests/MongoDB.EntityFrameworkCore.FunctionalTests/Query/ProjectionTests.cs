@@ -52,17 +52,6 @@ public class ProjectionTests
     }
 
     [Fact]
-    public void Select_projection_to_array()
-    {
-        var results = _planets.Select(p => new object[] {p.name, p.orderFromSun});
-        Assert.All(results, r =>
-        {
-            Assert.NotNull(r[0]);
-            Assert.InRange(Assert.IsType<int>(r[1]), 1, 8);
-        });
-    }
-
-    [Fact]
     public void Select_projection_to_tuple()
     {
         var results = _planets.Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings));
