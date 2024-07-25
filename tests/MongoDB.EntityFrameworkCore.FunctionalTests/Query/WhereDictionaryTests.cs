@@ -307,9 +307,9 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
             var results = db.Entities.Where(e => e.Dictionary.ContainsKey("key1")).ToArray();
             Assert.Single(results);
         }
-    }
+   }
 
-    [Fact(Skip = "IReadOnly.this[] not supported in C# Driver LINQ v3 yet")]
+    [Fact]
     public void Where_ReadOnlyDictionary_key_equals_value()
     {
         var collection = tempDatabase.CreateTemporaryCollection<IReadOnlyDictionaryIntEntity>();
