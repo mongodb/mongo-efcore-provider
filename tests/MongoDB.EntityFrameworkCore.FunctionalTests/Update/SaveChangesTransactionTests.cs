@@ -33,7 +33,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void SaveChanges_reverts_changes_on_driver_exception()
     {
-        var collection = tempDatabase.GetExistingTemporaryCollection<TextEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<TextEntity>();
         var idToDuplicate = ObjectId.GenerateNewId();
         var idToDelete = ObjectId.GenerateNewId();
 
@@ -69,7 +69,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public async Task SaveChangesAsync_reverts_changes_on_driver_exception()
     {
-        var collection = tempDatabase.GetExistingTemporaryCollection<TextEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<TextEntity>();
         var idToDuplicate = ObjectId.GenerateNewId();
         var idToDelete = ObjectId.GenerateNewId();
 
@@ -113,7 +113,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void SaveChanges_reverts_changes_on_DbConcurrencyException()
     {
-        var collection = tempDatabase.GetExistingTemporaryCollection<ConcurrencyEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<ConcurrencyEntity>();
         var idToChange = ObjectId.GenerateNewId();
 
         {
@@ -148,7 +148,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public async Task SaveChangesAsync_reverts_changes_on_DbConcurrencyException()
     {
-        var collection = tempDatabase.GetExistingTemporaryCollection<ConcurrencyEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<ConcurrencyEntity>();
         var idToChange = ObjectId.GenerateNewId();
 
         {
@@ -183,7 +183,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public async Task SaveChangesAsync_does_not_revert_when_transactions_disabled()
     {
-        var collection = tempDatabase.GetExistingTemporaryCollection<ConcurrencyEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<ConcurrencyEntity>();
         var idToChange = ObjectId.GenerateNewId();
 
         {
