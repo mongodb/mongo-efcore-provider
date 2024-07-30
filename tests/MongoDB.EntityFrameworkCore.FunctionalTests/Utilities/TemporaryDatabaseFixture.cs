@@ -19,7 +19,7 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class TemporaryDatabaseFixture
+public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
 {
     public const string TestDatabasePrefix = "EFCoreTest-";
 
@@ -90,4 +90,13 @@ public class TemporaryDatabaseFixture
             .Select(f => f.GetMethod())
             .FirstOrDefault(f => f?.Name == ".ctor")
             ?.DeclaringType?.Name;
+
+
+    public void Dispose()
+    {
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+    }
 }
