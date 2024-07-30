@@ -50,6 +50,7 @@ public sealed class MongoTransaction(
     {
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
+        stopwatch.Start();
 
         transactionLogger.TransactionCommitting(this, false, startTime);
         try
@@ -70,6 +71,7 @@ public sealed class MongoTransaction(
     {
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
+        stopwatch.Start();
 
         transactionLogger.TransactionCommitting(this, true, startTime);
         try
@@ -90,6 +92,7 @@ public sealed class MongoTransaction(
     {
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
+        stopwatch.Start();
 
         transactionLogger.TransactionRollingBack(this, false, startTime);
         try
@@ -110,6 +113,7 @@ public sealed class MongoTransaction(
     {
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
+        stopwatch.Start();
 
         transactionLogger.TransactionRollingBack(this, true, startTime);
         try

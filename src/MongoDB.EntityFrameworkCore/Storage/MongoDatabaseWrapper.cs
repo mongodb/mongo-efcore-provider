@@ -142,8 +142,9 @@ public class MongoDatabaseWrapper : Database
     {
         var context = _currentDbContext.Context;
         var startTime = DateTimeOffset.UtcNow;
-        var stopwatch = new Stopwatch();
         var transactionId = Guid.NewGuid();
+        var stopwatch = new Stopwatch();
+        stopwatch.Start();
 
         _transactionLogger.TransactionStarting(session, context, _transactionOptions, transactionId, true, startTime);
 
