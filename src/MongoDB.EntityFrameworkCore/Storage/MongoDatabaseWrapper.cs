@@ -101,7 +101,8 @@ public class MongoDatabaseWrapper : Database
 
     private T ExecuteInTransaction<T>(Func<T> operation, IClientSession session)
     {
-       var transaction = StartTransaction(session, false);
+        var transaction =
+            MongoTransaction.Start(session, _currentDbContext.Context, false, _transactionOptions, _transactionLogger);
 
         T result;
         try
@@ -121,7 +122,8 @@ public class MongoDatabaseWrapper : Database
 
     private async Task<T> ExecuteInTransactionAsync<T>(Func<CancellationToken, Task<T>> operation, IClientSession session, CancellationToken cancellationToken)
     {
-        var transaction = StartTransaction(session, true);
+        var transaction =
+            MongoTransaction.Start(session, _currentDbContext.Context, true, _transactionOptions, _transactionLogger);
 
         T result;
         try
@@ -136,24 +138,6 @@ public class MongoDatabaseWrapper : Database
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return result;
-    }
-
-    private MongoTransaction StartTransaction(IClientSession session, bool async)
-    {
-        var context = _currentDbContext.Context;
-        var startTime = DateTimeOffset.UtcNow;
-        var transactionId = Guid.NewGuid();
-        var stopwatch = new Stopwatch();
-        stopwatch.Start();
-
-        _transactionLogger.TransactionStarting(session, context, _transactionOptions, transactionId, true, startTime);
-
-        session.StartTransaction(_transactionOptions);
-
-        var transaction = new MongoTransaction(session, context, transactionId, _transactionLogger);
-        _transactionLogger.TransactionStarted(transaction, async, startTime, stopwatch.Elapsed);
-
-        return transaction;
     }
 
     private int WriteBatches(IEnumerable<MongoUpdate> updates, IClientSessionHandle session)

@@ -37,6 +37,27 @@ public sealed class MongoTransaction(
     IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
     : IDbContextTransaction
 {
+    internal static MongoTransaction Start(
+        IClientSession session,
+        DbContext context,
+        bool async,
+        TransactionOptions transactionOptions,
+        IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
+    {
+        var startTime = DateTimeOffset.UtcNow;
+        var transactionId = Guid.NewGuid();
+        var stopwatch = new Stopwatch();
+        stopwatch.Start();
+
+        transactionLogger.TransactionStarting(session, context, transactionOptions, transactionId, true, startTime);
+        session.StartTransaction(transactionOptions);
+
+        var transaction = new MongoTransaction(session, context, transactionId, transactionLogger);
+        transactionLogger.TransactionStarted(transaction, async, startTime, stopwatch.Elapsed);
+
+        return transaction;
+    }
+
     /// <inheritdoc />
     public Guid TransactionId { get; } = transactionId;
 
