@@ -15,6 +15,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -37,6 +38,19 @@ public sealed class MongoTransaction(
     IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
     : IDbContextTransaction
 {
+    enum TransactionState
+    {
+        Active,
+        Committing,
+        Committed,
+        RollingBack,
+        RolledBack,
+        Failed,
+        Disposed
+    }
+
+    private TransactionState _transactionState = TransactionState.Active;
+
     internal static MongoTransaction Start(
         IClientSession session,
         DbContext context,
@@ -69,6 +83,8 @@ public sealed class MongoTransaction(
     /// <inheritdoc />
     public void Commit()
     {
+        AssertCorrectState("Commit", TransactionState.Active);
+        _transactionState = TransactionState.Committing;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
         stopwatch.Start();
@@ -80,16 +96,20 @@ public sealed class MongoTransaction(
         }
         catch (Exception ex)
         {
+            _transactionState = TransactionState.Failed;
             transactionLogger.TransactionError(this, "Commit", ex, false, startTime, stopwatch.Elapsed);
             throw;
         }
 
+        _transactionState = TransactionState.Committed;
         transactionLogger.TransactionCommitted(this, false, startTime, stopwatch.Elapsed);
     }
 
     /// <inheritdoc />
     public async Task CommitAsync(CancellationToken cancellationToken = new())
     {
+        AssertCorrectState("Commit", TransactionState.Active);
+        _transactionState = TransactionState.Committing;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
         stopwatch.Start();
@@ -101,16 +121,20 @@ public sealed class MongoTransaction(
         }
         catch (Exception ex)
         {
+            _transactionState = TransactionState.Failed;
             transactionLogger.TransactionError(this, "Commit", ex, true, startTime, stopwatch.Elapsed);
             throw;
         }
 
+        _transactionState = TransactionState.Committed;
         transactionLogger.TransactionCommitted(this, true, startTime, stopwatch.Elapsed);
     }
 
     /// <inheritdoc />
     public void Rollback()
     {
+        AssertCorrectState("Rollback", TransactionState.Active);
+        _transactionState = TransactionState.RollingBack;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
         stopwatch.Start();
@@ -122,16 +146,20 @@ public sealed class MongoTransaction(
         }
         catch (Exception ex)
         {
+            _transactionState = TransactionState.Failed;
             transactionLogger.TransactionError(this, "Rollback", ex, false, startTime, stopwatch.Elapsed);
             throw;
         }
 
+        _transactionState = TransactionState.RolledBack;
         transactionLogger.TransactionRolledBack(this, false, startTime, stopwatch.Elapsed);
     }
 
     /// <inheritdoc />
     public async Task RollbackAsync(CancellationToken cancellationToken = new())
     {
+        AssertCorrectState("Rollback", TransactionState.Active);
+        _transactionState = TransactionState.RollingBack;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
         stopwatch.Start();
@@ -143,10 +171,12 @@ public sealed class MongoTransaction(
         }
         catch (Exception ex)
         {
+            _transactionState = TransactionState.Failed;
             transactionLogger.TransactionError(this, "Rollback", ex, true, startTime, stopwatch.Elapsed);
             throw;
         }
 
+        _transactionState = TransactionState.RolledBack;
         transactionLogger.TransactionRolledBack(this, true, startTime, stopwatch.Elapsed);
     }
 
@@ -159,9 +189,22 @@ public sealed class MongoTransaction(
     /// <inheritdoc />
     public void Dispose()
     {
+        AssertCorrectState("Dispose", TransactionState.Committed, TransactionState.RolledBack, TransactionState.Failed);
+        _transactionState = TransactionState.Disposed;
     }
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()
-        => ValueTask.CompletedTask;
+    {
+        AssertCorrectState("Dispose", TransactionState.Committed, TransactionState.RolledBack, TransactionState.Failed);
+        _transactionState = TransactionState.Disposed;
+        return ValueTask.CompletedTask;
+    }
+
+    private void AssertCorrectState(string action, params TransactionState[] validStates)
+    {
+        if (!validStates.Contains(_transactionState))
+            throw new
+                InvalidOperationException($"Can not {action} MongoTransaction {TransactionId} because it is {_transactionState}.");
+    }
 }

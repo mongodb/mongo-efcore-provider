@@ -101,7 +101,7 @@ public class MongoDatabaseWrapper : Database
 
     private T ExecuteInTransaction<T>(Func<T> operation, IClientSession session)
     {
-        var transaction =
+        using var transaction =
             MongoTransaction.Start(session, _currentDbContext.Context, false, _transactionOptions, _transactionLogger);
 
         T result;
@@ -122,7 +122,7 @@ public class MongoDatabaseWrapper : Database
 
     private async Task<T> ExecuteInTransactionAsync<T>(Func<CancellationToken, Task<T>> operation, IClientSession session, CancellationToken cancellationToken)
     {
-        var transaction =
+        await using var transaction =
             MongoTransaction.Start(session, _currentDbContext.Context, true, _transactionOptions, _transactionLogger);
 
         T result;
