@@ -14,6 +14,7 @@
  */
 
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
@@ -41,6 +42,13 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     class SimpleEntityWithGuidId
     {
+        public Guid _id { get; set; }
+        public string name { get; set; }
+    }
+
+    class BsonSimpleEntityWithGuidId
+    {
+        [BsonGuidRepresentation(GuidRepresentation.Standard)]
         public Guid _id { get; set; }
         public string name { get; set; }
     }
@@ -84,10 +92,13 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Entity_delete_with_guid_id()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithGuidId>();
-        collection.InsertOne(new SimpleEntityWithGuidId {_id = Guid.NewGuid(), name = "DeleteMe"});
+        {
+            var collection = _tempDatabase.CreateTemporaryCollection<BsonSimpleEntityWithGuidId>();
+            collection.InsertOne(new BsonSimpleEntityWithGuidId {_id = Guid.NewGuid(), name = "DeleteMe"});
+        }
 
-        using var db = SingleEntityDbContext.Create(collection);
+        var collectionEf = _tempDatabase.GetExistingTemporaryCollection<SimpleEntityWithGuidId>();
+        using var db = SingleEntityDbContext.Create(collectionEf);
         var entity = db.Entities.Single();
 
         db.Remove(entity);
