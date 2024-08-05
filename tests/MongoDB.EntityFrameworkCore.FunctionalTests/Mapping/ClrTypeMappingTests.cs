@@ -194,7 +194,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
             collection.InsertOne(new BsonGuidEntity {_id = ObjectId.GenerateNewId(), aGuid = expected});
         }
 
-        var collectionEf = tempDatabase.CreateTemporaryCollection<GuidEntity>();
+        var collectionEf = tempDatabase.GetExistingTemporaryCollection<GuidEntity>();
         using var db = SingleEntityDbContext.Create(collectionEf);
         var actual = db.Entities.FirstOrDefault();
 
