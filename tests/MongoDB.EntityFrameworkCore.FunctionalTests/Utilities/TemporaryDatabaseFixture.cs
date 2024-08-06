@@ -96,7 +96,6 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
     {
     }
 
-    public async ValueTask DisposeAsync()
-    {
-    }
+    public ValueTask DisposeAsync()
+        => ValueTask.CompletedTask;
 }
