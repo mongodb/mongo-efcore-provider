@@ -15,16 +15,19 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -85,12 +88,51 @@ public class MongoClientWrapper : IMongoClientWrapper
         => await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
-    public bool CreateDatabase()
-        => !DatabaseExists();
+    public bool CreateDatabase(IModel model)
+    {
+        var existed = DatabaseExists();
+        var existingCollectionNames = _database.ListCollectionNames().ToList();
+
+        foreach (var collectionName in model.GetEntityTypes().Where(e => e.IsDocumentRoot()).Select(e => e.GetCollectionName()))
+        {
+            if (existingCollectionNames.Contains(collectionName)) continue;
+
+            try
+            {
+                _database.CreateCollection(collectionName);
+            }
+            catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
+            {
+                // Ignore collection already exists in cases of concurrent creation
+            }
+        }
+
+        return !existed;
+    }
 
     /// <inheritdoc />
-    public async Task<bool> CreateDatabaseAsync(CancellationToken cancellationToken = default)
-        => !await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
+    public async Task<bool> CreateDatabaseAsync(IModel model, CancellationToken cancellationToken = default)
+    {
+        var existed = await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
+        var collectionNamesCursor = await _database.ListCollectionNamesAsync(cancellationToken: cancellationToken);
+        var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
+
+        foreach (var collectionName in model.GetEntityTypes().Where(e => e.IsDocumentRoot()).Select(e => e.GetCollectionName()))
+        {
+            if (existingCollectionNames.Contains(collectionName)) continue;
+
+            try
+            {
+                await _database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+            }
+            catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
+            {
+                // Ignore collection already exists in cases of concurrent creation
+            }
+        }
+
+        return !existed;
+    }
 
     /// <inheritdoc />
     public bool DeleteDatabase()
@@ -113,20 +155,20 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <inheritdoc/>
     public bool DatabaseExists()
     {
-        using var cursor = _client.ListDatabaseNames(new ListDatabaseNamesOptions {
-            Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)
-        });
+        using var cursor = _client.ListDatabaseNames(BuildListDbNameOptions());
         return cursor.Any();
     }
 
     /// <inheritdoc/>
     public async Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default)
     {
-        using var cursor = await _client.ListDatabaseNamesAsync(new ListDatabaseNamesOptions {
-            Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)
-        }, cancellationToken).ConfigureAwait(false);
+        using var cursor = await _client
+            .ListDatabaseNamesAsync(BuildListDbNameOptions(), cancellationToken).ConfigureAwait(false);
         return await cursor.AnyAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    private ListDatabaseNamesOptions BuildListDbNameOptions()
+        => new() {Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)};
 
     private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
     {
