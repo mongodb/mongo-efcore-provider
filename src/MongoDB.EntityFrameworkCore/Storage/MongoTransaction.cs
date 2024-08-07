@@ -64,13 +64,37 @@ public sealed class MongoTransaction(
         stopwatch.Start();
 
         transactionLogger.TransactionStarting(session, context, transactionOptions, transactionId, true, startTime);
-        session.StartTransaction(transactionOptions);
+        try
+        {
+            session.StartTransaction(transactionOptions);
+        }
+        catch (NotSupportedException ex)
+        {
+            if (ex.Message == "Standalone servers do not support transactions.")
+            {
+                throw new NotSupportedException(string.Join(" ", TransactionByDefault,
+                    "Your current MongoDB server configuration does not support transactions and you should consider switching to a replica set or load balanced configuration.",
+                    DisableTransactions),
+                    ex);
+            }
+
+            throw new NotSupportedException(string.Join(" ", TransactionByDefault,
+                "Your current MongoDB server version does not support transactions and you should consider upgrading to a newer version.",
+                DisableTransactions),
+                ex);
+        }
 
         var transaction = new MongoTransaction(session, context, transactionId, transactionLogger);
         transactionLogger.TransactionStarted(transaction, async, startTime, stopwatch.Elapsed);
 
         return transaction;
     }
+
+    private const string TransactionByDefault =
+        "The MongoDB EF Core Provider now uses transactions to ensure all updates in a SaveChanges operation are applied together or not at all.";
+
+    private const string DisableTransactions =
+        "If you are sure you do not need save consistency or optimistic concurrency you can disable transactions by setting 'Database.AutoTransactionBehavior = AutoTransactionBehavior.Never' on your DbContext.";
 
     /// <inheritdoc />
     public Guid TransactionId { get; } = transactionId;
