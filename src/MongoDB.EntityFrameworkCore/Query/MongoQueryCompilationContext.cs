@@ -21,6 +21,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
@@ -58,6 +59,11 @@ public class MongoQueryCompilationContext : QueryCompilationContext
     /// <inheritdoc />
     public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression originalQuery)
     {
+        if (BsonDefaults.GuidRepresentationMode != GuidRepresentationMode.V3)
+        {
+            BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3;
+        }
+
         var query = Dependencies.QueryTranslationPreprocessorFactory.Create(this).Process(originalQuery);
         query = Dependencies.QueryableMethodTranslatingExpressionVisitorFactory.Create(this).Visit(query);
 

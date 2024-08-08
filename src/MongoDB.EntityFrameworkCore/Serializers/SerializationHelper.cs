@@ -123,7 +123,7 @@ internal static class SerializationHelper
             _ when type == typeof(DateTimeOffset) => new DateTimeOffsetSerializer(),
             _ when type == typeof(decimal) => new DecimalSerializer(),
             _ when type == typeof(double) => DoubleSerializer.Instance,
-            _ when type == typeof(Guid) => new GuidSerializer(),
+            _ when type == typeof(Guid) => GuidSerializer.StandardInstance,
             _ when type == typeof(short) => new Int16Serializer(),
             _ when type == typeof(int) => Int32Serializer.Instance,
             _ when type == typeof(long) => Int64Serializer.Instance,
@@ -138,7 +138,7 @@ internal static class SerializationHelper
             _ when type == typeof(Decimal128) => new Decimal128Serializer(),
             _ when type.IsEnum => EnumSerializer.Create(type),
             {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
-                => CreateNullableSerializer(type.GetGenericArguments()[0]),
+                => CreateNullableSerializer(type.GetGenericArguments()[0], property),
             {IsGenericType: true} when DictionarySerializationProvider.Supports(type)
                 => DictionarySerializationProvider.Instance.GetSerializer(type),
             {IsGenericType: true} or {IsArray: true}
@@ -155,8 +155,11 @@ internal static class SerializationHelper
             : new DateTimeSerializer(dateTimeKind);
     }
 
-    private static IBsonSerializer CreateNullableSerializer(Type elementType)
-        => (IBsonSerializer)Activator.CreateInstance(typeof(NullableSerializer<>).MakeGenericType(elementType))!;
+    private static IBsonSerializer CreateNullableSerializer(Type elementType, IReadOnlyProperty? property)
+    {
+        var typeSerializer = CreateTypeSerializer(elementType, property);
+        return (IBsonSerializer)Activator.CreateInstance(typeof(NullableSerializer<>).MakeGenericType(elementType), typeSerializer)!;
+    }
 
     private static bool TryReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo, out T? value)
     {
