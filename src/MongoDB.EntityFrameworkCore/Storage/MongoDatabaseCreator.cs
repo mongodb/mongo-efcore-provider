@@ -15,6 +15,7 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -25,7 +26,10 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// <remarks>
 /// This class is not typically used directly from application code.
 /// </remarks>
-public class MongoDatabaseCreator(IMongoClientWrapper clientWrapper) : IDatabaseCreator
+public class MongoDatabaseCreator(
+    IMongoClientWrapper clientWrapper,
+    ICurrentDbContext currentDbContext)
+    : IDatabaseCreator
 {
     /// <inheritdoc/>
     public bool EnsureDeleted()
@@ -37,11 +41,11 @@ public class MongoDatabaseCreator(IMongoClientWrapper clientWrapper) : IDatabase
 
     /// <inheritdoc/>
     public bool EnsureCreated()
-        => clientWrapper.CreateDatabase();
+        => clientWrapper.CreateDatabase(currentDbContext.Context.Model);
 
     /// <inheritdoc/>
     public Task<bool> EnsureCreatedAsync(CancellationToken cancellationToken = new())
-        => clientWrapper.CreateDatabaseAsync(cancellationToken);
+        => clientWrapper.CreateDatabaseAsync(currentDbContext.Context.Model, cancellationToken);
 
     /// <inheritdoc/>
     public bool CanConnect()
