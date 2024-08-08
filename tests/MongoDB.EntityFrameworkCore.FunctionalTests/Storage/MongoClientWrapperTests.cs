@@ -77,16 +77,17 @@ public class MongoClientWrapperTests
     [Fact]
     public void CreateDatabase_does_not_affect_existing_collections()
     {
-        const int expectedMaxDocs = 1234;
-        const int expectedMaxSize = 56789;
+        const int expectedMaxDocs = 1024;
+        const int expectedMaxSize = 4096;
 
         using var database = new TemporaryDatabaseFixture();
 
         {
-            database.MongoDatabase.CreateCollection("Customers",
-                new CreateCollectionOptions {MaxDocuments = expectedMaxDocs, MaxSize = expectedMaxSize, Capped = true});
             var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
             collection.InsertOne(new Customer {Name = "John Doe"});
+            database.MongoDatabase.CreateCollection("Orders",
+                new CreateCollectionOptions {MaxDocuments = expectedMaxDocs, MaxSize = expectedMaxSize, Capped = true});
+            database.MongoDatabase.CreateCollection("Orders2");
         }
 
         {
@@ -95,37 +96,38 @@ public class MongoClientWrapperTests
 
             var didCreate = client.CreateDatabase(context.Model);
             Assert.False(didCreate);
-            var collections = database.MongoDatabase.ListCollections().ToList();
 
-            Assert.Equal(3, collections.Count);
+            var collections = database.MongoDatabase.ListCollections().ToList();
             var allNames = collections.Select(c => c["name"].AsString).ToArray();
+            Assert.Equal(4, allNames.Length);
             Assert.Contains("Customers", allNames);
             Assert.Contains("Orders", allNames);
             Assert.Contains("Addresses", allNames);
 
-            var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
-            Assert.Equal(1, collection.CountDocuments(FilterDefinition<Customer>.Empty));
-
-            var customerCollectionOptions = collections.Single(c => c["name"].AsString == "Customers")["options"];
+            var customerCollectionOptions = collections.Single(c => c["name"].AsString == "Orders")["options"];
             Assert.True(customerCollectionOptions["capped"].AsBoolean);
             Assert.Equal(expectedMaxDocs, customerCollectionOptions["max"].AsInt32);
             Assert.Equal(expectedMaxSize, customerCollectionOptions["size"].AsInt32);
+
+            var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
+            Assert.Equal(1, collection.CountDocuments(FilterDefinition<Customer>.Empty));
         }
     }
 
     [Fact]
     public async Task CreateDatabaseAsync_does_not_affect_existing_collections()
     {
-        const long expectedMaxDocs = 1234;
-        const long expectedMaxSize = 56789;
+        const int expectedMaxDocs = 1024;
+        const int expectedMaxSize = 4096;
 
         await using var database = new TemporaryDatabaseFixture();
 
         {
-            await database.MongoDatabase.CreateCollectionAsync("Customers",
-                new CreateCollectionOptions {MaxDocuments = expectedMaxDocs, MaxSize = expectedMaxSize, Capped = true});
             var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
             await collection.InsertOneAsync(new Customer {Name = "John Doe"});
+            await database.MongoDatabase.CreateCollectionAsync("Orders",
+                new CreateCollectionOptions {MaxDocuments = expectedMaxDocs, MaxSize = expectedMaxSize, Capped = true});
+            await database.MongoDatabase.CreateCollectionAsync("Orders2");
         }
 
         {
@@ -134,20 +136,22 @@ public class MongoClientWrapperTests
 
             var didCreate = await client.CreateDatabaseAsync(context.Model);
             Assert.False(didCreate);
-            var collections = (await database.MongoDatabase.ListCollectionsAsync()).ToList();
 
+            var collections = (await database.MongoDatabase.ListCollectionsAsync()).ToList();
             var allNames = collections.Select(c => c["name"].AsString).ToArray();
+            Assert.Equal(4, allNames.Length);
             Assert.Contains("Customers", allNames);
             Assert.Contains("Orders", allNames);
+            Assert.Contains("Orders2", allNames);
             Assert.Contains("Addresses", allNames);
+
+            var existingCollectionOptions = collections.Single(c => c["name"].AsString == "Orders")["options"];
+            Assert.True(existingCollectionOptions["capped"].AsBoolean);
+            Assert.Equal(expectedMaxDocs, existingCollectionOptions["max"].AsInt32);
+            Assert.Equal(expectedMaxSize, existingCollectionOptions["size"].AsInt32);
 
             var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
             Assert.Equal(1, await collection.CountDocumentsAsync(FilterDefinition<Customer>.Empty));
-
-            var customerCollectionOptions = collections.Single(c => c["name"].AsString == "Customers")["options"];
-            Assert.True(customerCollectionOptions["capped"].AsBoolean);
-            Assert.Equal(expectedMaxDocs, customerCollectionOptions["max"].AsInt32);
-            Assert.Equal(expectedMaxSize, customerCollectionOptions["size"].AsInt32);
         }
     }
 
