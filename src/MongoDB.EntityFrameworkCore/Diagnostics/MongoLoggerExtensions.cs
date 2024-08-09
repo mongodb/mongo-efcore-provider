@@ -71,42 +71,6 @@ internal static class MongoLoggerExtensions
         }
     }
 
-    public static void ExecutedBulkWrite(
-        this IDiagnosticsLogger<DbLoggerCategory.Database.Command> diagnostics,
-        TimeSpan elapsed,
-        CollectionNamespace collectionNamespace,
-        long documentsInserted,
-        long documentedDeleted,
-        long documentsModified)
-    {
-        var definition = LogExecutedBulkWrite(diagnostics);
-
-        if (diagnostics.ShouldLog(definition))
-        {
-            definition.Log(
-                diagnostics,
-                elapsed.TotalMilliseconds.ToString(),
-                collectionNamespace,
-                documentsInserted,
-                documentedDeleted,
-                documentsModified);
-        }
-
-        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
-        {
-            var eventData = new MongoBulkWriteEventData(
-                definition,
-                ExecutedBulkWrite,
-                elapsed,
-                collectionNamespace,
-                documentsInserted,
-                documentedDeleted,
-                documentsModified,
-                diagnostics.ShouldLogSensitiveData());
-
-            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
-        }
-    }
 
     private static string LoggedStagesToMql(BsonDocument[]? documents)
         => documents == null
@@ -121,18 +85,6 @@ internal static class MongoLoggerExtensions
             Environment.NewLine,
             p.CollectionNamespace,
             p.LogSensitiveData ? p.QueryMql : "?");
-    }
-
-    private static string ExecutedBulkWrite(EventDefinitionBase definition, EventData payload)
-    {
-        var d = (BulkWriteEventDefinition)definition;
-        var p = (MongoBulkWriteEventData)payload;
-        return d.GenerateMessage(
-            p.Elapsed.Milliseconds.ToString(),
-            p.CollectionNamespace,
-            p.DocumentsInserted,
-            p.DocumentsDeleted,
-            p.DocumentsModified);
     }
 
     private static MqlQueryEventDefinition LogExecutedMqlQuery(IDiagnosticsLogger logger)

@@ -61,6 +61,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aDictionary);
         Assert.Empty(actual.aDictionary);
     }
 
@@ -111,6 +112,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aDictionary);
         Assert.Empty(actual.aDictionary);
     }
 
@@ -145,6 +147,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aDictionary);
         Assert.Empty(actual.aDictionary);
     }
 
@@ -198,6 +201,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aDictionary);
         Assert.Empty(actual.aDictionary);
     }
 
@@ -259,6 +263,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
+        Assert.NotNull(actual.aDictionary);
         Assert.Empty(actual.aDictionary);
     }
 

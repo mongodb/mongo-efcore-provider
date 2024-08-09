@@ -15,17 +15,19 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -39,6 +41,7 @@ public class MongoClientWrapper : IMongoClientWrapper
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
     private readonly IMongoClient _client;
     private readonly IMongoDatabase _database;
+
     private string DatabaseName => _database.DatabaseNamespace.DatabaseName;
 
     /// <summary>
@@ -59,110 +62,77 @@ public class MongoClientWrapper : IMongoClientWrapper
         _database = _client.GetDatabase(options!.DatabaseName);
     }
 
-    /// <summary>
-    /// Execute a <see cref="MongoExecutableQuery"/> and return  a <see cref="Action"/>
-    /// that should be executed once the first item has been enumerated.
-    /// </summary>
-    /// <param name="executableQuery">The <see cref="MongoExecutableQuery"/> containing everything needed to run the query.</param>
-    /// <param name="log">The <see cref="Action"/> returned that will perform the MQL log once evaluation has happened.</param>
-    /// <typeparam name="T">The type of items being returned by the query.</typeparam>
-    /// <returns>An <see cref="IEnumerable{T}"/> containing the items returned by the query.</returns>
+    /// <inheritdoc />
     public IEnumerable<T> Execute<T>(MongoExecutableQuery executableQuery, out Action log)
     {
         log = () => { };
 
         if (executableQuery.Cardinality != ResultCardinality.Enumerable)
-        {
             return ExecuteScalar<T>(executableQuery);
-        }
 
         var queryable = (IMongoQueryable<T>)executableQuery.Provider.CreateQuery<T>(executableQuery.Query);
         log = () => _commandLogger.ExecutedMqlQuery(executableQuery);
         return queryable;
     }
 
-    private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
-    {
-        T? result;
-        try
-        {
-            result = executableQuery.Provider.Execute<T>(executableQuery.Query);
-        }
-        catch
-        {
-            _commandLogger.ExecutedMqlQuery(executableQuery);
-            throw;
-        }
-
-        _commandLogger.ExecutedMqlQuery(executableQuery);
-        return [result];
-    }
-
-    /// <summary>
-    /// Get an <see cref="IMongoCollection{T}"/> associated with a MongoDB collection by name.
-    /// </summary>
-    /// <param name="collectionName">The name of the collection that should be queried.</param>
-    /// <typeparam name="T">The type of items returned by the collection.</typeparam>
-    /// <returns>A <see cref="IMongoCollection{T}"/> for the named collection.</returns>
+    /// <inheritdoc />
     public IMongoCollection<T> GetCollection<T>(string collectionName)
         => _database.GetCollection<T>(collectionName);
 
-    /// <summary>
-    /// Save the supplied <see cref="MongoUpdate"/> operations to the database.
-    /// </summary>
-    /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
-    /// <returns>The number of documents modified.</returns>
-    public long SaveUpdates(IEnumerable<MongoUpdate> updates)
-    {
-        var stopwatch = new Stopwatch();
-        using var session = _client.StartSession();
-        long documentsAffected = 0;
+    /// <inheritdoc />
+    public IClientSessionHandle StartSession()
+        => _client.StartSession();
 
-        foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
+    /// <inheritdoc />
+    public async Task<IClientSessionHandle> StartSessionAsync(CancellationToken cancellationToken = default)
+        => await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public bool CreateDatabase(IModel model)
+    {
+        var existed = DatabaseExists();
+        var existingCollectionNames = _database.ListCollectionNames().ToList();
+
+        foreach (var collectionName in model.GetEntityTypes().Where(e => e.IsDocumentRoot()).Select(e => e.GetCollectionName()))
         {
-            stopwatch.Restart();
-            var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = collection.BulkWrite(session, batch.Models);
-            stopwatch.Stop();
-            _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
-            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
+            if (existingCollectionNames.Contains(collectionName)) continue;
+
+            try
+            {
+                _database.CreateCollection(collectionName);
+            }
+            catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
+            {
+                // Ignore collection already exists in cases of concurrent creation
+            }
         }
 
-        return documentsAffected;
-    }
-
-    /// <summary>
-    /// Save the supplied <see cref="MongoUpdate"/> operations to the database asynchronously.
-    /// </summary>
-    /// <param name="updates">An <see cref="IEnumerable{MongoUpdate}"/> containing the updates to apply to the database.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
-    /// <returns>A <see cref="Task"/> that, when resolved, gives the number of documents modified.</returns>
-    public async Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
-    {
-        var stopwatch = new Stopwatch();
-        using var session = await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        long documentsAffected = 0;
-
-        foreach (var batch in MongoUpdateBatch.CreateBatches(updates))
-        {
-            stopwatch.Restart();
-            var collection = _database.GetCollection<BsonDocument>(batch.CollectionName);
-            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken).ConfigureAwait(false);
-            stopwatch.Stop();
-            _commandLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
-            documentsAffected += result.ModifiedCount + result.InsertedCount + result.DeletedCount;
-        }
-
-        return documentsAffected;
+        return !existed;
     }
 
     /// <inheritdoc />
-    public bool CreateDatabase()
-        => !DatabaseExists();
+    public async Task<bool> CreateDatabaseAsync(IModel model, CancellationToken cancellationToken = default)
+    {
+        var existed = await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
+        var collectionNamesCursor = await _database.ListCollectionNamesAsync(cancellationToken: cancellationToken);
+        var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
 
-    /// <inheritdoc />
-    public async Task<bool> CreateDatabaseAsync(CancellationToken cancellationToken = default)
-        => !await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var collectionName in model.GetEntityTypes().Where(e => e.IsDocumentRoot()).Select(e => e.GetCollectionName()))
+        {
+            if (existingCollectionNames.Contains(collectionName)) continue;
+
+            try
+            {
+                await _database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+            }
+            catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
+            {
+                // Ignore collection already exists in cases of concurrent creation
+            }
+        }
+
+        return !existed;
+    }
 
     /// <inheritdoc />
     public bool DeleteDatabase()
@@ -185,19 +155,36 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <inheritdoc/>
     public bool DatabaseExists()
     {
-        using var cursor = _client.ListDatabaseNames(new ListDatabaseNamesOptions {
-            Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)
-        });
+        using var cursor = _client.ListDatabaseNames(BuildListDbNameOptions());
         return cursor.Any();
     }
 
     /// <inheritdoc/>
     public async Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default)
     {
-        using var cursor = await _client.ListDatabaseNamesAsync(new ListDatabaseNamesOptions {
-            Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)
-        }, cancellationToken).ConfigureAwait(false);
+        using var cursor = await _client
+            .ListDatabaseNamesAsync(BuildListDbNameOptions(), cancellationToken).ConfigureAwait(false);
         return await cursor.AnyAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private ListDatabaseNamesOptions BuildListDbNameOptions()
+        => new() {Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)};
+
+    private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
+    {
+        T? result;
+        try
+        {
+            result = executableQuery.Provider.Execute<T>(executableQuery.Query);
+        }
+        catch
+        {
+            _commandLogger.ExecutedMqlQuery(executableQuery);
+            throw;
+        }
+
+        _commandLogger.ExecutedMqlQuery(executableQuery);
+        return [result];
     }
 
     private static IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)

@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Query;
 
@@ -38,72 +39,50 @@ public interface IMongoClientWrapper
     public IMongoCollection<T> GetCollection<T>(string collectionName);
 
     /// <summary>
-    /// A query and the associated metadata and provider needed to execute that query.
+    /// Execute a <see cref="MongoExecutableQuery"/> and return  a <see cref="Action"/>
+    /// that should be executed once the first item has been enumerated.
     /// </summary>
-    /// <param name="executableQuery">The <see cref="MongoExecutableQuery"/> that will be executed.</param>
-    /// <param name="log">The <see cref="Action"/> that should be called upon evaluation of the query to log it.</param>
-    /// <typeparam name="T">The type of results being returned.</typeparam>
-    /// <returns>An <see cref="IEnumerable{T}"/> containing the results of the query.</returns>
+    /// <param name="executableQuery">The <see cref="MongoExecutableQuery"/> containing everything needed to run the query.</param>
+    /// <param name="log">The <see cref="Action"/> returned that will perform the MQL log once evaluation has happened.</param>
+    /// <typeparam name="T">The type of items being returned by the query.</typeparam>
+    /// <returns>An <see cref="IEnumerable{T}"/> containing the items returned by the query.</returns>
     public IEnumerable<T> Execute<T>(MongoExecutableQuery executableQuery, out Action log);
-
-    /// <summary>
-    /// Save updates to a MongoDB database.
-    /// </summary>
-    /// <param name="updates">The updates to save to the database.</param>
-    /// <returns>The number of affected documents.</returns>
-    public long SaveUpdates(IEnumerable<MongoUpdate> updates);
-
-    /// <summary>
-    /// Save updates to a MongoDB database asynchronously.
-    /// </summary>
-    /// <param name="updates">The updates to save to the database.</param>
-    /// <param name="cancellationToken"></param>
-    /// <returns>A task that when completed gives the number of affected documents.</returns>
-    public Task<long> SaveUpdatesAsync(IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken);
 
     /// <summary>
     /// Create a new database with the name specified in the connection options.
     /// </summary>
-    /// <remarks>
-    /// The database is not actually created until the first document is inserted.
-    /// </remarks>
-    /// <returns><c>true</c> if the database was created, <c>false</c> if it already existed.</returns>
-    public bool CreateDatabase();
+    /// <remarks>If the database already exists only new collections will be created.</remarks>
+    /// <param name="model">The <see cref="IModel"/> that informs how the database should be created.</param>
+    /// <returns><c>true</c> if the database was created from scratch, <c>false</c> if it already existed.</returns>
+    public bool CreateDatabase(IModel model);
 
     /// <summary>
     /// Create a new database with the name specified in the connection options asynchronously.
     /// </summary>
-    /// <remarks>
-    /// The database is not actually created until the first document is inserted.
-    /// </remarks>
+    /// <remarks>If the database already exists only new collections will be created.</remarks>
+    /// <param name="model">The <see cref="IModel"/> that informs how the database should be created.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>
     /// A <see cref="Task"/> that, when resolved, will be
-    /// <c>true</c> if the database was created, <c>false</c> if it already existed.
+    /// <c>true</c> if the database was created from scratch, <c>false</c> if it already existed.
     /// </returns>
-    public Task<bool> CreateDatabaseAsync(CancellationToken cancellationToken);
+    public Task<bool> CreateDatabaseAsync(IModel model, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Delete the database specified in the connection options.
     /// </summary>
-    /// <remarks>
-    /// Unlike <see cref="CreateDatabase"/> the database is actually deleted immediately.
-    /// </remarks>
     /// <returns><c>true</c> if the database was deleted, <c>false</c> if it did not exist.</returns>
     public bool DeleteDatabase();
 
     /// <summary>
     /// Delete the database specified in the connection options asynchronously.
     /// </summary>
-    /// <remarks>
-    /// Unlike <see cref="CreateDatabaseAsync"/> the database is actually deleted immediately.
-    /// </remarks>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>
     /// A <see cref="Task"/> that, when resolved, will be
     /// <c>true</c> if the database was deleted, <c>false</c> if it already existed.
     /// </returns>
-    public Task<bool> DeleteDatabaseAsync(CancellationToken cancellationToken);
+    public Task<bool> DeleteDatabaseAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Determine if the database already exists or not.
@@ -120,4 +99,19 @@ public interface IMongoClientWrapper
     /// <c>true</c> if the database exists, <c>false</c> if it does not.
     /// </returns>
     public Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Start a new client session.
+    /// </summary>
+    /// <returns>The new <see cref="IClientSessionHandle"/>.</returns>
+    public IClientSessionHandle StartSession();
+
+    /// <summary>
+    /// Start a new client session asynchronously.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>
+    /// A <see cref="Task"/> that, when resolved, will contain the new <see cref="IClientSessionHandle"/>.
+    /// </returns>
+    public Task<IClientSessionHandle> StartSessionAsync(CancellationToken cancellationToken = default);
 }

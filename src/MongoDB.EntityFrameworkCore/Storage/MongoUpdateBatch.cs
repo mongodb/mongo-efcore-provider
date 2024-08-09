@@ -14,6 +14,7 @@
  */
 
 using System.Collections.Generic;
+using System.Linq;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -23,6 +24,10 @@ internal class MongoUpdateBatch(string collectionName, List<WriteModel<BsonDocum
 {
     public string CollectionName { get => collectionName; }
     public List<WriteModel<BsonDocument>> Models { get => models; }
+
+    public long Modified => models.Count(b => b.ModelType == WriteModelType.UpdateOne);
+    public long Inserts => models.Count(b => b.ModelType == WriteModelType.InsertOne);
+    public long Deletes => models.Count(b => b.ModelType == WriteModelType.DeleteOne);
 
     public static IEnumerable<MongoUpdateBatch> CreateBatches(IEnumerable<MongoUpdate> updates)
     {

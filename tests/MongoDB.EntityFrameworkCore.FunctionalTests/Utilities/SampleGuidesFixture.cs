@@ -31,10 +31,18 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
 {
     public SampleGuidesFixture()
     {
+        MongoDatabase.CreateCollection("planets");
+        MongoDatabase.CreateCollection("moons");
+
+        var session = MongoDatabase.Client.StartSession();
+        session.StartTransaction();
+
         MongoDatabase.GetCollection<Planet>("planets")
-            .BulkWrite(PlanetData.Select(p => new InsertOneModel<Planet>(p)));
+            .BulkWrite(session, PlanetData.Select(p => new InsertOneModel<Planet>(p)));
         MongoDatabase.GetCollection<InternalMoon>("moons")
-            .BulkWrite(MoonData.Select(m => new InsertOneModel<InternalMoon>(m)));
+            .BulkWrite(session, MoonData.Select(m => new InsertOneModel<InternalMoon>(m)));
+
+        session.CommitTransaction();
     }
 
     private static readonly Planet[] PlanetData =
@@ -147,25 +155,18 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
 
     private static readonly InternalMoon[] MoonData =
     [
-        new()
-        {
-            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb65f"), "I"), name = "Triton", yearOfDiscovery = 1846
-        },
+        new() {_id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb65f"), "I"), name = "Triton", yearOfDiscovery = 1846},
         new()
         {
             _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb65f"), "II"), name = "Nereid", yearOfDiscovery = 1949
         },
         new()
         {
-            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb661"), "I"), name = "The Moon", yearOfDiscovery = null
+            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb661"), "I"),
+            name = "The Moon",
+            yearOfDiscovery = null
         },
-        new()
-        {
-            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "I"), name = "Mimas", yearOfDiscovery = 1789
-        },
-        new()
-        {
-            _id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI"), name = "Titan", yearOfDiscovery = 1655
-        }
+        new() {_id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "I"), name = "Mimas", yearOfDiscovery = 1789},
+        new() {_id = new InternalMoonKey(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI"), name = "Titan", yearOfDiscovery = 1655}
     ];
 }

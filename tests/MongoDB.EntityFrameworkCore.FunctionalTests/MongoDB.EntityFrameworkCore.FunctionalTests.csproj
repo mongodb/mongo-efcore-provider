@@ -6,4 +6,11 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="Xunit.TestFramework">
+      <_Parameter1>XUnit.Startup.Dispose.Hooks.TestFramework</_Parameter1>
+      <_Parameter2>XUnit.Startup.Dispose.Hooks</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

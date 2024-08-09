@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson.Serialization;
@@ -466,5 +467,74 @@ public static class MongoModelValidatorTests
 
         [BsonFactoryMethod]
         public static EntityWithBsonFactoryMethod Create() => new();
+    }
+
+    [Fact]
+    public static void Validate_throws_when_entity_has_multiple_timestamp_attributes()
+    {
+        using var context = SingleEntityDbContext.Create<DoubleTimestampedEntity>();
+
+        var ex = Assert.Throws<NotSupportedException>(() => context.GetProperty((DoubleTimestampedEntity e) => e.name));
+        Assert.Contains($"{nameof(DoubleTimestampedEntity.Version1)}", ex.Message);
+        Assert.Contains($"{nameof(DoubleTimestampedEntity.Version2)}", ex.Message);
+    }
+
+    class DoubleTimestampedEntity
+    {
+        public int _id { get; set; }
+
+        public string name { get; set; }
+
+        [Timestamp] public int Version1 { get; set; }
+        [Timestamp] public int Version2 { get; set; }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_entity_has_multiple_IsRowVersion_configurations()
+    {
+        using var context = SingleEntityDbContext.Create<VersionableEntity>(mb =>
+            mb.Entity<VersionableEntity>(e =>
+                {
+                    e.Property(v => v.VersionA).IsRowVersion();
+                    e.Property(v => v.VersionB).IsRowVersion();
+                }));
+
+        var ex = Assert.Throws<NotSupportedException>(() => context.GetProperty((VersionableEntity e) => e.name));
+        Assert.Contains($"{nameof(VersionableEntity.VersionA)}", ex.Message);
+        Assert.Contains($"{nameof(VersionableEntity.VersionB)}", ex.Message);
+    }
+
+    class VersionableEntity
+    {
+        public int _id { get; set; }
+
+        public string name { get; set; }
+
+        public int VersionA { get; set; }
+        public int VersionB { get; set; }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_entity_has_mutiple_timestamp_rowversions()
+    {
+        using var context = SingleEntityDbContext.Create<VersionableTimestampedEntity>(mb =>
+            mb.Entity<VersionableTimestampedEntity>(e =>
+            {
+                e.Property(v => v.VersionB2).IsRowVersion();
+            }));
+
+        var ex = Assert.Throws<NotSupportedException>(() => context.GetProperty((VersionableTimestampedEntity e) => e.name));
+        Assert.Contains($"{nameof(VersionableTimestampedEntity.VersionA1)}", ex.Message);
+        Assert.Contains($"{nameof(VersionableTimestampedEntity.VersionB2)}", ex.Message);
+    }
+
+    class VersionableTimestampedEntity
+    {
+        public int _id { get; set; }
+
+        public string name { get; set; }
+
+        [Timestamp] public int VersionA1 { get; set; }
+        public int VersionB2 { get; set; }
     }
 }

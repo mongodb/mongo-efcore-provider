@@ -80,42 +80,60 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
     {
         var document = new BsonDocument();
         using var writer = new BsonDocumentWriter(document);
+
+        SetStoreGeneratedValues(entry);
         WriteEntity(writer, entry);
 
-        var model = new InsertOneModel<BsonDocument>(document);
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), model);
+        return new MongoUpdate(entry.EntityType.GetCollectionName(), new InsertOneModel<BsonDocument>(document));
     }
 
     private static MongoUpdate ConvertDeleted(IUpdateEntry entry)
     {
-        var model = new DeleteOneModel<BsonDocument>(CreateIdFilter(entry));
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), model);
+        return new MongoUpdate(entry.EntityType.GetCollectionName(), new DeleteOneModel<BsonDocument>(CreateWhereFilter(entry)));
     }
 
     private static MongoUpdate ConvertModified(IUpdateEntry entry)
     {
         var document = new BsonDocument();
         using var writer = new BsonDocumentWriter(document);
+
+        var whereFilter = CreateWhereFilter(entry); // Before row version incrementation
+        SetStoreGeneratedValues(entry);
         WriteEntity(writer, entry);
 
-        var updateDocument = new BsonDocument("$set", document);
-        var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(updateDocument);
-
-        var model = new UpdateOneModel<BsonDocument>(CreateIdFilter(entry), updateDefinition);
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), model);
+        var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(new BsonDocument("$set", document));
+        return new MongoUpdate(entry.EntityType.GetCollectionName(),
+            new UpdateOneModel<BsonDocument>(whereFilter, updateDefinition));
     }
 
-    private static FilterDefinition<BsonDocument> CreateIdFilter(IUpdateEntry entry)
+    private static FilterDefinition<BsonDocument> CreateWhereFilter(IUpdateEntry entry)
     {
         _ = entry.EntityType.FindPrimaryKey() ??
             throw new InvalidOperationException($"Cannot find the primary key for the entity: {entry.EntityType.Name}");
 
         var document = new BsonDocument();
         using var writer = new BsonDocumentWriter(document);
-        WriteEntity(writer, entry, p => p.IsPrimaryKey());
 
-        // MongoDB requires primary key named as "_id";
-        return Builders<BsonDocument>.Filter.Eq("_id", document["_id"]);
+        writer.WriteStartDocument();
+        WriteKeyProperties(writer, entry);
+        WriteConcurrencyTokens(writer, entry);
+        writer.WriteEndDocument();
+
+        return writer.Document.Elements
+            .Select(element => Builders<BsonDocument>.Filter.Eq(element.Name, element.Value))
+            .Aggregate<FilterDefinition<BsonDocument>?, FilterDefinition<BsonDocument>?>(null, (current, nextFilter)
+                => current == null
+                    ? nextFilter
+                    : Builders<BsonDocument>.Filter.And(current, nextFilter))!;
+    }
+
+    private static void WriteConcurrencyTokens(IBsonWriter writer, IUpdateEntry entry)
+    {
+        var concurrencyTokens = entry.EntityType.GetProperties().Where(p => p.IsConcurrencyToken).ToArray();
+        foreach (var property in concurrencyTokens)
+        {
+            WriteProperty(writer, entry.GetOriginalValue(property), property);
+        }
     }
 
     private static void WriteEntity(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
@@ -125,13 +143,83 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
             propertyFilter = entry.IsModified;
         }
 
-        AcceptTemporaryValues(entry);
-
         writer.WriteStartDocument();
-
         WriteKeyProperties(writer, entry);
         WriteNonKeyProperties(writer, entry, propertyFilter);
+        WriteOwnedEntities(writer, entry);
+        writer.WriteEndDocument();
+    }
 
+    private static IProperty? FindOrdinalKeyProperty(IEntityType entityType)
+        => entityType.FindPrimaryKey()!.Properties.FirstOrDefault(
+            p => p.GetElementName().Length == 0 && p.IsOwnedCollectionShadowKey());
+
+    private static void SetStoreGeneratedValues(IUpdateEntry entry)
+    {
+        foreach (var property in entry.EntityType.GetProperties())
+        {
+            if (entry.HasTemporaryValue(property))
+            {
+                entry.SetStoreGeneratedValue(property, entry.GetCurrentValue(property));
+            }
+
+            if (property.IsRowVersion())
+            {
+                entry.SetStoreGeneratedValue(property, entry.GetRowVersion(property));
+            }
+        }
+    }
+
+    private static void WriteKeyProperties(IBsonWriter writer, IUpdateEntry entry)
+    {
+        var keyProperties = entry.EntityType.FindPrimaryKey()?
+            .Properties
+            .Where(p => !p.IsShadowProperty() && p.GetElementName() != "").ToArray() ?? [];
+
+        if (!keyProperties.Any()) return;
+
+        var compoundKey = keyProperties.Length > 1;
+        if (compoundKey)
+        {
+            writer.WriteName("_id");
+            writer.WriteStartDocument();
+        }
+
+        foreach (var property in keyProperties)
+        {
+            WriteProperty(writer, entry.GetCurrentValue(property), property);
+        }
+
+        if (compoundKey)
+        {
+            writer.WriteEndDocument();
+        }
+    }
+
+    internal static void WriteNonKeyProperties(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
+    {
+        var properties = entry.EntityType.GetProperties()
+            .Where(p => !p.IsShadowProperty() && !p.IsPrimaryKey() && p.GetElementName() != "")
+            .Where(p => propertyFilter == null || propertyFilter(p))
+            .ToArray();
+
+        foreach (var property in properties)
+        {
+            WriteProperty(writer, entry.GetCurrentValue(property), property);
+        }
+    }
+
+
+    private static void WriteProperty(IBsonWriter writer, object? value, IProperty property)
+    {
+        var serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
+        writer.WriteName(serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName);
+        var root = BsonSerializationContext.CreateRoot(writer);
+        serializationInfo.Serializer.Serialize(root, value);
+    }
+
+    private static void WriteOwnedEntities(IBsonWriter writer, IUpdateEntry entry)
+    {
         foreach (var navigation in entry.EntityType.GetNavigations())
         {
             var fk = navigation.ForeignKey;
@@ -186,74 +274,9 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
                 }
             }
         }
-
-        writer.WriteEndDocument();
     }
 
-    private static IProperty? FindOrdinalKeyProperty(IEntityType entityType)
-        => entityType.FindPrimaryKey()!.Properties.FirstOrDefault(
-            p => p.GetElementName().Length == 0 && p.IsOwnedCollectionShadowKey());
-
-    private static void AcceptTemporaryValues(IUpdateEntry entry)
-    {
-        foreach (var property in entry.EntityType.GetProperties())
-        {
-            if (entry.HasTemporaryValue(property))
-                entry.SetStoreGeneratedValue(property, entry.GetCurrentValue(property));
-        }
-    }
-
-    private static void WriteKeyProperties(IBsonWriter writer, IUpdateEntry entry)
-    {
-        var keyProperties = entry.EntityType.FindPrimaryKey()?
-            .Properties
-            .Where(p => !p.IsShadowProperty() && p.GetElementName() != "").ToArray() ?? [];
-
-        if (!keyProperties.Any()) return;
-
-        var compoundKey = keyProperties.Length > 1;
-        if (compoundKey)
-        {
-            writer.WriteName("_id");
-            writer.WriteStartDocument();
-        }
-
-        foreach (var property in keyProperties)
-        {
-            var serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
-            var elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
-            writer.WriteName(elementName);
-            var root = BsonSerializationContext.CreateRoot(writer);
-            serializationInfo.Serializer.Serialize(root, entry.GetCurrentValue(property));
-        }
-
-        if (compoundKey)
-        {
-            writer.WriteEndDocument();
-        }
-    }
-
-    internal static void WriteNonKeyProperties(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
-    {
-        var properties = entry.EntityType.GetProperties()
-            .Where(p => !p.IsShadowProperty() && !p.IsPrimaryKey() && p.GetElementName() != "")
-            .Where(p => propertyFilter == null || propertyFilter(p))
-            .ToArray();
-
-        foreach (var property in properties)
-        {
-            var serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
-            var elementName = serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName;
-            writer.WriteName(elementName);
-            var root = BsonSerializationContext.CreateRoot(writer);
-            serializationInfo.Serializer.Serialize(root, entry.GetCurrentValue(property));
-        }
-    }
-
-    private static void SetTemporaryOrdinals(
-        IUpdateEntry entry,
-        IForeignKey fk,
-        object embeddedValue)
+    private static void SetTemporaryOrdinals(IUpdateEntry entry, IForeignKey fk, object embeddedValue)
     {
         var embeddedOrdinal = 1;
         var ordinalKeyProperty = FindOrdinalKeyProperty(fk.DeclaringEntityType);

@@ -95,8 +95,9 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
 
 
     public void Dispose()
-        => Client.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
+    {
+    }
 
-    public async ValueTask DisposeAsync()
-        => await Client.DropDatabaseAsync(MongoDatabase.DatabaseNamespace.DatabaseName);
+    public ValueTask DisposeAsync()
+        => ValueTask.CompletedTask;
 }
