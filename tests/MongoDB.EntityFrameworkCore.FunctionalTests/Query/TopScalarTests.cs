@@ -18,15 +18,11 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class TopScalarTests : IDisposable, IAsyncDisposable
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class TopScalarTests(ReadOnlySampleGuidesFixture fixture)
+    : IDisposable, IAsyncDisposable
 {
-    private readonly GuidesDbContext _db;
-
-    public TopScalarTests(SampleGuidesFixture fixture)
-    {
-        _db = GuidesDbContext.Create(fixture.MongoDatabase);
-    }
+    private readonly GuidesDbContext _db = GuidesDbContext.Create(fixture.MongoDatabase);
 
     [Fact]
     public void Count_with_no_predicate()

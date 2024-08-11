@@ -18,8 +18,9 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class FirstSingleTests(SampleGuidesFixture fixture) : IDisposable, IAsyncDisposable
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class FirstSingleTests(ReadOnlySampleGuidesFixture fixture)
+    : IDisposable, IAsyncDisposable
 {
     private readonly GuidesDbContext _db = GuidesDbContext.Create(fixture.MongoDatabase);
 

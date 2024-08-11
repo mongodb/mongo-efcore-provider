@@ -2,8 +2,9 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase) : IClassFixture<TemporaryDatabaseFixture>
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
     class MissingPrimitiveList
     {
