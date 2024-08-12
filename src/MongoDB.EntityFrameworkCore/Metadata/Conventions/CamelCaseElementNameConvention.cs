@@ -18,14 +18,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
-using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
 /// A convention that configures the element name for entity properties by using a camel-case naming convention.
 /// </summary>
-public class CamelCaseElementNameConvention : IPropertyAddedConvention, IEntityTypeAddedConvention
+public class CamelCaseElementNameConvention : IPropertyAddedConvention, INavigationAddedConvention
 {
     /// <summary>
     /// Creates a <see cref="CamelCaseElementNameConvention" />.
@@ -57,18 +56,16 @@ public class CamelCaseElementNameConvention : IPropertyAddedConvention, IEntityT
     }
 
     /// <summary>
-    /// For every owned entity that is added to the model set the element name to be the camel case
-    /// version of the owning properties name.
+    /// For every navigation that is added to the model set the element name to be the camel case
+    /// version of the navigation property name with symbols being removed and considered word separators.
     /// </summary>
-    /// <param name="entityTypeBuilder">The builder for the entity.</param>
+    /// <param name="navigationBuilder">The builder for the navigation.</param>
     /// <param name="context">Additional information associated with convention execution.</param>
-    public void ProcessEntityTypeAdded(
-        IConventionEntityTypeBuilder entityTypeBuilder,
-        IConventionContext<IConventionEntityTypeBuilder> context)
+    public void ProcessNavigationAdded(
+        IConventionNavigationBuilder navigationBuilder,
+        IConventionContext<IConventionNavigationBuilder> context)
     {
-        if (!entityTypeBuilder.Metadata.IsOwned()) return;
-
-        entityTypeBuilder.Metadata.SetContainingElementName(
-            entityTypeBuilder.Metadata.ShortName().ToCamelCase(CultureInfo.CurrentCulture));
+        var name = navigationBuilder.Metadata.Name.ToCamelCase(CultureInfo.CurrentCulture);
+        navigationBuilder.Metadata.TargetEntityType.SetAnnotation(MongoAnnotationNames.ElementName, name);
     }
 }
