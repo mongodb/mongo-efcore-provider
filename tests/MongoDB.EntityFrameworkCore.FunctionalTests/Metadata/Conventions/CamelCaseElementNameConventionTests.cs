@@ -26,15 +26,9 @@ using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
 [XUnitCollection("ConventionsTests")]
-public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatabaseFixture>
+public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDatabase)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public CamelCasePropertyNameConventionTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class CamelCaseDbContext : DbContext
     {
         private readonly string _collectionName;
@@ -77,7 +71,8 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         public string removeUnderscores { get; set; }
         public string treatUpperCase { get; set; }
         public string numeric123Separator { get; set; }
-        public IntendedStoragesSubDoc ownedEntity { get; set; }
+        public IntendedStoragesSubDoc ownedEntity1 { get; set; }
+        public IntendedStoragesSubDoc ownedEntity2 { get; set; }
     }
 
     class IntendedStoragesSubDoc
@@ -96,7 +91,8 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         public string remove_underscores { get; set; }
         public string treatUPPERCase { get; set; }
         public string numeric123separator { get; set; }
-        public OwnedEntity OwnedEntity { get; set; }
+        public OwnedEntity ownedEntity1 { get; set; }
+        public OwnedEntity ownedEntity2 { get; set; }
     }
 
     class OwnedEntity
@@ -108,7 +104,7 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
     [Fact]
     public void CamelCase_redefines_element_name_for_insert_and_query()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<RemappedEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<RemappedEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string unchangedText = "Unchanged as is a single already-lowercase word";
@@ -117,8 +113,10 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
         const string underscoredText = "Changed as underscores need removing and second word capitalizing";
         const string treatUpperText = "Treated UPPER as a separate word and title cased it";
         const string numericText = "Treated 123 as part of numeric and title cased word after";
-        const string subUnchanged = "Unchanged as is already fully camel cased inside an owned entity";
-        const string subChangedText = "Changed as first word needs to be lower cased inside an owned entity";
+        const string subUnchanged1 = "Unchanged as is already fully camel cased inside an owned entity";
+        const string subChangedText1 = "Changed as first word needs to be lower cased inside an owned entity";
+        const string subUnchanged2 = "Unchanged2 as is already fully camel cased inside an owned entity";
+        const string subChangedText2 = "Changed2 as first word needs to be lower cased inside an owned entity";
 
         {
             using var db = CamelCaseDbContext.Create(collection);
@@ -131,7 +129,8 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
                 remove_underscores = underscoredText,
                 treatUPPERCase = treatUpperText,
                 numeric123separator = numericText,
-                OwnedEntity = new OwnedEntity {subUnchanged = subUnchanged, SubChanged = subChangedText}
+                ownedEntity1 = new OwnedEntity {subUnchanged = subUnchanged1, SubChanged = subChangedText1},
+                ownedEntity2 = new OwnedEntity {subUnchanged = subUnchanged2, SubChanged = subChangedText2}
             });
             db.SaveChanges();
         }
@@ -145,8 +144,10 @@ public class CamelCasePropertyNameConventionTests : IClassFixture<TemporaryDatab
             Assert.Equal(underscoredText, directFound.removeUnderscores);
             Assert.Equal(treatUpperText, directFound.treatUpperCase);
             Assert.Equal(numericText, directFound.numeric123Separator);
-            Assert.Equal(subUnchanged, directFound.ownedEntity.subUnchanged);
-            Assert.Equal(subChangedText, directFound.ownedEntity.subChanged);
+            Assert.Equal(subUnchanged1, directFound.ownedEntity1.subUnchanged);
+            Assert.Equal(subChangedText1, directFound.ownedEntity1.subChanged);
+            Assert.Equal(subUnchanged2, directFound.ownedEntity2.subUnchanged);
+            Assert.Equal(subChangedText2, directFound.ownedEntity2.subChanged);
         }
     }
 }
