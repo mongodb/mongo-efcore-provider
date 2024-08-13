@@ -73,6 +73,8 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDa
         public string numeric123Separator { get; set; }
         public IntendedStoragesSubDoc ownedEntity1 { get; set; }
         public IntendedStoragesSubDoc ownedEntity2 { get; set; }
+
+        public List<IntendedStoragesSubDoc> ownedItems { get; set; }
     }
 
     class IntendedStoragesSubDoc
@@ -93,6 +95,7 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDa
         public string numeric123separator { get; set; }
         public OwnedEntity OwnedEntity1 { get; set; }
         public OwnedEntity owned_entity_2 { get; set; }
+        public List<OwnedEntity> owned_items { get; set; }
     }
 
     class OwnedEntity
@@ -130,7 +133,12 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDa
                 treatUPPERCase = treatUpperText,
                 numeric123separator = numericText,
                 OwnedEntity1 = new OwnedEntity {subUnchanged = subUnchanged1, SubChanged = subChangedText1},
-                owned_entity_2 = new OwnedEntity {subUnchanged = subUnchanged2, SubChanged = subChangedText2}
+                owned_entity_2 = new OwnedEntity {subUnchanged = subUnchanged2, SubChanged = subChangedText2},
+                owned_items =
+                [
+                    new OwnedEntity {subUnchanged = subUnchanged1, SubChanged = subChangedText1},
+                    new OwnedEntity {subUnchanged = subUnchanged2, SubChanged = subChangedText2}
+                ]
             });
             db.SaveChanges();
         }

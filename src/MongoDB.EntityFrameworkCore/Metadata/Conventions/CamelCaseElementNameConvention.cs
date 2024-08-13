@@ -50,7 +50,7 @@ public class CamelCaseElementNameConvention : IPropertyAddedConvention, INavigat
         IConventionPropertyBuilder propertyBuilder,
         IConventionContext<IConventionPropertyBuilder> context)
     {
-        if (propertyBuilder.Metadata.Name == "_id") return;
+        if (propertyBuilder.Metadata.Name == "_id" || propertyBuilder.Metadata.IsShadowProperty()) return;
 
         propertyBuilder.HasElementName(propertyBuilder.Metadata.Name.ToCamelCase(CultureInfo.CurrentCulture));
     }
@@ -65,6 +65,8 @@ public class CamelCaseElementNameConvention : IPropertyAddedConvention, INavigat
         IConventionNavigationBuilder navigationBuilder,
         IConventionContext<IConventionNavigationBuilder> context)
     {
+        if (navigationBuilder.Metadata.IsShadowProperty()) return;
+
         var name = navigationBuilder.Metadata.Name.ToCamelCase(CultureInfo.CurrentCulture);
         navigationBuilder.Metadata.TargetEntityType.SetAnnotation(MongoAnnotationNames.ElementName, name);
     }
