@@ -720,6 +720,31 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     }
 
     [Fact]
+    public void OwnedEntity_can_have_element_name_set_for_same_types()
+    {
+        var expected = new PersonWithTwoLocationsRemapped
+        {
+            name = "Elizabeth", locationOne = Location1, locationTwo = Location2
+        };
+
+        _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocationsRemapped>().WriteTestDocs([expected]);
+
+        var collection = _tempDatabase.GetExistingTemporaryCollection<PersonWithTwoLocations>();
+        using var db = SingleEntityDbContext.Create(collection,
+            mb => {
+                mb.Entity<PersonWithTwoLocations>().OwnsOne(p => p.first, r => r.HasElementName("locationOne"));
+                mb.Entity<PersonWithTwoLocations>().OwnsOne(p => p.second, r => r.HasElementName("locationTwo"));
+            });
+
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected.name, actual.name);
+        Assert.Equal(expected.locationOne.latitude, actual.first.latitude);
+        Assert.Equal(expected.locationTwo.longitude, actual.second.longitude);
+    }
+
+    [Fact]
     public void OwnedEntity_can_go_multiple_levels_deep_serializing()
     {
         var expectedName = FirstLevel1.children[0].children[0].name;
@@ -843,6 +868,12 @@ public class OwnedEntityTests : IClassFixture<TemporaryDatabaseFixture>
     {
         public Location first { get; set; }
         public Location second { get; set; }
+    }
+
+    private record PersonWithTwoLocationsRemapped : Person
+    {
+        public Location locationOne { get; set; }
+        public Location locationTwo { get; set; }
     }
 
     private record FirstLevel
