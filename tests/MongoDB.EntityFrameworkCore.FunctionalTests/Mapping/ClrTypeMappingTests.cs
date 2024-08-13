@@ -16,6 +16,7 @@
 using System.Collections.ObjectModel;
 using System.Reflection;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
@@ -38,6 +39,12 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
 
     class GuidEntity : IdEntity
     {
+        public Guid aGuid { get; set; }
+    }
+
+    class BsonGuidEntity : IdEntity
+    {
+        [BsonGuidRepresentation(GuidRepresentation.Standard)]
         public Guid aGuid { get; set; }
     }
 
@@ -180,15 +187,15 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Guid_read()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<GuidEntity>();
-
         var expected = Guid.NewGuid();
-        collection.InsertOne(new GuidEntity
-        {
-            _id = ObjectId.GenerateNewId(), aGuid = expected
-        });
 
-        using var db = SingleEntityDbContext.Create(collection);
+        {
+            var collection = tempDatabase.CreateTemporaryCollection<BsonGuidEntity>();
+            collection.InsertOne(new BsonGuidEntity {_id = ObjectId.GenerateNewId(), aGuid = expected});
+        }
+
+        var collectionEf = tempDatabase.GetExistingTemporaryCollection<GuidEntity>();
+        using var db = SingleEntityDbContext.Create(collectionEf);
         var actual = db.Entities.FirstOrDefault();
 
         Assert.NotNull(actual);
