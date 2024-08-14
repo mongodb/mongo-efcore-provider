@@ -42,7 +42,6 @@ public class ColumnAttributeConvention :
     {
     }
 
-
     /// <summary>
     /// For every property added to the model that has a <see cref="ColumnAttribute"/>
     /// use the specified name as an annotation to configure the element name used in BSON documents.

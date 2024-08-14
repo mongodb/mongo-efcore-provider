@@ -26,6 +26,10 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 /// </summary>
 public class MongoRelationshipDiscoveryConvention : RelationshipDiscoveryConvention
 {
+    /// <summary>
+    /// Creates a <see cref="MongoRelationshipDiscoveryConvention"/>.
+    /// </summary>
+    /// <param name="dependencies">The <see cref="MongoRelationshipDiscoveryConvention"/> required by this convention.</param>
     public MongoRelationshipDiscoveryConvention(ProviderConventionSetBuilderDependencies dependencies)
         : base(dependencies)
     {

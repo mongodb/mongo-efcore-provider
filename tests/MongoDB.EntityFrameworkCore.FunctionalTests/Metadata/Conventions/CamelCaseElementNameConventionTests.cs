@@ -49,9 +49,7 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDa
 
         protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
         {
-            configurationBuilder.Conventions.Add(serviceProvider =>
-                new CamelCaseElementNameConvention(serviceProvider
-                    .GetRequiredService<ProviderConventionSetBuilderDependencies>()));
+            configurationBuilder.Conventions.Add(_ => new CamelCaseElementNameConvention());
         }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -17,29 +17,14 @@ using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
-using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
 /// A convention that configures the element name for entity properties by using a camel-case naming convention.
 /// </summary>
-public class CamelCaseElementNameConvention : IPropertyAddedConvention, INavigationAddedConvention
+public sealed class CamelCaseElementNameConvention : IPropertyAddedConvention, INavigationAddedConvention
 {
-    /// <summary>
-    /// Creates a <see cref="CamelCaseElementNameConvention" />.
-    /// </summary>
-    /// <param name="dependencies">Parameter object containing dependencies for this convention.</param>
-    public CamelCaseElementNameConvention(ProviderConventionSetBuilderDependencies dependencies)
-    {
-        Dependencies = dependencies;
-    }
-
-    /// <summary>
-    ///  Dependencies this convention uses.
-    /// </summary>
-    protected virtual ProviderConventionSetBuilderDependencies Dependencies { get; }
-
     /// <summary>
     /// For every property that is added to the model set the element name to be the camel case
     /// version of the property name with symbols being removed and considered word separators.

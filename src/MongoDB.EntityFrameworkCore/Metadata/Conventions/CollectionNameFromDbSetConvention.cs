@@ -26,9 +26,9 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 /// <summary>
 /// A convention that configures the collection name based on the <see cref="DbSet{TEntity}" /> property name.
 /// </summary>
-public class CollectionNameFromDbSetConvention : IEntityTypeAddedConvention
+public sealed class CollectionNameFromDbSetConvention : IEntityTypeAddedConvention
 {
-    private readonly IDictionary<Type, string> _sets = new Dictionary<Type, string>();
+    private readonly Dictionary<Type, string> _sets = new();
 
     /// <summary>
     /// Creates a <see cref="CollectionNameFromDbSetConvention" /> with required dependencies.
@@ -54,17 +54,10 @@ public class CollectionNameFromDbSetConvention : IEntityTypeAddedConvention
         {
             _sets.Remove(type);
         }
-
-        Dependencies = dependencies;
     }
 
-    /// <summary>
-    ///  Dependencies this convention uses.
-    /// </summary>
-    protected virtual ProviderConventionSetBuilderDependencies Dependencies { get; }
-
     /// <inheritdoc />
-    public virtual void ProcessEntityTypeAdded(
+    public void ProcessEntityTypeAdded(
         IConventionEntityTypeBuilder entityTypeBuilder,
         IConventionContext<IConventionEntityTypeBuilder> context)
     {
