@@ -20,15 +20,9 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
+public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class Entity<TValue>
     {
         public ObjectId _id { get; set; }
@@ -62,7 +56,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Update_simple_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<SimpleEntity>();
         var entity = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "Before"};
 
         {
@@ -84,7 +78,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Update_dictionary_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -160,7 +154,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
    [Fact]
     public void Update_dictionary_of_dictionary_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<DictionaryOfDictionaryEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<DictionaryOfDictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -272,7 +266,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Update_realistic_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<RealisticEntity>();
 
         var entity = new RealisticEntity
         {
@@ -286,6 +280,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(entity);
             db.SaveChanges();
+
             entity.session = Guid.NewGuid();
             entity.lastCount++;
             entity.lastModified = DateTime.UtcNow;
@@ -299,6 +294,52 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
             Assert.Equal(entity.session, foundEntity.session);
             Assert.Equal(entity.lastCount, foundEntity.lastCount);
             Assert.Equal(entity.lastModified.ToBsonPrecision(), foundEntity.lastModified.ToBsonPrecision());
+        }
+    }
+
+    [Fact]
+    public void Update_only_updates_modified_fields()
+    {
+        var collection = tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+
+        var session2 = Guid.NewGuid();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new RealisticEntity
+            {
+                _id = ObjectId.GenerateNewId(),
+                session = Guid.NewGuid(),
+                lastCount = 1,
+                lastModified = DateTime.UtcNow.Subtract(TimeSpan.FromDays(5))
+            });
+            db.SaveChanges();
+        }
+
+        // Cause two updates to happen interleaved
+        {
+            using var db1 = SingleEntityDbContext.Create(collection);
+            var entity1 = db1.Entities.First();
+            entity1.lastCount++;
+
+            using var db2 = SingleEntityDbContext.Create(collection);
+            var entity2 = db2.Entities.First();
+            entity2.session = session2;
+
+            db1.SaveChanges();
+            db2.SaveChanges();
+
+            Assert.NotEqual(entity1.lastCount, entity2.lastCount);
+            Assert.NotEqual(entity1.session, entity2.session);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var entity = db.Entities.First();
+
+            // Ensure we have data from two interleaved updates
+            Assert.Equal(entity.session, session2);
+            Assert.Equal(2, entity.lastCount);
         }
     }
 
@@ -323,7 +364,7 @@ public class UpdateEntityTests : IClassFixture<TemporaryDatabaseFixture>
     private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
     {
         var collection =
-            _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue!, updatedValue!);
+            tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
