@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -236,7 +237,9 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
-            optionsBuilder.UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName);
+            optionsBuilder
+                .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         }
     }
 
@@ -259,6 +262,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
 
         {
             using var db = new MultiEntityDbContext(tempDatabaseFixture.MongoDatabase);
+            db.Database.EnsureCreated();
             db.Add(new Supplier {Id = "S1", Name = "Friendly Corp.", Address = "123 Main St."});
             db.Add(e1);
             db.SaveChanges();
@@ -290,6 +294,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
 
         {
             await using var db = new MultiEntityDbContext(tempDatabaseFixture.MongoDatabase);
+            await db.Database.EnsureCreatedAsync();
             await db.AddAsync(new Supplier {Id = "S1", Name = "Friendly Corp.", Address = "123 Main St."});
             await db.AddAsync(e1);
             await db.SaveChangesAsync();
@@ -322,6 +327,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
 
         {
             using var db = new ConcurrentMultiEntityDbContext(tempDatabaseFixture.MongoDatabase);
+            db.Database.EnsureCreated();
             db.AddRange(s1, e1);
             db.SaveChanges();
         }
@@ -358,6 +364,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
 
         {
             await using var db = new ConcurrentMultiEntityDbContext(tempDatabaseFixture.MongoDatabase);
+            await db.Database.EnsureCreatedAsync();
             await db.AddRangeAsync(s1, e1);
             await db.SaveChangesAsync();
         }
