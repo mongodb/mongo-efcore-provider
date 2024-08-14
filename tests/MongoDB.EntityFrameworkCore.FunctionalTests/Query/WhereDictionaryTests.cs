@@ -17,7 +17,7 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection("WhereTests")]
+[XUnitCollection("DictionaryTests")]
 public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -60,8 +60,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
                 },
                 new DictionaryEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, string> {{"key2", "value2"}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, string> {{"key2", "value2"}}
                 });
             db.SaveChanges();
         }
@@ -89,8 +88,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
                 },
                 new DictionaryEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, string> {{"key2", "value2"}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, string> {{"key2", "value2"}}
                 });
             db.SaveChanges();
         }
@@ -120,8 +118,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
                 },
                 new DictionaryEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, string> {{"key2", "value2"}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, string> {{"key2", "value2"}}
                 });
             db.SaveChanges();
         }
@@ -149,8 +146,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
                 },
                 new DictionaryEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, string> {{"key1", null!}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, string> {{"key1", null!}}
                 });
             db.SaveChanges();
         }
@@ -174,18 +170,15 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
             db.Entities.AddRange(
                 new DictionaryIntEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, int> {{"key1", 10}, {"key2", 50}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, int> {{"key1", 10}, {"key2", 50}}
                 },
                 new DictionaryIntEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, int> {{"key1", 72}, {"key2", 100}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, int> {{"key1", 72}, {"key2", 100}}
                 },
                 new DictionaryIntEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, int> {{"key1", 100}, {"key2", 500}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, int> {{"key1", 100}, {"key2", 500}}
                 });
             db.SaveChanges();
         }
@@ -226,16 +219,8 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
         {
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.AddRange(
-                new IDictionaryIntEntity
-                {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, int> {{"key1", 1}}
-                },
-                new IDictionaryIntEntity
-                {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, int> {{"key2", 2}}
-                });
+                new IDictionaryIntEntity {_id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, int> {{"key1", 1}}},
+                new IDictionaryIntEntity {_id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, int> {{"key2", 2}}});
             db.SaveChanges();
         }
 
@@ -259,18 +244,15 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
             db.Entities.AddRange(
                 new IDictionaryIntEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, int> {{"key1", 10}, {"key2", 50}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, int> {{"key1", 10}, {"key2", 50}}
                 },
                 new IDictionaryIntEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, int> {{"key1", 72}, {"key2", 100}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, int> {{"key1", 72}, {"key2", 100}}
                 },
                 new IDictionaryIntEntity
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    Dictionary = new Dictionary<string, int> {{"key1", 100}, {"key2", 500}}
+                    _id = ObjectId.GenerateNewId(), Dictionary = new Dictionary<string, int> {{"key1", 100}, {"key2", 500}}
                 });
             db.SaveChanges();
         }
@@ -307,7 +289,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
             var results = db.Entities.Where(e => e.Dictionary.ContainsKey("key1")).ToArray();
             Assert.Single(results);
         }
-   }
+    }
 
     [Fact]
     public void Where_ReadOnlyDictionary_key_equals_value()
@@ -370,4 +352,3 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
         }
     }
 }
-

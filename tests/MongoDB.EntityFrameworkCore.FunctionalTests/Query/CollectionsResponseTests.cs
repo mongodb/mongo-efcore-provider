@@ -3,15 +3,11 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class CollectionsResponseTests : IDisposable, IAsyncDisposable
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class CollectionsResponseTests(ReadOnlySampleGuidesFixture fixture)
+    : IDisposable, IAsyncDisposable
 {
-    private readonly GuidesDbContext _db;
-
-    public CollectionsResponseTests(SampleGuidesFixture fixture)
-    {
-        _db = GuidesDbContext.Create(fixture.MongoDatabase);
-    }
+    private readonly GuidesDbContext _db = GuidesDbContext.Create(fixture.MongoDatabase);
 
     [Fact]
     public void ToList()
@@ -40,7 +36,7 @@ public class CollectionsResponseTests : IDisposable, IAsyncDisposable
         var result = await _db.Planets.ToArrayAsync();
         Assert.Equal(8, result.Length);
     }
-    
+
     public void Dispose()
         => _db.Dispose();
 

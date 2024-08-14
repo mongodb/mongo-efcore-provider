@@ -19,15 +19,10 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class FindTests
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class FindTests(ReadOnlySampleGuidesFixture fixture)
 {
-    private readonly IMongoDatabase _mongoDatabase;
-
-    public FindTests(SampleGuidesFixture fixture)
-    {
-        _mongoDatabase = fixture.MongoDatabase;
-    }
+    private readonly IMongoDatabase _mongoDatabase = fixture.MongoDatabase;
 
     [Fact]
     public void Find_with_primitive_key_found()

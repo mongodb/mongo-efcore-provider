@@ -13,20 +13,24 @@
  * limitations under the License.
  */
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using System.Runtime.CompilerServices;
 
-[CollectionDefinition(nameof(SampleGuidesFixture))]
-public class SampleGuidesFixtureCollection : ICollectionFixture<SampleGuidesFixture>
-{
-    // This class has no code, and is never created. Its purpose is simply
-    // to be the place to apply [CollectionDefinition] and all the
-    // ICollectionFixture<> interfaces.
-}
+namespace MongoDB.EntityFrameworkCore.FunctionalTests;
 
-public class SampleGuidesFixture : TemporaryDatabaseFixture
+public class TestInitialization
 {
-    public SampleGuidesFixture()
+    [ModuleInitializer]
+    public static void CleanDatabase()
     {
-        SampleGuides.Populate(MongoDatabase);
+        var client = TestServer.GetClient();
+        var databaseNameCursor = client.ListDatabaseNames();
+        while (databaseNameCursor.MoveNext())
+        {
+            foreach (var databaseName in databaseNameCursor.Current)
+            {
+                if (databaseName.StartsWith(TemporaryDatabaseFixture.TestDatabasePrefix))
+                    client.DropDatabase(databaseName);
+            }
+        }
     }
 }

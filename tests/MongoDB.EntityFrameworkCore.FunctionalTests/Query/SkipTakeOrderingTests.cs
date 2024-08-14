@@ -17,15 +17,10 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class SkipTakeOrderingTests
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class SkipTakeOrderingTests(ReadOnlySampleGuidesFixture fixture)
 {
-    private readonly GuidesDbContext _db;
-
-    public SkipTakeOrderingTests(SampleGuidesFixture fixture)
-    {
-        _db = GuidesDbContext.Create(fixture.MongoDatabase);
-    }
+    private readonly GuidesDbContext _db = GuidesDbContext.Create(fixture.MongoDatabase);
 
     [Fact]
     public void Take_with_constant_integer()
