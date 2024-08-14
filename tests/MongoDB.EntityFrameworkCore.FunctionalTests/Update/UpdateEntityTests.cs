@@ -56,7 +56,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_simple_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<SimpleEntity>();
         var entity = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "Before"};
 
         {
@@ -78,7 +78,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_dictionary_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -154,7 +154,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
    [Fact]
     public void Update_dictionary_of_dictionary_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<DictionaryOfDictionaryEntity>();
+        var collection = tempDatabase.CreateTemporaryCollection<DictionaryOfDictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -365,7 +365,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     {
         var collection =
             tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
-            
+
         {
             using var db = SingleEntityDbContext.Create(collection);
             var entity = new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = initialValue};
