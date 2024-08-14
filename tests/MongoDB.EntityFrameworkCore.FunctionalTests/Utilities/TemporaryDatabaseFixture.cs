@@ -15,6 +15,7 @@
 
 using System.Collections;
 using System.Runtime.CompilerServices;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
@@ -30,6 +31,9 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
     {
         Client = TestServer.GetClient();
         MongoDatabase = Client.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
+#pragma warning disable CS0618 // Type or member is obsolete
+        BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3; // We sometimes insert with C# Driver before firing up EF Provider
+#pragma warning restore CS0618 // Type or member is obsolete
     }
 
     public IMongoDatabase MongoDatabase { get; }
@@ -93,8 +97,9 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
 
 
     public void Dispose()
-        => Client.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
+    {
+    }
 
-    public async ValueTask DisposeAsync()
-        => await Client.DropDatabaseAsync(MongoDatabase.DatabaseNamespace.DatabaseName);
+    public ValueTask DisposeAsync()
+        => ValueTask.CompletedTask;
 }

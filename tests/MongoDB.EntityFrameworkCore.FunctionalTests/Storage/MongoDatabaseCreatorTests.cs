@@ -21,7 +21,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 public class MongoDatabaseCreatorTests
 {
     [Fact]
-    public void EnsureCreated_returns_true_when_database_does_not_exist()
+    public void EnsureCreated_returns_true_when_database_did_not_exist()
     {
         using var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
@@ -41,7 +41,7 @@ public class MongoDatabaseCreatorTests
     }
 
     [Fact]
-    public async Task EnsureCreatedAsync_returns_true_when_database_does_not_exist()
+    public async Task EnsureCreatedAsync_returns_true_when_database_did_not_exist()
     {
         await using var database = new TemporaryDatabaseFixture();
         await using var db = GuidesDbContext.Create(database.MongoDatabase);

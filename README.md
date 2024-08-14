@@ -1,4 +1,4 @@
-# MongoDB Entity Framework Core Provider 
+# MongoDB Entity Framework Core Provider
 
 The MongoDB EF Core Provider requires Entity Framework Core 8 on .NET 8 or later.
 
@@ -79,7 +79,7 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Relationships between entities
 - Includes/joins
 - Foreign keys and navigation traversal
-  
+
 ### Not supported & out-of-scope features
 
 - Keyless entity types
@@ -109,7 +109,4 @@ If you’ve identified a security vulnerability in a driver or any other MongoDB
 
 Please see our [guidelines](CONTRIBUTING.md) for contributing to the driver.
 
-### Maintainers:
-* Damien Guard              damien.guard@mongodb.com
-* Oleksandr Poliakov        oleksandr.poliakov@mongodb.com
-* Robert Stam               robert@mongodb.com
+Thank you to [everyone](https://github.com/mongodb/mongo-efcore-provider/graphs/contributors) who has contributed to this project.

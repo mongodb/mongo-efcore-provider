@@ -18,16 +18,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class CompositeKeyQueryTests(TemporaryDatabaseFixture fixture)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _temporaryDatabase;
-
-    public CompositeKeyQueryTests(TemporaryDatabaseFixture fixture)
-    {
-        _temporaryDatabase = fixture;
-    }
-
     [Fact]
     public void Should_query_by_key_component()
     {
@@ -64,7 +58,7 @@ public class CompositeKeyQueryTests : IClassFixture<TemporaryDatabaseFixture>
 
     private SingleEntityDbContext<Entity> CreateContext([CallerMemberName] string? name = null)
     {
-        var collection = _temporaryDatabase.CreateTemporaryCollection<Entity>(name);
+        var collection = fixture.CreateTemporaryCollection<Entity>(name);
 
         {
             using var db = SingleEntityDbContext.Create(collection, ConfigureContext);

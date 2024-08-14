@@ -19,17 +19,12 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class WhereTests : IDisposable, IAsyncDisposable
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class WhereTests(ReadOnlySampleGuidesFixture fixture)
+    : IDisposable, IAsyncDisposable
 {
-    private readonly IMongoDatabase _mongoDatabase;
-    private readonly GuidesDbContext _db;
-
-    public WhereTests(SampleGuidesFixture fixture)
-    {
-        _mongoDatabase = fixture.MongoDatabase;
-        _db = GuidesDbContext.Create(fixture.MongoDatabase);
-    }
+    private readonly IMongoDatabase _mongoDatabase = fixture.MongoDatabase;
+    private readonly GuidesDbContext _db = GuidesDbContext.Create(fixture.MongoDatabase);
 
     [Fact]
     public void Where_string_equal()
@@ -251,7 +246,7 @@ public class WhereTests : IDisposable, IAsyncDisposable
         Assert.All(results, p => Assert.NotEmpty(p.mainAtmosphere));
     }
 
-    [Fact(Skip = "Errors wiuth MongoDB < 5.0")]
+    [Fact]
     public void Where_entity_equal_null()
     {
         var actual = _db.Planets.FirstOrDefault(p => p == null);

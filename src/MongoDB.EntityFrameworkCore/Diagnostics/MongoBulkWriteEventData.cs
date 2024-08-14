@@ -34,57 +34,49 @@ public class MongoBulkWriteEventData : EventData
     /// <param name="eventDefinition">The event definition.</param>
     /// <param name="messageGenerator">A delegate that generates a log message for this event.</param>
     /// <param name="elapsed">The time elapsed since the command was sent to the database.</param>
-    /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> being queried.</param>
-    /// <param name="documentsInserted">The number of documents inserted by this bulk write operation.</param>
-    /// <param name="documentsDeleted">The number of documents deleted by this bulk write operation.</param>
-    /// <param name="documentsModified">The number of documents modified by this bulk write operation.</param>
-    /// <param name="logSensitiveData">Indicates whether the application allows logging of sensitive data.</param>
+    /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> being operated upon.</param>
+    /// <param name="insertCount">The number of documents to insert in this bulk write operation.</param>
+    /// <param name="deleteCount">The number of documents to delete by this bulk write operation.</param>
+    /// <param name="modifyCount">The number of documents to modify by this bulk write operation.</param>
     public MongoBulkWriteEventData(
         EventDefinitionBase eventDefinition,
         Func<EventDefinitionBase, EventData, string> messageGenerator,
         TimeSpan elapsed,
         CollectionNamespace collectionNamespace,
-        long documentsInserted,
-        long documentsDeleted,
-        long documentsModified,
-        bool logSensitiveData)
+        long insertCount,
+        long deleteCount,
+        long modifyCount)
         : base(eventDefinition, messageGenerator)
     {
         Elapsed = elapsed;
         CollectionNamespace = collectionNamespace;
-        DocumentsInserted = documentsInserted;
-        DocumentsDeleted = documentsDeleted;
-        DocumentsModified = documentsModified;
-        LogSensitiveData = logSensitiveData;
+        InsertCount = insertCount;
+        DeleteCount = deleteCount;
+        ModifyCount = modifyCount;
     }
 
     /// <summary>
     /// The time elapsed since the command was sent to the database.
     /// </summary>
-    public virtual TimeSpan Elapsed { get; }
+    public TimeSpan Elapsed { get; }
 
     /// <summary>
     /// The <see cref="CollectionNamespace"/> being queried.
     /// </summary>
-    public virtual CollectionNamespace CollectionNamespace { get; }
+    public CollectionNamespace CollectionNamespace { get; }
 
     /// <summary>
-    /// The number of documents inserted by this bulk write operation.
+    /// The number of documents to insert in this bulk write operation.
     /// </summary>
-    public virtual long DocumentsInserted { get; }
+    public long InsertCount { get; }
 
     /// <summary>
-    /// The number of documents deleted by this bulk write operation.
+    /// The number of documents to delete by this bulk write operation.
     /// </summary>
-    public virtual long DocumentsDeleted { get; }
+    public long DeleteCount { get; }
 
     /// <summary>
-    /// The number of documents modified by this bulk write operation.
+    /// The number of documents to modify by this bulk write operation.
     /// </summary>
-    public virtual long DocumentsModified { get; }
-
-    /// <summary>
-    /// Indicates whether the application allows logging of sensitive data.
-    /// </summary>
-    public virtual bool LogSensitiveData { get; }
+    public long ModifyCount { get; }
 }

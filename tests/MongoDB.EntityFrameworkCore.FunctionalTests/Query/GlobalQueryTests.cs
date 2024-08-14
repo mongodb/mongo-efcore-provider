@@ -21,15 +21,10 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
-public class GlobalQueryTests
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+public class GlobalQueryTests(ReadOnlySampleGuidesFixture fixture)
 {
-    private static IMongoDatabase _mongoDatabase;
-
-    public GlobalQueryTests(SampleGuidesFixture fixture)
-    {
-        _mongoDatabase = fixture.MongoDatabase;
-    }
+    private readonly IMongoDatabase _mongoDatabase = fixture.MongoDatabase;
 
     [Fact]
     public void Global_query_filter_applies()
@@ -89,7 +84,7 @@ public class GlobalQueryTests
     [Fact]
     public void Global_query_filter_against_the_dbcontext()
     {
-        using var db = new MultiTenantDbContext();
+        using var db = new MultiTenantDbContext(_mongoDatabase);
 
         db.MaxOrder = 5;
         Assert.Equal(5, db.Planets.Count());
@@ -101,7 +96,7 @@ public class GlobalQueryTests
         Assert.Equal(2, db.Planets.Count());
     }
 
-    class MultiTenantDbContext : DbContext
+    class MultiTenantDbContext(IMongoDatabase mongoDatabase) : DbContext
     {
         public DbSet<Planet> Planets { get; set; }
 
@@ -111,7 +106,7 @@ public class GlobalQueryTests
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => base.OnConfiguring(optionsBuilder
-                .UseMongoDB(_mongoDatabase.Client, _mongoDatabase.DatabaseNamespace.DatabaseName)
+                .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             );
 

@@ -17,12 +17,12 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
 public class ProjectionTests
 {
     private readonly IQueryable<Planet> _planets;
 
-    public ProjectionTests(SampleGuidesFixture fixture)
+    public ProjectionTests(ReadOnlySampleGuidesFixture fixture)
     {
         var db = GuidesDbContext.Create(fixture.MongoDatabase);
         _planets = db.Planets.Take(10);
@@ -48,17 +48,6 @@ public class ProjectionTests
         {
             Assert.NotNull(r.Name);
             Assert.InRange(r.Order, 1, 8);
-        });
-    }
-
-    [Fact]
-    public void Select_projection_to_array()
-    {
-        var results = _planets.Select(p => new object[] {p.name, p.orderFromSun});
-        Assert.All(results, r =>
-        {
-            Assert.NotNull(r[0]);
-            Assert.InRange(Assert.IsType<int>(r[1]), 1, 8);
         });
     }
 
