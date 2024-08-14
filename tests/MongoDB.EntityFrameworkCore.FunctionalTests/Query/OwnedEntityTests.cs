@@ -723,9 +723,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
             name = "Elizabeth", locationOne = Location1, locationTwo = Location2
         };
 
-        _tempDatabase.CreateTemporaryCollection<PersonWithTwoLocationsRemapped>().WriteTestDocs([expected]);
+        tempDatabase.CreateTemporaryCollection<PersonWithTwoLocationsRemapped>().WriteTestDocs([expected]);
 
-        var collection = _tempDatabase.GetExistingTemporaryCollection<PersonWithTwoLocations>();
+        var collection = tempDatabase.GetExistingTemporaryCollection<PersonWithTwoLocations>();
         using var db = SingleEntityDbContext.Create(collection,
             mb => {
                 mb.Entity<PersonWithTwoLocations>().OwnsOne(p => p.first, r => r.HasElementName("locationOne"));
