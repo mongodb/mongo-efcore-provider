@@ -12,6 +12,7 @@ This release sees a number of breaking changes deemed necessary to implement the
 - Guid binary format is changing
 - CreateDatabase recommended at start-up
 - IMongoClientWrapper interface changes
+- Convention tweaks
 
 Please see the following sections for more details.
 
@@ -53,5 +54,10 @@ Instead it is recommended you call `EnsureCreated` or `EnsureCreatedAsync` durin
 
 Transactions and database creation work has meant that the `IMongoClientWrapper` interface has changed. It is not recommended you implement this interface yourself as it exists solely to provide EF service registration for the concrete implementation `MongoClientWrapper` class.
 
+### Convention tweaks
+
+- The previously undocumented `CamelCaseElementNameConvention` was incorrectly using the class name and not the property name
+- Some other conventions were not sealed and had virtual methods that made no sense, these have been corrected
+- Some conventions took unnecessary constructor arguments for unneeded dependencies, these have been removed
 
 
