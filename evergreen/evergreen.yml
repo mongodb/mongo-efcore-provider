@@ -238,9 +238,8 @@ functions:
         include_expansions_in_env:
           - "ARTIFACTORY_PASSWORD"
           - "ARTIFACTORY_USERNAME"
-          - "AZURE_NUGET_SIGN_TENANT_ID"
-          - "AZURE_NUGET_SIGN_CLIENT_ID"
-          - "AZURE_NUGET_SIGN_CLIENT_SECRET"
+          - "GRS_USERNAME"
+          - "GRS_PASSWORD"
         script: |
           ${PREPARE_SHELL}
           . ./evergreen/sign-packages.sh
