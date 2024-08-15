@@ -31,12 +31,14 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
     {
         Client = TestServer.GetClient();
         MongoDatabase = Client.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
+#pragma warning disable CS0618 // Type or member is obsolete
         BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3; // We sometimes insert with C# Driver before firing up EF Provider
+#pragma warning restore CS0618 // Type or member is obsolete
     }
 
     public IMongoDatabase MongoDatabase { get; }
 
-    public IMongoCollection<T> CreateTemporaryCollection<T>(string prefix, params object[] values)
+    public IMongoCollection<T> CreateTemporaryCollection<T>(string prefix, params object?[] values)
     {
         var valuesSuffix = string.Join('+', values.Select(v =>
         {
@@ -95,8 +97,9 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
 
 
     public void Dispose()
-        => Client.DropDatabase(MongoDatabase.DatabaseNamespace.DatabaseName);
+    {
+    }
 
-    public async ValueTask DisposeAsync()
-        => await Client.DropDatabaseAsync(MongoDatabase.DatabaseNamespace.DatabaseName);
+    public ValueTask DisposeAsync()
+        => ValueTask.CompletedTask;
 }

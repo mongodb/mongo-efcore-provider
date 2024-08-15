@@ -17,12 +17,12 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(SampleGuidesFixture))]
+[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
 public class ProjectionTests
 {
     private readonly IQueryable<Planet> _planets;
 
-    public ProjectionTests(SampleGuidesFixture fixture)
+    public ProjectionTests(ReadOnlySampleGuidesFixture fixture)
     {
         var db = GuidesDbContext.Create(fixture.MongoDatabase);
         _planets = db.Planets.Take(10);

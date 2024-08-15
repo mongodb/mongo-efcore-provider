@@ -19,19 +19,12 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 internal static class TestServer
 {
-    private const string MongoServer = "localhost";
-
-    private static readonly MongoClientSettings MongoClientSettings = new()
-    {
-        Server = MongoServerAddress.Parse(MongoServer)
-    };
-
-    private static readonly MongoClient MongoClient = new(MongoClientSettings);
+    public static readonly string ConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+    private static readonly MongoClient MongoClient = new(ConnectionString);
 
     public static IMongoClient GetClient()
         => MongoClient;
 
     public static readonly IMongoClient BrokenClient
         = new MongoClient(new MongoClientSettings { Server = new MongoServerAddress("localhost", 27000), ServerSelectionTimeout = TimeSpan.Zero, ConnectTimeout = TimeSpan.FromSeconds(1)});
-
 }

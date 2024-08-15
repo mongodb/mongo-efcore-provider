@@ -13,20 +13,34 @@
  * limitations under the License.
  */
 
+using MongoDB.Driver;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-[CollectionDefinition(nameof(SampleGuidesFixture))]
-public class SampleGuidesFixtureCollection : ICollectionFixture<SampleGuidesFixture>
+[CollectionDefinition(nameof(ReadOnlySampleGuidesFixture))]
+public class ReadOnlySampleGuidesFixtureCollection : ICollectionFixture<ReadOnlySampleGuidesFixture>
 {
     // This class has no code, and is never created. Its purpose is simply
     // to be the place to apply [CollectionDefinition] and all the
     // ICollectionFixture<> interfaces.
 }
 
-public class SampleGuidesFixture : TemporaryDatabaseFixture
+public class ReadOnlySampleGuidesFixture : IDisposable, IAsyncDisposable
 {
-    public SampleGuidesFixture()
+    public ReadOnlySampleGuidesFixture()
     {
+        Client = TestServer.GetClient();
+        MongoDatabase = Client.GetDatabase("EFCoreTest-SampleGuides");
         SampleGuides.Populate(MongoDatabase);
     }
+
+    public IMongoDatabase MongoDatabase { get; }
+    public IMongoClient Client { get; }
+
+    public void Dispose()
+    {
+    }
+
+    public ValueTask DisposeAsync()
+        => ValueTask.CompletedTask;
 }
