@@ -2,7 +2,7 @@
 
 Please note that this provider **does not follow traditional semantic versioning** of limiting breaking changes to major version numbers. This is because the major version number is used to align with releases of Entity Framework Core.
 
-In order to evolve the driver as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
+In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
 ## Breaking changes in 8.1.0
 
@@ -29,7 +29,7 @@ If, however, you are running MongoDB Server:
 - In standalone mode (perhaps for local development) you can reconfigure your standalone server to a single-instance replica set
 - In a container environment switch to a single-instance replica set container if one is available
 
-To reconfigure a standalone server please follow the [Convert a Standalone mognod to a Replica Set guide](https://www.mongodb.com/docs/manual/tutorial/convert-standalone-to-replica-set/).
+To reconfigure a standalone server please follow the [Convert a Standalone MongoDB to a Replica Set guide](https://www.mongodb.com/docs/manual/tutorial/convert-standalone-to-replica-set/).
 
 Alternatively, if you are absolutely sure you do not wish to use transactions, (and therefore not use optimistic concurrency) then you can disable automatic transactions inside `SaveChanges` and `SaveChangesAsync` by setting `Database.AutoTransactionBehavior = AutoTransactionBehavior.Never` on your `DbContext` subclass as part of the setup.
 
@@ -47,7 +47,7 @@ Previous versions of this provider did not actually create either the database o
 
 With the move to transactional `SaveChanges` this is no longer recommended as it may cause snapshot issues in some server configurations.
 
-Instead it is recommended you call `EnsureCreated` or `EnsureCreatedAsync` durinng your application start0up. This will call `CreateDatabase` (even if it already exists) which will add create any missing expected collections based on the configured metadata for your `DbContext` subclass. This will not affect any existing collections or data and is recommended to avoid a `SaveChanges` or `SaveChangesAsync` operation from causing schema changes during a transaction which can result in snapshot exceptions on some configurations.
+Instead it is recommended you call `EnsureCreated` or `EnsureCreatedAsync` during your application start-up. This will call `CreateDatabase` (even if it already exists) which will create any missing expected collections based on the configured metadata for your `DbContext` subclass. This will not affect any existing collections or data and is recommended to avoid a `SaveChanges` or `SaveChangesAsync` operation from causing schema changes during a transaction which can result in snapshot exceptions on some configurations.
 
 ### IMongoClientWrapper interface changes
 
