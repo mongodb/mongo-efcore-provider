@@ -28,5 +28,6 @@
     <None Include="..\..\LICENSE.md" Pack="true" PackagePath="$(PackageLicenseFile)"/>
     <None Include="..\..\packageIcon.png" Pack="true" PackagePath="" />
     <None Include="..\..\README.md" Pack="true" PackagePath=""/>
+    <None Include="..\..\BREAKING-CHANGES.md" Pack="true" PackagePath=""/>
   </ItemGroup>
 </Project>
