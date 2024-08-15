@@ -1,6 +1,6 @@
 # MongoDB Entity Framework Core Provider
 
-The MongoDB EF Core Provider requires Entity Framework Core 8 on .NET 8 or later.
+The MongoDB EF Core Provider requires Entity Framework Core 8 on .NET 8 or later and a MongoDB database server 5.0 or later, preferably in a transaction-enabled configuration.
 
 ## Getting Started
 
@@ -35,25 +35,30 @@ To get going with the DbContext:
 var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI");
 var mongoClient = new MongoClient(mongoConnectionString);
 var db = PlanetDbContext.Create(mongoClient.GetDatabase("planets"));
+db.Database.EnsureCreated();
 ```
 
 ## Supported Features
 
 Entity Framework Core and MongoDB have a wide variety of features. This provider supports a subset of the functionality available in both, specifically:
 
-- Querying with Where, Find, First, Single, OrderBy, ThenBy, Skip, Take etc.
-- Top-level aggregates of Any, Count, LongCount
+- Querying with `Where`, `Find`, `First`, `Single`, `OrderBy`, `ThenBy`, `Skip`, `Take` etc.
+- Top-level aggregates of `Any`, `Count`, `LongCount`
 - Mapping properties to BSON elements using `[Column]` or `[BsonElement]` attributes or `HasElementName("name")` method
 - Mapping entities to collections using `[Table("name")]` attribute or `ToCollection("name")` method
-- Single or composite keys of standard types including string, Guid and ObjectId
-- Properties with typical CLR types (int, string, Guid, decimal), Mongo types (ObjectId, Decimal128)
+- Single or composite keys of standard types including string, `Guid` and `ObjectId`
+- Properties with typical CLR types (`int`, `string`, `Guid`, `decimal`, etc.) & MongoDB types (`ObjectId`, `Decimal128`)
+- Properties of `Dictionary<string, ...>` type
 - Properties containing arrays and lists of simple CLR types
 - Owned entities (aka value types, sub-documents, embedded documents) both directly and within collections
-- BsonIgnore, BsonId, BsonDateTimeOptions, BsonElement, BsonRepresentation and BsonRequired support
+- `BsonIgnore`, `BsonId`, `BsonDateTimeOptions`, `BsonElement`, `BsonRepresentation` and `BsonRequired` support
 - Value converters using `HasConversion`
 - Query and update logging including MQL (sensitive mode only)
-- Some mapping configuration options for DateTime
-- EnsureCreated & EnsureDeleted operations
+- Some mapping configuration options for `DateTime`
+- `EnsureCreated` & `EnsureDeleted` operations
+- Optimistic concurrency support through `IsConcurrencyToken`/`ConcurrencyCheckAttribute` & `IsRowVersion`/`TimestampAttribute`
+- AutoTransactional `SaveChanges` & `SaveChangesAsync` - all changes committed or rolled-back together
+- `CamcelCaseElementNameConvention` for helping map Pascal-cased C# properties to came-cased BSON elements
 
 ## Limitations
 
@@ -63,11 +68,8 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 ### Planned for upcoming releases
 
 - Select projections with client-side operations
-- Sum, Average, Min, Max etc. support at top level
-- Transactions
 - Type discriminators
-- Additional mapping configuration options
-- Properties of Dictionary type
+- Sum, Average, Min, Max etc. support at top level
 
 ### Not supported but considering for future releases
 
@@ -92,6 +94,10 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Timeseries
 - Atlas search
 
+## Breaking changes
+
+This project's version-numbers are aligned with Entity Framework Core and as-such we can not use the semver convention of constraining breaking changes solely to major version numbers. Please keep an eye on our [Breaking Changes](/BREAKING-CHANGES.md) document before upgrading to a new version of this provider.
+ 
 ## Documentation
 
 - [MongoDB](https://www.mongodb.com/docs)
