@@ -27,7 +27,7 @@ public class BooleanSerializationTests : BaseSerializationTests
     [InlineData(false)]
     public void Boolean_round_trips(bool expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<BooleanEntity>(nameof(Boolean_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<BooleanEntity>(nameof(Boolean_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -67,7 +67,7 @@ public class BooleanSerializationTests : BaseSerializationTests
     public void Nullable_bool_round_trips(bool? expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableBooleanEntity>(nameof(Nullable_bool_round_trips) + expected);
+            TempDatabase.CreateCollection<NullableBooleanEntity>(nameof(Nullable_bool_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

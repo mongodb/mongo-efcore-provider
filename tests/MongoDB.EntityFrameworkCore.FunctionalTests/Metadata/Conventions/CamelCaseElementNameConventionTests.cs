@@ -105,7 +105,7 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void CamelCase_redefines_element_name_for_insert_and_query()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<RemappedEntity>();
+        var collection = tempDatabase.CreateCollection<RemappedEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string unchangedText = "Unchanged as is a single already-lowercase word";

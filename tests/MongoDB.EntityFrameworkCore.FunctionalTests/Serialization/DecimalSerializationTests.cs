@@ -29,7 +29,7 @@ public class DecimalSerializationTests : BaseSerializationTests
     public void Decimal_round_trips(string expectedString)
     {
         var expected = Decimal.Parse(expectedString);
-        var collection = TempDatabase.CreateTemporaryCollection<DecimalEntity>(nameof(Decimal_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<DecimalEntity>(nameof(Decimal_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -72,7 +72,7 @@ public class DecimalSerializationTests : BaseSerializationTests
         decimal? expected = decimal.TryParse(expectedString, out var parsedDecimal) ? parsedDecimal : null;
 
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableDecimalEntity>(nameof(Nullable_Decimal_round_trips) + expected);
+            TempDatabase.CreateCollection<NullableDecimalEntity>(nameof(Nullable_Decimal_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

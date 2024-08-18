@@ -31,7 +31,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_insert_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = _tempDatabase.CreateCollection<Entity>();
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
@@ -58,7 +58,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_read_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = _tempDatabase.CreateCollection<Entity>();
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
@@ -88,7 +88,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_update_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = _tempDatabase.CreateCollection<Entity>();
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
@@ -118,7 +118,7 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_delete_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = _tempDatabase.CreateCollection<Entity>();
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
             {

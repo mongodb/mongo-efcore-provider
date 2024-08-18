@@ -34,7 +34,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void SaveChanges_throws_DbUpdateConcurrencyException_when_modifying_entity_that_has_been_modified()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity1>();
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity1 { Text = "Initial state on instance 1" };
@@ -56,7 +56,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_modifying_entity_that_has_been_modified()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity1>();
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity1 { Text = "Initial state on instance 1" };
@@ -78,7 +78,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void SaveChanges_throws_DbUpdateConcurrencyException_when_modifying_entity_that_is_missing()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity1>();
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity1 { Text = "Initial state on instance 1" };
@@ -100,7 +100,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_modifying_entity_that_is_missing()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity1>();
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity1 { Text = "Initial state on instance 1" };
@@ -122,7 +122,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void SaveChanges_throws_DbUpdateConcurrencyException_when_deleting_entity_that_is_missing()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity1>();
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity1 { Text = "I will be gone" };
@@ -143,7 +143,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_deleting_entity_that_is_missing()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity1>();
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity1 { Text = "I will be gone" };
@@ -164,7 +164,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void SaveChanges_throws_DbUpdateConcurrencyException_when_deleting_entity_that_has_been_modified()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity1>();
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity1 { Text = "Original" };
@@ -185,7 +185,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_deleting_entity_that_has_been_modified()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity1>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity1>();
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity1 { Text = "Original" };
@@ -217,7 +217,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void SaveChanges_throws_DbUpdateConcurrencyException_when_modifying_two_checked_entity_that_has_been_modified()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<ConcurrentEntity2>();
+        var collection = tempDatabase.CreateCollection<ConcurrentEntity2>();
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new ConcurrentEntity2 { TextA = "Initial A on instance 1", TextB = "Initial B on instance 1"};

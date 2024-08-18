@@ -34,7 +34,7 @@ public class StringSerializationTests : BaseSerializationTests
     {
         var counter = Interlocked.Increment(ref CollectionCounter);
         var collection =
-            TempDatabase.CreateTemporaryCollection<StringEntity>(nameof(String_round_trips) + counter);
+            TempDatabase.CreateCollection<StringEntity>(nameof(String_round_trips) + counter);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -78,7 +78,7 @@ public class StringSerializationTests : BaseSerializationTests
     [InlineData('\x0169')]
     public void Char_round_trips(char expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<CharEntity>(nameof(Char_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<CharEntity>(nameof(Char_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -122,7 +122,7 @@ public class StringSerializationTests : BaseSerializationTests
     public void Nullable_char_round_trips(char? expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableCharEntity>(nameof(Nullable_char_round_trips) +
+            TempDatabase.CreateCollection<NullableCharEntity>(nameof(Nullable_char_round_trips) +
                                                                        expected?.ToString().Replace(' ', '_'));
 
         {

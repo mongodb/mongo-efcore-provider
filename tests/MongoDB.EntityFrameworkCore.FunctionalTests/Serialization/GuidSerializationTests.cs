@@ -31,7 +31,7 @@ public class GuidSerializationTests : BaseSerializationTests
     public void Guid_round_trips(string expectedString)
     {
         var expected = Guid.Parse(expectedString);
-        var collection = TempDatabase.CreateTemporaryCollection<GuidEntity>(nameof(Guid_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<GuidEntity>(nameof(Guid_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -74,7 +74,7 @@ public class GuidSerializationTests : BaseSerializationTests
     public void Nullable_guid_round_trips(string? expectedString)
     {
         Guid? expected = expectedString == null ? null : Guid.Parse(expectedString);
-        var collection = TempDatabase.CreateTemporaryCollection<NullableGuidEntity>(nameof(Nullable_guid_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<NullableGuidEntity>(nameof(Nullable_guid_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

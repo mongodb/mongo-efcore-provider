@@ -38,7 +38,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Non_nullable_primitive_list_is_empty_when_bson_empty()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<NonNullablePrimitiveList>();
+        var collection = tempDatabase.CreateCollection<NonNullablePrimitiveList>();
         collection.WriteTestDocs([
             new NonNullablePrimitiveList
             {
@@ -54,7 +54,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Non_nullable_primitive_list_throws_when_bson_missing()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<MissingPrimitiveList>();
+        var collection = tempDatabase.CreateCollection<MissingPrimitiveList>();
         collection.WriteTestDocs([new MissingPrimitiveList()]);
         using var db = SingleEntityDbContext.Create<MissingPrimitiveList, NonNullablePrimitiveArray>(collection);
 
@@ -67,7 +67,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Non_nullable_primitive_list_throws_when_bson_null()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<NonNullablePrimitiveList>();
+        var collection = tempDatabase.CreateCollection<NonNullablePrimitiveList>();
         collection.WriteTestDocs([
             new NonNullablePrimitiveList
             {
@@ -85,7 +85,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Nullable_primitive_list_is_null_when_bson_missing()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<MissingPrimitiveList>();
+        var collection = tempDatabase.CreateCollection<MissingPrimitiveList>();
         collection.WriteTestDocs([new MissingPrimitiveList()]);
         var db = SingleEntityDbContext.Create<MissingPrimitiveList, NullablePrimitiveArray>(collection);
 
@@ -96,7 +96,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Nullable_primitive_list_is_empty_when_bson_empty()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<NullablePrimitiveList>();
+        var collection = tempDatabase.CreateCollection<NullablePrimitiveList>();
         collection.WriteTestDocs([
             new NullablePrimitiveList
             {
@@ -113,7 +113,7 @@ public class PrimitiveCollectionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Nullable_primitive_list_is_null_when_bson_null()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<NullablePrimitiveList>();
+        var collection = tempDatabase.CreateCollection<NullablePrimitiveList>();
         collection.WriteTestDocs([
             new NullablePrimitiveList
             {

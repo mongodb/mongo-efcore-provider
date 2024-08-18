@@ -27,7 +27,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     [InlineData(2, 4, 8, 16, 32, 64)]
     public void Int_array_round_trips(params int[] expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<IntArrayEntity>(nameof(Int_array_round_trips) + expected.Length);
+        var collection = TempDatabase.CreateCollection<IntArrayEntity>(nameof(Int_array_round_trips) + expected.Length);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -67,7 +67,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void Nullable_int_array_round_trips(params int[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableIntArrayEntity>(nameof(Nullable_int_array_round_trips)
+            TempDatabase.CreateCollection<NullableIntArrayEntity>(nameof(Nullable_int_array_round_trips)
                                                                            + expected.Length);
 
         {
@@ -110,7 +110,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void String_array_round_trips(params string[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<StringArrayEntity>(nameof(String_array_round_trips) + expected.Length);
+            TempDatabase.CreateCollection<StringArrayEntity>(nameof(String_array_round_trips) + expected.Length);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -158,7 +158,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void String_array_of_arrays_round_trips(string[][] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<StringArrayOfArraysEntity>(nameof(String_array_of_arrays_round_trips)
+            TempDatabase.CreateCollection<StringArrayOfArraysEntity>(nameof(String_array_of_arrays_round_trips)
                                                                               + expected.Length);
 
         {
@@ -189,7 +189,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void Nullable_string_array_round_trips(params string[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableStringArrayEntity>(nameof(Nullable_string_array_round_trips)
+            TempDatabase.CreateCollection<NullableStringArrayEntity>(nameof(Nullable_string_array_round_trips)
                                                                               + expected.Length);
 
         {
@@ -231,7 +231,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void List_round_trips(params int[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<ListEntity>(nameof(List_round_trips) + expected.Length);
+            TempDatabase.CreateCollection<ListEntity>(nameof(List_round_trips) + expected.Length);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -270,7 +270,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void Nullable_list_round_trips(params int[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableListEntity>(nameof(Nullable_list_round_trips) + expected.Length);
+            TempDatabase.CreateCollection<NullableListEntity>(nameof(Nullable_list_round_trips) + expected.Length);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -311,7 +311,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void IEnumerable_exposed_list_round_trips(params int[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<IEnumerableEntity>(
+            TempDatabase.CreateCollection<IEnumerableEntity>(
                 nameof(IEnumerable_exposed_list_round_trips) + expected.Length);
 
         {
@@ -342,7 +342,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void Nullable_ienumerable_exposed_list_round_trips(params int[] expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableIEnumerableEntity>(nameof(Nullable_ienumerable_exposed_list_round_trips)
+            TempDatabase.CreateCollection<NullableIEnumerableEntity>(nameof(Nullable_ienumerable_exposed_list_round_trips)
                                                                               + expected.Length);
 
         {
@@ -370,7 +370,7 @@ public class CollectionSerializationTests : BaseSerializationTests
     [Fact]
     public void IEnumerable_exposed_ienumerable_throws()
     {
-        var collection = TempDatabase.CreateTemporaryCollection<IEnumerableEntity>();
+        var collection = TempDatabase.CreateCollection<IEnumerableEntity>();
 
         using var db = SingleEntityDbContext.Create(collection);
 

@@ -35,7 +35,7 @@ public class MongoDatabaseCreatorTests
         using var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
-        database.CreateTemporaryCollection<Planet>(); // Force DB to actually exist
+        database.CreateCollection<Planet>(); // Force DB to actually exist
 
         Assert.False(db.Database.EnsureCreated());
     }
@@ -55,7 +55,7 @@ public class MongoDatabaseCreatorTests
         await using var database = new TemporaryDatabaseFixture();
         await using var db = GuidesDbContext.Create(database.MongoDatabase);
 
-        database.CreateTemporaryCollection<Planet>(); // Force DB to actually exist
+        database.CreateCollection<Planet>(); // Force DB to actually exist
 
         Assert.False(await db.Database.EnsureCreatedAsync());
     }
@@ -66,7 +66,7 @@ public class MongoDatabaseCreatorTests
         using var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
-        database.CreateTemporaryCollection<Planet>(); // Force DB to actually exist
+        database.CreateCollection<Planet>(); // Force DB to actually exist
 
         Assert.True(db.Database.EnsureDeleted());
         var databaseNames = database.Client.ListDatabaseNames().ToList();
@@ -88,7 +88,7 @@ public class MongoDatabaseCreatorTests
         await using var database = new TemporaryDatabaseFixture();
         await using var db = GuidesDbContext.Create(database.MongoDatabase);
 
-        database.CreateTemporaryCollection<Planet>(); // Force DB to actually exist
+        database.CreateCollection<Planet>(); // Force DB to actually exist
 
         Assert.True(await db.Database.EnsureDeletedAsync());
         var databaseNames = (await database.Client.ListDatabaseNamesAsync()).ToList();

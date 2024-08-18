@@ -36,7 +36,7 @@ public class InvalidQueryTranslationTests : IClassFixture<TemporaryDatabaseFixtu
     [Fact]
     public void ExecuteDelete_throws_invalid_operation_exception()
     {
-        using var db = SingleEntityDbContext.Create(_tempDatabase.CreateTemporaryCollection<SimpleEntity>());
+        using var db = SingleEntityDbContext.Create(_tempDatabase.CreateCollection<SimpleEntity>());
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.ExecuteDelete());
         Assert.Contains("ExecuteDelete", ex.Message);

@@ -43,7 +43,7 @@ public static class Exerciser
     {
         roundForComparison ??= e => e;
         var collectionName = caller + expectedValue;
-        var collection = database.CreateTemporaryCollection<EntityWithValue<TEntity>>(collectionName);
+        var collection = database.CreateCollection<EntityWithValue<TEntity>>(collectionName);
 
         var expected = new EntityWithValue<TEntity>
         {
@@ -69,7 +69,7 @@ public static class Exerciser
 
         {
             // Test MongoDB C# driver retrieval
-            var mongoCollection = database.GetExistingTemporaryCollection<EntityWithValue<TStorage>>(collectionName);
+            var mongoCollection = database.GetCollection<EntityWithValue<TStorage>>(collectionName);
             var found = mongoCollection.AsQueryable().First();
             Assert.Equal(converter(expectedValue), found.value);
             Assert.Equal(expected._id, found._id);
@@ -86,14 +86,14 @@ public static class Exerciser
         {
             // Create native one in MongoDB C# Driver & read via EF
             var mongoCollectionName = collectionName + "_";
-            var mongoCollection = database.CreateTemporaryCollection<EntityWithValue<TStorage>>(mongoCollectionName);
+            var mongoCollection = database.CreateCollection<EntityWithValue<TStorage>>(mongoCollectionName);
             var expectedMongo = new EntityWithValue<TStorage>
             {
                 _id = ObjectId.GenerateNewId(), value = converter(expectedValue)
             };
             mongoCollection.InsertOne(expectedMongo);
 
-            var efCollection = database.GetExistingTemporaryCollection<EntityWithValue<TEntity>>(mongoCollectionName);
+            var efCollection = database.GetCollection<EntityWithValue<TEntity>>(mongoCollectionName);
             using var db = SingleEntityDbContext.Create(efCollection, modelConfig);
             var found = db.Entities.First();
             Assert.Equal(roundForComparison(expectedValue), roundForComparison(found.value));
@@ -108,7 +108,7 @@ public static class Exerciser
         [CallerMemberName] string? caller = default)
     {
         var collectionName = caller + expectedId;
-        var collection = database.CreateTemporaryCollection<EntityWithId<TEntity>>(collectionName);
+        var collection = database.CreateCollection<EntityWithId<TEntity>>(collectionName);
 
         var expected = new EntityWithId<TEntity>
         {
@@ -134,7 +134,7 @@ public static class Exerciser
 
         {
             // Test MongoDB C# driver retrieval
-            var mongoCollection = database.GetExistingTemporaryCollection<EntityWithId<TStorage>>(collectionName);
+            var mongoCollection = database.GetCollection<EntityWithId<TStorage>>(collectionName);
             var found = mongoCollection.AsQueryable().First();
             Assert.Equal(converter(expectedId), found._id);
         }
@@ -149,14 +149,14 @@ public static class Exerciser
         {
             // Create native one in MongoDB C# Driver & read via EF
             var mongoCollectionName = collectionName + "_";
-            var mongoCollection = database.CreateTemporaryCollection<EntityWithId<TStorage>>(mongoCollectionName);
+            var mongoCollection = database.CreateCollection<EntityWithId<TStorage>>(mongoCollectionName);
             var expectedMongo = new EntityWithId<TStorage>
             {
                 _id = converter(expectedId)
             };
             mongoCollection.InsertOne(expectedMongo);
 
-            var efCollection = database.GetExistingTemporaryCollection<EntityWithId<TEntity>>(mongoCollectionName);
+            var efCollection = database.GetCollection<EntityWithId<TEntity>>(mongoCollectionName);
             using var db = SingleEntityDbContext.Create(efCollection, modelConfig);
             var found = db.Entities.First();
             Assert.Equal(expectedId, found._id);

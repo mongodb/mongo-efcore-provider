@@ -50,7 +50,7 @@ public class BsonIgnoreAttributeConventionTests(TemporaryDatabaseFixture tempDat
     [Fact]
     public void BsonElementAttribute_redefines_element_name_for_insert_and_query()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<IgnoredPropertiesEntity>();
+        var collection = tempDatabase.CreateCollection<IgnoredPropertiesEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string name = "The quick brown fox";

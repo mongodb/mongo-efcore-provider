@@ -78,7 +78,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     private void SaveChanges_throws_DbUpdateConcurrencyException_when_modifying_entity_already_modified<T>(Action<ModelBuilder>? mb = null)
         where T : BasicEntity, new()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<T>("Modifying " + typeof(T).Name);
+        var collection = tempDatabase.CreateCollection<T>("Modifying " + typeof(T).Name);
 
         using var db1 = SingleEntityDbContext.Create(collection, mb);
         var entityInstance1 = new T {Text = "Initial state on instance 1"};
@@ -123,7 +123,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     private async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_modifying_entity_already_modified<T>()
         where T : BasicEntity, new()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<T>("Modifying async " + typeof(T).Name);
+        var collection = tempDatabase.CreateCollection<T>("Modifying async " + typeof(T).Name);
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new T {Text = "Initial state on instance 1"};
@@ -164,7 +164,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     private void SaveChanges_throws_DbUpdateConcurrencyException_when_modifying_missing_entity<T>()
         where T : BasicEntity, new()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<T>("Missing " + typeof(T).Name);
+        var collection = tempDatabase.CreateCollection<T>("Missing " + typeof(T).Name);
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new T {Text = "Initial state on instance 1"};
@@ -205,7 +205,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     private async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_modifying_missing_entity<T>()
         where T : BasicEntity, new()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<T>("Missing async " + typeof(T).Name);
+        var collection = tempDatabase.CreateCollection<T>("Missing async " + typeof(T).Name);
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new T {Text = "Initial state on instance 1"};
@@ -247,7 +247,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     private void SaveChanges_throws_DbUpdateConcurrencyException_when_deleting_missing_entity<T>()
         where T : BasicEntity, new()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<T>("Deleting " + typeof(T).Name);
+        var collection = tempDatabase.CreateCollection<T>("Deleting " + typeof(T).Name);
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new T {Text = "I will be gone"};
@@ -285,7 +285,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     private async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_deleting_missing_entity<T>()
         where T : BasicEntity, new()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<T>("Deleting async " + typeof(T).Name);
+        var collection = tempDatabase.CreateCollection<T>("Deleting async " + typeof(T).Name);
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new T {Text = "I will be gone"};
@@ -322,7 +322,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     private void SaveChanges_throws_DbUpdateConcurrencyException_when_deleting_modified_entity<T>()
         where T : BasicEntity, new()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<T>("Deleting modified " + typeof(T).Name);
+        var collection = tempDatabase.CreateCollection<T>("Deleting modified " + typeof(T).Name);
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new T {Text = "Original"};
@@ -363,7 +363,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     private async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_deleting_modified_entity<T>()
         where T : BasicEntity, new()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<T>("Deleting modified async " + typeof(T).Name);
+        var collection = tempDatabase.CreateCollection<T>("Deleting modified async " + typeof(T).Name);
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new T {Text = "Original"};
@@ -384,7 +384,7 @@ public class RowVersionTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public async Task SaveChangesAsync_succeeds_after_rollback_by_setting_rowversion_original_value_to_latest()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<TimestampedULongEntity>("Applying rollbacked TimestampedULongEntity");
+        var collection = tempDatabase.CreateCollection<TimestampedULongEntity>("Applying rollbacked TimestampedULongEntity");
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var entityInstance1 = new TimestampedULongEntity {Text = "Original"};

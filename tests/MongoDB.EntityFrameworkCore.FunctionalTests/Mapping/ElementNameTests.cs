@@ -60,7 +60,7 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void ElementName_on_primary_key_round_trips()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<RenamedKeyElement>();
+        var collection = _tempDatabase.CreateCollection<RenamedKeyElement>();
 
         var id = ObjectId.GenerateNewId();
         var expectedName = Guid.NewGuid().ToString();
@@ -95,7 +95,7 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void ElementName_on_non_primary_key_round_trips()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<RenamedNonKeyElements>();
+        var collection = _tempDatabase.CreateCollection<RenamedNonKeyElements>();
 
         var id = ObjectId.GenerateNewId();
         var expectedFirstName = Guid.NewGuid().ToString();

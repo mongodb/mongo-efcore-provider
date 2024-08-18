@@ -70,7 +70,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_generated_ObjectId()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = _tempDatabase.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
         var expected = new SimpleEntity
@@ -91,7 +91,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_unset_ObjectId()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = _tempDatabase.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
         var expected = new SimpleEntity
@@ -114,7 +114,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_empty_ObjectId()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = _tempDatabase.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
         var expected = new SimpleEntity
@@ -137,7 +137,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_numeric_types_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<NumericTypesEntity>();
+        var collection = _tempDatabase.CreateCollection<NumericTypesEntity>();
 
         var expected = new NumericTypesEntity
         {
@@ -174,7 +174,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_clr_types_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<OtherClrTypeEntity>();
+        var collection = _tempDatabase.CreateCollection<OtherClrTypeEntity>();
 
         var expected = new OtherClrTypeEntity
         {
@@ -205,7 +205,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_mongo_types_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<MongoSpecificTypeEntity>();
+        var collection = _tempDatabase.CreateCollection<MongoSpecificTypeEntity>();
 
         var expected = new MongoSpecificTypeEntity
         {
@@ -283,7 +283,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     private void EntityAddTestImpl<TValue>(TValue value)
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityAddTestImpl", typeof(TValue), value!);
+        var collection = _tempDatabase.CreateCollection<Entity<TValue>>("EntityAddTestImpl", typeof(TValue), value!);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

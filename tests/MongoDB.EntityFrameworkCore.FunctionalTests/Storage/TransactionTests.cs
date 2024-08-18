@@ -33,7 +33,7 @@ public class TransactionTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void MongoTransactionManager_throws_if_transaction_attempted()
     {
-        using var db = SingleEntityDbContext.Create(_tempDatabase.CreateTemporaryCollection<SimpleEntity>());
+        using var db = SingleEntityDbContext.Create(_tempDatabase.CreateCollection<SimpleEntity>());
 
         var ex = Assert.Throws<NotSupportedException>(() => db.Database.BeginTransaction());
         Assert.Contains("does not support transactions", ex.Message);

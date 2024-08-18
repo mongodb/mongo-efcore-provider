@@ -28,14 +28,14 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
         var expected = DateTime.UtcNow;
 
         {
-            var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
+            var collection = TempDatabase.CreateCollection<DateTimeEntity>();
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(new DateTimeEntity {aDateTime = expected});
             db.SaveChanges();
         }
 
         {
-            var collection = TempDatabase.GetExistingTemporaryCollection<UtcDateTimeEntity>();
+            var collection = TempDatabase.GetCollection<UtcDateTimeEntity>();
             var result = collection.AsQueryable().First();
             Assert.NotNull(result);
             Assert.Equal(expected.ToBsonPrecision(), result.aDateTime.ToBsonPrecision());
@@ -48,7 +48,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
         var expected = DateTime.Now;
 
         {
-            var collection = TempDatabase.CreateTemporaryCollection<DateTimeEntity>();
+            var collection = TempDatabase.CreateCollection<DateTimeEntity>();
             using var db = SingleEntityDbContext.Create(collection,
                 model => model.Entity<DateTimeEntity>().Property(e => e.aDateTime).HasDateTimeKind(DateTimeKind.Local));
             db.Entities.Add(new DateTimeEntity {aDateTime = expected});
@@ -56,7 +56,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
         }
 
         {
-            var collection = TempDatabase.GetExistingTemporaryCollection<LocalDateTimeEntity>();
+            var collection = TempDatabase.GetCollection<LocalDateTimeEntity>();
             var result = collection.AsQueryable().First();
             Assert.NotNull(result);
             Assert.Equal(expected.ToBsonPrecision(), result.aDateTime.ToBsonPrecision());
@@ -93,7 +93,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
     public void Nullable_DateTime_round_trips_as_utc_with_expected_precision()
     {
         DateTime? expected = DateTime.UtcNow;
-        var collection = TempDatabase.CreateTemporaryCollection<NullableDateTimeEntity>();
+        var collection = TempDatabase.CreateCollection<NullableDateTimeEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -114,7 +114,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
     public void Nullable_DateTime_round_trips_as_null()
     {
         DateTime? expected = null;
-        var collection = TempDatabase.CreateTemporaryCollection<NullableDateTimeEntity>();
+        var collection = TempDatabase.CreateCollection<NullableDateTimeEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -150,7 +150,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
     public void DateTimeOffset_round_trips()
     {
         var expected = DateTimeOffset.Now;
-        var collection = TempDatabase.CreateTemporaryCollection<DateTimeOffsetEntity>();
+        var collection = TempDatabase.CreateCollection<DateTimeOffsetEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -184,7 +184,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
     public void Nullable_DateTimeOffset_round_trips_as_utc_with_expected_precision()
     {
         DateTimeOffset? expected = DateTimeOffset.Now;
-        var collection = TempDatabase.CreateTemporaryCollection<NullableDateTimeOffsetEntity>();
+        var collection = TempDatabase.CreateCollection<NullableDateTimeOffsetEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -205,7 +205,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
     public void Nullable_DateTimeOffset_round_trips_as_null()
     {
         DateTimeOffset? expected = null;
-        var collection = TempDatabase.CreateTemporaryCollection<NullableDateTimeOffsetEntity>();
+        var collection = TempDatabase.CreateCollection<NullableDateTimeOffsetEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -242,7 +242,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
     public void TimeSpan_round_trips()
     {
         var expected = TimeSpan.FromTicks(Random.Shared.NextInt64());
-        var collection = TempDatabase.CreateTemporaryCollection<TimeSpanEntity>();
+        var collection = TempDatabase.CreateCollection<TimeSpanEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -281,7 +281,7 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture tempDatabase
         TimeSpan? expected = expectedTicks == null ? null : TimeSpan.FromTicks(expectedTicks.Value);
 
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableTimeSpanEntity>(nameof(Nullable_TimeSpan_round_trips) + expected);
+            TempDatabase.CreateCollection<NullableTimeSpanEntity>(nameof(Nullable_TimeSpan_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

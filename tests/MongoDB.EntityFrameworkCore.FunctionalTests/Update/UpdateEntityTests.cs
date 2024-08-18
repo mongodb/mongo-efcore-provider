@@ -56,7 +56,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_simple_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = tempDatabase.CreateCollection<SimpleEntity>();
         var entity = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "Before"};
 
         {
@@ -78,7 +78,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_dictionary_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
+        var collection = tempDatabase.CreateCollection<DictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -154,7 +154,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
    [Fact]
     public void Update_dictionary_of_dictionary_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryOfDictionaryEntity>();
+        var collection = tempDatabase.CreateCollection<DictionaryOfDictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -266,7 +266,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_realistic_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+        var collection = tempDatabase.CreateCollection<RealisticEntity>();
 
         var entity = new RealisticEntity
         {
@@ -300,7 +300,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_only_updates_modified_fields()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+        var collection = tempDatabase.CreateCollection<RealisticEntity>();
 
         var session2 = Guid.NewGuid();
 
@@ -364,7 +364,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
+            tempDatabase.CreateCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

@@ -58,7 +58,7 @@ public class CompositeKeyQueryTests(TemporaryDatabaseFixture fixture)
 
     private SingleEntityDbContext<Entity> CreateContext([CallerMemberName] string? name = null)
     {
-        var collection = fixture.CreateTemporaryCollection<Entity>(name);
+        var collection = fixture.CreateCollection<Entity>(name);
 
         {
             using var db = SingleEntityDbContext.Create(collection, ConfigureContext);

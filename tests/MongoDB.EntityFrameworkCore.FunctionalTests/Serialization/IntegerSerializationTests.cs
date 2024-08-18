@@ -28,7 +28,7 @@ public class IntegerSerializationTests : BaseSerializationTests
     [InlineData(0)]
     public void Int_round_trips(int expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<IntEntity>(nameof(Int_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<IntEntity>(nameof(Int_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -68,7 +68,7 @@ public class IntegerSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_int_round_trips(int? expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<NullableIntEntity>(nameof(Nullable_int_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<NullableIntEntity>(nameof(Nullable_int_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -109,7 +109,7 @@ public class IntegerSerializationTests : BaseSerializationTests
     [InlineData(0L)]
     public void Long_round_trips(long expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<LongEntity>(nameof(Long_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<LongEntity>(nameof(Long_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -149,7 +149,7 @@ public class IntegerSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_long_round_trips(long? expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<NullableLongEntity>(nameof(Nullable_long_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<NullableLongEntity>(nameof(Nullable_long_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -190,7 +190,7 @@ public class IntegerSerializationTests : BaseSerializationTests
     [InlineData(0)]
     public void Short_round_trips(short expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<ShortEntity>(nameof(Short_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<ShortEntity>(nameof(Short_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -230,7 +230,7 @@ public class IntegerSerializationTests : BaseSerializationTests
     public void Nullable_short_round_trips(int? expectedInt)
     {
         var expected = Convert.ToInt16(expectedInt);
-        var collection = TempDatabase.CreateTemporaryCollection<NullableShortEntity>(nameof(Nullable_short_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<NullableShortEntity>(nameof(Nullable_short_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -272,7 +272,7 @@ public class IntegerSerializationTests : BaseSerializationTests
     [InlineData(127)]
     public void Sbyte_round_trips(sbyte expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<SByteEntity>(nameof(Sbyte_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<SByteEntity>(nameof(Sbyte_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -314,7 +314,7 @@ public class IntegerSerializationTests : BaseSerializationTests
     public void Nullable_sbyte_round_trips(int? expectedInt)
     {
         sbyte? expected = expectedInt == null ? null : Convert.ToSByte(expectedInt);
-        var collection = TempDatabase.CreateTemporaryCollection<NullableSByteEntity>(nameof(Nullable_sbyte_round_trips) + expected);
+        var collection = TempDatabase.CreateCollection<NullableSByteEntity>(nameof(Nullable_sbyte_round_trips) + expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

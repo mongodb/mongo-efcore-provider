@@ -62,7 +62,7 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Entity_delete_with_string_id()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithStringId>();
+        var collection = _tempDatabase.CreateCollection<SimpleEntityWithStringId>();
         collection.InsertOne(new SimpleEntityWithStringId {_id = ObjectId.GenerateNewId().ToString(), name = "DeleteMe"});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -77,7 +77,7 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Entity_delete_with_objectid_id()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithObjectIdId>();
+        var collection = _tempDatabase.CreateCollection<SimpleEntityWithObjectIdId>();
         collection.InsertOne(new SimpleEntityWithObjectIdId {_id = ObjectId.GenerateNewId(), name = "DeleteMe"});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -93,11 +93,11 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void Entity_delete_with_guid_id()
     {
         {
-            var collection = _tempDatabase.CreateTemporaryCollection<BsonSimpleEntityWithGuidId>();
+            var collection = _tempDatabase.CreateCollection<BsonSimpleEntityWithGuidId>();
             collection.InsertOne(new BsonSimpleEntityWithGuidId {_id = Guid.NewGuid(), name = "DeleteMe"});
         }
 
-        var collectionEf = _tempDatabase.GetExistingTemporaryCollection<SimpleEntityWithGuidId>();
+        var collectionEf = _tempDatabase.GetCollection<SimpleEntityWithGuidId>();
         using var db = SingleEntityDbContext.Create(collectionEf);
         var entity = db.Entities.Single();
 
@@ -110,7 +110,7 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Entity_delete_with_int_id()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithIntId>();
+        var collection = _tempDatabase.CreateCollection<SimpleEntityWithIntId>();
         collection.InsertOne(new SimpleEntityWithIntId {_id = new Random().Next(), name = "DeleteMe"});
 
         using var db = SingleEntityDbContext.Create(collection);

@@ -36,7 +36,7 @@ public abstract class BaseSerializationTests : IClassFixture<TemporaryDatabaseFi
 
     protected IMongoCollection<T> SetupIdOnlyCollection<T>([CallerMemberName] string? methodName = null)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<BaseIdEntity>(methodName);
+        var collection = TempDatabase.CreateCollection<BaseIdEntity>(methodName);
         collection.WriteTestDocs(new[] {new BaseIdEntity()});
         return TempDatabase.MongoDatabase.GetCollection<T>(collection.CollectionNamespace.CollectionName);
     }

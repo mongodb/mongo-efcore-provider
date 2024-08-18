@@ -26,7 +26,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_materializes_single()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -40,7 +40,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_where_not_null()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -54,7 +54,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_where_null()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithOptionalLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithOptionalLocation>();
         collection.WriteTestDocs([new PersonWithOptionalLocation { _id = ObjectId.GenerateNewId(), name = "Milton" }]);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -67,7 +67,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_first_matching_location_throws()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         collection.WriteTestDocs(Person2WithLocation1);
         using var db = SingleEntityDbContext.Create(collection);
@@ -82,7 +82,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_first_no_matching_location_throws()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         collection.WriteTestDocs(Person2WithLocation1);
         using var db = SingleEntityDbContext.Create(collection);
@@ -97,7 +97,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_first_match_location_property()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         collection.WriteTestDocs(Person2WithLocation1);
         using var db = SingleEntityDbContext.Create(collection);
@@ -111,7 +111,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_collection_match()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithMultipleLocations>();
         collection.WriteTestDocs(PersonWithLocations1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -124,7 +124,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_collection_not_match()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithMultipleLocations>();
         collection.WriteTestDocs(PersonWithLocations1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -137,7 +137,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_missing_document_element_does_not_throw()
     {
-        tempDatabase.CreateTemporaryCollection<Person>("personNoLocation").WriteTestDocs([
+        tempDatabase.CreateCollection<Person>("personNoLocation").WriteTestDocs([
             new Person
             {
                 name = "Bill"
@@ -156,7 +156,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_allows_nested_where()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -170,7 +170,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_two_levels_allows_nested_where()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = tempDatabase.CreateCollection<PersonWithCity>();
         collection.WriteTestDocs(PersonWithCity1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -184,7 +184,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_materializes_when_missing_non_required_owned_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithMissingLocation1);
         using var db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(false); });
@@ -199,7 +199,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_throws_when_missing_required_owned_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithMissingLocation1);
         using var db = SingleEntityDbContext.Create(collection,
             mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(); });
@@ -212,7 +212,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_materializes_many()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -227,7 +227,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_creates()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         var expected =
             new PersonWithLocation
             {
@@ -258,7 +258,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     public void OwnedEntity_collection_creates()
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+            tempDatabase.CreateCollection<PersonWithMultipleLocations>();
 
         PersonWithMultipleLocations expected = new()
         {
@@ -321,7 +321,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_non_nullable_collection_is_empty_when_empty()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<SimpleNonNullableCollection>();
+        var collection = tempDatabase.CreateCollection<SimpleNonNullableCollection>();
         collection.WriteTestDocs([
             new SimpleNonNullableCollection
             {
@@ -337,7 +337,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nullable_collection_is_empty_when_empty()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<SimpleNullableCollection>();
+        var collection = tempDatabase.CreateCollection<SimpleNullableCollection>();
         collection.WriteTestDocs([
             new SimpleNullableCollection
             {
@@ -354,7 +354,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_non_nullable_collection_is_null_when_null()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<SimpleNonNullableCollection>();
+        var collection = tempDatabase.CreateCollection<SimpleNonNullableCollection>();
         collection.WriteTestDocs([
             new SimpleNonNullableCollection
             {
@@ -370,7 +370,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nullable_collection_is_null_when_null()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<SimpleNullableCollection>();
+        var collection = tempDatabase.CreateCollection<SimpleNullableCollection>();
         collection.WriteTestDocs([
             new SimpleNullableCollection
             {
@@ -386,7 +386,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_non_nullable_collection_throws_when_missing()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<MissingNullableCollection>();
+        var collection = tempDatabase.CreateCollection<MissingNullableCollection>();
         collection.WriteTestDocs([new MissingNullableCollection()]);
         using var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNullableCollection>(collection);
 
@@ -397,7 +397,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nullable_collection_throws_when_missing()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<MissingNullableCollection>();
+        var collection = tempDatabase.CreateCollection<MissingNullableCollection>();
         collection.WriteTestDocs([new MissingNullableCollection()]);
         using var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNullableCollection>(collection);
 
@@ -408,7 +408,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_single()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = tempDatabase.CreateCollection<PersonWithCity>();
         collection.WriteTestDocs(PersonWithCity1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -423,7 +423,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_many()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = tempDatabase.CreateCollection<PersonWithCity>();
         collection.WriteTestDocs(PersonWithCity1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -440,7 +440,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_with_collection_materializes_many()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithMultipleLocations>();
         collection.WriteTestDocs(PersonWithLocations1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -462,7 +462,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
         {
             latitude = 1.01m, longitude = 1.02m
         };
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithIEnumerableLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithIEnumerableLocations>();
         collection.WriteTestDocs(new PersonWithIEnumerableLocations[]
         {
             new()
@@ -500,7 +500,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_with_ienumerable_list_serializes()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithIEnumerableLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithIEnumerableLocations>();
         var entity = new PersonWithIEnumerableLocations
         {
             _id = ObjectId.GenerateNewId(),
@@ -532,7 +532,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_with_ienumerable_non_list_or_array_throws()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithIEnumerableLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithIEnumerableLocations>();
         using var db = SingleEntityDbContext.Create(collection);
 
         var entity = new PersonWithIEnumerableLocations
@@ -553,7 +553,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_with_collection_adjusted_correctly()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithMultipleLocations>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -612,7 +612,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_with_two_owned_entities_materializes()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithTwoLocations>();
         var expected = PersonWithTwoLocations1[0];
         collection.WriteTestDocs(PersonWithTwoLocations1);
         using var db = SingleEntityDbContext.Create(collection);
@@ -630,7 +630,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_with_two_owned_entities_creates()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithTwoLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithTwoLocations>();
         PersonWithTwoLocations expected = new()
         {
             name = "Elizabeth", first = Location2, second = Location1
@@ -658,7 +658,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_can_be_queried_on()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         var expected = PersonWithLocation1[0];
         collection.WriteTestDocs(PersonWithLocation1);
         using var db = SingleEntityDbContext.Create(collection,
@@ -672,7 +672,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_collection_can_be_queried_on()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithMultipleLocations>();
         var expected = PersonWithLocations1[0];
         collection.WriteTestDocs(PersonWithLocations1);
 
@@ -686,7 +686,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_nested_one_level_allows_list_nested_where()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithMultipleLocations>();
+        var collection = tempDatabase.CreateCollection<PersonWithMultipleLocations>();
         collection.WriteTestDocs(PersonWithLocations1);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -701,7 +701,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void OwnedEntity_can_have_element_name_set()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<PersonWithLocation>();
+        var collection = tempDatabase.CreateCollection<PersonWithLocation>();
         var expected = PersonWithLocation1[0];
         collection.WriteTestDocs(PersonWithLocation1);
         using var db = SingleEntityDbContext.Create(collection,
@@ -723,9 +723,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
             name = "Elizabeth", locationOne = Location1, locationTwo = Location2
         };
 
-        tempDatabase.CreateTemporaryCollection<PersonWithTwoLocationsRemapped>().WriteTestDocs([expected]);
+        tempDatabase.CreateCollection<PersonWithTwoLocationsRemapped>().WriteTestDocs([expected]);
 
-        var collection = tempDatabase.GetExistingTemporaryCollection<PersonWithTwoLocations>();
+        var collection = tempDatabase.GetCollection<PersonWithTwoLocations>();
         using var db = SingleEntityDbContext.Create(collection,
             mb => {
                 mb.Entity<PersonWithTwoLocations>().OwnsOne(p => p.first, r => r.HasElementName("locationOne"));
@@ -744,7 +744,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     public void OwnedEntity_can_go_multiple_levels_deep_serializing()
     {
         var expectedName = FirstLevel1.children[0].children[0].name;
-        var collection = tempDatabase.CreateTemporaryCollection<FirstLevel>();
+        var collection = tempDatabase.CreateCollection<FirstLevel>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -768,7 +768,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     public void OwnedEntity_can_go_multiple_levels_deep_querying_collection()
     {
         var expectedName = FirstLevel1.children[0].children[0].name;
-        var collection = tempDatabase.CreateTemporaryCollection<FirstLevel>();
+        var collection = tempDatabase.CreateCollection<FirstLevel>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -792,7 +792,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture tempDatabase)
     public void OwnedEntity_can_go_multiple_levels_deep_querying_reference()
     {
         var expectedReference = FirstLevel1.children[0].children[0].reference;
-        var collection = tempDatabase.CreateTemporaryCollection<FirstLevel>();
+        var collection = tempDatabase.CreateCollection<FirstLevel>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);

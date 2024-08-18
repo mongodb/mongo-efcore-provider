@@ -37,7 +37,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     public void SaveChanges_behavior_on_driver_exception(AutoTransactionBehavior transactionBehavior)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<TextEntity>("SaveChanges_DriverException" + transactionBehavior);
+            tempDatabase.CreateCollection<TextEntity>("SaveChanges_DriverException" + transactionBehavior);
         var idToDuplicate = ObjectId.GenerateNewId();
         var idToDelete = ObjectId.GenerateNewId();
 
@@ -84,7 +84,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     public async Task SaveChangesAsync_behavior_on_driver_exception(AutoTransactionBehavior transactionBehavior)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<TextEntity>("SaveChangesAsync_DriverException" + transactionBehavior);
+            tempDatabase.CreateCollection<TextEntity>("SaveChangesAsync_DriverException" + transactionBehavior);
         var idToDuplicate = ObjectId.GenerateNewId();
         var idToDelete = ObjectId.GenerateNewId();
 
@@ -132,7 +132,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     public void SaveChanges_behavior_on_DbUpdateConcurrencyException(AutoTransactionBehavior transactionBehavior)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<TextEntity>("SaveChanges_DbConcurrencyException" + transactionBehavior);
+            tempDatabase.CreateCollection<TextEntity>("SaveChanges_DbConcurrencyException" + transactionBehavior);
         var idToDelete = ObjectId.GenerateNewId();
 
         {
@@ -169,7 +169,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     public async Task SaveChangesAsync_behavior_on_DbUpdateConcurrencyException(AutoTransactionBehavior transactionBehavior)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<TextEntity>("SaveChangesAsync_DbConcurrencyException" + transactionBehavior);
+            tempDatabase.CreateCollection<TextEntity>("SaveChangesAsync_DbConcurrencyException" + transactionBehavior);
         var idToDelete = ObjectId.GenerateNewId();
 
         {

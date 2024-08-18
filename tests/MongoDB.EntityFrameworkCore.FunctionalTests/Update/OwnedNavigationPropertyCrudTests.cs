@@ -31,7 +31,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_insert_empty_owned_navigation_property()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -58,7 +58,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_insert_owned_navigation_property()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -90,7 +90,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_property_with_null()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -125,7 +125,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_property_with_new_value()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -163,7 +163,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_property_fields()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -198,7 +198,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_insert_empty_owned_navigation_collection()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -225,7 +225,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_insert_owned_navigation_collection()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -266,7 +266,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_collection_with_null()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -309,7 +309,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_collection_adding_new_value()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -358,7 +358,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_collection_remove_value()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -400,7 +400,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_reload_changed_values_correctly()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCountries>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCountries>();
 
         using var db = SingleEntityDbContext.Create(collection);
         var person = new PersonWithCountries()
@@ -430,7 +430,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_collection_update_value()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -475,7 +475,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_reorder_owned_navigation_collection_ordinals()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCountries>();
+        var collection = _tempDatabase.CreateCollection<PersonWithCountries>();
         var unitedKingdom = new Country { Name = "United Kingdom" };
         var newZealand = new Country { Name = "New Zealand" };
         var france = new Country { Name = "France" };
@@ -519,7 +519,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_reorder_owned_navigation_collection_ordinals_nested()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithPhoneNumbers>();
+        var collection = _tempDatabase.CreateCollection<PersonWithPhoneNumbers>();
 
         var ukWorkPhone = new Phone
         {

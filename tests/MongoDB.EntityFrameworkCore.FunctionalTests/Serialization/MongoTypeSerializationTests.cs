@@ -30,7 +30,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     public void ObjectId_round_trips(string expectedString)
     {
         var expected = ObjectId.Parse(expectedString);
-        var collection = TempDatabase.CreateTemporaryCollection<ObjectIdEntity>(nameof(ObjectId_round_trips) + expectedString);
+        var collection = TempDatabase.CreateCollection<ObjectIdEntity>(nameof(ObjectId_round_trips) + expectedString);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -71,7 +71,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     {
         ObjectId? expected = expectedString == null ? null : ObjectId.Parse(expectedString);
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableObjectIdEntity>(nameof(Nullable_ObjectId_round_trips) + expectedString);
+            TempDatabase.CreateCollection<NullableObjectIdEntity>(nameof(Nullable_ObjectId_round_trips) + expectedString);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -113,7 +113,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     public void Decimal128_round_trips(string expectedString)
     {
         var expected = Decimal128.Parse(expectedString);
-        var collection = TempDatabase.CreateTemporaryCollection<Decimal128Entity>(nameof(Decimal128_round_trips) + expectedString);
+        var collection = TempDatabase.CreateCollection<Decimal128Entity>(nameof(Decimal128_round_trips) + expectedString);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -155,7 +155,7 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     {
         Decimal128? expected = expectedString == null ? null : Decimal128.Parse(expectedString);
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableDecimal128Entity>(nameof(Nullable_Decimal128_round_trips) +
+            TempDatabase.CreateCollection<NullableDecimal128Entity>(nameof(Nullable_Decimal128_round_trips) +
                                                                              expectedString);
 
         {
