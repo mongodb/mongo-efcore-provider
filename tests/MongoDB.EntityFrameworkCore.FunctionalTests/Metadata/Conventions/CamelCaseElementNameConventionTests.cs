@@ -26,13 +26,11 @@ using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
 [XUnitCollection("ConventionsTests")]
-public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDatabase)
+public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    class CamelCaseDbContext : DbContext
+    class CamelCaseDbContext(DbContextOptions options, string collectionName) : DbContext(options)
     {
-        private readonly string _collectionName;
-
         public DbSet<RemappedEntity> Remapped { get; init; }
 
         public static CamelCaseDbContext Create(IMongoCollection<RemappedEntity> collection) =>
@@ -40,12 +38,6 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDa
                 .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options, collection.CollectionNamespace.CollectionName);
-
-        public CamelCaseDbContext(DbContextOptions options, string collectionName)
-            : base(options)
-        {
-            _collectionName = collectionName;
-        }
 
         protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
         {
@@ -55,7 +47,7 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDa
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-            modelBuilder.Entity<RemappedEntity>().ToCollection(_collectionName);
+            modelBuilder.Entity<RemappedEntity>().ToCollection(collectionName);
         }
     }
 
@@ -105,7 +97,7 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void CamelCase_redefines_element_name_for_insert_and_query()
     {
-        var collection = tempDatabase.CreateCollection<RemappedEntity>();
+        var collection = database.CreateCollection<RemappedEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string unchangedText = "Unchanged as is a single already-lowercase word";

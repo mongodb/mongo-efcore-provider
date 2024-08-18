@@ -15,26 +15,19 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class CollectionSerializationTests : BaseSerializationTests
+public class CollectionSerializationTests(TemporaryDatabaseFixture database)
+    : BaseSerializationTests(database)
 {
-    public CollectionSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
-
     [Theory]
     [InlineData]
     [InlineData(2, 4, 8, 16, 32, 64)]
     public void Int_array_round_trips(params int[] expected)
     {
-        var collection = TempDatabase.CreateCollection<IntArrayEntity>(nameof(Int_array_round_trips) + expected.Length);
+        var collection = Database.CreateCollection<IntArrayEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new IntArrayEntity
-            {
-                anIntArray = expected
-            });
+            db.Entities.Add(new IntArrayEntity {anIntArray = expected});
             db.SaveChanges();
         }
 
@@ -60,22 +53,16 @@ public class CollectionSerializationTests : BaseSerializationTests
         public int[] anIntArray { get; set; }
     }
 
-
     [Theory]
     [InlineData]
     [InlineData(2, 4, 8, 16, 32, 64)]
     public void Nullable_int_array_round_trips(params int[] expected)
     {
-        var collection =
-            TempDatabase.CreateCollection<NullableIntArrayEntity>(nameof(Nullable_int_array_round_trips)
-                                                                           + expected.Length);
+        var collection = Database.CreateCollection<NullableIntArrayEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableIntArrayEntity
-            {
-                anIntArray = expected
-            });
+            db.Entities.Add(new NullableIntArrayEntity {anIntArray = expected});
             db.SaveChanges();
         }
 
@@ -109,15 +96,11 @@ public class CollectionSerializationTests : BaseSerializationTests
     [InlineData("abc", "def", "ghi", "and the rest")]
     public void String_array_round_trips(params string[] expected)
     {
-        var collection =
-            TempDatabase.CreateCollection<StringArrayEntity>(nameof(String_array_round_trips) + expected.Length);
+        var collection = Database.CreateCollection<StringArrayEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new StringArrayEntity
-            {
-                aStringArray = expected
-            });
+            db.Entities.Add(new StringArrayEntity {aStringArray = expected});
             db.SaveChanges();
         }
 
@@ -143,13 +126,12 @@ public class CollectionSerializationTests : BaseSerializationTests
         public string[] aStringArray { get; set; }
     }
 
-
     public static readonly TheoryData<string[][]> ArrayOfArraysData =
     [
         [],
         [
-            new [] { "a", "b", "c" },
-            new [] { "d" }
+            new[] {"a", "b", "c"},
+            new[] {"d"}
         ]
     ];
 
@@ -157,16 +139,11 @@ public class CollectionSerializationTests : BaseSerializationTests
     [MemberData(nameof(ArrayOfArraysData))]
     public void String_array_of_arrays_round_trips(string[][] expected)
     {
-        var collection =
-            TempDatabase.CreateCollection<StringArrayOfArraysEntity>(nameof(String_array_of_arrays_round_trips)
-                                                                              + expected.Length);
+        var collection = Database.CreateCollection<StringArrayOfArraysEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new StringArrayOfArraysEntity
-            {
-                arrayOfStringArray = expected
-            });
+            db.Entities.Add(new StringArrayOfArraysEntity {arrayOfStringArray = expected});
             db.SaveChanges();
         }
 
@@ -189,15 +166,11 @@ public class CollectionSerializationTests : BaseSerializationTests
     public void Nullable_string_array_round_trips(params string[] expected)
     {
         var collection =
-            TempDatabase.CreateCollection<NullableStringArrayEntity>(nameof(Nullable_string_array_round_trips)
-                                                                              + expected.Length);
+            Database.CreateCollection<NullableStringArrayEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableStringArrayEntity
-            {
-                aStringArray = expected
-            });
+            db.Entities.Add(new NullableStringArrayEntity {aStringArray = expected});
             db.SaveChanges();
         }
 
@@ -230,15 +203,11 @@ public class CollectionSerializationTests : BaseSerializationTests
     [InlineData(1, 2, 3, 4)]
     public void List_round_trips(params int[] expected)
     {
-        var collection =
-            TempDatabase.CreateCollection<ListEntity>(nameof(List_round_trips) + expected.Length);
+        var collection = Database.CreateCollection<ListEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new ListEntity
-            {
-                aList = [..expected]
-            });
+            db.Entities.Add(new ListEntity {aList = [..expected]});
             db.SaveChanges();
         }
 
@@ -269,15 +238,11 @@ public class CollectionSerializationTests : BaseSerializationTests
     [InlineData(1, 2, 3, 4)]
     public void Nullable_list_round_trips(params int[] expected)
     {
-        var collection =
-            TempDatabase.CreateCollection<NullableListEntity>(nameof(Nullable_list_round_trips) + expected.Length);
+        var collection = Database.CreateCollection<NullableListEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableListEntity
-            {
-                aList = new List<int>(expected)
-            });
+            db.Entities.Add(new NullableListEntity {aList = new List<int>(expected)});
             db.SaveChanges();
         }
 
@@ -310,16 +275,11 @@ public class CollectionSerializationTests : BaseSerializationTests
     [InlineData(1, 2, 3, 4)]
     public void IEnumerable_exposed_list_round_trips(params int[] expected)
     {
-        var collection =
-            TempDatabase.CreateCollection<IEnumerableEntity>(
-                nameof(IEnumerable_exposed_list_round_trips) + expected.Length);
+        var collection = Database.CreateCollection<IEnumerableEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new IEnumerableEntity
-            {
-                anEnumerable = new List<int>(expected)
-            });
+            db.Entities.Add(new IEnumerableEntity {anEnumerable = new List<int>(expected)});
             db.SaveChanges();
         }
 
@@ -341,16 +301,11 @@ public class CollectionSerializationTests : BaseSerializationTests
     [InlineData(1, 2, 3, 4)]
     public void Nullable_ienumerable_exposed_list_round_trips(params int[] expected)
     {
-        var collection =
-            TempDatabase.CreateCollection<NullableIEnumerableEntity>(nameof(Nullable_ienumerable_exposed_list_round_trips)
-                                                                              + expected.Length);
+        var collection = Database.CreateCollection<NullableIEnumerableEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableIEnumerableEntity
-            {
-                anEnumerable = new List<int>(expected)
-            });
+            db.Entities.Add(new NullableIEnumerableEntity {anEnumerable = new List<int>(expected)});
             db.SaveChanges();
         }
 
@@ -370,16 +325,13 @@ public class CollectionSerializationTests : BaseSerializationTests
     [Fact]
     public void IEnumerable_exposed_ienumerable_throws()
     {
-        var collection = TempDatabase.CreateCollection<IEnumerableEntity>();
+        var collection = Database.CreateCollection<IEnumerableEntity>();
 
         using var db = SingleEntityDbContext.Create(collection);
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Add(new IEnumerableEntity
         {
-            anEnumerable = EnumerableOnlyWrapper.Wrap(new[]
-            {
-                1, 2, 3
-            })
+            anEnumerable = EnumerableOnlyWrapper.Wrap(new[] {1, 2, 3})
         }));
 
         Assert.Contains(nameof(EnumerableOnlyWrapper<int>), ex.Message);

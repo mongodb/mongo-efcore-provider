@@ -19,7 +19,7 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
 [XUnitCollection("MappingTests")]
-public class DiscriminatorTests(TemporaryDatabaseFixture tempDatabase)
+public class DiscriminatorTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class Vehicle
@@ -28,28 +28,21 @@ public class DiscriminatorTests(TemporaryDatabaseFixture tempDatabase)
         public string VehicleType { get; set; }
     }
 
-    class VehicleDbContext : DbContext
+    class VehicleDbContext(Action<ModelBuilder> modelConfigurator) : DbContext
     {
-        private readonly Action<ModelBuilder> _modelConfigurator;
-
-        public VehicleDbContext(Action<ModelBuilder> modelConfigurator)
-        {
-            _modelConfigurator = modelConfigurator;
-        }
-
         public DbSet<Vehicle> Vehicles { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-            _modelConfigurator(modelBuilder);
+            modelConfigurator(modelBuilder);
         }
     }
 
     [Fact]
     public void Discriminators_throw_not_supported_if_configured()
     {
-        var collection = tempDatabase.CreateCollection<Vehicle>();
+        var collection = database.CreateCollection<Vehicle>();
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
             mb.Entity<Vehicle>().HasDiscriminator(v => v.VehicleType);

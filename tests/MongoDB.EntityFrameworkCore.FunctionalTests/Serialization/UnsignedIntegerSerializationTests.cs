@@ -15,19 +15,15 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class UnsignedIntegerSerializationTests : BaseSerializationTests
+public class UnsignedIntegerSerializationTests(TemporaryDatabaseFixture database)
+    : BaseSerializationTests(database)
 {
-    public UnsignedIntegerSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
-
     [Theory]
     [InlineData(78910u)]
     [InlineData(0u)]
     public void Uint_round_trips(uint expected)
     {
-        var collection = TempDatabase.CreateCollection<UIntEntity>(nameof(Uint_round_trips) + expected);
+        var collection = Database.CreateCollection<UIntEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -63,7 +59,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_uint_round_trips(uint? expected)
     {
-        var collection = TempDatabase.CreateCollection<NullableUIntEntity>(nameof(Nullable_uint_round_trips) + expected);
+        var collection = Database.CreateCollection<NullableUIntEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -100,7 +96,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
     [InlineData(0L)]
     public void Ulong_round_trips(ulong expected)
     {
-        var collection = TempDatabase.CreateCollection<UlongEntity>(nameof(Ulong_round_trips) + expected);
+        var collection = Database.CreateCollection<UlongEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -136,7 +132,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_ulong_round_trips(ulong? expected)
     {
-        var collection = TempDatabase.CreateCollection<NullableUlongEntity>(nameof(Nullable_ulong_round_trips) + expected);
+        var collection = Database.CreateCollection<NullableUlongEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -173,7 +169,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
     [InlineData(0)]
     public void Ushort_round_trips(ushort expected)
     {
-        var collection = TempDatabase.CreateCollection<UshortEntity>(nameof(Ushort_round_trips) + expected);
+        var collection = Database.CreateCollection<UshortEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -210,7 +206,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
     {
         ushort? expected = expectedInt == null ? null : Convert.ToUInt16(expectedInt);
         var collection =
-            TempDatabase.CreateCollection<NullableShortEntity>(nameof(Nullable_ushort_round_trips) + expected);
+            Database.CreateCollection<NullableShortEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -248,7 +244,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
     [InlineData(255)]
     public void Byte_round_trips(byte expected)
     {
-        var collection = TempDatabase.CreateCollection<ByteEntity>(nameof(Byte_round_trips) + expected);
+        var collection = Database.CreateCollection<ByteEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -286,7 +282,7 @@ public class UnsignedIntegerSerializationTests : BaseSerializationTests
     public void Nullable_byte_round_trips(int? expectedInt)
     {
         byte? expected = expectedInt == null ? null : Convert.ToByte(expectedInt);
-        var collection = TempDatabase.CreateCollection<NullableByteEntity>(nameof(Nullable_byte_round_trips) + expected);
+        var collection = Database.CreateCollection<NullableByteEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

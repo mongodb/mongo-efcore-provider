@@ -20,11 +20,11 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
-public class WhereTests(ReadOnlySampleGuidesFixture fixture)
+public class WhereTests(ReadOnlySampleGuidesFixture database)
     : IDisposable, IAsyncDisposable
 {
-    private readonly IMongoDatabase _mongoDatabase = fixture.MongoDatabase;
-    private readonly GuidesDbContext _db = GuidesDbContext.Create(fixture.MongoDatabase);
+    private readonly IMongoDatabase _mongoDatabase = database.MongoDatabase;
+    private readonly GuidesDbContext _db = GuidesDbContext.Create(database.MongoDatabase);
 
     [Fact]
     public void Where_string_equal()

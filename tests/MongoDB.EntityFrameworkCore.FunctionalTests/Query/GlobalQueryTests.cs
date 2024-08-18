@@ -22,17 +22,15 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
-public class GlobalQueryTests(ReadOnlySampleGuidesFixture fixture)
+public class GlobalQueryTests(ReadOnlySampleGuidesFixture database)
 {
-    private readonly IMongoDatabase _mongoDatabase = fixture.MongoDatabase;
+    private readonly IMongoDatabase _mongoDatabase = database.MongoDatabase;
 
     [Fact]
     public void Global_query_filter_applies()
     {
         using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
-        {
-            mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true);
-        });
+            mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true));
 
         var results = db.Entities.ToList();
 
@@ -43,9 +41,7 @@ public class GlobalQueryTests(ReadOnlySampleGuidesFixture fixture)
     public void Global_query_filter_combines_with_where()
     {
         using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
-        {
-            mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true);
-        });
+            mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true));
 
         var results = db.Entities.Where(e => e.orderFromSun < 7).ToList();
 
@@ -57,9 +53,7 @@ public class GlobalQueryTests(ReadOnlySampleGuidesFixture fixture)
     public void Global_query_filter_applies_to_first()
     {
         using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
-        {
-            mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true);
-        });
+            mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true));
 
         var results = db.Entities.First();
 
@@ -70,10 +64,7 @@ public class GlobalQueryTests(ReadOnlySampleGuidesFixture fixture)
     public void Global_query_filter_can_be_ignored()
     {
         using var db = SingleEntityDbContext.Create(_mongoDatabase.GetCollection<WhereTests.PlanetListVersion>("planets"), mb =>
-        {
-            mb.Entity<WhereTests.PlanetListVersion>()
-                .HasQueryFilter(p => p.hasRings == true);
-        });
+            mb.Entity<WhereTests.PlanetListVersion>().HasQueryFilter(p => p.hasRings == true));
 
         var results = db.Entities.IgnoreQueryFilters().Where(e => e.orderFromSun < 7).ToList();
 

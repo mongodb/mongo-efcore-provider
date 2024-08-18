@@ -15,13 +15,9 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class DecimalSerializationTests : BaseSerializationTests
+public class DecimalSerializationTests(TemporaryDatabaseFixture database)
+    : BaseSerializationTests(database)
 {
-    public DecimalSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
-
     [Theory]
     [InlineData("12345.678")]
     [InlineData("-912345.6781")]
@@ -29,14 +25,11 @@ public class DecimalSerializationTests : BaseSerializationTests
     public void Decimal_round_trips(string expectedString)
     {
         var expected = Decimal.Parse(expectedString);
-        var collection = TempDatabase.CreateCollection<DecimalEntity>(nameof(Decimal_round_trips) + expected);
+        var collection = Database.CreateCollection<DecimalEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new DecimalEntity
-            {
-                aDecimal = expected
-            });
+            db.Entities.Add(new DecimalEntity {aDecimal = expected});
             db.SaveChanges();
         }
 
@@ -71,15 +64,11 @@ public class DecimalSerializationTests : BaseSerializationTests
     {
         decimal? expected = decimal.TryParse(expectedString, out var parsedDecimal) ? parsedDecimal : null;
 
-        var collection =
-            TempDatabase.CreateCollection<NullableDecimalEntity>(nameof(Nullable_Decimal_round_trips) + expected);
+        var collection = Database.CreateCollection<NullableDecimalEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableDecimalEntity
-            {
-                aNullableDecimal = expected
-            });
+            db.Entities.Add(new NullableDecimalEntity {aNullableDecimal = expected});
             db.SaveChanges();
         }
 

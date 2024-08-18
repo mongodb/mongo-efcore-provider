@@ -20,14 +20,12 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
-public class FindTests(ReadOnlySampleGuidesFixture fixture)
+public class FindTests(ReadOnlySampleGuidesFixture database)
 {
-    private readonly IMongoDatabase _mongoDatabase = fixture.MongoDatabase;
-
     [Fact]
     public void Find_with_primitive_key_found()
     {
-        using var db = GuidesDbContext.Create(_mongoDatabase);
+        using var db = GuidesDbContext.Create(database.MongoDatabase);
         var result = db.Planets.Find(ObjectId.Parse("621ff30d2a3e781873fcb661"));
         Assert.NotNull(result);
         Assert.Equal("Earth", result.name);
@@ -36,7 +34,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public void Find_with_primitive_key_not_found()
     {
-        using var db = GuidesDbContext.Create(_mongoDatabase);
+        using var db = GuidesDbContext.Create(database.MongoDatabase);
         var result = db.Planets.Find(ObjectId.Parse("a21ff30d2a3e781873fcb661"));
         Assert.Null(result);
     }
@@ -44,7 +42,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public async Task FindAsync_with_primitive_key_found()
     {
-        await using var db = GuidesDbContext.Create(_mongoDatabase);
+        await using var db = GuidesDbContext.Create(database.MongoDatabase);
         var result = await db.Planets.FindAsync(ObjectId.Parse("621ff30d2a3e781873fcb661"));
         Assert.NotNull(result);
         Assert.Equal("Earth", result.name);
@@ -53,7 +51,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public async Task FindAsync_with_primitive_nullable_constant_key_found()
     {
-        await using var db = GuidesDbContext.Create(_mongoDatabase);
+        await using var db = GuidesDbContext.Create(database.MongoDatabase);
         ObjectId? key = ObjectId.Parse("621ff30d2a3e781873fcb661");
         var result = await db.Planets.FindAsync(key);
         Assert.NotNull(result);
@@ -63,7 +61,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public async Task FindAsync_with_primitive_key_not_found()
     {
-        await using var db = GuidesDbContext.Create(_mongoDatabase);
+        await using var db = GuidesDbContext.Create(database.MongoDatabase);
         var result = await db.Planets.FindAsync(ObjectId.Parse("a21ff30d2a3e781873fcb661"));
         Assert.Null(result);
     }
@@ -71,7 +69,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public void Find_with_compound_key_found()
     {
-        using var db = GuidesDbContext.Create(_mongoDatabase);
+        using var db = GuidesDbContext.Create(database.MongoDatabase);
         var result = db.Moons.Find(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI");
         Assert.NotNull(result);
         Assert.Equal("Titan", result.name);
@@ -80,7 +78,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public void Find_with_compound_key_not_found()
     {
-        using var db = GuidesDbContext.Create(_mongoDatabase);
+        using var db = GuidesDbContext.Create(database.MongoDatabase);
         var result = db.Moons.Find(ObjectId.Parse("a21ff30d2a3e781873fcb663"), "VI");
         Assert.Null(result);
     }
@@ -88,7 +86,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public async Task FindAsync_with_compound_key_found()
     {
-        await using var db = GuidesDbContext.Create(_mongoDatabase);
+        await using var db = GuidesDbContext.Create(database.MongoDatabase);
         var result = await db.Moons.FindAsync(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI");
         Assert.NotNull(result);
         Assert.Equal("Titan", result.name);
@@ -97,7 +95,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public async Task FindAsync_with_compound_key_not_found()
     {
-        await using var db = GuidesDbContext.Create(_mongoDatabase);
+        await using var db = GuidesDbContext.Create(database.MongoDatabase);
         var result = await db.Moons.FindAsync(ObjectId.Parse("a21ff30d2a3e781873fcb663"), "VI");
         Assert.Null(result);
     }
@@ -105,7 +103,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public void Find_equivalent_in_LINQ_works_v3()
     {
-        using var db = GuidesDbContext.Create(_mongoDatabase);
+        using var db = GuidesDbContext.Create(database.MongoDatabase);
         // Just ensures underling LINQ provider accepting translation
         var result = db.Planets.First(p => Equals(p._id, ObjectId.Parse("621ff30d2a3e781873fcb661")));
         Assert.NotNull(result);
@@ -115,7 +113,7 @@ public class FindTests(ReadOnlySampleGuidesFixture fixture)
     [Fact]
     public void Find_equivalent_in_LINQ_v3_works_when_constant_nullable()
     {
-        using var db = GuidesDbContext.Create(_mongoDatabase);
+        using var db = GuidesDbContext.Create(database.MongoDatabase);
         ObjectId? key = ObjectId.Parse("621ff30d2a3e781873fcb661");
         var result = db.Planets.First(p => Equals(p._id, key));
         Assert.NotNull(result);

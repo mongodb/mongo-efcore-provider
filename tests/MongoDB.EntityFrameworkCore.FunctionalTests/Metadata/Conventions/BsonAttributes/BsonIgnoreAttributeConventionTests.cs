@@ -20,7 +20,7 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions.BsonAttributes;
 
 [XUnitCollection("ConventionsTests")]
-public class BsonIgnoreAttributeConventionTests(TemporaryDatabaseFixture tempDatabase)
+public class BsonIgnoreAttributeConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class IgnoredPropertiesEntity
@@ -50,7 +50,7 @@ public class BsonIgnoreAttributeConventionTests(TemporaryDatabaseFixture tempDat
     [Fact]
     public void BsonElementAttribute_redefines_element_name_for_insert_and_query()
     {
-        var collection = tempDatabase.CreateCollection<IgnoredPropertiesEntity>();
+        var collection = database.CreateCollection<IgnoredPropertiesEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string name = "The quick brown fox";

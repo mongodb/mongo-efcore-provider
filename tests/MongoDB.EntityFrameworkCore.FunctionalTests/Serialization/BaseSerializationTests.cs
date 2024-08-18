@@ -20,14 +20,10 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
 [XUnitCollection("SerializationTests")]
-public abstract class BaseSerializationTests : IClassFixture<TemporaryDatabaseFixture>
+public abstract class BaseSerializationTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    protected readonly TemporaryDatabaseFixture TempDatabase;
-
-    protected BaseSerializationTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        TempDatabase = tempDatabase;
-    }
+    protected readonly TemporaryDatabaseFixture Database = database;
 
     protected class BaseIdEntity
     {
@@ -36,8 +32,8 @@ public abstract class BaseSerializationTests : IClassFixture<TemporaryDatabaseFi
 
     protected IMongoCollection<T> SetupIdOnlyCollection<T>([CallerMemberName] string? methodName = null)
     {
-        var collection = TempDatabase.CreateCollection<BaseIdEntity>(methodName);
+        var collection = Database.CreateCollection<BaseIdEntity>(methodName);
         collection.WriteTestDocs(new[] {new BaseIdEntity()});
-        return TempDatabase.MongoDatabase.GetCollection<T>(collection.CollectionNamespace.CollectionName);
+        return Database.GetCollection<T>(collection.CollectionNamespace);
     }
 }

@@ -15,13 +15,9 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class GuidSerializationTests : BaseSerializationTests
+public class GuidSerializationTests(TemporaryDatabaseFixture database)
+    : BaseSerializationTests(database)
 {
-    public GuidSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
-
     [Theory]
     [InlineData("dd2838d8-66bf-11ee-8c99-0242ac120002")]
     [InlineData("305b397d-98d3-4f4e-aff6-5e4693d59f6a")]
@@ -31,7 +27,7 @@ public class GuidSerializationTests : BaseSerializationTests
     public void Guid_round_trips(string expectedString)
     {
         var expected = Guid.Parse(expectedString);
-        var collection = TempDatabase.CreateCollection<GuidEntity>(nameof(Guid_round_trips) + expected);
+        var collection = Database.CreateCollection<GuidEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -74,7 +70,7 @@ public class GuidSerializationTests : BaseSerializationTests
     public void Nullable_guid_round_trips(string? expectedString)
     {
         Guid? expected = expectedString == null ? null : Guid.Parse(expectedString);
-        var collection = TempDatabase.CreateCollection<NullableGuidEntity>(nameof(Nullable_guid_round_trips) + expected);
+        var collection = Database.CreateCollection<NullableGuidEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

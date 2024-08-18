@@ -20,15 +20,9 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
 [XUnitCollection("ConventionsTests")]
-public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFixture>
+public class ColumnAttributeConventionTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public ColumnAttributeConventionTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class IntendedStorageEntity
     {
         public ObjectId _id { get; set; }
@@ -77,7 +71,7 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_redefines_element_name_for_owned_entity()
     {
-        var collection = _tempDatabase.CreateCollection<OwnedEntityRemappingEntity>();
+        var collection = database.CreateCollection<OwnedEntityRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var location = new Geolocation(1.1, 2.2);
@@ -102,7 +96,7 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_redefines_element_name_for_insert_and_query()
     {
-        var collection = _tempDatabase.CreateCollection<NonKeyRemappingEntity>();
+        var collection = database.CreateCollection<NonKeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var name = "The quick brown fox";
@@ -126,7 +120,7 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_redefines_key_name_for_insert_and_query()
     {
-        var collection = _tempDatabase.CreateCollection<KeyRemappingEntity>();
+        var collection = database.CreateCollection<KeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var name = "The quick brown fox";
@@ -150,7 +144,7 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_redefines_key_name_for_delete()
     {
-        var collection = _tempDatabase.CreateCollection<KeyRemappingEntity>();
+        var collection = database.CreateCollection<KeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var name = "The quick brown fox";
@@ -177,7 +171,7 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_throws_if_type_name_specified()
     {
-        var collection = _tempDatabase.CreateCollection<TypeNameSpecifyingEntity>();
+        var collection = database.CreateCollection<TypeNameSpecifyingEntity>();
 
         using var db = SingleEntityDbContext.Create(collection);
 

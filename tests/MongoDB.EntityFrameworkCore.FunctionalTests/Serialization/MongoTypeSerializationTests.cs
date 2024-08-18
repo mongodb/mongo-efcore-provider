@@ -17,27 +17,20 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class MongoTypeSerializationTests : BaseSerializationTests
+public class MongoTypeSerializationTests(TemporaryDatabaseFixture database)
+    : BaseSerializationTests(database)
 {
-    public MongoTypeSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
-
     [Theory]
     [InlineData("652446393021fe289cf2c197")]
     [InlineData("64a8583aa1ee84d292c009dd")]
     public void ObjectId_round_trips(string expectedString)
     {
         var expected = ObjectId.Parse(expectedString);
-        var collection = TempDatabase.CreateCollection<ObjectIdEntity>(nameof(ObjectId_round_trips) + expectedString);
+        var collection = Database.CreateCollection<ObjectIdEntity>(values: expectedString);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new ObjectIdEntity
-            {
-                anObjectId = expected
-            });
+            db.Entities.Add(new ObjectIdEntity {anObjectId = expected});
             db.SaveChanges();
         }
 
@@ -70,15 +63,11 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     public void Nullable_ObjectId_round_trips(string? expectedString)
     {
         ObjectId? expected = expectedString == null ? null : ObjectId.Parse(expectedString);
-        var collection =
-            TempDatabase.CreateCollection<NullableObjectIdEntity>(nameof(Nullable_ObjectId_round_trips) + expectedString);
+        var collection = Database.CreateCollection<NullableObjectIdEntity>(values: expectedString);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableObjectIdEntity
-            {
-                aNullableObjectId = expected
-            });
+            db.Entities.Add(new NullableObjectIdEntity {aNullableObjectId = expected});
             db.SaveChanges();
         }
 
@@ -113,14 +102,11 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     public void Decimal128_round_trips(string expectedString)
     {
         var expected = Decimal128.Parse(expectedString);
-        var collection = TempDatabase.CreateCollection<Decimal128Entity>(nameof(Decimal128_round_trips) + expectedString);
+        var collection = Database.CreateCollection<Decimal128Entity>(values: expectedString);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new Decimal128Entity
-            {
-                anDecimal128 = expected
-            });
+            db.Entities.Add(new Decimal128Entity {anDecimal128 = expected});
             db.SaveChanges();
         }
 
@@ -154,16 +140,11 @@ public class MongoTypeSerializationTests : BaseSerializationTests
     public void Nullable_Decimal128_round_trips(string? expectedString)
     {
         Decimal128? expected = expectedString == null ? null : Decimal128.Parse(expectedString);
-        var collection =
-            TempDatabase.CreateCollection<NullableDecimal128Entity>(nameof(Nullable_Decimal128_round_trips) +
-                                                                             expectedString);
+        var collection = Database.CreateCollection<NullableDecimal128Entity>(values: expectedString);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableDecimal128Entity
-            {
-                aNullableDecimal128 = expected
-            });
+            db.Entities.Add(new NullableDecimal128Entity {aNullableDecimal128 = expected});
             db.SaveChanges();
         }
 

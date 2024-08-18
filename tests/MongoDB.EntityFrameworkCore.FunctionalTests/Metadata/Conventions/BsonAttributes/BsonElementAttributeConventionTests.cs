@@ -20,7 +20,7 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions.BsonAttributes;
 
 [XUnitCollection("ConventionsTests")]
-public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDatabase)
+public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class IntendedStorageEntity
@@ -65,7 +65,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void BsonElement_redefines_element_name_for_owned_entity()
     {
-        var collection = tempDatabase.CreateCollection<OwnedEntityRemappingEntity>();
+        var collection = database.CreateCollection<OwnedEntityRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var location = new Geolocation(1.1, 2.2);
@@ -90,7 +90,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void BsonElementAttribute_redefines_element_name_for_insert_and_query()
     {
-        var collection = tempDatabase.CreateCollection<NonKeyRemappingEntity>();
+        var collection = database.CreateCollection<NonKeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string name = "The quick brown fox";
@@ -114,7 +114,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void BsonElementAttribute_redefines_key_name_for_insert_and_query()
     {
-        var collection = tempDatabase.CreateCollection<KeyRemappingEntity>();
+        var collection = database.CreateCollection<KeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string name = "The quick brown fox";
@@ -138,7 +138,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void BsonElementAttribute_redefines_key_name_for_delete()
     {
-        var collection = tempDatabase.CreateCollection<KeyRemappingEntity>();
+        var collection = database.CreateCollection<KeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string name = "The quick brown fox";

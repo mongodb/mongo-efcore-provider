@@ -18,7 +18,7 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
+public class DictionarySerializationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class DictionaryEntityBase<T>
@@ -54,7 +54,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Dictionary_string_values_read_empty()
     {
-        var collection = tempDatabase.CreateCollection<DictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<DictionaryStringValuesEntity>();
         collection.InsertOne(new DictionaryStringValuesEntity {_id = ObjectId.GenerateNewId()});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -68,7 +68,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Dictionary_string_values_read_null()
     {
-        var collection = tempDatabase.CreateCollection<DictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<DictionaryStringValuesEntity>();
         collection.InsertOne(new DictionaryStringValuesEntity {_id = ObjectId.GenerateNewId(), aDictionary = null});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -81,7 +81,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Dictionary_string_values_write_read_with_items()
     {
-        var collection = tempDatabase.CreateCollection<DictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<DictionaryStringValuesEntity>();
         var expected = new Dictionary<string, string>
         {
             {"Season", "Summer"}, {"Temperature", "35'"}, {"Clouds", "None"}, {"Wind", "Breeze"}
@@ -105,7 +105,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Dictionary_int_values_read_empty()
     {
-        var collection = tempDatabase.CreateCollection<DictionaryIntValuesEntity>();
+        var collection = database.CreateCollection<DictionaryIntValuesEntity>();
         collection.InsertOne(new DictionaryIntValuesEntity {_id = ObjectId.GenerateNewId()});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -119,7 +119,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Dictionary_int_values_write_read_with_items()
     {
-        var collection = tempDatabase.CreateCollection<DictionaryIntValuesEntity>();
+        var collection = database.CreateCollection<DictionaryIntValuesEntity>();
         var expected = new Dictionary<string, int> {{"Season", 2}, {"Temperature", 35}, {"Clouds", 0}, {"Wind", 11}};
         var item = new DictionaryIntValuesEntity {_id = ObjectId.GenerateNewId(), aDictionary = expected};
 
@@ -140,7 +140,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void IDictionary_string_values_read_empty()
     {
-        var collection = tempDatabase.CreateCollection<IDictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<IDictionaryStringValuesEntity>();
         collection.InsertOne(new IDictionaryStringValuesEntity {_id = ObjectId.GenerateNewId()});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -154,7 +154,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void IDictionary_string_values_read_null()
     {
-        var collection = tempDatabase.CreateCollection<IDictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<IDictionaryStringValuesEntity>();
         collection.InsertOne(new IDictionaryStringValuesEntity {_id = ObjectId.GenerateNewId(), aDictionary = null});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -167,7 +167,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void IDictionary_string_values_write_read_with_items()
     {
-        var collection = tempDatabase.CreateCollection<IDictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<IDictionaryStringValuesEntity>();
         var expected = new Dictionary<string, string>
         {
             {"Season", "Summer"}, {"Temperature", "35'"}, {"Clouds", "None"}, {"Wind", "Breeze"}
@@ -191,7 +191,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void IDictionary_int_values_read_empty()
     {
-        var collection = tempDatabase.CreateCollection<IDictionaryIntValuesEntity>();
+        var collection = database.CreateCollection<IDictionaryIntValuesEntity>();
         collection.InsertOne(new IDictionaryIntValuesEntity
         {
             _id = ObjectId.GenerateNewId(), aDictionary = new Dictionary<string, int>()
@@ -208,7 +208,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void IDictionary_int_values_write_read_with_items()
     {
-        var collection = tempDatabase.CreateCollection<IDictionaryIntValuesEntity>();
+        var collection = database.CreateCollection<IDictionaryIntValuesEntity>();
         var expected = new Dictionary<string, int> {{"Season", 2}, {"Temperature", 35}, {"Clouds", 0}, {"Wind", 11}};
         var item = new IDictionaryIntValuesEntity {_id = ObjectId.GenerateNewId(), aDictionary = expected};
 
@@ -229,7 +229,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact(Skip = "Dictionary with collection value types is currently broken")]
     public void Dictionary_string_array_values_write_read_with_items()
     {
-        var collection = tempDatabase.CreateCollection<DictionaryStringArrayValuesEntity>();
+        var collection = database.CreateCollection<DictionaryStringArrayValuesEntity>();
         var expected = new Dictionary<string, string[]>
         {
             {"Seasons", ["Summer", "Autumn", "Winter", "Spring"]},
@@ -256,7 +256,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void IReadOnlyDictionary_string_values_read_empty()
     {
-        var collection = tempDatabase.CreateCollection<IReadOnlyDictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<IReadOnlyDictionaryStringValuesEntity>();
         collection.InsertOne(new IReadOnlyDictionaryStringValuesEntity {_id = ObjectId.GenerateNewId()});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -270,7 +270,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void IReadOnlyDictionary_string_values_read_null()
     {
-        var collection = tempDatabase.CreateCollection<IReadOnlyDictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<IReadOnlyDictionaryStringValuesEntity>();
         collection.InsertOne(new IReadOnlyDictionaryStringValuesEntity {_id = ObjectId.GenerateNewId(), aDictionary = null});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -283,7 +283,7 @@ public class DictionarySerializationTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void IReadOnlyDictionary_string_values_write_read_with_items()
     {
-        var collection = tempDatabase.CreateCollection<IReadOnlyDictionaryStringValuesEntity>();
+        var collection = database.CreateCollection<IReadOnlyDictionaryStringValuesEntity>();
         var expected = new ReadOnlyDictionary<string, string>(new Dictionary<string, string>
         {
             {"Season", "Summer"}, {"Temperature", "35'"}, {"Clouds", "None"}, {"Wind", "Breeze"}
