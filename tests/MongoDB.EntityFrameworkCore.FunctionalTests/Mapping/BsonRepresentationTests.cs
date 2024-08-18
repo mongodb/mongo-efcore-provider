@@ -33,7 +33,14 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             mb => mb.Entity<EntityWithId<string>>().Property(e => e._id).HasBsonRepresentation(BsonType.ObjectId));
 
     public static readonly TheoryData<decimal> ConstrainedDecimalData
-        = new() {0m, 1m, -1m, 1.1m, -1.1m};
+        = new()
+        {
+            0m,
+            1m,
+            -1m,
+            1.1m,
+            -1.1m
+        };
 
     [Theory]
     [MemberData(nameof(ConstrainedDecimalData))]
@@ -44,7 +51,14 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             mb => mb.Entity<EntityWithId<ObjectId>>().Property(e => e._id).HasBsonRepresentation(BsonType.Decimal128));
 
     public static readonly TheoryData<int> IntData
-        = new() {0, 1, -1, int.MaxValue, int.MinValue};
+        = new()
+        {
+            0,
+            1,
+            -1,
+            int.MaxValue,
+            int.MinValue
+        };
 
     [Theory]
     [MemberData(nameof(IntData))]
@@ -52,7 +66,16 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<double> DoubleData
-        = new() {0d, 1d, -1d, 1.2d, -1.2d, double.MaxValue, double.MinValue};
+        = new()
+        {
+            0d,
+            1d,
+            -1d,
+            1.2d,
+            -1.2d,
+            double.MaxValue,
+            double.MinValue
+        };
 
     [Theory]
     [MemberData(nameof(DoubleData))]
@@ -60,7 +83,16 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<float> FloatData
-        = new() {0f, 1f, -1f, 1.1f, -1.1f, float.MaxValue, float.MinValue};
+        = new()
+        {
+            0f,
+            1f,
+            -1f,
+            1.1f,
+            -1.1f,
+            float.MaxValue,
+            float.MinValue
+        };
 
     [Theory]
     [MemberData(nameof(FloatData))]
@@ -68,7 +100,16 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<decimal> DecimalData
-        = new() {0m, 1m, -1m, 1.1m, -1.1m, decimal.MaxValue, decimal.MinValue};
+        = new()
+        {
+            0m,
+            1m,
+            -1m,
+            1.1m,
+            -1.1m,
+            decimal.MaxValue,
+            decimal.MinValue
+        };
 
     [Theory]
     [MemberData(nameof(DecimalData))]
@@ -93,7 +134,14 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<TimeSpan> TimeSpanData
-        = new() {TimeSpan.Zero, TimeSpan.MaxValue, TimeSpan.MinValue, TimeSpan.FromDays(2), TimeSpan.FromHours(-1)};
+        = new()
+        {
+            TimeSpan.Zero,
+            TimeSpan.MaxValue,
+            TimeSpan.MinValue,
+            TimeSpan.FromDays(2),
+            TimeSpan.FromHours(-1)
+        };
 
     [Theory]
     [MemberData(nameof(TimeSpanData))]
@@ -101,7 +149,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<DateTime> DateTimeData
-        = new() { DateTime.Now, DateTime.Now.AddYears(500), DateTime.Now.AddYears(-500) };
+        = new() {DateTime.Now, DateTime.Now.AddYears(500), DateTime.Now.AddYears(-500)};
 
     [Theory]
     [MemberData(nameof(DateTimeData))]
@@ -114,7 +162,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
                 .HasBsonRepresentation(BsonType.String));
 
     public static readonly TheoryData<DateTime> UtcDateTimeData
-        = new() { DateTime.UtcNow, DateTime.UtcNow.AddYears(500), DateTime.UtcNow.AddYears(-500) };
+        = new() {DateTime.UtcNow, DateTime.UtcNow.AddYears(500), DateTime.UtcNow.AddYears(-500)};
 
     [Theory]
     [MemberData(nameof(UtcDateTimeData))]

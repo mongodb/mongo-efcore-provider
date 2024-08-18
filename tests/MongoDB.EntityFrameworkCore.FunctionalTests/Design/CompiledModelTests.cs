@@ -102,6 +102,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
         {
             WriteScaffoldedFile(file);
         }
+
         scope.Dispose();
     }
 
@@ -153,7 +154,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
             Assert.Equal(BsonType.String, representation.BsonType);
 
             scope.Dispose();
-       }
+        }
     }
 
     private static IReadOnlyCollection<ScaffoldedFile> GenerateModel(SimpleContext context)
@@ -168,7 +169,8 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
         return codeGenerator.GenerateModel(designTimeModel.Model, options);
     }
 
-    private (T, IServiceScope) GetDesignTimeConfigured<T>(Action<DbContextOptionsBuilder>? configOptionsBuilder = null) where T : DbContext
+    private (T, IServiceScope) GetDesignTimeConfigured<T>(Action<DbContextOptionsBuilder>? configOptionsBuilder = null)
+        where T : DbContext
     {
         var serviceCollection = new ServiceCollection()
             .AddEntityFrameworkMongoDB()

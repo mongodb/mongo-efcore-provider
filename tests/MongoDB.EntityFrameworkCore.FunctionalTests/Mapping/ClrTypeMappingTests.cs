@@ -188,10 +188,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<StringEntity>();
 
         var expected = Guid.NewGuid().ToString();
-        collection.InsertOne(new StringEntity
-        {
-            _id = ObjectId.GenerateNewId(), aString = expected
-        });
+        collection.InsertOne(new StringEntity {_id = ObjectId.GenerateNewId(), aString = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -206,10 +203,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<Int16Entity>();
 
         var expected = (Int16)_random.Next(1, Int16.MaxValue);
-        collection.InsertOne(new Int16Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt16 = expected
-        });
+        collection.InsertOne(new Int16Entity {_id = ObjectId.GenerateNewId(), anInt16 = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -223,10 +217,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<Int16Entity>();
 
-        collection.InsertOne(new Int16Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt16 = 0
-        });
+        collection.InsertOne(new Int16Entity {_id = ObjectId.GenerateNewId(), anInt16 = 0});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -241,10 +232,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<Int16Entity>();
 
         var expected = (Int16)_random.Next(Int16.MinValue, -1);
-        collection.InsertOne(new Int16Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt16 = expected
-        });
+        collection.InsertOne(new Int16Entity {_id = ObjectId.GenerateNewId(), anInt16 = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -259,10 +247,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<Int32Entity>();
 
         var expected = _random.Next(1, Int32.MaxValue);
-        collection.InsertOne(new Int32Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt32 = expected
-        });
+        collection.InsertOne(new Int32Entity {_id = ObjectId.GenerateNewId(), anInt32 = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -276,10 +261,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<Int32Entity>();
 
-        collection.InsertOne(new Int32Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt32 = 0
-        });
+        collection.InsertOne(new Int32Entity {_id = ObjectId.GenerateNewId(), anInt32 = 0});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -294,10 +276,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<Int32Entity>();
 
         var expected = _random.Next(Int32.MinValue, -1);
-        collection.InsertOne(new Int32Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt32 = expected
-        });
+        collection.InsertOne(new Int32Entity {_id = ObjectId.GenerateNewId(), anInt32 = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -312,10 +291,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<Int64Entity>();
 
         var expected = _random.NextInt64(1, Int64.MaxValue);
-        collection.InsertOne(new Int64Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt64 = expected
-        });
+        collection.InsertOne(new Int64Entity {_id = ObjectId.GenerateNewId(), anInt64 = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -329,10 +305,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<Int64Entity>();
 
-        collection.InsertOne(new Int64Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt64 = 0
-        });
+        collection.InsertOne(new Int64Entity {_id = ObjectId.GenerateNewId(), anInt64 = 0});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -347,10 +320,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<Int64Entity>();
 
         var expected = _random.NextInt64(Int64.MinValue, -1);
-        collection.InsertOne(new Int64Entity
-        {
-            _id = ObjectId.GenerateNewId(), anInt64 = expected
-        });
+        collection.InsertOne(new Int64Entity {_id = ObjectId.GenerateNewId(), anInt64 = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -365,10 +335,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<ByteEntity>();
 
         var expected = (Byte)_random.Next(0, Byte.MaxValue);
-        collection.InsertOne(new ByteEntity
-        {
-            _id = ObjectId.GenerateNewId(), aByte = expected
-        });
+        collection.InsertOne(new ByteEntity {_id = ObjectId.GenerateNewId(), aByte = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -383,10 +350,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<CharEntity>();
 
         var expected = (Char)_random.Next(1, 0xD799);
-        collection.InsertOne(new CharEntity
-        {
-            _id = ObjectId.GenerateNewId(), aChar = expected
-        });
+        collection.InsertOne(new CharEntity {_id = ObjectId.GenerateNewId(), aChar = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -404,10 +368,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         while (expected <= 0)
             expected = _random.NextDecimal();
 
-        collection.InsertOne(new DecimalEntity
-        {
-            _id = ObjectId.GenerateNewId(), aDecimal = expected
-        });
+        collection.InsertOne(new DecimalEntity {_id = ObjectId.GenerateNewId(), aDecimal = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -421,10 +382,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<DecimalEntity>();
 
-        collection.InsertOne(new DecimalEntity
-        {
-            _id = ObjectId.GenerateNewId(), aDecimal = 0m
-        });
+        collection.InsertOne(new DecimalEntity {_id = ObjectId.GenerateNewId(), aDecimal = 0m});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -442,10 +400,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         while (expected >= 0)
             expected = _random.NextDecimal();
 
-        collection.InsertOne(new DecimalEntity
-        {
-            _id = ObjectId.GenerateNewId(), aDecimal = expected
-        });
+        collection.InsertOne(new DecimalEntity {_id = ObjectId.GenerateNewId(), aDecimal = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -460,10 +415,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<SingleFloatEntity>();
 
         var expected = _random.NextSingle() * Single.MaxValue;
-        collection.InsertOne(new SingleFloatEntity
-        {
-            _id = ObjectId.GenerateNewId(), aSingle = expected
-        });
+        collection.InsertOne(new SingleFloatEntity {_id = ObjectId.GenerateNewId(), aSingle = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -477,10 +429,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SingleFloatEntity>();
 
-        collection.InsertOne(new SingleFloatEntity
-        {
-            _id = ObjectId.GenerateNewId(), aSingle = 0
-        });
+        collection.InsertOne(new SingleFloatEntity {_id = ObjectId.GenerateNewId(), aSingle = 0});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -495,10 +444,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<SingleFloatEntity>();
 
         var expected = _random.NextSingle() * Single.MinValue;
-        collection.InsertOne(new SingleFloatEntity
-        {
-            _id = ObjectId.GenerateNewId(), aSingle = expected
-        });
+        collection.InsertOne(new SingleFloatEntity {_id = ObjectId.GenerateNewId(), aSingle = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -513,10 +459,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<DoubleFloatEntity>();
 
         var expected = _random.NextDouble() * Double.MaxValue;
-        collection.InsertOne(new DoubleFloatEntity
-        {
-            _id = ObjectId.GenerateNewId(), aDouble = expected
-        });
+        collection.InsertOne(new DoubleFloatEntity {_id = ObjectId.GenerateNewId(), aDouble = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -530,10 +473,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<DoubleFloatEntity>();
 
-        collection.InsertOne(new DoubleFloatEntity
-        {
-            _id = ObjectId.GenerateNewId(), aDouble = 0
-        });
+        collection.InsertOne(new DoubleFloatEntity {_id = ObjectId.GenerateNewId(), aDouble = 0});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -548,10 +488,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<DoubleFloatEntity>();
 
         var expected = _random.NextDouble() * Double.MinValue;
-        collection.InsertOne(new DoubleFloatEntity
-        {
-            _id = ObjectId.GenerateNewId(), aDouble = expected
-        });
+        collection.InsertOne(new DoubleFloatEntity {_id = ObjectId.GenerateNewId(), aDouble = expected});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -564,16 +501,10 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     public void List_write_read_with_items()
     {
         var collection = database.CreateCollection<ListEntity>();
-        var expected = new List<string>
-        {
-            "a", "b", "c"
-        };
+        var expected = new List<string> {"a", "b", "c"};
 
         {
-            var item = new ListEntity
-            {
-                _id = ObjectId.GenerateNewId(), aList = expected
-            };
+            var item = new ListEntity {_id = ObjectId.GenerateNewId(), aList = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -592,10 +523,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     public void List_read_empty()
     {
         var collection = database.CreateCollection<ListEntity>();
-        collection.InsertOne(new ListEntity
-        {
-            _id = ObjectId.GenerateNewId(), aList = []
-        });
+        collection.InsertOne(new ListEntity {_id = ObjectId.GenerateNewId(), aList = []});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -609,16 +537,10 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     public void IList_write_read_with_items()
     {
         var collection = database.CreateCollection<IListEntity>();
-        var expected = new List<string>
-        {
-            "a", "b", "c"
-        };
+        var expected = new List<string> {"a", "b", "c"};
 
         {
-            var item = new IListEntity
-            {
-                _id = ObjectId.GenerateNewId(), aList = expected
-            };
+            var item = new IListEntity {_id = ObjectId.GenerateNewId(), aList = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -637,10 +559,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     public void IList_read_empty()
     {
         var collection = database.CreateCollection<IListEntity>();
-        collection.InsertOne(new IListEntity
-        {
-            _id = ObjectId.GenerateNewId(), aList = []
-        });
+        collection.InsertOne(new IListEntity {_id = ObjectId.GenerateNewId(), aList = []});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -654,10 +573,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     public void IList_read_null()
     {
         var collection = database.CreateCollection<IListEntity>();
-        collection.InsertOne(new IListEntity
-        {
-            _id = ObjectId.GenerateNewId(), aList = null
-        });
+        collection.InsertOne(new IListEntity {_id = ObjectId.GenerateNewId(), aList = null});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -670,10 +586,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     public void ListOfLists_read_empty()
     {
         var collection = database.CreateCollection<ListOfListEntity>();
-        collection.InsertOne(new ListOfListEntity
-        {
-            _id = ObjectId.GenerateNewId(), aListOfLists = []
-        });
+        collection.InsertOne(new ListOfListEntity {_id = ObjectId.GenerateNewId(), aListOfLists = []});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -689,15 +602,27 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<ListOfListEntity>();
         var expected = new List<List<string>>
         {
-            new() {"a", "e", "i", "o", "u" },
-            new() { "b", "c", "d", "f", "g", "h" }
+            new()
+            {
+                "a",
+                "e",
+                "i",
+                "o",
+                "u"
+            },
+            new()
+            {
+                "b",
+                "c",
+                "d",
+                "f",
+                "g",
+                "h"
+            }
         };
 
         {
-            var item = new ListOfListEntity
-            {
-                _id = ObjectId.GenerateNewId(), aListOfLists = expected
-            };
+            var item = new ListOfListEntity {_id = ObjectId.GenerateNewId(), aListOfLists = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -716,10 +641,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     public void IListOfLists_read_empty()
     {
         var collection = database.CreateCollection<IListOfListEntity>();
-        collection.InsertOne(new IListOfListEntity
-        {
-            _id = ObjectId.GenerateNewId(), aListOfLists = []
-        });
+        collection.InsertOne(new IListOfListEntity {_id = ObjectId.GenerateNewId(), aListOfLists = []});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -735,15 +657,27 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<IListOfListEntity>();
         var expected = new List<List<string>>
         {
-            new() {"a", "e", "i", "o", "u" },
-            new() { "b", "c", "d", "f", "g", "h" }
+            new()
+            {
+                "a",
+                "e",
+                "i",
+                "o",
+                "u"
+            },
+            new()
+            {
+                "b",
+                "c",
+                "d",
+                "f",
+                "g",
+                "h"
+            }
         };
 
         {
-            var item = new IListOfListEntity
-            {
-                _id = ObjectId.GenerateNewId(), aListOfLists = expected
-            };
+            var item = new IListOfListEntity {_id = ObjectId.GenerateNewId(), aListOfLists = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -762,10 +696,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     public void ListSubclassOfListSubclass_read_empty()
     {
         var collection = database.CreateCollection<ListSubclassOfListSubclassEntity>();
-        collection.InsertOne(new ListSubclassOfListSubclassEntity
-        {
-            _id = ObjectId.GenerateNewId(), aListOfLists = []
-        });
+        collection.InsertOne(new ListSubclassOfListSubclassEntity {_id = ObjectId.GenerateNewId(), aListOfLists = []});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();
@@ -781,15 +712,27 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<ListSubclassOfListSubclassEntity>();
         var expected = new ListSubclass<ListSubclass<string>>
         {
-            new() {"a", "e", "i", "o", "u" },
-            new() { "b", "c", "d", "f", "g", "h" }
+            new()
+            {
+                "a",
+                "e",
+                "i",
+                "o",
+                "u"
+            },
+            new()
+            {
+                "b",
+                "c",
+                "d",
+                "f",
+                "g",
+                "h"
+            }
         };
 
         {
-            var item = new ListSubclassOfListSubclassEntity
-            {
-                _id = ObjectId.GenerateNewId(), aListOfLists = expected
-            };
+            var item = new ListSubclassOfListSubclassEntity {_id = ObjectId.GenerateNewId(), aListOfLists = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -811,10 +754,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var expected = new ReadOnlyCollection<string>(["z", "x", "y", "1", "2", "3"]);
 
         {
-            var item = new ReadOnlyCollectionEntity
-            {
-                _id = ObjectId.GenerateNewId(), aCollection = expected
-            };
+            var item = new ReadOnlyCollectionEntity {_id = ObjectId.GenerateNewId(), aCollection = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -836,10 +776,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var expected = new Collection<string>(["z", "x", "y", "1", "2", "3"]);
 
         {
-            var item = new CollectionEntity
-            {
-                _id = ObjectId.GenerateNewId(), aCollection = expected
-            };
+            var item = new CollectionEntity {_id = ObjectId.GenerateNewId(), aCollection = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -861,10 +798,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var expected = new ObservableCollection<string>(["z", "x", "y", "1", "2", "3"]);
 
         {
-            var item = new ObservableCollectionEntity
-            {
-                _id = ObjectId.GenerateNewId(), aCollection = expected
-            };
+            var item = new ObservableCollectionEntity {_id = ObjectId.GenerateNewId(), aCollection = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -886,10 +820,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var expected = new List<string>(["z", "x", "y", "1", "2", "3"]).AsReadOnly();
 
         {
-            var item = new IReadOnlyListEntity
-            {
-                _id = ObjectId.GenerateNewId(), aList = expected
-            };
+            var item = new IReadOnlyListEntity {_id = ObjectId.GenerateNewId(), aList = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -911,10 +842,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var expected = new List<string>(["z", "x", "y", "1", "2", "3"]).AsEnumerable();
 
         {
-            var item = new IEnumerableEntity
-            {
-                _id = ObjectId.GenerateNewId(), anEnumerable = expected
-            };
+            var item = new IEnumerableEntity {_id = ObjectId.GenerateNewId(), anEnumerable = expected};
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
@@ -955,50 +883,23 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [InlineData(typeof(TestByteEnum?), TestByteEnum.EnumValue1)]
     [InlineData(typeof(TestByteEnum?), null)]
     [InlineData(typeof(int[]), null)]
-    [InlineData(typeof(int[]), new[]
-    {
-        -5, 0, 128, 10
-    })]
+    [InlineData(typeof(int[]), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(string[]), null)]
-    [InlineData(typeof(string[]), new[]
-    {
-        "one", "two"
-    })]
+    [InlineData(typeof(string[]), new[] {"one", "two"})]
     [InlineData(typeof(List<int>), null)]
-    [InlineData(typeof(List<int>), new[]
-    {
-        -5, 0, 128, 10
-    })]
+    [InlineData(typeof(List<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(IList<int>), null)]
-    [InlineData(typeof(IList<int>), new[]
-    {
-        -5, 0, 128, 10
-    })]
+    [InlineData(typeof(IList<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(IReadOnlyList<int>), null)]
-    [InlineData(typeof(IReadOnlyList<int>), new[]
-    {
-        -5, 0, 128, 10
-    })]
+    [InlineData(typeof(IReadOnlyList<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(ReadOnlyCollection<int>), null)]
-    [InlineData(typeof(ReadOnlyCollection<int>), new[]
-    {
-        -5, 0, 128, 10
-    })]
+    [InlineData(typeof(ReadOnlyCollection<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(Collection<int>), null)]
-    [InlineData(typeof(Collection<int>), new[]
-    {
-        -100, 100, 0, 1234
-    })]
+    [InlineData(typeof(Collection<int>), new[] {-100, 100, 0, 1234})]
     [InlineData(typeof(ObservableCollection<int>), null)]
-    [InlineData(typeof(ObservableCollection<int>), new[]
-    {
-        -100, 100, 0, 1234
-    })]
+    [InlineData(typeof(ObservableCollection<int>), new[] {-100, 100, 0, 1234})]
     [InlineData(typeof(ListSubclass<int>), null)]
-    [InlineData(typeof(ListSubclass<int>), new[]
-    {
-        -5, 0, 128, 10
-    })]
+    [InlineData(typeof(ListSubclass<int>), new[] {-5, 0, 128, 10})]
     public void Type_mapping_test(Type valueType, object? value)
     {
         if (value != null && !value.GetType().IsAssignableTo(valueType))
@@ -1015,19 +916,13 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Type_mapping_test_list_nullable_int()
     {
-        ClrTypeMappingTestImpl(new List<int?>(new int?[]
-        {
-            1, 2, 3, null, 4
-        }));
+        ClrTypeMappingTestImpl(new List<int?>(new int?[] {1, 2, 3, null, 4}));
     }
 
     private void ClrTypeMappingTestImpl<TValue>(TValue value)
     {
-        var collection = database.CreateCollection<Entity<TValue>>(values:[typeof(TValue), value!]);
-        collection.InsertOne(new Entity<TValue>
-        {
-            _id = ObjectId.GenerateNewId(), Value = value
-        });
+        var collection = database.CreateCollection<Entity<TValue>>(values: [typeof(TValue), value!]);
+        collection.InsertOne(new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = value});
 
         using var db = SingleEntityDbContext.Create(collection);
         var actual = db.Entities.FirstOrDefault();

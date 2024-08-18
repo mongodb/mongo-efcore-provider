@@ -72,16 +72,13 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture databa
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new OwnedEntityRemappingEntity
-            {
-                _id = id,
-                Location = location
-            });
+            db.Entities.Add(new OwnedEntityRemappingEntity {_id = id, Location = location});
             db.SaveChanges();
         }
 
         {
-            var actual = collection.Database.GetCollection<IntendedOwnedEntityRemappingEntity>(collection.CollectionNamespace.CollectionName);
+            var actual = collection.Database.GetCollection<IntendedOwnedEntityRemappingEntity>(collection.CollectionNamespace
+                .CollectionName);
             var directFound = actual.Find(f => f._id == id).Single();
             Assert.Equal(location, directFound.otherLocation);
         }
@@ -97,10 +94,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture databa
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NonKeyRemappingEntity
-            {
-                _id = id, RemapThisToName = name
-            });
+            db.Entities.Add(new NonKeyRemappingEntity {_id = id, RemapThisToName = name});
             db.SaveChanges();
         }
 
@@ -121,10 +115,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture databa
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new KeyRemappingEntity
-            {
-                _id = id, name = name
-            });
+            db.Entities.Add(new KeyRemappingEntity {_id = id, name = name});
             db.SaveChanges();
         }
 
@@ -145,10 +136,7 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture databa
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var entity = new KeyRemappingEntity
-            {
-                _id = id, name = name
-            };
+            var entity = new KeyRemappingEntity {_id = id, name = name};
             db.Entities.Add(entity);
             db.SaveChanges();
 
