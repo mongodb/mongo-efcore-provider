@@ -38,7 +38,7 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
 
     public IMongoDatabase MongoDatabase { get; }
 
-    public IMongoCollection<T> CreateTemporaryCollection<T>(string prefix, params object?[] values)
+    public IMongoCollection<T> CreateTemporaryCollection<T>([CallerMemberName] string? prefix = null, params object?[] values)
     {
         var valuesSuffix = string.Join('+', values.Select(v =>
         {
@@ -46,6 +46,10 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
             {
                 case null:
                     return "null";
+                case ObjectId objectId:
+                    return objectId.ToString();
+                case string s:
+                    return s;
                 case IEnumerable enumerable:
                     return string.Join('+', enumerable.Cast<object>().Select(i => i == null ? "null" : i.ToString()));
             }
@@ -85,6 +89,9 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
                        "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
         return MongoDatabase.GetCollection<T>(name);
     }
+
+    public IMongoCollection<T> GetExistingTemporaryCollection<T>(CollectionNamespace collectionNamespace)
+        => MongoDatabase.GetCollection<T>(collectionNamespace.CollectionName);
 
     public IMongoClient Client { get; }
 
