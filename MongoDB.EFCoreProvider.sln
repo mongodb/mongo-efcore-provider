@@ -9,6 +9,16 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.FunctionalTests", "tests\MongoDB.EntityFrameworkCore.FunctionalTests\MongoDB.EntityFrameworkCore.FunctionalTests.csproj", "{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{F1A19F8C-80F3-4051-96A1-866E2B1E688A}"
+	ProjectSection(SolutionItems) = preProject
+		BREAKING-CHANGES.md = BREAKING-CHANGES.md
+		LICENSE.md = LICENSE.md
+		CONTRIBUTING.md = CONTRIBUTING.md
+		README.md = README.md
+		THIRD-PARTY-NOTICES = THIRD-PARTY-NOTICES
+		src\Directory.Build.props = src\Directory.Build.props
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
