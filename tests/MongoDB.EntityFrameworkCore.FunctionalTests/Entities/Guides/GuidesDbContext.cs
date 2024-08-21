@@ -21,7 +21,8 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
-internal class GuidesDbContext(DbContextOptions options) : DbContext(options)
+internal class GuidesDbContext(DbContextOptions options)
+    : DbContext(options)
 {
     public DbSet<Moon> Moons { get; init; }
     public DbSet<Planet> Planets { get; init; }

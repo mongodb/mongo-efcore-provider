@@ -20,15 +20,9 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
 [XUnitCollection("ConventionsTests")]
-public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFixture>
+public class ColumnAttributeConventionTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public ColumnAttributeConventionTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class IntendedStorageEntity
     {
         public ObjectId _id { get; set; }
@@ -77,17 +71,14 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_redefines_element_name_for_owned_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<OwnedEntityRemappingEntity>();
+        var collection = database.CreateCollection<OwnedEntityRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var location = new Geolocation(1.1, 2.2);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new OwnedEntityRemappingEntity
-            {
-                _id = id, Location = location
-            });
+            db.Entities.Add(new OwnedEntityRemappingEntity {_id = id, Location = location});
             db.SaveChanges();
         }
 
@@ -102,17 +93,14 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_redefines_element_name_for_insert_and_query()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<NonKeyRemappingEntity>();
+        var collection = database.CreateCollection<NonKeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var name = "The quick brown fox";
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NonKeyRemappingEntity
-            {
-                _id = id, RemapThisToName = name
-            });
+            db.Entities.Add(new NonKeyRemappingEntity {_id = id, RemapThisToName = name});
             db.SaveChanges();
         }
 
@@ -126,17 +114,14 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_redefines_key_name_for_insert_and_query()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<KeyRemappingEntity>();
+        var collection = database.CreateCollection<KeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var name = "The quick brown fox";
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new KeyRemappingEntity
-            {
-                _id = id, name = name
-            });
+            db.Entities.Add(new KeyRemappingEntity {_id = id, name = name});
             db.SaveChanges();
         }
 
@@ -150,17 +135,14 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_redefines_key_name_for_delete()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<KeyRemappingEntity>();
+        var collection = database.CreateCollection<KeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var name = "The quick brown fox";
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var entity = new KeyRemappingEntity
-            {
-                _id = id, name = name
-            };
+            var entity = new KeyRemappingEntity {_id = id, name = name};
             db.Entities.Add(entity);
             db.SaveChanges();
 
@@ -177,7 +159,7 @@ public class ColumnAttributeConventionTests : IClassFixture<TemporaryDatabaseFix
     [Fact]
     public void ColumnAttribute_throws_if_type_name_specified()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<TypeNameSpecifyingEntity>();
+        var collection = database.CreateCollection<TypeNameSpecifyingEntity>();
 
         using var db = SingleEntityDbContext.Create(collection);
 

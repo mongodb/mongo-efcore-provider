@@ -20,15 +20,9 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
 [XUnitCollection("ConventionsTests")]
-public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDatabaseFixture>
+public class MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class UnderscoreIdNamedProperty
     {
         public ObjectId _id { get; set; }
@@ -65,7 +59,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
     [Fact]
     public void PrimaryKeyDiscovery_discovers_underscore_id_named_property()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<UnderscoreIdNamedProperty>();
+        var collection = database.CreateCollection<UnderscoreIdNamedProperty>();
 
         var id = ObjectId.GenerateNewId();
         var name = Guid.NewGuid().ToString();
@@ -95,7 +89,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
     [Fact]
     public void PrimaryKeyDiscovery_discovers_Id_named_property()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<IdNamedProperty>();
+        var collection = database.CreateCollection<IdNamedProperty>();
 
         var id = ObjectId.GenerateNewId();
         var name = Guid.NewGuid().ToString();
@@ -124,7 +118,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
     [Fact]
     public void PrimaryKeyDiscovery_discovers_ColumnAttributed_named_property()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<ColumnAttributedIdProperty>();
+        var collection = database.CreateCollection<ColumnAttributedIdProperty>();
 
         var id = ObjectId.GenerateNewId();
         var name = Guid.NewGuid().ToString();
@@ -155,7 +149,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests : IClassFixture<TemporaryDa
     [Fact]
     public void PrimaryKeyDiscovery_discovers_EntityId_named_property()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Product>();
+        var collection = database.CreateCollection<Product>();
 
         var id = Guid.NewGuid().ToString();
         var name = Guid.NewGuid().ToString();

@@ -19,27 +19,18 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
+public class SimpleKeyCrudTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public SimpleKeyCrudTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     [Fact]
     public void Should_insert_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = database.CreateCollection<Entity>();
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id));
-            });
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id)));
             db.Entities.Add(entity);
             db.SaveChanges();
         }
@@ -58,25 +49,19 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_read_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = database.CreateCollection<Entity>();
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id));
-            });
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id)));
             db.Entities.Add(entity);
             db.SaveChanges();
         }
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id));
-            });
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id)));
 
             var actual = db.Entities.Single();
 
@@ -88,15 +73,12 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_update_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = database.CreateCollection<Entity>();
         var entity = new Entity {Id = "key", Data = "some text"};
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id));
-            });
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id)));
             db.Entities.Add(entity);
             db.SaveChanges();
 
@@ -118,13 +100,10 @@ public class SimpleKeyCrudTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Should_delete_composite_key_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = database.CreateCollection<Entity>();
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id));
-            });
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id)));
             var entity = new Entity {Id = "key", Data = "some text"};
             db.Entities.Add(entity);
             db.SaveChanges();

@@ -15,27 +15,20 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class FloatingSerializationTests : BaseSerializationTests
+public class FloatingSerializationTests(TemporaryDatabaseFixture database)
+    : BaseSerializationTests(database)
 {
-    public FloatingSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
-
     [Theory]
     [InlineData(1234.56f)]
     [InlineData(-4587.498f)]
     [InlineData(0f)]
     public void Float_round_trips(float expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<FloatEntity>(nameof(Float_round_trips) + expected);
+        var collection = Database.CreateCollection<FloatEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new FloatEntity
-            {
-                aFloat = expected
-            });
+            db.Entities.Add(new FloatEntity {aFloat = expected});
             db.SaveChanges();
         }
 
@@ -68,14 +61,11 @@ public class FloatingSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_Float_round_trips(float? expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<NullableFloatEntity>(nameof(Nullable_Float_round_trips) + expected);
+        var collection = Database.CreateCollection<NullableFloatEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableFloatEntity
-            {
-                aNullableFloat = expected
-            });
+            db.Entities.Add(new NullableFloatEntity {aNullableFloat = expected});
             db.SaveChanges();
         }
 
@@ -109,14 +99,11 @@ public class FloatingSerializationTests : BaseSerializationTests
     [InlineData(0.0)]
     public void Double_round_trips(double expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<DoubleEntity>(nameof(Double_round_trips) + expected);
+        var collection = Database.CreateCollection<DoubleEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new DoubleEntity
-            {
-                aDouble = expected
-            });
+            db.Entities.Add(new DoubleEntity {aDouble = expected});
             db.SaveChanges();
         }
 
@@ -149,15 +136,11 @@ public class FloatingSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_Double_round_trips(double? expected)
     {
-        var collection =
-            TempDatabase.CreateTemporaryCollection<NullableDoubleEntity>(nameof(Nullable_Double_round_trips) + expected);
+        var collection = Database.CreateCollection<NullableDoubleEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableDoubleEntity
-            {
-                aNullableDouble = expected
-            });
+            db.Entities.Add(new NullableDoubleEntity {aNullableDouble = expected});
             db.SaveChanges();
         }
 

@@ -19,7 +19,7 @@ using Microsoft.EntityFrameworkCore;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
-public class CompositeKeyQueryTests(TemporaryDatabaseFixture fixture)
+public class CompositeKeyQueryTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     [Fact]
@@ -58,7 +58,7 @@ public class CompositeKeyQueryTests(TemporaryDatabaseFixture fixture)
 
     private SingleEntityDbContext<Entity> CreateContext([CallerMemberName] string? name = null)
     {
-        var collection = fixture.CreateTemporaryCollection<Entity>(name);
+        var collection = database.CreateCollection<Entity>(name);
 
         {
             using var db = SingleEntityDbContext.Create(collection, ConfigureContext);

@@ -22,7 +22,7 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
+public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class TextEntity
@@ -36,8 +36,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(AutoTransactionBehavior.Never)]
     public void SaveChanges_behavior_on_driver_exception(AutoTransactionBehavior transactionBehavior)
     {
-        var collection =
-            tempDatabase.CreateTemporaryCollection<TextEntity>("SaveChanges_DriverException" + transactionBehavior);
+        var collection = database.CreateCollection<TextEntity>(values: transactionBehavior);
         var idToDuplicate = ObjectId.GenerateNewId();
         var idToDelete = ObjectId.GenerateNewId();
 
@@ -83,8 +82,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(AutoTransactionBehavior.Never)]
     public async Task SaveChangesAsync_behavior_on_driver_exception(AutoTransactionBehavior transactionBehavior)
     {
-        var collection =
-            tempDatabase.CreateTemporaryCollection<TextEntity>("SaveChangesAsync_DriverException" + transactionBehavior);
+        var collection = database.CreateCollection<TextEntity>(values: transactionBehavior);
         var idToDuplicate = ObjectId.GenerateNewId();
         var idToDelete = ObjectId.GenerateNewId();
 
@@ -132,7 +130,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     public void SaveChanges_behavior_on_DbUpdateConcurrencyException(AutoTransactionBehavior transactionBehavior)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<TextEntity>("SaveChanges_DbConcurrencyException" + transactionBehavior);
+            database.CreateCollection<TextEntity>(values: transactionBehavior);
         var idToDelete = ObjectId.GenerateNewId();
 
         {
@@ -168,8 +166,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
     [InlineData(AutoTransactionBehavior.Never)]
     public async Task SaveChangesAsync_behavior_on_DbUpdateConcurrencyException(AutoTransactionBehavior transactionBehavior)
     {
-        var collection =
-            tempDatabase.CreateTemporaryCollection<TextEntity>("SaveChangesAsync_DbConcurrencyException" + transactionBehavior);
+        var collection = database.CreateCollection<TextEntity>(values: transactionBehavior);
         var idToDelete = ObjectId.GenerateNewId();
 
         {
@@ -341,7 +338,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
 
         {
             using var db = new ConcurrentMultiEntityDbContext(tempDatabaseFixture.MongoDatabase);
-            db.Customers.Add(new Customer { Id = "C1", Name = "A Friend", SalesRegion = "EMEA" });
+            db.Customers.Add(new Customer {Id = "C1", Name = "A Friend", SalesRegion = "EMEA"});
             db.RemoveRange(s1);
             e1.Name = "Roy Williams Jr.";
             Assert.Throws<DbUpdateConcurrencyException>(() => db.SaveChanges());
@@ -350,7 +347,8 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
         {
             using var db = new ConcurrentMultiEntityDbContext(tempDatabaseFixture.MongoDatabase);
             Assert.Empty(db.Customers);
-            Assert.Single(db.Employees, e => e is {Id: "E1", Name: "Roy Williams", JobTitle: "Senior Office Manager", RowVersion: 2});
+            Assert.Single(db.Employees,
+                e => e is {Id: "E1", Name: "Roy Williams", JobTitle: "Senior Office Manager", RowVersion: 2});
             Assert.Single(db.Suppliers, e => e is {Id: "S1", Name: "Friendly Corp.", Address: "100 Main St.", RowVersion: 2});
         }
     }
@@ -378,7 +376,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
 
         {
             await using var db = new ConcurrentMultiEntityDbContext(tempDatabaseFixture.MongoDatabase);
-            await db.Customers.AddAsync(new Customer { Id = "C1", Name = "A Friend", SalesRegion = "EMEA" });
+            await db.Customers.AddAsync(new Customer {Id = "C1", Name = "A Friend", SalesRegion = "EMEA"});
             db.RemoveRange(s1);
             e1.Name = "Roy Williams Jr.";
             await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db.SaveChangesAsync());
@@ -387,9 +385,9 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture tempDatabase)
         {
             await using var db = new ConcurrentMultiEntityDbContext(tempDatabaseFixture.MongoDatabase);
             Assert.Empty(db.Customers);
-            Assert.Single(db.Employees, e => e is {Id: "E1", Name: "Roy Williams", JobTitle: "Senior Office Manager", RowVersion: 2});
+            Assert.Single(db.Employees,
+                e => e is {Id: "E1", Name: "Roy Williams", JobTitle: "Senior Office Manager", RowVersion: 2});
             Assert.Single(db.Suppliers, e => e is {Id: "S1", Name: "Friendly Corp.", Address: "100 Main St.", RowVersion: 2});
         }
     }
 }
-

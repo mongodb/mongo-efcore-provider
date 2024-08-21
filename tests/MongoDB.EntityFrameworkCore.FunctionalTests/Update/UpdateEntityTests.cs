@@ -20,7 +20,7 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
+public class UpdateEntityTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class Entity<TValue>
@@ -56,7 +56,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_simple_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>();
         var entity = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "Before"};
 
         {
@@ -78,7 +78,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_dictionary_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
+        var collection = database.CreateCollection<DictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -151,10 +151,10 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
         }
     }
 
-   [Fact]
+    [Fact]
     public void Update_dictionary_of_dictionary_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryOfDictionaryEntity>();
+        var collection = database.CreateCollection<DictionaryOfDictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -164,8 +164,8 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
                 name = "My Post",
                 dictionary = new Dictionary<string, Dictionary<string, string>>
                 {
-                    {"A", new Dictionary<string, string> {{"name", "Damien"}, { "category", "technology" }}},
-                    {"B", new Dictionary<string, string> {{"name", "Bob" }, { "category", "social"}}}
+                    {"A", new Dictionary<string, string> {{"name", "Damien"}, {"category", "technology"}}},
+                    {"B", new Dictionary<string, string> {{"name", "Bob"}, {"category", "social"}}}
                 }
             });
             db.SaveChanges();
@@ -221,7 +221,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.First().dictionary.Add("Z", new Dictionary<string, string> { { "name", "Art" }});
+            db.Entities.First().dictionary.Add("Z", new Dictionary<string, string> {{"name", "Art"}});
             db.SaveChanges();
         }
 
@@ -266,7 +266,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_realistic_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+        var collection = database.CreateCollection<RealisticEntity>();
 
         var entity = new RealisticEntity
         {
@@ -300,7 +300,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Update_only_updates_modified_fields()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<RealisticEntity>();
+        var collection = database.CreateCollection<RealisticEntity>();
 
         var session2 = Guid.NewGuid();
 
@@ -364,7 +364,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture tempDatabase)
     private void EntityAddTestImpl<TValue>(TValue initialValue, TValue updatedValue)
     {
         var collection =
-            tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
+            database.CreateCollection<Entity<TValue>>("EntityUpdateTest", typeof(TValue), initialValue, updatedValue);
 
         {
             using var db = SingleEntityDbContext.Create(collection);

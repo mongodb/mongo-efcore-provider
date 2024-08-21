@@ -18,9 +18,9 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
-public class SkipTakeOrderingTests(ReadOnlySampleGuidesFixture fixture)
+public class SkipTakeOrderingTests(ReadOnlySampleGuidesFixture database)
 {
-    private readonly GuidesDbContext _db = GuidesDbContext.Create(fixture.MongoDatabase);
+    private readonly GuidesDbContext _db = GuidesDbContext.Create(database.MongoDatabase);
 
     [Fact]
     public void Take_with_constant_integer()

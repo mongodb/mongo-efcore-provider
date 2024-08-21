@@ -15,26 +15,19 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class BooleanSerializationTests : BaseSerializationTests
+public class BooleanSerializationTests(TemporaryDatabaseFixture database)
+    : BaseSerializationTests(database)
 {
-    public BooleanSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
-
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public void Boolean_round_trips(bool expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<BooleanEntity>(nameof(Boolean_round_trips) + expected);
+        var collection = Database.CreateCollection<BooleanEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new BooleanEntity
-            {
-                aBoolean = expected
-            });
+            db.Entities.Add(new BooleanEntity {aBoolean = expected});
             db.SaveChanges();
         }
 
@@ -66,15 +59,11 @@ public class BooleanSerializationTests : BaseSerializationTests
     [InlineData(null)]
     public void Nullable_bool_round_trips(bool? expected)
     {
-        var collection =
-            TempDatabase.CreateTemporaryCollection<NullableBooleanEntity>(nameof(Nullable_bool_round_trips) + expected);
+        var collection = Database.CreateCollection<NullableBooleanEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableBooleanEntity
-            {
-                aNullableBoolean = expected
-            });
+            db.Entities.Add(new NullableBooleanEntity {aNullableBoolean = expected});
             db.SaveChanges();
         }
 

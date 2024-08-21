@@ -20,15 +20,9 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
 [XUnitCollection("MappingTests")]
-public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
+public class ElementNameTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public ElementNameTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class RenamedKeyElement
     {
         public ObjectId PrimaryKey { get; set; }
@@ -60,7 +54,7 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void ElementName_on_primary_key_round_trips()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<RenamedKeyElement>();
+        var collection = database.CreateCollection<RenamedKeyElement>();
 
         var id = ObjectId.GenerateNewId();
         var expectedName = Guid.NewGuid().ToString();
@@ -95,7 +89,7 @@ public class ElementNameTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void ElementName_on_non_primary_key_round_trips()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<RenamedNonKeyElements>();
+        var collection = database.CreateCollection<RenamedNonKeyElements>();
 
         var id = ObjectId.GenerateNewId();
         var expectedFirstName = Guid.NewGuid().ToString();

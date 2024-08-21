@@ -27,7 +27,7 @@ using MongoDB.EntityFrameworkCore.Design;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design;
 
 [XUnitCollection("DesignTests")]
-public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
+public class CompiledModelTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     public enum TestEnum
@@ -102,6 +102,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
         {
             WriteScaffoldedFile(file);
         }
+
         scope.Dispose();
     }
 
@@ -153,7 +154,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
             Assert.Equal(BsonType.String, representation.BsonType);
 
             scope.Dispose();
-       }
+        }
     }
 
     private static IReadOnlyCollection<ScaffoldedFile> GenerateModel(SimpleContext context)
@@ -168,14 +169,15 @@ public class CompiledModelTests(TemporaryDatabaseFixture tempDatabase)
         return codeGenerator.GenerateModel(designTimeModel.Model, options);
     }
 
-    private (T, IServiceScope) GetDesignTimeConfigured<T>(Action<DbContextOptionsBuilder>? configOptionsBuilder = null) where T : DbContext
+    private (T, IServiceScope) GetDesignTimeConfigured<T>(Action<DbContextOptionsBuilder>? configOptionsBuilder = null)
+        where T : DbContext
     {
         var serviceCollection = new ServiceCollection()
             .AddEntityFrameworkMongoDB()
             .AddEntityFrameworkDesignTimeServices()
             .AddDbContext<T>((p, b) =>
             {
-                b.UseMongoDB(tempDatabase.Client, tempDatabase.MongoDatabase.DatabaseNamespace.DatabaseName)
+                b.UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                     .UseInternalServiceProvider(p);
 
                 configOptionsBuilder?.Invoke(b);

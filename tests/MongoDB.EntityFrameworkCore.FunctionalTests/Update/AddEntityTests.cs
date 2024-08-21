@@ -21,12 +21,10 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
+public class AddEntityTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
     private static readonly Random Random = new();
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public AddEntityTests(TemporaryDatabaseFixture tempDatabase) => _tempDatabase = tempDatabase;
 
     private class Entity<TValue>
     {
@@ -70,13 +68,10 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_generated_ObjectId()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var expected = new SimpleEntity
-        {
-            _id = ObjectId.GenerateNewId(), name = "Generated"
-        };
+        var expected = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "Generated"};
         db.Entities.Add(expected);
         db.SaveChanges();
 
@@ -91,13 +86,10 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_unset_ObjectId()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var expected = new SimpleEntity
-        {
-            name = "Not Set"
-        };
+        var expected = new SimpleEntity {name = "Not Set"};
         db.Entities.Add(expected);
         db.SaveChanges();
 
@@ -114,13 +106,10 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_simple_entity_with_empty_ObjectId()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
-        var expected = new SimpleEntity
-        {
-            _id = ObjectId.Empty, name = "Empty"
-        };
+        var expected = new SimpleEntity {_id = ObjectId.Empty, name = "Empty"};
         db.Entities.Add(expected);
         db.SaveChanges();
 
@@ -137,7 +126,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_numeric_types_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<NumericTypesEntity>();
+        var collection = database.CreateCollection<NumericTypesEntity>();
 
         var expected = new NumericTypesEntity
         {
@@ -174,7 +163,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_clr_types_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<OtherClrTypeEntity>();
+        var collection = database.CreateCollection<OtherClrTypeEntity>();
 
         var expected = new OtherClrTypeEntity
         {
@@ -205,7 +194,7 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Add_mongo_types_entity()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<MongoSpecificTypeEntity>();
+        var collection = database.CreateCollection<MongoSpecificTypeEntity>();
 
         var expected = new MongoSpecificTypeEntity
         {
@@ -233,33 +222,15 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [InlineData(typeof(TestEnum?), TestEnum.EnumValue1)]
     [InlineData(typeof(TestEnum?), null)]
     [InlineData(typeof(int[]), null)]
-    [InlineData(typeof(int[]), new[]
-    {
-        -5, 0, 128, 10
-    })]
+    [InlineData(typeof(int[]), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(IList<int>), null)]
-    [InlineData(typeof(IList<int>), new[]
-    {
-        -5, 0, 128, 10
-    })]
-    [InlineData(typeof(IReadOnlyList<int>), new[]
-    {
-        -5, 0, 128, 10
-    })]
-    [InlineData(typeof(List<int>), new[]
-    {
-        -5, 0, 128, 10
-    })]
+    [InlineData(typeof(IList<int>), new[] {-5, 0, 128, 10})]
+    [InlineData(typeof(IReadOnlyList<int>), new[] {-5, 0, 128, 10})]
+    [InlineData(typeof(List<int>), new[] {-5, 0, 128, 10})]
     [InlineData(typeof(string[]), null)]
-    [InlineData(typeof(string[]), new[]
-    {
-        "one", "two"
-    })]
+    [InlineData(typeof(string[]), new[] {"one", "two"})]
     [InlineData(typeof(IList<string>), null)]
-    [InlineData(typeof(List<string>), new[]
-    {
-        "one", "two"
-    })]
+    [InlineData(typeof(List<string>), new[] {"one", "two"})]
     [InlineData(typeof(Collection<int>), null)]
     [InlineData(typeof(ObservableCollection<int>), null)]
     public void Entity_add_tests(Type valueType, object? value)
@@ -283,14 +254,11 @@ public class AddEntityTests : IClassFixture<TemporaryDatabaseFixture>
 
     private void EntityAddTestImpl<TValue>(TValue value)
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<Entity<TValue>>("EntityAddTestImpl", typeof(TValue), value!);
+        var collection = database.CreateCollection<Entity<TValue>>("EntityAddTestImpl", typeof(TValue), value!);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new Entity<TValue>
-            {
-                _id = ObjectId.GenerateNewId(), Value = value
-            });
+            db.Entities.Add(new Entity<TValue> {_id = ObjectId.GenerateNewId(), Value = value});
             db.SaveChanges();
         }
 

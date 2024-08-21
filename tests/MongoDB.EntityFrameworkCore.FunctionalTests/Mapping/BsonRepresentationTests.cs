@@ -22,29 +22,43 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
 [XUnitCollection("MappingTests")]
-public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
+public class BsonTypeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     [Fact]
     public void String_clr_with_ObjectId_storage()
-        => Exerciser.TestConvertedIdRoundTrip(tempDatabase,
+        => Exerciser.TestConvertedIdRoundTrip(database,
             ObjectId.GenerateNewId().ToString(),
             a => new ObjectId(a),
             mb => mb.Entity<EntityWithId<string>>().Property(e => e._id).HasBsonRepresentation(BsonType.ObjectId));
 
     public static readonly TheoryData<decimal> ConstrainedDecimalData
-        = new() {0m, 1m, -1m, 1.1m, -1.1m};
+        = new()
+        {
+            0m,
+            1m,
+            -1m,
+            1.1m,
+            -1.1m
+        };
 
     [Theory]
     [MemberData(nameof(ConstrainedDecimalData))]
     public void Decimal_clr_with_Decimal128_storage(decimal expectedValue)
-        => Exerciser.TestConvertedValueRoundTrip(tempDatabase,
+        => Exerciser.TestConvertedValueRoundTrip(database,
             expectedValue,
             a => new Decimal128(a),
             mb => mb.Entity<EntityWithId<ObjectId>>().Property(e => e._id).HasBsonRepresentation(BsonType.Decimal128));
 
     public static readonly TheoryData<int> IntData
-        = new() {0, 1, -1, int.MaxValue, int.MinValue};
+        = new()
+        {
+            0,
+            1,
+            -1,
+            int.MaxValue,
+            int.MinValue
+        };
 
     [Theory]
     [MemberData(nameof(IntData))]
@@ -52,7 +66,16 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<double> DoubleData
-        = new() {0d, 1d, -1d, 1.2d, -1.2d, double.MaxValue, double.MinValue};
+        = new()
+        {
+            0d,
+            1d,
+            -1d,
+            1.2d,
+            -1.2d,
+            double.MaxValue,
+            double.MinValue
+        };
 
     [Theory]
     [MemberData(nameof(DoubleData))]
@@ -60,7 +83,16 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<float> FloatData
-        = new() {0f, 1f, -1f, 1.1f, -1.1f, float.MaxValue, float.MinValue};
+        = new()
+        {
+            0f,
+            1f,
+            -1f,
+            1.1f,
+            -1.1f,
+            float.MaxValue,
+            float.MinValue
+        };
 
     [Theory]
     [MemberData(nameof(FloatData))]
@@ -68,7 +100,16 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<decimal> DecimalData
-        = new() {0m, 1m, -1m, 1.1m, -1.1m, decimal.MaxValue, decimal.MinValue};
+        = new()
+        {
+            0m,
+            1m,
+            -1m,
+            1.1m,
+            -1.1m,
+            decimal.MaxValue,
+            decimal.MinValue
+        };
 
     [Theory]
     [MemberData(nameof(DecimalData))]
@@ -93,7 +134,14 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<TimeSpan> TimeSpanData
-        = new() {TimeSpan.Zero, TimeSpan.MaxValue, TimeSpan.MinValue, TimeSpan.FromDays(2), TimeSpan.FromHours(-1)};
+        = new()
+        {
+            TimeSpan.Zero,
+            TimeSpan.MaxValue,
+            TimeSpan.MinValue,
+            TimeSpan.FromDays(2),
+            TimeSpan.FromHours(-1)
+        };
 
     [Theory]
     [MemberData(nameof(TimeSpanData))]
@@ -101,12 +149,12 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         => TestValueRoundTripToString(expectedValue);
 
     public static readonly TheoryData<DateTime> DateTimeData
-        = new() { DateTime.Now, DateTime.Now.AddYears(500), DateTime.Now.AddYears(-500) };
+        = new() {DateTime.Now, DateTime.Now.AddYears(500), DateTime.Now.AddYears(-500)};
 
     [Theory]
     [MemberData(nameof(DateTimeData))]
     public void DateTime_clr_with_String_storage(DateTime expectedValue)
-        => Exerciser.TestConvertedValueRoundTrip(tempDatabase,
+        => Exerciser.TestConvertedValueRoundTrip(database,
             expectedValue.ToBsonPrecision(),
             converter: a => a.ToBsonPrecision().ToUniversalTime(),
             mb => mb.Entity<EntityWithValue<DateTime>>().Property(e => e.value)
@@ -114,12 +162,12 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
                 .HasBsonRepresentation(BsonType.String));
 
     public static readonly TheoryData<DateTime> UtcDateTimeData
-        = new() { DateTime.UtcNow, DateTime.UtcNow.AddYears(500), DateTime.UtcNow.AddYears(-500) };
+        = new() {DateTime.UtcNow, DateTime.UtcNow.AddYears(500), DateTime.UtcNow.AddYears(-500)};
 
     [Theory]
     [MemberData(nameof(UtcDateTimeData))]
     public void DateTime_clr_with_DateTime_storage(DateTime expectedValue)
-        => Exerciser.TestConvertedValueRoundTrip(tempDatabase,
+        => Exerciser.TestConvertedValueRoundTrip(database,
             expectedValue,
             a => a.ToBsonPrecision(),
             mb => mb.Entity<EntityWithValue<DateTime>>().Property(e => e.value)
@@ -131,7 +179,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture tempDatabase)
         T expectedValue,
         [CallerMemberName] string? caller = default)
     {
-        Exerciser.TestConvertedValueRoundTrip(tempDatabase,
+        Exerciser.TestConvertedValueRoundTrip(database,
             expectedValue,
             a => a?.ToString(),
             mb => mb.Entity<EntityWithValue<T>>().Property(e => e.value).HasBsonRepresentation(BsonType.String),

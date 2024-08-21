@@ -19,21 +19,18 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class CompositeKeyCrudTests(TemporaryDatabaseFixture tempDatabase)
+public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     [Fact]
     public void Should_insert_composite_key_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = database.CreateCollection<Entity>();
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
-            });
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
             db.Entities.Add(entity);
             db.SaveChanges();
         }
@@ -52,26 +49,20 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Should_read_composite_key_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = database.CreateCollection<Entity>();
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
                 builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
-            });
+                    .HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
             db.Entities.Add(entity);
             db.SaveChanges();
         }
 
         {
             using var dbContext = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
-            });
-
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
             var actual = dbContext.Entities.Single();
 
             Assert.Equal(entity.Id1, actual.Id1);
@@ -83,15 +74,12 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Should_update_composite_key_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = database.CreateCollection<Entity>();
         var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
-            });
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
             db.Entities.Add(entity);
             db.SaveChanges();
 
@@ -113,13 +101,10 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Should_delete_composite_key_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<Entity>();
+        var collection = database.CreateCollection<Entity>();
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
-            {
-                builder.Entity<Entity>()
-                    .HasKey(nameof(Entity.Id1), nameof(Entity.Id2));
-            });
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
             var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
             db.Entities.Add(entity);
             db.SaveChanges();

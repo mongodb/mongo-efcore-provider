@@ -15,15 +15,9 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
-public class TransactionTests : IClassFixture<TemporaryDatabaseFixture>
+public class TransactionTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public TransactionTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class SimpleEntity
     {
         public Guid _id { get; set; }
@@ -33,7 +27,7 @@ public class TransactionTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void MongoTransactionManager_throws_if_transaction_attempted()
     {
-        using var db = SingleEntityDbContext.Create(_tempDatabase.CreateTemporaryCollection<SimpleEntity>());
+        using var db = SingleEntityDbContext.Create(database.CreateCollection<SimpleEntity>());
 
         var ex = Assert.Throws<NotSupportedException>(() => db.Database.BeginTransaction());
         Assert.Contains("does not support transactions", ex.Message);

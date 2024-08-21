@@ -15,14 +15,10 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
-public class StringSerializationTests : BaseSerializationTests
+public class StringSerializationTests(TemporaryDatabaseFixture database)
+    : BaseSerializationTests(database)
 {
     private static long CollectionCounter;
-
-    public StringSerializationTests(TemporaryDatabaseFixture tempDatabase)
-        : base(tempDatabase)
-    {
-    }
 
     [Theory]
     [InlineData("A sample string")]
@@ -33,15 +29,11 @@ public class StringSerializationTests : BaseSerializationTests
     public void String_round_trips(string? expected)
     {
         var counter = Interlocked.Increment(ref CollectionCounter);
-        var collection =
-            TempDatabase.CreateTemporaryCollection<StringEntity>(nameof(String_round_trips) + counter);
+        var collection = Database.CreateCollection<StringEntity>(values: counter);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new StringEntity
-            {
-                aString = expected
-            });
+            db.Entities.Add(new StringEntity {aString = expected});
             db.SaveChanges();
         }
 
@@ -78,14 +70,11 @@ public class StringSerializationTests : BaseSerializationTests
     [InlineData('\x0169')]
     public void Char_round_trips(char expected)
     {
-        var collection = TempDatabase.CreateTemporaryCollection<CharEntity>(nameof(Char_round_trips) + expected);
+        var collection = Database.CreateCollection<CharEntity>(values: expected);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new CharEntity
-            {
-                aChar = expected
-            });
+            db.Entities.Add(new CharEntity {aChar = expected});
             db.SaveChanges();
         }
 
@@ -122,15 +111,11 @@ public class StringSerializationTests : BaseSerializationTests
     public void Nullable_char_round_trips(char? expected)
     {
         var collection =
-            TempDatabase.CreateTemporaryCollection<NullableCharEntity>(nameof(Nullable_char_round_trips) +
-                                                                       expected?.ToString().Replace(' ', '_'));
+            Database.CreateCollection<NullableCharEntity>(values: expected?.ToString().Replace(' ', '_'));
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NullableCharEntity
-            {
-                aNullableChar = expected
-            });
+            db.Entities.Add(new NullableCharEntity {aNullableChar = expected});
             db.SaveChanges();
         }
 

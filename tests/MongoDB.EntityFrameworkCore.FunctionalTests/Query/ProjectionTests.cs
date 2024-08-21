@@ -18,15 +18,9 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
-public class ProjectionTests
+public class ProjectionTests(ReadOnlySampleGuidesFixture database)
 {
-    private readonly IQueryable<Planet> _planets;
-
-    public ProjectionTests(ReadOnlySampleGuidesFixture fixture)
-    {
-        var db = GuidesDbContext.Create(fixture.MongoDatabase);
-        _planets = db.Planets.Take(10);
-    }
+    private readonly IQueryable<Planet> _planets = GuidesDbContext.Create(database.MongoDatabase).Planets.Take(10);
 
     [Fact]
     public void Select_projection_no_op()

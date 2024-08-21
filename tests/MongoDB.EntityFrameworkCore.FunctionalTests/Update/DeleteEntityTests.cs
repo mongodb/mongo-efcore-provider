@@ -19,15 +19,9 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
+public class DeleteEntityTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public DeleteEntityTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     class SimpleEntityWithStringId
     {
         public string _id { get; set; }
@@ -50,6 +44,7 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     {
         [BsonGuidRepresentation(GuidRepresentation.Standard)]
         public Guid _id { get; set; }
+
         public string name { get; set; }
     }
 
@@ -62,7 +57,7 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Entity_delete_with_string_id()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithStringId>();
+        var collection = database.CreateCollection<SimpleEntityWithStringId>();
         collection.InsertOne(new SimpleEntityWithStringId {_id = ObjectId.GenerateNewId().ToString(), name = "DeleteMe"});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -77,7 +72,7 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Entity_delete_with_objectid_id()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithObjectIdId>();
+        var collection = database.CreateCollection<SimpleEntityWithObjectIdId>();
         collection.InsertOne(new SimpleEntityWithObjectIdId {_id = ObjectId.GenerateNewId(), name = "DeleteMe"});
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -93,11 +88,11 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     public void Entity_delete_with_guid_id()
     {
         {
-            var collection = _tempDatabase.CreateTemporaryCollection<BsonSimpleEntityWithGuidId>();
+            var collection = database.CreateCollection<BsonSimpleEntityWithGuidId>();
             collection.InsertOne(new BsonSimpleEntityWithGuidId {_id = Guid.NewGuid(), name = "DeleteMe"});
         }
 
-        var collectionEf = _tempDatabase.GetExistingTemporaryCollection<SimpleEntityWithGuidId>();
+        var collectionEf = database.GetCollection<SimpleEntityWithGuidId>();
         using var db = SingleEntityDbContext.Create(collectionEf);
         var entity = db.Entities.Single();
 
@@ -110,7 +105,7 @@ public class DeleteEntityTests : IClassFixture<TemporaryDatabaseFixture>
     [Fact]
     public void Entity_delete_with_int_id()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<SimpleEntityWithIntId>();
+        var collection = database.CreateCollection<SimpleEntityWithIntId>();
         collection.InsertOne(new SimpleEntityWithIntId {_id = new Random().Next(), name = "DeleteMe"});
 
         using var db = SingleEntityDbContext.Create(collection);

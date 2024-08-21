@@ -18,7 +18,7 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection("DictionaryTests")]
-public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
+public class WhereDictionaryTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class DictionaryEntity
@@ -48,7 +48,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_Dictionary_contains_key()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
+        var collection = database.CreateCollection<DictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -76,7 +76,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_Dictionary_key_equals_value()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
+        var collection = database.CreateCollection<DictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -106,7 +106,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_Dictionary_key_equals_null()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
+        var collection = database.CreateCollection<DictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -134,7 +134,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_Dictionary_key_not_equals_null()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryEntity>();
+        var collection = database.CreateCollection<DictionaryEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -163,7 +163,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_Dictionary_value_in_range()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<DictionaryIntEntity>();
+        var collection = database.CreateCollection<DictionaryIntEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -194,7 +194,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_IDictionary_contains_key()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<IDictionaryIntEntity>();
+        var collection = database.CreateCollection<IDictionaryIntEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -214,7 +214,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_IDictionary_key_equals_value()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<IDictionaryIntEntity>();
+        var collection = database.CreateCollection<IDictionaryIntEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -237,7 +237,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_IDictionary_value_in_range()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<IDictionaryIntEntity>();
+        var collection = database.CreateCollection<IDictionaryIntEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -268,7 +268,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_ReadOnlyDictionary_contains_key()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<IReadOnlyDictionaryIntEntity>();
+        var collection = database.CreateCollection<IReadOnlyDictionaryIntEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -294,7 +294,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_ReadOnlyDictionary_key_equals_value()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<IReadOnlyDictionaryIntEntity>();
+        var collection = database.CreateCollection<IReadOnlyDictionaryIntEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -323,7 +323,7 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture tempDatabase)
     [Fact]
     public void Where_ReadOnlyDictionary_value_in_range()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<IReadOnlyDictionaryIntEntity>();
+        var collection = database.CreateCollection<IReadOnlyDictionaryIntEntity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);

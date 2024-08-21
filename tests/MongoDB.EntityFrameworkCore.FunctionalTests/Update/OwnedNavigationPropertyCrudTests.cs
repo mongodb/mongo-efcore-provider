@@ -19,26 +19,17 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
 [XUnitCollection("UpdateTests")]
-public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseFixture>
+public class OwnedNavigationPropertyCrudTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
 {
-    private readonly TemporaryDatabaseFixture _tempDatabase;
-
-    public OwnedNavigationPropertyCrudTests(TemporaryDatabaseFixture tempDatabase)
-    {
-        _tempDatabase = tempDatabase;
-    }
-
     [Fact]
     public void Should_insert_empty_owned_navigation_property()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = database.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity
-            {
-                Id = 1, Name = "John"
-            };
+            var person = new PersonWithCity {Id = 1, Name = "John"};
 
             db.Entities.Add(person);
             db.SaveChanges();
@@ -58,19 +49,11 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_insert_owned_navigation_property()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = database.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity
-            {
-                Id = 1,
-                Name = "John",
-                City = new City
-                {
-                    Id = 1, Name = "New York"
-                }
-            };
+            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
 
             db.Entities.Add(person);
             db.SaveChanges();
@@ -90,19 +73,11 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_property_with_null()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = database.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity
-            {
-                Id = 1,
-                Name = "John",
-                City = new City
-                {
-                    Id = 1, Name = "New York"
-                }
-            };
+            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
 
             db.Entities.Add(person);
             db.SaveChanges();
@@ -125,27 +100,16 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_property_with_new_value()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = database.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity
-            {
-                Id = 1,
-                Name = "John",
-                City = new City
-                {
-                    Id = 1, Name = "New York"
-                }
-            };
+            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
 
             db.Entities.Add(person);
             db.SaveChanges();
 
-            person.City = new City
-            {
-                Id = 2, Name = "Washington"
-            };
+            person.City = new City {Id = 2, Name = "Washington"};
             db.SaveChanges();
         }
 
@@ -163,19 +127,11 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_property_fields()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCity>();
+        var collection = database.CreateCollection<PersonWithCity>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCity
-            {
-                Id = 1,
-                Name = "John",
-                City = new City
-                {
-                    Id = 1, Name = "New York"
-                }
-            };
+            var person = new PersonWithCity {Id = 1, Name = "John", City = new City {Id = 1, Name = "New York"}};
 
             db.Entities.Add(person);
             db.SaveChanges();
@@ -198,14 +154,11 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_insert_empty_owned_navigation_collection()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = database.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCities
-            {
-                Id = 1, Name = "John"
-            };
+            var person = new PersonWithCities {Id = 1, Name = "John"};
 
             db.Entities.Add(person);
             db.SaveChanges();
@@ -225,7 +178,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_insert_owned_navigation_collection()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = database.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -235,14 +188,8 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 Name = "John",
                 Cities =
                 [
-                    new City
-                    {
-                        Id = 1, Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2, Name = "Washington"
-                    }
+                    new City {Id = 1, Name = "New York"},
+                    new City {Id = 2, Name = "Washington"}
                 ]
             };
 
@@ -266,7 +213,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_collection_with_null()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = database.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -276,14 +223,8 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 Name = "John",
                 Cities =
                 [
-                    new City
-                    {
-                        Id = 1, Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2, Name = "Washington"
-                    }
+                    new City {Id = 1, Name = "New York"},
+                    new City {Id = 2, Name = "Washington"}
                 ]
             };
 
@@ -309,7 +250,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_collection_adding_new_value()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = database.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -319,14 +260,8 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 Name = "John",
                 Cities =
                 [
-                    new City
-                    {
-                        Id = 1, Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2, Name = "Washington"
-                    }
+                    new City {Id = 1, Name = "New York"},
+                    new City {Id = 2, Name = "Washington"}
                 ]
             };
 
@@ -334,10 +269,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             db.SaveChanges();
 
             person.Cities = person.Cities.Concat([
-                new City
-                {
-                    Id = 3, Name = "Denver"
-                }
+                new City {Id = 3, Name = "Denver"}
             ]).ToList();
             db.SaveChanges();
         }
@@ -358,7 +290,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_collection_remove_value()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = database.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -368,14 +300,8 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 Name = "John",
                 Cities =
                 [
-                    new City
-                    {
-                        Id = 1, Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2, Name = "Washington"
-                    }
+                    new City {Id = 1, Name = "New York"},
+                    new City {Id = 2, Name = "Washington"}
                 ]
             };
 
@@ -400,7 +326,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_reload_changed_values_correctly()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCountries>();
+        var collection = database.CreateCollection<PersonWithCountries>();
 
         using var db = SingleEntityDbContext.Create(collection);
         var person = new PersonWithCountries()
@@ -409,14 +335,8 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             Name = "John",
             Countries =
             [
-                new Country()
-                {
-                    Name = "New York"
-                },
-                new Country()
-                {
-                    Name = "Washington"
-                }
+                new Country() {Name = "New York"},
+                new Country() {Name = "Washington"}
             ]
         };
 
@@ -430,7 +350,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_update_owned_navigation_collection_update_value()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCities>();
+        var collection = database.CreateCollection<PersonWithCities>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -440,14 +360,8 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
                 Name = "John",
                 Cities =
                 [
-                    new City
-                    {
-                        Id = 1, Name = "New York"
-                    },
-                    new City
-                    {
-                        Id = 2, Name = "Washington"
-                    }
+                    new City {Id = 1, Name = "New York"},
+                    new City {Id = 2, Name = "Washington"}
                 ]
             };
 
@@ -475,19 +389,14 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_reorder_owned_navigation_collection_ordinals()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithCountries>();
-        var unitedKingdom = new Country { Name = "United Kingdom" };
-        var newZealand = new Country { Name = "New Zealand" };
-        var france = new Country { Name = "France" };
+        var collection = database.CreateCollection<PersonWithCountries>();
+        var unitedKingdom = new Country {Name = "United Kingdom"};
+        var newZealand = new Country {Name = "New Zealand"};
+        var france = new Country {Name = "France"};
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithCountries
-            {
-                Id = 1,
-                Name = "Sally",
-                Countries = [ unitedKingdom, newZealand ]
-            };
+            var person = new PersonWithCountries {Id = 1, Name = "Sally", Countries = [unitedKingdom, newZealand]};
 
             db.Entities.Add(person);
             db.SaveChanges();
@@ -519,22 +428,13 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
     [Fact]
     public void Should_reorder_owned_navigation_collection_ordinals_nested()
     {
-        var collection = _tempDatabase.CreateTemporaryCollection<PersonWithPhoneNumbers>();
+        var collection = database.CreateCollection<PersonWithPhoneNumbers>();
 
-        var ukWorkPhone = new Phone
-        {
-            Description = "Work", Number = "123"
-        };
+        var ukWorkPhone = new Phone {Description = "Work", Number = "123"};
 
-        var ukHomePhone = new Phone
-        {
-            Description = "Home", Number = "789"
-        };
+        var ukHomePhone = new Phone {Description = "Home", Number = "789"};
 
-        var ukCellPhone = new Phone
-        {
-            Description = "Cell", Number = "555"
-        };
+        var ukCellPhone = new Phone {Description = "Cell", Number = "555"};
 
         var unitedKingdom = new CountryPhones
         {
@@ -549,10 +449,7 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             Name = "New Zealand",
             Phones =
             [
-                new Phone
-                {
-                    Description = "Cell", Number = "456"
-                }
+                new Phone {Description = "Cell", Number = "456"}
             ]
         };
         var france = new CountryPhones
@@ -560,19 +457,13 @@ public class OwnedNavigationPropertyCrudTests : IClassFixture<TemporaryDatabaseF
             Name = "France",
             Phones =
             [
-                new Phone
-                {
-                    Description = "Work", Number = "456"
-                }
+                new Phone {Description = "Work", Number = "456"}
             ]
         };
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var person = new PersonWithPhoneNumbers
-            {
-                Id = 1, Name = "Simon", PhonesByCountry = [unitedKingdom, newZealand]
-            };
+            var person = new PersonWithPhoneNumbers {Id = 1, Name = "Simon", PhonesByCountry = [unitedKingdom, newZealand]};
 
             db.Entities.Add(person);
             db.SaveChanges();

@@ -20,7 +20,7 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions.BsonAttributes;
 
 [XUnitCollection("ConventionsTests")]
-public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDatabase)
+public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     class IntendedStorageEntity
@@ -65,23 +65,20 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void BsonElement_redefines_element_name_for_owned_entity()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<OwnedEntityRemappingEntity>();
+        var collection = database.CreateCollection<OwnedEntityRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         var location = new Geolocation(1.1, 2.2);
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new OwnedEntityRemappingEntity
-            {
-                _id = id,
-                Location = location
-            });
+            db.Entities.Add(new OwnedEntityRemappingEntity {_id = id, Location = location});
             db.SaveChanges();
         }
 
         {
-            var actual = collection.Database.GetCollection<IntendedOwnedEntityRemappingEntity>(collection.CollectionNamespace.CollectionName);
+            var actual = collection.Database.GetCollection<IntendedOwnedEntityRemappingEntity>(collection.CollectionNamespace
+                .CollectionName);
             var directFound = actual.Find(f => f._id == id).Single();
             Assert.Equal(location, directFound.otherLocation);
         }
@@ -90,17 +87,14 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void BsonElementAttribute_redefines_element_name_for_insert_and_query()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<NonKeyRemappingEntity>();
+        var collection = database.CreateCollection<NonKeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string name = "The quick brown fox";
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new NonKeyRemappingEntity
-            {
-                _id = id, RemapThisToName = name
-            });
+            db.Entities.Add(new NonKeyRemappingEntity {_id = id, RemapThisToName = name});
             db.SaveChanges();
         }
 
@@ -114,17 +108,14 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void BsonElementAttribute_redefines_key_name_for_insert_and_query()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<KeyRemappingEntity>();
+        var collection = database.CreateCollection<KeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string name = "The quick brown fox";
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new KeyRemappingEntity
-            {
-                _id = id, name = name
-            });
+            db.Entities.Add(new KeyRemappingEntity {_id = id, name = name});
             db.SaveChanges();
         }
 
@@ -138,17 +129,14 @@ public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture tempDa
     [Fact]
     public void BsonElementAttribute_redefines_key_name_for_delete()
     {
-        var collection = tempDatabase.CreateTemporaryCollection<KeyRemappingEntity>();
+        var collection = database.CreateCollection<KeyRemappingEntity>();
 
         var id = ObjectId.GenerateNewId();
         const string name = "The quick brown fox";
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var entity = new KeyRemappingEntity
-            {
-                _id = id, name = name
-            };
+            var entity = new KeyRemappingEntity {_id = id, name = name};
             db.Entities.Add(entity);
             db.SaveChanges();
 
