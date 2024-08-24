@@ -22,5 +22,5 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies;
 /// Dependencies required by <see cref="MongoShapedQueryCompilingExpressionVisitor"/> which will be supplied by
 /// the <see cref="MongoShapedQueryCompilingExpressionVisitorFactory"/>.
 /// </summary>
-/// <param name="EntitySerializerCache">The <see cref="EntitySerializerCache"/> used to cache <see cref="EntitySerializer{TValue}"/> objects.</param>
-public sealed record MongoShapedQueryCompilingExpressionVisitorDependencies(EntitySerializerCache EntitySerializerCache);
+/// <param name="BsonSerializerFactory">The <see cref="BsonSerializerFactory"/> used to cache <see cref="EntitySerializer{TValue}"/> objects.</param>
+public sealed record MongoShapedQueryCompilingExpressionVisitorDependencies(BsonSerializerFactory BsonSerializerFactory);

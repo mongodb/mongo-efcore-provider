@@ -43,13 +43,17 @@ internal static class SingleEntityDbContext
         return newOptions;
     }
 
-    public static SingleEntityDbContext<T> Create<T>(IMongoCollection<T> collection,
-        Action<ModelBuilder>? modelBuilderAction = null) where T : class =>
-        new(GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction);
+    public static SingleEntityDbContext<T> Create<T>(
+        IMongoCollection<T> collection,
+        Action<ModelBuilder>? modelBuilderAction = null,
+        Action<ModelConfigurationBuilder>? configBuilderAction = null) where T : class =>
+        new(GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction);
 
-    public static SingleEntityDbContext<T2> Create<T1, T2>(IMongoCollection<T1> collection,
-        Action<ModelBuilder>? modelBuilderAction = null) where T1 : class where T2 : class
-        => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction);
+    public static SingleEntityDbContext<T2> Create<T1, T2>(
+        IMongoCollection<T1> collection,
+        Action<ModelBuilder>? modelBuilderAction = null,
+        Action<ModelConfigurationBuilder>? configBuilderAction = null) where T1 : class where T2 : class
+        => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction);
 
     private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
     {
@@ -60,24 +64,26 @@ internal static class SingleEntityDbContext
     }
 }
 
-internal class SingleEntityDbContext<T> : DbContext where T : class
+internal class SingleEntityDbContext<T>(
+    DbContextOptions options,
+    string collectionName,
+    Action<ModelBuilder>? modelBuilderAction = null,
+    Action<ModelConfigurationBuilder>? configBuilderAction = null)
+    : DbContext(options)
+    where T : class
 {
-    private readonly string _collectionName;
-    private readonly Action<ModelBuilder>? _modelBuilderAction;
-
     public DbSet<T> Entities { get; init; }
-
-    public SingleEntityDbContext(DbContextOptions options, string collectionName, Action<ModelBuilder>? modelBuilderAction = null)
-        : base(options)
-    {
-        _collectionName = collectionName;
-        _modelBuilderAction = modelBuilderAction;
-    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-        modelBuilder.Entity<T>().ToCollection(_collectionName);
-        _modelBuilderAction?.Invoke(modelBuilder);
+        modelBuilder.Entity<T>().ToCollection(collectionName);
+        modelBuilderAction?.Invoke(modelBuilder);
+    }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        base.ConfigureConventions(configurationBuilder);
+        configBuilderAction?.Invoke(configurationBuilder);
     }
 }

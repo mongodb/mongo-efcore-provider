@@ -15,13 +15,9 @@
 
 using System;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
-using MongoDB.Bson.Serialization.Options;
-using MongoDB.Bson.Serialization.Serializers;
-using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
@@ -48,7 +44,7 @@ internal static class SerializationHelper
 
     public static T? GetElementValue<T>(BsonDocument document, string elementName)
     {
-        var serializationInfo = new BsonSerializationInfo(elementName, CreateTypeSerializer(typeof(T)), typeof(T));
+        var serializationInfo = new BsonSerializationInfo(elementName, BsonSerializerFactory.CreateTypeSerializer(typeof(T)), typeof(T));
         if (TryReadElementValue(document, serializationInfo, out T? value) || typeof(T).IsNullableType())
         {
             return value;
@@ -59,7 +55,7 @@ internal static class SerializationHelper
 
     internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
     {
-        var serializer = CreateTypeSerializer(property);
+        var serializer = BsonSerializerFactory.CreateTypeSerializer(property);
 
         if (property.IsPrimaryKey() && property.DeclaringType is IEntityType entityType
                                     && entityType.FindPrimaryKey()?.Properties.Count > 1)
@@ -71,94 +67,6 @@ internal static class SerializationHelper
         }
 
         return new BsonSerializationInfo(property.GetElementName(), serializer, serializer.ValueType);
-    }
-
-    private static IBsonSerializer CreateTypeSerializer(IReadOnlyProperty property)
-    {
-        var typeMapping = property.FindTypeMapping();
-        if (typeMapping is {Converter: { } converter})
-        {
-            var valueConverterSerializerType = typeof(ValueConverterSerializer<,>)
-                .MakeGenericType(converter.ModelClrType, converter.ProviderClrType);
-
-            var providerSerializer = CreateTypeSerializer(converter.ProviderClrType);
-            var serializer =
-                (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, [converter, providerSerializer]);
-
-            return serializer ?? throw new InvalidOperationException($"Unable to create serializer to handle '{converter.GetType().ShortDisplayName()}'");
-        }
-
-        var typeSerializer = CreateTypeSerializer(property.ClrType, property);
-
-        return property.GetBsonRepresentation() is { } bsonRepresentation
-            ? ApplyBsonRepresentation(bsonRepresentation, typeSerializer)
-            : typeSerializer;
-    }
-
-    private static IBsonSerializer ApplyBsonRepresentation(BsonRepresentationConfiguration representation, IBsonSerializer typeSerializer)
-    {
-        if (typeSerializer is not IRepresentationConfigurable representationConfigurable)
-        {
-            return typeSerializer;
-        }
-
-        var representationTypeSerializer = representationConfigurable.WithRepresentation(representation.BsonType);
-        if (representationTypeSerializer is not IRepresentationConverterConfigurable converterConfigurable)
-        {
-            return representationTypeSerializer;
-        }
-
-        var allowOverflow = representation.AllowOverflow ?? false;
-        var allowTruncation = representation.AllowTruncation ?? representation.BsonType == BsonType.Decimal128;
-        return converterConfigurable.WithConverter(new RepresentationConverter(allowOverflow, allowTruncation));
-    }
-
-    private static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty? property = null)
-        => type switch
-        {
-            _ when type == typeof(bool) => BooleanSerializer.Instance,
-            _ when type == typeof(byte) => new ByteSerializer(),
-            _ when type == typeof(char) => new CharSerializer(),
-            _ when type == typeof(DateTime) => CreateDateTimeSerializer(property),
-            _ when type == typeof(DateTimeOffset) => new DateTimeOffsetSerializer(),
-            _ when type == typeof(decimal) => new DecimalSerializer(),
-            _ when type == typeof(double) => DoubleSerializer.Instance,
-            _ when type == typeof(Guid) => GuidSerializer.StandardInstance,
-            _ when type == typeof(short) => new Int16Serializer(),
-            _ when type == typeof(int) => Int32Serializer.Instance,
-            _ when type == typeof(long) => Int64Serializer.Instance,
-            _ when type == typeof(ObjectId) => ObjectIdSerializer.Instance,
-            _ when type == typeof(TimeSpan) => new TimeSpanSerializer(),
-            _ when type == typeof(sbyte) => new SByteSerializer(),
-            _ when type == typeof(float) => new SingleSerializer(),
-            _ when type == typeof(string) => new StringSerializer(),
-            _ when type == typeof(ushort) => new UInt16Serializer(),
-            _ when type == typeof(uint) => new UInt32Serializer(),
-            _ when type == typeof(ulong) => new UInt64Serializer(),
-            _ when type == typeof(Decimal128) => new Decimal128Serializer(),
-            _ when type.IsEnum => EnumSerializer.Create(type),
-            {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
-                => CreateNullableSerializer(type.GetGenericArguments()[0], property),
-            {IsGenericType: true} when DictionarySerializationProvider.Supports(type)
-                => DictionarySerializationProvider.Instance.GetSerializer(type),
-            {IsGenericType: true} or {IsArray: true}
-                => CollectionSerializationProvider.Instance.GetSerializer(type),
-
-            _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'."),
-        };
-
-    private static DateTimeSerializer CreateDateTimeSerializer(IReadOnlyProperty? property)
-    {
-        var dateTimeKind = property?.GetDateTimeKind() ?? DateTimeKind.Unspecified;
-        return dateTimeKind == DateTimeKind.Unspecified
-            ? new DateTimeSerializer()
-            : new DateTimeSerializer(dateTimeKind);
-    }
-
-    private static IBsonSerializer CreateNullableSerializer(Type elementType, IReadOnlyProperty? property)
-    {
-        var typeSerializer = CreateTypeSerializer(elementType, property);
-        return (IBsonSerializer)Activator.CreateInstance(typeof(NullableSerializer<>).MakeGenericType(elementType), typeSerializer)!;
     }
 
     private static bool TryReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo, out T? value)
