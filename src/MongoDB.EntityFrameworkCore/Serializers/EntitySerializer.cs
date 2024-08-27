@@ -94,7 +94,7 @@ internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocument
         var property = _entityType.FindProperty(memberName);
         if (property != null)
         {
-            serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
+            serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
             return true;
         }
 

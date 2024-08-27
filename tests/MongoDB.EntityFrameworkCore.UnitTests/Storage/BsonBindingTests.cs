@@ -16,18 +16,18 @@
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Metadata.Conventions;
-using MongoDB.EntityFrameworkCore.Serializers;
+using MongoDB.EntityFrameworkCore.Storage;
 
-namespace MongoDB.EntityFrameworkCore.UnitTests.Serializers;
+namespace MongoDB.EntityFrameworkCore.UnitTests.Storage;
 
-public class SerializationHelperTests
+public class BsonBindingTests
 {
     [Fact]
     public void Read_element_returns_value()
     {
         var document = BsonDocument.Parse("{ property: 12 }");
 
-        var value = SerializationHelper.GetElementValue<int>(document, "property");
+        var value = BsonBinding.GetElementValue<int>(document, "property");
 
         Assert.Equal(12, value);
     }
@@ -37,7 +37,7 @@ public class SerializationHelperTests
     {
         var document = BsonDocument.Parse("{ property: 12 }");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => SerializationHelper.GetElementValue<int>(document, "missedElementName"));
+        var ex = Assert.Throws<InvalidOperationException>(() => BsonBinding.GetElementValue<int>(document, "missedElementName"));
 
         Assert.Contains("missedElementName", ex.Message);
     }
@@ -47,7 +47,7 @@ public class SerializationHelperTests
     {
         var document = BsonDocument.Parse("{ property: 12 }");
 
-        var value = SerializationHelper.GetElementValue<int?>(document, "missedElementName");
+        var value = BsonBinding.GetElementValue<int?>(document, "missedElementName");
 
         Assert.Null(value);
     }
@@ -64,7 +64,7 @@ public class SerializationHelperTests
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ IntProperty: 12 }");
 
-        var value = SerializationHelper.GetPropertyValue<int>(document, property);
+        var value = BsonBinding.GetPropertyValue<int>(document, property);
 
         Assert.Equal(12, value);
     }
@@ -81,7 +81,7 @@ public class SerializationHelperTests
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ property: 12 }");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => SerializationHelper.GetPropertyValue<int>(document, property));
+        var ex = Assert.Throws<InvalidOperationException>(() => BsonBinding.GetPropertyValue<int>(document, property));
         Assert.Contains("IntProperty", ex.Message);
     }
 
@@ -97,7 +97,7 @@ public class SerializationHelperTests
         var property = entity.GetProperty(nameof(TestEntity.NullableProperty));
 
         var document = BsonDocument.Parse("{ somevalue: 12 }");
-        var value = SerializationHelper.GetPropertyValue<int?>(document, property);
+        var value = BsonBinding.GetPropertyValue<int?>(document, property);
 
         Assert.Null(value);
     }

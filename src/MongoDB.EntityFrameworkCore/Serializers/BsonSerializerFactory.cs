@@ -41,13 +41,13 @@ public sealed class BsonSerializerFactory
     private static bool SupportsDictionary(Type type)
         => type.IsGenericType && SupportedDictionaryTypes.Contains(type.GetGenericTypeDefinition());
 
-    private readonly ConcurrentDictionary<IReadOnlyEntityType, IBsonSerializer> _cache = new();
+    private readonly ConcurrentDictionary<IReadOnlyEntityType, IBsonSerializer> _entitySerializersCache = new();
 
-    public IBsonSerializer GetOrCreateSerializer(IReadOnlyEntityType entityType) =>
-        _cache.GetOrAdd(entityType, CreateSerializer);
+    public IBsonSerializer GetEntitySerializer(IReadOnlyEntityType entityType) =>
+        _entitySerializersCache.GetOrAdd(entityType, CreateEntitySerializer);
 
-    internal IBsonSerializer CreateSerializer(IReadOnlyEntityType entityType) =>
-        (IBsonSerializer)Activator.CreateInstance(typeof(EntitySerializer<>).MakeGenericType(entityType.ClrType), entityType, this)!;
+    internal IBsonSerializer CreateEntitySerializer(IReadOnlyEntityType entityType) =>
+        CreateGenericSerializer(typeof(EntitySerializer<>), [ entityType.ClrType ], entityType, this)!;
 
     internal static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty? property = null)
         => type switch
@@ -73,12 +73,12 @@ public sealed class BsonSerializerFactory
             _ when type == typeof(ulong) => new UInt64Serializer(),
             _ when type == typeof(Decimal128) => new Decimal128Serializer(),
             _ when type.IsEnum => EnumSerializer.Create(type),
+            {IsArray: true}
+                => GetArraySerializer(type, CreateTypeSerializer(type.GetElementType()!)),
             {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
                 => GetNullableSerializer(type.GetGenericArguments()[0], property),
             {IsGenericType: true} when SupportsDictionary(type)
-                => GetDictionarySerializer(type, null),
-            {IsArray: true}
-                => GetArraySerializer(type, CreateTypeSerializer(type.GetElementType()!)),
+                => GetDictionarySerializer(type),
             {IsGenericType: true}
                 => GetCollectionSerializer(type, CreateTypeSerializer(type.GetGenericArguments()[0])),
 
@@ -89,23 +89,25 @@ public sealed class BsonSerializerFactory
     internal static IBsonSerializer CreateTypeSerializer(IReadOnlyProperty property)
     {
         var typeMapping = property.FindTypeMapping();
+
+        IBsonSerializer serializer;
         if (typeMapping is {Converter: { } converter})
         {
             var valueConverterSerializerType = typeof(ValueConverterSerializer<,>)
                 .MakeGenericType(converter.ModelClrType, converter.ProviderClrType);
 
             var providerSerializer = CreateTypeSerializer(converter.ProviderClrType);
-            var serializer =
-                (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, [converter, providerSerializer]);
-
-            return serializer ?? throw new InvalidOperationException($"Unable to create serializer to handle '{converter.GetType().ShortDisplayName()}'");
+            serializer = (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, [converter, providerSerializer])
+                ?? throw new InvalidOperationException($"Unable to create serializer to handle '{converter.GetType().ShortDisplayName()}'");
+        }
+        else
+        {
+            serializer = CreateTypeSerializer(property.ClrType, property);
         }
 
-        var typeSerializer = CreateTypeSerializer(property.ClrType, property);
-
         return property.GetBsonRepresentation() is { } bsonRepresentation
-            ? ApplyBsonRepresentation(bsonRepresentation, typeSerializer)
-            : typeSerializer;
+            ? ApplyBsonRepresentation(bsonRepresentation, serializer)
+            : serializer;
     }
 
     private static IBsonSerializer ApplyBsonRepresentation(BsonRepresentationConfiguration representation, IBsonSerializer typeSerializer)
@@ -127,12 +129,12 @@ public sealed class BsonSerializerFactory
     }
 
     private static DateTimeSerializer GetDateTimeSerializer(IReadOnlyProperty? property)
-    {
-        var dateTimeKind = property?.GetDateTimeKind() ?? DateTimeKind.Unspecified;
-        return dateTimeKind == DateTimeKind.Unspecified
-            ? new DateTimeSerializer()
-            : new DateTimeSerializer(dateTimeKind);
-    }
+        => property?.GetDateTimeKind() switch
+        {
+            DateTimeKind.Local => DateTimeSerializer.LocalInstance,
+            DateTimeKind.Utc => DateTimeSerializer.UtcInstance,
+            _ => DateTimeSerializer.Instance
+        };
 
     private static IBsonSerializer GetNullableSerializer(Type elementType, IReadOnlyProperty? property)
         => CreateGenericSerializer(typeof(NullableSerializer<>), [elementType], CreateTypeSerializer(elementType, property));
@@ -150,8 +152,8 @@ public sealed class BsonSerializerFactory
 
     internal IBsonSerializer GetNavigationSerializer(IReadOnlyNavigation navigation)
         => navigation.IsCollection
-            ? GetCollectionSerializer(navigation.ClrType, GetOrCreateSerializer(navigation.TargetEntityType))
-            : GetOrCreateSerializer(navigation.TargetEntityType);
+            ? GetCollectionSerializer(navigation.ClrType, GetEntitySerializer(navigation.TargetEntityType))
+            : GetEntitySerializer(navigation.TargetEntityType);
 
     private static IBsonSerializer GetCollectionSerializer(Type type, IBsonSerializer childSerializer)
     {
@@ -159,7 +161,10 @@ public sealed class BsonSerializerFactory
             ? type
             : type.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
 
-        if (enumerableInterface == null) return null;
+        if (enumerableInterface == null)
+        {
+            throw new NotSupportedException($"Unsupported collection type '{type.ShortDisplayName()}'.");
+        }
 
         var itemType = enumerableInterface.GetTypeInfo().GetGenericArguments()[0];
 
@@ -187,7 +192,23 @@ public sealed class BsonSerializerFactory
         return CreateGenericSerializer(typeof(EnumerableInterfaceImplementerSerializer<,>), [type, itemType], childSerializer);
     }
 
-    private static IBsonSerializer? GetDictionarySerializer(Type type, IBsonSerializer childSerializer)
+    internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
+    {
+        var serializer = CreateTypeSerializer(property);
+
+        if (property.IsPrimaryKey() && property.DeclaringType is IEntityType entityType
+                                    && entityType.FindPrimaryKey()?.Properties.Count > 1)
+        {
+            return BsonSerializationInfo.CreateWithPath(new[]
+            {
+                "_id", property.GetElementName()
+            }, serializer, serializer.ValueType);
+        }
+
+        return new BsonSerializationInfo(property.GetElementName(), serializer, serializer.ValueType);
+    }
+
+    private static IBsonSerializer GetDictionarySerializer(Type type)
     {
         var genericTypeDefinition = type.GetGenericTypeDefinition();
 
@@ -203,7 +224,7 @@ public sealed class BsonSerializerFactory
             var concreteType = type.IsInterface
                 ? typeof(Dictionary<,>).MakeGenericType(keyType, valueType)
                 : type;
-            return CreateGenericSerializer(typeof(DictionaryInterfaceImplementerSerializer<,,>), [concreteType, keyType, valueType], childSerializer);
+            return CreateGenericSerializer(typeof(DictionaryInterfaceImplementerSerializer<,,>), [concreteType, keyType, valueType]);
         }
 
         var readOnlyDictionaryInterface = genericTypeDefinition == typeof(IReadOnlyDictionary<,>)
@@ -218,12 +239,12 @@ public sealed class BsonSerializerFactory
             var concreteType = type.IsInterface
                 ? typeof(ReadOnlyDictionary<,>).MakeGenericType(keyType, valueType)
                 : type;
-            return CreateGenericSerializer(typeof(ReadOnlyDictionaryInterfaceImplementerSerializer<,,>), [concreteType, keyType, valueType], childSerializer);
+            return CreateGenericSerializer(typeof(ReadOnlyDictionaryInterfaceImplementerSerializer<,,>), [concreteType, keyType, valueType]);
         }
 
-        return null;
+        throw new NotSupportedException($"Unsupported dictionary type '{type.ShortDisplayName()}'.");
     }
 
-    private static IBsonSerializer CreateGenericSerializer(Type serializer, Type[] genericArgs, IBsonSerializer? childSerializer)
-        => (IBsonSerializer)Activator.CreateInstance(serializer.MakeGenericType(genericArgs), childSerializer)!;
+    private static IBsonSerializer CreateGenericSerializer(Type serializer, Type[] genericArgs, params object[] constructorArgs)
+        => (IBsonSerializer)Activator.CreateInstance(serializer.MakeGenericType(genericArgs), constructorArgs)!;
 }

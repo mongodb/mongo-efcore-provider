@@ -20,6 +20,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
@@ -68,16 +69,18 @@ internal static class BsonBinding
         var targetProperty = entityType.FindProperty(name);
         if (targetProperty != null)
         {
-            mappedType = targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType;
-            return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty), mappedType);
+            return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty),
+                targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType);
         }
 
-        var navigationProperty = entityType.FindNavigation(name) ??
-                                 throw new InvalidOperationException(
-                                     CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
+        var navigationProperty = entityType.FindNavigation(name);
+        if (navigationProperty != null)
+        {
+            var fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
+            return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
+        }
 
-        var fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
-        return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
+        throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
     }
 
     private static Expression CreateGetBsonArray(Expression bsonDocExpression, string name)
@@ -103,7 +106,7 @@ internal static class BsonBinding
         };
     }
 
-    private static Expression CreateGetBsonDocument(
+    private static MethodCallExpression CreateGetBsonDocument(
         Expression bsonDocExpression, string name, bool required, IEntityType entityType)
         => Expression.Call(null, GetBsonDocumentMethodInfo, bsonDocExpression, Expression.Constant(name),
             Expression.Constant(required),
@@ -116,7 +119,6 @@ internal static class BsonBinding
     private static BsonDocument? GetBsonDocument(BsonDocument parent, string name, bool required, IReadOnlyTypeBase entityType)
     {
         var value = parent.GetValue(name, BsonNull.Value);
-
         if (value == BsonNull.Value && required)
         {
             throw new InvalidOperationException($"Field '{name}' required but not present in BsonDocument for a '{
@@ -126,18 +128,80 @@ internal static class BsonBinding
         return value == BsonNull.Value ? null : value.AsBsonDocument;
     }
 
-    private static Expression
+    private static MethodCallExpression
         CreateGetPropertyValue(Expression bsonDocExpression, Expression propertyExpression, Type resultType) =>
         Expression.Call(null, GetPropertyValueMethodInfo.MakeGenericMethod(resultType), bsonDocExpression, propertyExpression);
 
-    private static Expression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
+    private static MethodCallExpression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
         Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
     private static readonly MethodInfo GetPropertyValueMethodInfo
-        = typeof(SerializationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(SerializationHelper.GetPropertyValue));
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetPropertyValue));
 
     private static readonly MethodInfo GetElementValueMethodInfo
-        = typeof(SerializationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
-            .Single(mi => mi.Name == nameof(SerializationHelper.GetElementValue));
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetElementValue));
+
+    internal static T? GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
+    {
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+        if (TryReadElementValue(document, serializationInfo, out T? value))
+        {
+            if (value == null && !property.IsNullable)
+            {
+                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name
+                }'.");
+            }
+
+            return value;
+        }
+
+        if (property.IsNullable) return default;
+
+        throw new InvalidOperationException($"Document element is missing for required non-nullable property '{property.Name}'.");
+    }
+
+    internal static T? GetElementValue<T>(BsonDocument document, string elementName)
+    {
+        var type = typeof(T);
+        var serializationInfo = new BsonSerializationInfo(elementName, BsonSerializerFactory.CreateTypeSerializer(type), type);
+        if (TryReadElementValue(document, serializationInfo, out T? value) || type.IsNullableType())
+        {
+            return value;
+        }
+
+        throw new InvalidOperationException($"Document element '{elementName}' is missing but required.");
+    }
+
+    private static bool TryReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo, out T? value)
+    {
+        BsonValue? rawValue;
+        if (elementSerializationInfo.ElementPath == null)
+        {
+            document.TryGetValue(elementSerializationInfo.ElementName, out rawValue);
+        }
+        else
+        {
+            rawValue = document;
+            foreach (var node in elementSerializationInfo.ElementPath)
+            {
+                var doc = (BsonDocument)rawValue;
+                if (!doc.TryGetValue(node, out rawValue))
+                {
+                    rawValue = null;
+                    break;
+                }
+            }
+        }
+
+        if (rawValue != null)
+        {
+            value = (T)elementSerializationInfo.DeserializeValue(rawValue);
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
 }
