@@ -772,6 +772,38 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void OwnedEntity_can_query_owned_entity_collection_with_remapped_name()
+    {
+        var docs = database.CreateCollection<BsonDocument>();
+        var id = ObjectId.GenerateNewId();
+
+        {
+            docs.InsertOne(new BsonDocument("_id", id)
+            {
+                ["children"] = new BsonArray
+                {
+                    new BsonDocument("name", "child1"),
+                    new BsonDocument("name", "child2")
+                }
+            });
+        }
+
+        {
+            var collection = database.GetCollection<SimpleOwner>();
+            using var db = SingleEntityDbContext.Create(collection, mb =>
+            {
+                var owned = mb.Entity<SimpleOwner>().OwnsMany(o => o.Children);
+                owned.HasElementName("children");
+                owned.Property(o => o.Name).HasElementName("name");
+            });
+
+            var actual = db.Entities.FirstOrDefault(e => e.Children.Any(c => c.Name == "child1"));
+            Assert.NotNull(actual);
+            Assert.Equal(id, actual.Id);
+        }
+    }
+
+    [Fact]
     public void OwnedEntity_can_go_multiple_levels_deep_querying_reference()
     {
         var expectedReference = FirstLevel1.children[0].children[0].reference;
@@ -891,6 +923,17 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         public string name { get; set; }
         public DayOfWeek day { get; set; }
+    }
+
+    private record SimpleOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<SimpleOwned> Children { get; set; }
+    }
+
+    private record SimpleOwned
+    {
+        public string Name { get; set; }
     }
 
     private static readonly City City1 = new() {name = "San Diego"};
