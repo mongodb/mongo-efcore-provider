@@ -89,8 +89,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var shaperBody = shapedQueryExpression.ShaperExpression;
         shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
         shaperBody = InjectEntityMaterializers(shaperBody);
-        shaperBody = new MongoProjectionBindingRemovingExpressionVisitor(
-                rootEntityType, mongoQueryExpression, bsonDocParameter, trackQueryResults)
+        shaperBody = new MongoProjectionBindingRemovingExpressionVisitor(mongoQueryExpression, bsonDocParameter, trackQueryResults)
             .Visit(shaperBody);
 
         var shaperLambda = Expression.Lambda(

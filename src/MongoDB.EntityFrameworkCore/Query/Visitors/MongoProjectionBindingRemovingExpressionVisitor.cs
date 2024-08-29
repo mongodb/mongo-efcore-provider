@@ -15,7 +15,6 @@
 
 using System;
 using System.Linq.Expressions;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
@@ -31,12 +30,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindingRemovingExpressionVisitor
 {
     private readonly MongoQueryExpression _queryExpression;
-    private readonly IEntityType _rootEntityType;
 
     /// <summary>
     /// Create a <see cref="MongoProjectionBindingRemovingExpressionVisitor"/>.
     /// </summary>
-    /// <param name="rootEntityType">The <see cref="IEntityType"/> this projection relates to.</param>
     /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> this visitor should use.</param>
     /// <param name="docParameter">The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.</param>
     /// <param name="trackQueryResults">
@@ -44,14 +41,12 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
     /// <see langref="false"/> if they are not.
     /// </param>
     public MongoProjectionBindingRemovingExpressionVisitor(
-        IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
         ParameterExpression docParameter,
         bool trackQueryResults)
         : base(docParameter, trackQueryResults)
     {
         _queryExpression = queryExpression;
-        _rootEntityType = rootEntityType;
     }
 
     /// <summary>
@@ -65,18 +60,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
     /// <inheritdoc />
     protected override Expression CreateGetValueExpression(
         Expression docExpression,
-        string? fieldName,
-        bool fieldRequired,
+        string? elementName,
         Type type,
         CoreTypeMapping? typeMapping = null)
     {
-        var entityType = docExpression switch
-        {
-            RootReferenceExpression rootReferenceExpression => rootReferenceExpression.EntityType,
-            ObjectAccessExpression docAccessExpression => docAccessExpression.Navigation.TargetEntityType,
-            _ => _rootEntityType
-        };
-
         var innerExpression = docExpression;
         if (ProjectionBindings.TryGetValue(docExpression, out var innerVariable))
         {
@@ -86,15 +73,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
         {
             innerExpression = docExpression switch
             {
-                RootReferenceExpression => CreateGetValueExpression(DocParameter, null, fieldRequired, typeof(BsonDocument)),
+                RootReferenceExpression => CreateGetValueExpression(DocParameter, null, typeof(BsonDocument)),
                 ObjectAccessExpression docAccessExpression => CreateGetValueExpression(docAccessExpression.AccessExpression,
-                    docAccessExpression.Name, fieldRequired, typeof(BsonDocument)),
+                    docAccessExpression.Name, typeof(BsonDocument)),
                 _ => innerExpression
             };
         }
 
-        return BsonBinding.CreateGetValueExpression(innerExpression, fieldName, fieldRequired, typeMapping?.ClrType ?? type,
-            entityType);
+        return BsonBinding.CreateGetValueExpression(innerExpression, elementName, typeMapping?.ClrType.MakeNullable() ?? type);
     }
 
     private int GetProjectionIndex(ProjectionBindingExpression projectionBindingExpression)

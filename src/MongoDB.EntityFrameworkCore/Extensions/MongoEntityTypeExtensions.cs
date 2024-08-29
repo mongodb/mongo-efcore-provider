@@ -46,13 +46,10 @@ public static class MongoEntityTypeExtensions
     /// <param name="entityType">The entity type to get the collection name for.</param>
     /// <returns>The name of the collection to which the entity type is mapped.</returns>
     public static string GetCollectionName(this IReadOnlyEntityType entityType)
-    {
-        var nameAnnotation = entityType.FindAnnotation(MongoAnnotationNames.CollectionName);
-        if (nameAnnotation?.Value != null)
-            return (string)nameAnnotation.Value;
-
-        return GetDefaultCollectionName(entityType);
-    }
+        => entityType.BaseType != null
+            ? entityType.GetRootType().GetCollectionName()
+            : (string?)entityType[MongoAnnotationNames.CollectionName]
+              ?? GetDefaultCollectionName(entityType);
 
     /// <summary>
     /// Returns the default collection name that would be used for this entity type.
@@ -69,8 +66,8 @@ public static class MongoEntityTypeExtensions
     /// <returns><see langref="true"/> if the entity is a root, <see langref="false"/> if it is owned.</returns>
     public static bool IsDocumentRoot(this IReadOnlyEntityType entityType)
         => entityType.BaseType?.IsDocumentRoot()
-           ?? (entityType.FindOwnership() == null
-               || entityType[MongoAnnotationNames.CollectionName] != null);
+           ?? entityType.FindOwnership() == null
+           || entityType[MongoAnnotationNames.CollectionName] != null;
 
     /// <summary>
     /// Get the name of the parent element to which the entity type is mapped.

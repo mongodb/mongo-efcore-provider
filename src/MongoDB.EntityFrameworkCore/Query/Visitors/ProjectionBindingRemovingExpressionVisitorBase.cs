@@ -18,6 +18,8 @@ using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Serializers;
+using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -52,7 +54,6 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     return CreateGetValueExpression(
                         DocParameter,
                         projection.Alias,
-                        !projectionBindingExpression.Type.IsNullableType(),
                         projectionBindingExpression.Type);
                 }
 
@@ -152,15 +153,14 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         {
             if (parameterExpression.Type == typeof(BsonDocument) || parameterExpression.Type == typeof(BsonArray))
             {
-                string fieldName = null;
-                var fieldRequired = true;
+                string elementName = null;
 
                 var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
                 if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
                 {
                     var projection = GetProjection(projectionBindingExpression);
                     projectionExpression = projection.Expression;
-                    fieldName = projection.Alias;
+                    elementName = projection.Alias;
                 }
                 else if (projectionExpression is UnaryExpression convertExpression &&
                          convertExpression.NodeType == ExpressionType.Convert)
@@ -173,14 +173,14 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                 {
                     innerAccessExpression = objectArrayProjectionExpression.AccessExpression;
                     ProjectionBindings[objectArrayProjectionExpression] = parameterExpression;
-                    fieldName ??= objectArrayProjectionExpression.Name;
+                    elementName ??= objectArrayProjectionExpression.Name;
                 }
                 else
                 {
                     var entityProjectionExpression = (EntityProjectionExpression)projectionExpression;
                     var accessExpression = entityProjectionExpression.ParentAccessExpression;
                     ProjectionBindings[accessExpression] = parameterExpression;
-                    fieldName ??= entityProjectionExpression.Name;
+                    elementName ??= entityProjectionExpression.Name;
 
                     switch (accessExpression)
                     {
@@ -188,7 +188,6 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                             innerAccessExpression = innerObjectAccessExpression.AccessExpression;
                             _ownerMappings[accessExpression] =
                                 (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
-                            fieldRequired = innerObjectAccessExpression.Required;
                             break;
                         case RootReferenceExpression:
                             innerAccessExpression = DocParameter;
@@ -200,7 +199,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                 }
 
                 var valueExpression =
-                    CreateGetValueExpression(innerAccessExpression, fieldName, fieldRequired, parameterExpression.Type);
+                    CreateGetValueExpression(innerAccessExpression, elementName, parameterExpression.Type);
 
                 return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
             }
@@ -254,7 +253,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             {
                 var projection = GetProjection(projectionBindingExpression);
                 innerExpression =
-                    CreateGetValueExpression(DocParameter, projection.Alias, projection.Required, typeof(BsonDocument));
+                    CreateGetValueExpression(DocParameter, projection.Alias, typeof(BsonDocument));
             }
             else
             {
@@ -273,7 +272,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             var lambda = (LambdaExpression)methodCallExpression.Arguments[1];
             if (lambda.Body is IncludeExpression includeExpression)
             {
-                if (!(includeExpression.Navigation is INavigation navigation)
+                if (includeExpression.Navigation is not INavigation navigation
                     || navigation.IsOnDependent
                     || navigation.ForeignKey.DeclaringEntityType.IsDocumentRoot())
                 {
@@ -343,8 +342,10 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             return Expression.Default(type);
         }
 
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+
         return Expression.Convert(
-            CreateGetValueExpression(docExpression, property.Name, !type.IsNullableType(), type, property.GetTypeMapping()),
+            CreateGetValueExpression(docExpression, serializationInfo.ElementName, type.MakeNullable(), property.GetTypeMapping()),
             type);
     }
 
@@ -359,15 +360,13 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     /// Create a new compilable <see cref="Expression"/> the shaper can use to obtain the value from the <see cref="BsonDocument"/>.
     /// </summary>
     /// <param name="docExpression">The <see cref="Expression"/> used to access the <see cref="BsonDocument"/>.</param>
-    /// <param name="fieldName">The name of the field within the document.</param>
-    /// <param name="fieldRequired"><see langref="true"/> if the field is required, <see langref="false"/> if it is optional.</param>
+    /// <param name="elementName">The name of the field within the document.</param>
     /// <param name="type">The <see cref="Type"/> of the value as it is within the document.</param>
     /// <param name="typeMapping">Any associated <see cref="CoreTypeMapping"/> to be used in mapping the value.</param>
     /// <returns>A compilable <see cref="Expression"/> to obtain the desired value as the correct type.</returns>
     protected abstract Expression CreateGetValueExpression(
         Expression docExpression,
-        string fieldName,
-        bool fieldRequired,
+        string elementName,
         Type type,
         CoreTypeMapping typeMapping = null);
 

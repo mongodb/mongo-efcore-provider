@@ -69,28 +69,12 @@ public class MongoModelValidator : ModelValidator
     {
         base.Validate(model, logger);
 
-        ValidateNoTypeDiscriminators(model);
         ValidateMaximumOneRowVersionPerEntity(model);
         ValidateNoUnsupportedAttributesOrAnnotations(model);
         ValidateElementNames(model);
         ValidateNoShadowProperties(model);
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
-    }
-
-    /// <summary>
-    /// Validate that no type discriminators are in use.
-    /// </summary>
-    /// <param name="model">The <see cref="IModel"/> to validate for correctness.</param>
-    /// <exception cref="NotSupportedException">When a type discriminator has been configured.</exception>
-    private static void ValidateNoTypeDiscriminators(IModel model)
-    {
-        foreach (var entityType in model.GetEntityTypes())
-        {
-            if (entityType.FindAnnotation(CoreAnnotationNames.DiscriminatorProperty) is { } property)
-                throw new NotSupportedException($"Type discriminator '{entityType.ShortName()}.{property.Value}' encountered.' "
-                                                + "Type discriminators are not supported.");
-        }
     }
 
     /// <summary>
