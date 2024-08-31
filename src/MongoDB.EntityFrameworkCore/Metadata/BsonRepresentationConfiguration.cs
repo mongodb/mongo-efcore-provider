@@ -29,8 +29,8 @@ public record BsonRepresentationConfiguration
     /// Create a new instance of <see cref="BsonRepresentationConfiguration"/>.
     /// </summary>
     /// <param name="bsonType">The <see cref="BsonType"/> for this configuration.</param>
-    /// <param name="allowOverflow"><langref>true</langref> to allow overflow, <langref>false</langref> to throw when overflow would occur.</param>
-    /// <param name="allowTruncation"><langref>true</langref> to allow truncation, <langref>false</langref> to throw when truncation would occur.</param>
+    /// <param name="allowOverflow"><see langref="true" /> to allow overflow, <see langref="false" /> to throw when overflow would occur.</param>
+    /// <param name="allowTruncation"><see langref="true" /> to allow truncation, <see langref="false" /> to throw when truncation would occur.</param>
     public BsonRepresentationConfiguration(BsonType bsonType, bool? allowOverflow = null, bool? allowTruncation = null)
     {
         BsonType = bsonType;
@@ -42,16 +42,16 @@ public record BsonRepresentationConfiguration
     public BsonType BsonType { get; }
 
     /// <summary>
-    /// <langref>true</langref> to allow overflow,
-    /// <langref>false</langref> to throw when overflow would occur,
-    /// <langref>null</langref> to default to provider semantics.
+    /// <see langref="true" /> to allow overflow,
+    /// <see langref="false" /> to throw when overflow would occur,
+    /// <see langref="null" /> to default to provider semantics.
     /// </summary>
     public bool? AllowOverflow { get; }
 
     /// <summary>
-    /// <langref>true</langref> to allow truncation,
-    /// <langref>false</langref> to throw when truncation would occur,
-    /// <langref>null</langref> to default to provider semantics.
+    /// <see langref="true" /> to allow truncation,
+    /// <see langref="false" /> to throw when truncation would occur,
+    /// <see langref="null" /> to default to provider semantics.
     /// </summary>
     public bool? AllowTruncation { get; }
 
