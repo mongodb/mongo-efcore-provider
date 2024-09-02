@@ -4,7 +4,6 @@
 // Originally from EFCore NonCapturingLazyInitializer.cs
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;

@@ -26,9 +26,9 @@ internal static class ExceptionHelpers
     {
         if (string.IsNullOrEmpty(argument))
         {
-            throw (argument is null
+            throw argument is null
                 ? new ArgumentNullException(paramName)
-                : new ArgumentException("The value cannot be an empty string.", paramName));
+                : new ArgumentException("The value cannot be an empty string.", paramName);
         }
     }
 }

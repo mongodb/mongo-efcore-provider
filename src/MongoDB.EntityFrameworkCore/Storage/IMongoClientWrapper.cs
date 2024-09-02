@@ -53,7 +53,7 @@ public interface IMongoClientWrapper
     /// </summary>
     /// <remarks>If the database already exists only new collections will be created.</remarks>
     /// <param name="model">The <see cref="IModel"/> that informs how the database should be created.</param>
-    /// <returns><c>true</c> if the database was created from scratch, <c>false</c> if it already existed.</returns>
+    /// <returns><see langword="true" /> if the database was created from scratch, <see langword="false" /> if it already existed.</returns>
     public bool CreateDatabase(IModel model);
 
     /// <summary>
@@ -64,14 +64,14 @@ public interface IMongoClientWrapper
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>
     /// A <see cref="Task"/> that, when resolved, will be
-    /// <c>true</c> if the database was created from scratch, <c>false</c> if it already existed.
+    /// <see langword="true" /> if the database was created from scratch, <see langword="false" /> if it already existed.
     /// </returns>
     public Task<bool> CreateDatabaseAsync(IModel model, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Delete the database specified in the connection options.
     /// </summary>
-    /// <returns><c>true</c> if the database was deleted, <c>false</c> if it did not exist.</returns>
+    /// <returns><see langword="true" /> if the database was deleted, <see langword="false" /> if it did not exist.</returns>
     public bool DeleteDatabase();
 
     /// <summary>
@@ -80,14 +80,14 @@ public interface IMongoClientWrapper
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>
     /// A <see cref="Task"/> that, when resolved, will be
-    /// <c>true</c> if the database was deleted, <c>false</c> if it already existed.
+    /// <see langword="true" /> if the database was deleted, <see langword="false" /> if it already existed.
     /// </returns>
     public Task<bool> DeleteDatabaseAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Determine if the database already exists or not.
     /// </summary>
-    /// <returns><c>true</c> if the database exists, <c>false</c> if it does not.</returns>
+    /// <returns><see langword="true" /> if the database exists, <see langword="false" /> if it does not.</returns>
     public bool DatabaseExists();
 
     /// <summary>
@@ -96,7 +96,7 @@ public interface IMongoClientWrapper
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>
     /// A <see cref="Task"/> that, when resolved, will be
-    /// <c>true</c> if the database exists, <c>false</c> if it does not.
+    /// <see langword="true" /> if the database exists, <see langword="false" /> if it does not.
     /// </returns>
     public Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default);
 

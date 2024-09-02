@@ -27,8 +27,8 @@ public static class MongoNavigationExtensions
     /// </summary>
     /// <param name="navigation">The <see cref="IReadOnlyNavigation"/> to consider.</param>
     /// <returns>
-    /// <see langref="true"/> if the navigation is embedded,
-    /// <see langref="false"/> if it is not.
+    /// <see langword="true"/> if the navigation is embedded,
+    /// <see langword="false"/> if it is not.
     /// </returns>
     public static bool IsEmbedded(this IReadOnlyNavigation navigation)
         => !navigation.IsOnDependent

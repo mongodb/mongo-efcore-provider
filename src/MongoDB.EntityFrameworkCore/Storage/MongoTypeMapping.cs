@@ -29,6 +29,9 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// </summary>
 public class MongoTypeMapping : CoreTypeMapping
 {
+    /// <summary>
+    /// Get the default <see cref="MongoTypeMapping"/> instance.
+    /// </summary>
     public static MongoTypeMapping Default { get; } = new(typeof(object));
 
     /// <summary>

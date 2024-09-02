@@ -56,12 +56,7 @@ public static class MongoPropertyExtensions
             }
         }
 
-        if (RowVersion.IsRowVersion(property))
-        {
-            return RowVersion.DefaultElementName;
-        }
-
-        return property.Name;
+        return property.IsRowVersion() ? RowVersion.DefaultElementName : property.Name;
     }
 
     /// <summary>
