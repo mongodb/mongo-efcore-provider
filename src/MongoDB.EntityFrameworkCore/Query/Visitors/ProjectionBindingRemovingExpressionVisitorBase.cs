@@ -360,7 +360,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     /// </summary>
     /// <param name="docExpression">The <see cref="Expression"/> used to access the <see cref="BsonDocument"/>.</param>
     /// <param name="fieldName">The name of the field within the document.</param>
-    /// <param name="fieldRequired"><see langref="true"/> if the field is required, <see langref="false"/> if it is optional.</param>
+    /// <param name="fieldRequired"><see langword="true"/> if the field is required, <see langword="false"/> if it is optional.</param>
     /// <param name="type">The <see cref="Type"/> of the value as it is within the document.</param>
     /// <param name="typeMapping">Any associated <see cref="CoreTypeMapping"/> to be used in mapping the value.</param>
     /// <returns>A compilable <see cref="Expression"/> to obtain the desired value as the correct type.</returns>

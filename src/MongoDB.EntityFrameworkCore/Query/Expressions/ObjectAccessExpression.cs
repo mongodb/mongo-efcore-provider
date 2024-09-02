@@ -22,8 +22,8 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
     /// <param name="navigation">The <see cref="INavigation"/> this object access relates to.</param>
     /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
     /// <param name="required">
-    /// <see langref="true"/> if this object is required,
-    /// <see langref="false"/> if it is optional.
+    /// <see langword="true"/> if this object is required,
+    /// <see langword="false"/> if it is optional.
     /// </param>
     /// <exception cref="InvalidOperationException"></exception>
     public ObjectAccessExpression(

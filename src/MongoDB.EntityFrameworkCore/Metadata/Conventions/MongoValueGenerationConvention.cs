@@ -69,7 +69,7 @@ internal class MongoValueGenerationConvention : ValueGenerationConvention, IEnti
     /// <param name="property">The property determine a generation strategy for.</param>
     /// <returns>
     /// The store <see cref="ValueGenerated"/> strategy to set for the <paramref name="property"/>
-    /// or <see langref="null"/> if no strategy should be used.
+    /// or <see langword="null"/> if no strategy should be used.
     /// </returns>
     protected override ValueGenerated? GetValueGenerated(IConventionProperty property)
     {

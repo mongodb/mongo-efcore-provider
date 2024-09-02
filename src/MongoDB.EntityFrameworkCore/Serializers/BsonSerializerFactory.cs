@@ -43,7 +43,7 @@ public sealed class BsonSerializerFactory
 
     private readonly ConcurrentDictionary<IReadOnlyEntityType, IBsonSerializer> _entitySerializersCache = new();
 
-    public IBsonSerializer GetEntitySerializer(IReadOnlyEntityType entityType) =>
+    internal IBsonSerializer GetEntitySerializer(IReadOnlyEntityType entityType) =>
         _entitySerializersCache.GetOrAdd(entityType, CreateEntitySerializer);
 
     internal IBsonSerializer CreateEntitySerializer(IReadOnlyEntityType entityType) =>

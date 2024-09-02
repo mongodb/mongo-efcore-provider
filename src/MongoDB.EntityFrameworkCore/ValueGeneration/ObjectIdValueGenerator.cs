@@ -36,7 +36,7 @@ internal class ObjectIdValueGenerator : ValueGenerator<ObjectId>
         => ObjectId.GenerateNewId();
 
     /// <summary>
-    /// Always <see langref="false"/> as this generator is only used for permanent values.
+    /// Always <see langword="false"/> as this generator is only used for permanent values.
     /// </summary>
     public override bool GeneratesTemporaryValues
         => false;
