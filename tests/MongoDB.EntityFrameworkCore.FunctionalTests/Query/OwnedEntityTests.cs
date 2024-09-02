@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -55,7 +56,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     public void OwnedEntity_nested_one_level_where_null()
     {
         var collection = database.CreateCollection<PersonWithOptionalLocation>();
-        collection.WriteTestDocs([new PersonWithOptionalLocation { _id = ObjectId.GenerateNewId(), name = "Milton" }]);
+        collection.WriteTestDocs([new PersonWithOptionalLocation {_id = ObjectId.GenerateNewId(), name = "Milton"}]);
         using var db = SingleEntityDbContext.Create(collection);
 
         var actual = db.Entities.Where(e => e.location == null).First();
@@ -138,10 +139,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     public void OwnedEntity_missing_document_element_does_not_throw()
     {
         database.CreateCollection<Person>("personNoLocation").WriteTestDocs([
-            new Person
-            {
-                name = "Bill"
-            }
+            new Person {name = "Bill"}
         ]);
 
         var collection = database.MongoDatabase.GetCollection<PersonWithOptionalLocation>("personNoLocation");
@@ -229,14 +227,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<PersonWithLocation>();
         var expected =
-            new PersonWithLocation
-            {
-                name = "Charlie",
-                location = new Location
-                {
-                    latitude = 1.234m, longitude = 1.567m
-                }
-            };
+            new PersonWithLocation {name = "Charlie", location = new Location {latitude = 1.234m, longitude = 1.567m}};
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -266,15 +257,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             name = "Alfred",
             locations =
             [
-                new()
-                {
-                    latitude = 1.234m, longitude = 1.567m
-                },
+                new() {latitude = 1.234m, longitude = 1.567m},
 
-                new()
-                {
-                    latitude = 5.1m, longitude = 3.9m
-                }
+                new() {latitude = 5.1m, longitude = 3.9m}
             ]
         };
 
@@ -323,10 +308,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleNonNullableCollection>();
         collection.WriteTestDocs([
-            new SimpleNonNullableCollection
-            {
-                children = []
-            }
+            new SimpleNonNullableCollection {children = []}
         ]);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -339,10 +321,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleNullableCollection>();
         collection.WriteTestDocs([
-            new SimpleNullableCollection
-            {
-                children = []
-            }
+            new SimpleNullableCollection {children = []}
         ]);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -356,10 +335,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleNonNullableCollection>();
         collection.WriteTestDocs([
-            new SimpleNonNullableCollection
-            {
-                children = null!
-            }
+            new SimpleNonNullableCollection {children = null!}
         ]);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -372,10 +348,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleNullableCollection>();
         collection.WriteTestDocs([
-            new SimpleNullableCollection
-            {
-                children = null
-            }
+            new SimpleNullableCollection {children = null}
         ]);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -458,10 +431,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_with_ienumerable_collection_materializes_many()
     {
-        var expectedLocation = new Location
-        {
-            latitude = 1.01m, longitude = 1.02m
-        };
+        var expectedLocation = new Location {latitude = 1.01m, longitude = 1.02m};
         var collection = database.CreateCollection<PersonWithIEnumerableLocations>();
         collection.WriteTestDocs(new PersonWithIEnumerableLocations[]
         {
@@ -469,22 +439,13 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             {
                 _id = ObjectId.GenerateNewId(),
                 name = "IEnumerableRound1",
-                locations = new List<Location>
-                {
-                    expectedLocation
-                }
+                locations = new List<Location> {expectedLocation}
             },
             new()
             {
                 _id = ObjectId.GenerateNewId(),
                 name = "IEnumerableRound2",
-                locations = new List<Location>
-                {
-                    new()
-                    {
-                        latitude = 1.03m, longitude = 1.04m
-                    }
-                }
+                locations = new List<Location> {new() {latitude = 1.03m, longitude = 1.04m}}
             }
         });
 
@@ -503,12 +464,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<PersonWithIEnumerableLocations>();
         var entity = new PersonWithIEnumerableLocations
         {
-            _id = ObjectId.GenerateNewId(),
-            name = "IEnumerableSerialize",
-            locations = new List<Location>
-            {
-                Location1, Location2
-            }
+            _id = ObjectId.GenerateNewId(), name = "IEnumerableSerialize", locations = new List<Location> {Location1, Location2}
         };
 
         {
@@ -539,10 +495,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         {
             _id = ObjectId.GenerateNewId(),
             name = "IEnumerableSerialize",
-            locations = EnumerableOnlyWrapper.Wrap(new List<Location>
-            {
-                Location1, Location2
-            })
+            locations = EnumerableOnlyWrapper.Wrap(new List<Location> {Location1, Location2})
         };
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Add(entity));
@@ -564,10 +517,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
                 name = "Many updates",
                 locations =
                 [
-                    new Location
-                    {
-                        latitude = 1.1m, longitude = 2.2m
-                    }
+                    new Location {latitude = 1.1m, longitude = 2.2m}
                 ]
             };
 
@@ -575,10 +525,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             db.SaveChanges();
             Assert.Single(original.locations, l => l.latitude == 1.1m);
 
-            original.locations.Add(new()
-            {
-                latitude = 3.3m, longitude = 4.4m
-            });
+            original.locations.Add(new() {latitude = 3.3m, longitude = 4.4m});
             db.SaveChanges();
 
             Assert.Equal(2, original.locations.Count);
@@ -631,10 +578,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     public void OwnedEntity_with_two_owned_entities_creates()
     {
         var collection = database.CreateCollection<PersonWithTwoLocations>();
-        PersonWithTwoLocations expected = new()
-        {
-            name = "Elizabeth", first = Location2, second = Location1
-        };
+        PersonWithTwoLocations expected = new() {name = "Elizabeth", first = Location2, second = Location1};
 
         {
             using var db = SingleEntityDbContext.Create(collection);
@@ -718,16 +662,14 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_can_have_element_name_set_for_same_types()
     {
-        var expected = new PersonWithTwoLocationsRemapped
-        {
-            name = "Elizabeth", locationOne = Location1, locationTwo = Location2
-        };
+        var expected = new PersonWithTwoLocationsRemapped {name = "Elizabeth", locationOne = Location1, locationTwo = Location2};
 
         database.CreateCollection<PersonWithTwoLocationsRemapped>().WriteTestDocs([expected]);
 
         var collection = database.GetCollection<PersonWithTwoLocations>();
         using var db = SingleEntityDbContext.Create(collection,
-            mb => {
+            mb =>
+            {
                 mb.Entity<PersonWithTwoLocations>().OwnsOne(p => p.first, r => r.HasElementName("locationOne"));
                 mb.Entity<PersonWithTwoLocations>().OwnsOne(p => p.second, r => r.HasElementName("locationTwo"));
             });
@@ -788,6 +730,79 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         }
     }
 
+
+    [Theory]
+    [InlineData(typeof(int))]
+    [InlineData(typeof(string))]
+    [InlineData(null)]
+    public void OwnedEntity_can_go_multiple_levels_deep_querying_enum(Type? storageType)
+    {
+        var configBuilderAction = (ModelConfigurationBuilder cb) => { };
+        if (storageType != null)
+        {
+            configBuilderAction = cb => cb.Properties<DayOfWeek>().HaveConversion(storageType);
+        }
+
+        var collection = database.CreateCollection<FirstLevel>(values: [storageType]);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, configBuilderAction: configBuilderAction);
+            db.Entities.Add(FirstLevel1);
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, configBuilderAction: configBuilderAction);
+
+            var level1 = db.Entities.First(e => e.day == DayOfWeek.Monday);
+            Assert.Equal(FirstLevel1._id, level1._id);
+
+            var level2Ref = db.Entities.First(e => e.reference.day == DayOfWeek.Friday);
+            Assert.Equal(FirstLevel1._id, level2Ref._id);
+
+            var level2 = db.Entities.First(e => e.children.Any(f => f.day == DayOfWeek.Tuesday));
+            Assert.Equal(FirstLevel1._id, level2._id);
+
+            var level3 = db.Entities.First(e => e.children.Any(f => f.children.Any(g => g.day == DayOfWeek.Wednesday)));
+            Assert.Equal(FirstLevel1._id, level3._id);
+
+            var level4 = db.Entities.First(e => e.children.Any(f => f.children.Any(g => g.reference.day == DayOfWeek.Thursday)));
+            Assert.Equal(FirstLevel1._id, level4._id);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_can_query_owned_entity_collection_with_remapped_name()
+    {
+        var docs = database.CreateCollection<BsonDocument>();
+        var id = ObjectId.GenerateNewId();
+
+        {
+            docs.InsertOne(new BsonDocument("_id", id)
+            {
+                ["children"] = new BsonArray
+                {
+                    new BsonDocument("name", "child1"),
+                    new BsonDocument("name", "child2")
+                }
+            });
+        }
+
+        {
+            var collection = database.GetCollection<SimpleOwner>();
+            using var db = SingleEntityDbContext.Create(collection, mb =>
+            {
+                var owned = mb.Entity<SimpleOwner>().OwnsMany(o => o.Children);
+                owned.HasElementName("children");
+                owned.Property(o => o.Name).HasElementName("name");
+            });
+
+            var actual = db.Entities.FirstOrDefault(e => e.Children.Any(c => c.Name == "child1"));
+            Assert.NotNull(actual);
+            Assert.Equal(id, actual.Id);
+        }
+    }
+
     [Fact]
     public void OwnedEntity_can_go_multiple_levels_deep_querying_reference()
     {
@@ -811,6 +826,17 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             var thirdLevel = Assert.Single(secondLevel.children);
             Assert.Equal(expectedReference.name, thirdLevel.reference.name);
         }
+    }
+
+    record A
+    {
+        public string _id { get; set; }
+        public List<B> children { get; set; }
+    }
+
+    record B
+    {
+        public string name { get; set; }
     }
 
     private record Person
@@ -876,118 +902,99 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         public Guid _id { get; set; }
         public List<SecondLevel> children { get; set; }
+        public DayOfWeek day { get; set; }
+        public Reference reference { get; set; }
     }
 
     private record SecondLevel
     {
         public List<ThirdLevel> children { get; set; }
+        public DayOfWeek day { get; set; }
     }
 
     private record ThirdLevel
     {
         public string name { get; set; }
         public Reference reference { get; set; }
+        public DayOfWeek day { get; set; }
     }
 
     private record Reference
     {
         public string name { get; set; }
+        public DayOfWeek day { get; set; }
     }
 
-    private static readonly City City1 = new()
+    private record SimpleOwner
     {
-        name = "San Diego"
-    };
+        public ObjectId Id { get; set; }
+        public List<SimpleOwned> Children { get; set; }
+    }
+
+    private record SimpleOwned
+    {
+        public string Name { get; set; }
+    }
+
+    private static readonly City City1 = new() {name = "San Diego"};
 
     private static readonly LocationWithCity LocationWithCity1 =
-        new()
-        {
-            latitude = 32.715736m, longitude = -117.161087m, city = City1
-        };
+        new() {latitude = 32.715736m, longitude = -117.161087m, city = City1};
 
     private static readonly PersonWithCity[] PersonWithCity1 =
     [
-        new()
-        {
-            name = "Carmen", location = LocationWithCity1
-        }
+        new() {name = "Carmen", location = LocationWithCity1}
     ];
 
-    private static readonly Location Location1 = new()
-    {
-        latitude = 32.715736m, longitude = -117.161087m
-    };
+    private static readonly Location Location1 = new() {latitude = 32.715736m, longitude = -117.161087m};
 
     private static readonly PersonWithLocation[] PersonWithLocation1 =
     [
-        new()
-        {
-            name = "Carmen", location = Location1
-        }
+        new() {name = "Carmen", location = Location1}
     ];
 
     private static readonly PersonWithLocation[] Person2WithLocation1 =
     [
-        new()
-        {
-            name = "Milton", location = Location1
-        }
+        new() {name = "Milton", location = Location1}
     ];
 
     private static readonly PersonWithLocation[] PersonWithMissingLocation1 =
     [
-        new()
-        {
-            name = "Elizabeth"
-        }
+        new() {name = "Elizabeth"}
     ];
 
-    private static readonly Location Location2 = new()
-    {
-        latitude = 49.45981m, longitude = -2.53527m
-    };
+    private static readonly Location Location2 = new() {latitude = 49.45981m, longitude = -2.53527m};
 
-    private static readonly Location Location3 = new()
-    {
-        latitude = 40.1m, longitude = -1.1m
-    };
+    private static readonly Location Location3 = new() {latitude = 40.1m, longitude = -1.1m};
 
     private static readonly PersonWithMultipleLocations[] PersonWithLocations1 =
     [
-        new()
-        {
-            name = "Damien", locations = [Location2, Location1]
-        },
-        new()
-        {
-            name = "Carmen", locations = [Location3]
-        },
+        new() {name = "Damien", locations = [Location2, Location1]},
+        new() {name = "Carmen", locations = [Location3]},
     ];
 
     private static readonly PersonWithTwoLocations[] PersonWithTwoLocations1 =
     [
-        new()
-        {
-            name = "Henry", first = Location1, second = Location2
-        }
+        new() {name = "Henry", first = Location1, second = Location2}
     ];
 
     private static readonly FirstLevel FirstLevel1 = new()
     {
         _id = Guid.NewGuid(),
+        day = DayOfWeek.Monday,
+        reference = new() {day = DayOfWeek.Friday, name = "This is the first level name"},
         children =
         [
             new SecondLevel
             {
+                day = DayOfWeek.Tuesday,
                 children =
                 [
                     new()
                     {
                         name = "This is the third level name",
-                        reference = new()
-                        {
-                            name = "This is the item reference name"
-                        }
+                        day = DayOfWeek.Wednesday,
+                        reference = new() {name = "This is the item reference name", day = DayOfWeek.Thursday}
                     }
                 ]
             }

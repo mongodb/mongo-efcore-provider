@@ -212,7 +212,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
 
     private static void WriteProperty(IBsonWriter writer, object? value, IProperty property)
     {
-        var serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
         writer.WriteName(serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName);
         var root = BsonSerializationContext.CreateRoot(writer);
         serializationInfo.Serializer.Serialize(root, value);

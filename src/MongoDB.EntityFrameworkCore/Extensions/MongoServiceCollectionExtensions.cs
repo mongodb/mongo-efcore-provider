@@ -123,7 +123,7 @@ public static class MongoServiceCollectionExtensions
                     .TryAddScoped<IMongoClientWrapper, MongoClientWrapper>()
                     .TryAddSingleton<MongoShapedQueryCompilingExpressionVisitorDependencies,
                         MongoShapedQueryCompilingExpressionVisitorDependencies>()
-                    .TryAddSingleton(new EntitySerializerCache())
+                    .TryAddSingleton(new BsonSerializerFactory())
             )
             .TryAddCoreServices();
 

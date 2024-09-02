@@ -19,36 +19,49 @@ using MongoDB.Bson.Serialization;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
+/// <summary>
+/// Provides the interface between the EFCore <see cref="ValueConverter"/>
+/// and the MongoDB LINQ provider's <see cref="IBsonDocumentSerializer"/> interface.
+/// </summary>
+/// <typeparam name="TActual">The CLR type mapped on the entity by this serializer.</typeparam>
+/// <typeparam name="TStorage">The CLR type being used for storage this serializer.</typeparam>
 internal class ValueConverterSerializer<TActual, TStorage> : IBsonSerializer<TActual>
 {
     private readonly ValueConverter<TActual, TStorage> _valueConverter;
     private readonly IBsonSerializer<TStorage> _storageSerializer;
 
+    /// <summary>
+    /// Create a new instance of <see cref="ValueConverterSerializer{TActual,TStorage}"/>.
+    /// </summary>
+    /// <param name="valueConverter">The <see cref="ValueConverter{TModel,TProvider}"/> provided by EF.</param>
+    /// <param name="storageSerializer">The <see cref="IBsonSerializer"/> for the underlying storage.</param>
     public ValueConverterSerializer(
         ValueConverter<TActual, TStorage> valueConverter,
         IBsonSerializer<TStorage> storageSerializer)
     {
+        ArgumentNullException.ThrowIfNull(valueConverter);
+        ArgumentNullException.ThrowIfNull(storageSerializer);
+
         _valueConverter = valueConverter;
         _storageSerializer = storageSerializer;
     }
 
+    /// <inheritdoc />
     public Type ValueType => typeof(TActual);
 
+    /// <inheritdoc />
     public TActual Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
-    {
-        var storage = _storageSerializer.Deserialize(context, args);
-        return _valueConverter.ConvertFromProviderTyped(storage);
-    }
+        => _valueConverter.ConvertFromProviderTyped(_storageSerializer.Deserialize(context, args));
 
+    /// <inheritdoc />
     public void Serialize(BsonSerializationContext context, BsonSerializationArgs args, TActual value)
-    {
-        var storage = _valueConverter.ConvertToProviderTyped(value);
-        _storageSerializer.Serialize(context, args, storage);
-    }
+        => _storageSerializer.Serialize(context, args, _valueConverter.ConvertToProviderTyped(value));
 
+    /// <inheritdoc />
     object IBsonSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
         => Deserialize(context, args)!;
 
+    /// <inheritdoc />
     void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
         => Serialize(context, args, (TActual)value);
 }

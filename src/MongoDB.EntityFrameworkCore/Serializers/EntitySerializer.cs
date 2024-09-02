@@ -20,90 +20,101 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson.Serialization;
 using MongoDB.EntityFrameworkCore.Extensions;
 
-namespace MongoDB.EntityFrameworkCore.Serializers
+namespace MongoDB.EntityFrameworkCore.Serializers;
+
+/// <summary>
+/// Provides the interface between the EFCore <see cref="IReadOnlyEntityType"/> metadata
+/// and the MongoDB LINQ provider's <see cref="IBsonDocumentSerializer"/> interface.
+/// </summary>
+/// <typeparam name="TValue">The underlying CLR type being handled by this serializer.</typeparam>
+internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocumentSerializer
 {
+    private readonly Func<IReadOnlyProperty, bool> _isStored = p => !p.IsShadowProperty() && p.GetElementName() != "";
+    private readonly IReadOnlyEntityType _entityType;
+    private readonly BsonSerializerFactory _bsonSerializerFactory;
+
     /// <summary>
-    /// Provides the interface between the EFCore <see cref="IReadOnlyEntityType"/> metadata
-    /// and the MongoDB LINQ provider's <see cref="IBsonDocumentSerializer"/> interface.
+    /// Create a new instance of <see cref="EntitySerializer{TValue}"/>.
     /// </summary>
-    /// <typeparam name="TValue">The underlying CLR type being handled by this serializer.</typeparam>
-    internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocumentSerializer
+    /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> this serializer relates to in EF.</param>
+    /// <param name="bsonSerializerFactory">The <see cref="BsonSerializerFactory"/> to obtain additional sub-serializers from.</param>
+    public EntitySerializer(
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory)
     {
-        private readonly Func<IReadOnlyProperty, bool> _isStored = p => !p.IsShadowProperty() && p.GetElementName() != "";
-        private readonly IReadOnlyEntityType _entityType;
-        private readonly EntitySerializerCache _entitySerializerCache;
+        ArgumentNullException.ThrowIfNull(entityType);
+        ArgumentNullException.ThrowIfNull(bsonSerializerFactory);
 
-        public EntitySerializer(IReadOnlyEntityType entityType, EntitySerializerCache entitySerializerCache)
+        _entityType = entityType;
+        _bsonSerializerFactory = bsonSerializerFactory;
+    }
+
+    /// <inheritdoc />
+    public Type ValueType => typeof(TValue);
+
+    /// <inheritdoc />
+    public TValue Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+        => throw new NotImplementedException();
+
+    /// <inheritdoc />
+    object? IBsonSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+        => Deserialize(context, args);
+
+    /// <inheritdoc />
+    public void Serialize(BsonSerializationContext context, BsonSerializationArgs args, TValue value)
+    {
+        if (value == null)
         {
-            ArgumentNullException.ThrowIfNull(entityType);
-            ArgumentNullException.ThrowIfNull(entitySerializerCache);
-
-            _entityType = entityType;
-            _entitySerializerCache = entitySerializerCache;
+            context.Writer.WriteNull();
+            return;
         }
 
-        public Type ValueType => typeof(TValue);
+        // We do not support direct entity serialization right now because:
+        //  - Matching owned entities by example or expression may mismatch because of unmapped fields/default values
+        //    (we will likely configurable policy for this)
+        //  - Matching root/entities with keys should be done by key fields, not by entity comparison
+        //    (we will rewrite the expression tree to do this automatically in a future update)
 
-        public TValue Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
-            => throw new NotImplementedException();
+        var storedKeyProperties = GetStoredKeyProperties();
+        var uniqueness = storedKeyProperties.Any()
+            ? string.Join(", ", storedKeyProperties.Select(p => "'" + p.Name + "'"))
+            : "unique fields";
 
-        object? IBsonSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
-            => Deserialize(context, args);
+        throw new NotSupportedException($"Entity to entity comparison is not supported. Compare '{_entityType.DisplayName()
+        }' entities by {uniqueness} instead.");
+    }
 
-        public void Serialize(BsonSerializationContext context, BsonSerializationArgs args, TValue value)
+    /// <inheritdoc />
+    void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
+        => Serialize(context, args, (TValue)value);
+
+    /// <inheritdoc />
+    public bool TryGetMemberSerializationInfo(string memberName, out BsonSerializationInfo? serializationInfo)
+    {
+        var property = _entityType.FindProperty(memberName);
+        if (property != null)
         {
-            if (value == null)
-            {
-                context.Writer.WriteNull();
-                return;
-            }
-
-            // We do not support direct entity serialization right now because:
-            //  - Matching owned entities by example or expression may mismatch because of unmapped fields/default values
-            //    (we will likely configurable policy for this)
-            //  - Matching root/entities with keys should be done by key fields, not by entity comparison
-            //    (we will rewrite the expression tree to do this automatically in a future update)
-
-            var storedKeyProperties = GetStoredKeyProperties();
-            var uniqueness = storedKeyProperties.Any()
-                ? string.Join(", ", storedKeyProperties.Select(p => "'" + p.Name + "'"))
-                : "unique fields";
-
-            throw new NotSupportedException($"Entity to entity comparison is not supported. Compare '{_entityType.DisplayName()}' entities by {uniqueness} instead.");
+            serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+            return true;
         }
 
-        private IReadOnlyProperty[] GetStoredKeyProperties()
-            => _entityType.FindPrimaryKey()?.Properties.Where(_isStored).ToArray() ?? [];
-
-        void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
-            => Serialize(context, args, (TValue)value);
-
-        public bool TryGetMemberSerializationInfo(string memberName, out BsonSerializationInfo? serializationInfo)
+        var navigation = _entityType.FindNavigation(memberName);
+        if (navigation != null)
         {
-            var property = _entityType.FindProperty(memberName);
-            if (property != null)
+            var serializer = _bsonSerializerFactory.GetNavigationSerializer(navigation);
+            var entityType = navigation.TargetEntityType;
+            var elementName = entityType.GetContainingElementName();
+            if (elementName != null)
             {
-                serializationInfo = SerializationHelper.GetPropertySerializationInfo(property);
+                serializationInfo = new BsonSerializationInfo(elementName, serializer, entityType.ClrType);
                 return true;
             }
-
-            var navigation = _entityType.FindNavigation(memberName);
-            if (navigation != null)
-            {
-                var entityType = navigation.TargetEntityType;
-                var serializer = navigation.IsCollection
-                    ? new CollectionSerializationProvider().GetSerializer(navigation.ClrType)
-                    : _entitySerializerCache.GetOrCreateSerializer(entityType);
-                var elementName = entityType.GetContainingElementName();
-                if (elementName != null)
-                {
-                    serializationInfo = new BsonSerializationInfo(elementName, serializer, entityType.ClrType);
-                    return true;
-                }
-            }
-
-            serializationInfo = default;
-            return false;
         }
+
+        serializationInfo = default;
+        return false;
     }
+
+    private IReadOnlyProperty[] GetStoredKeyProperties()
+        => _entityType.FindPrimaryKey()?.Properties.Where(_isStored).ToArray() ?? [];
 }
