@@ -1,5 +1,7 @@
 # MongoDB Entity Framework Core Provider
 
+[![MongoDB.EntityFrameworkCore](https://img.shields.io/nuget/v/MongoDB.EntityFrameworkCore.svg)](https://www.nuget.org/packages/MongoDB.EntityFrameworkCore/)
+
 The MongoDB EF Core Provider requires Entity Framework Core 8 on .NET 8 or later and a MongoDB database server 5.0 or later, preferably in a transaction-enabled configuration.
 
 ## Getting Started
