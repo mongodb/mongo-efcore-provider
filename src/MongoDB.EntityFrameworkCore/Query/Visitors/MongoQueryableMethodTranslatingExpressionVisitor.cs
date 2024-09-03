@@ -85,6 +85,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     case nameof(Queryable.Any) when genericMethod == QueryableMethods.AnyWithoutPredicate:
                         visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
                         break;
+                    case nameof(Queryable.OfType) when genericMethod == QueryableMethods.OfType:
+                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
+                        break;
                 }
 
                 var newCardinality = GetResultCardinality(method);
@@ -152,8 +155,27 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <inheritdoc />
-    protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate) =>
-        throw new NotImplementedException();
+    protected override ShapedQueryExpression? TranslateOfType(ShapedQueryExpression source, Type resultType)
+    {
+        if (source.ShaperExpression is StructuralTypeShaperExpression entityShaperExpression)
+        {
+            if (entityShaperExpression.StructuralType is not IEntityType entityType)
+            {
+                throw new NotSupportedException($"Complex type '{entityShaperExpression.StructuralType.DisplayName()
+                }' not supported in MongoDB.");
+            }
+
+            if (entityType.ClrType == resultType) return source;
+
+            var resultEntityType = entityType.Model.FindEntityType(resultType);
+            if (resultEntityType != null)
+            {
+                return source.UpdateShaperExpression(entityShaperExpression.WithType(resultEntityType));
+            }
+        }
+
+        return null;
+    }
 
     /// <inheritdoc />
     protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
@@ -234,6 +256,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor() =>
         throw new NotImplementedException();
 
+    protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate) =>
+        throw new NotImplementedException();
+
     protected override ShapedQueryExpression TranslateAverage(ShapedQueryExpression source, LambdaExpression? selector,
         Type resultType) => throw new NotImplementedException();
 
@@ -293,9 +318,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression TranslateMin(ShapedQueryExpression source, LambdaExpression? selector,
         Type resultType) => throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateOfType(ShapedQueryExpression source, Type resultType) =>
-        throw new NotImplementedException();
 
     protected override ShapedQueryExpression TranslateOrderBy(ShapedQueryExpression source, LambdaExpression keySelector,
         bool ascending) => throw new NotImplementedException();

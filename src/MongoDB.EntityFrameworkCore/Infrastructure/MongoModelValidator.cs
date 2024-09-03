@@ -24,8 +24,10 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
@@ -75,6 +77,35 @@ public class MongoModelValidator : ModelValidator
         ValidateNoShadowProperties(model);
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
+
+        SetupTypeDiscriminators(model);
+    }
+
+    private static readonly Dictionary<Type, IDiscriminatorConvention>? DiscriminatorConventionDictionary =
+        typeof(BsonSerializer).GetField("__discriminatorConventions", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as Dictionary<Type, IDiscriminatorConvention>;
+
+    private static void SetupTypeDiscriminators(IModel model)
+    {
+        if (DiscriminatorConventionDictionary == null)
+        {
+            throw new InvalidOperationException("Unable to access MongoDB C# Driver discriminator conventions.");
+        }
+
+        var discriminatorProperties = new HashSet<IReadOnlyProperty>();
+        foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
+        {
+            var discriminatorProperty = entityType.FindDiscriminatorProperty();
+            if (discriminatorProperty != null)
+            {
+                discriminatorProperties.Add(discriminatorProperty);
+            }
+        }
+
+        foreach (var discriminatorProperty in discriminatorProperties)
+        {
+            var entityType = (IReadOnlyEntityType)discriminatorProperty.DeclaringType;
+            DiscriminatorConventionDictionary.TryAdd(entityType.ClrType, new MongoEFDiscriminator(entityType));
+        }
     }
 
     /// <summary>

@@ -56,12 +56,25 @@ public static class MongoPropertyExtensions
             }
         }
 
-        if (RowVersion.IsRowVersion(property))
+        if (property.IsRowVersion())
         {
             return RowVersion.DefaultElementName;
         }
 
+        if (property.IsTypeDiscriminator())
+        {
+             return "_t";
+        }
+
         return property.Name;
+    }
+
+    private static bool IsTypeDiscriminator(this IReadOnlyProperty property)
+    {
+        if (property.DeclaringType is not IEntityType entityType) return false;
+        var discriminatorProperty = entityType.FindDiscriminatorProperty();
+        if (discriminatorProperty == null) return false;
+        return property.Name == discriminatorProperty.Name;
     }
 
     /// <summary>
