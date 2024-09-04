@@ -41,40 +41,20 @@ public static class MongoPropertyExtensions
 
     private static string GetDefaultElementName(IReadOnlyProperty property)
     {
-        var entityType = (IReadOnlyEntityType)property.DeclaringType;
-        var ownership = entityType.FindOwnership();
-
-        if (ownership != null && !entityType.IsDocumentRoot())
+        return property switch
         {
-            var pk = property.FindContainingPrimaryKey();
-            if (pk != null
-                && (property.ClrType == typeof(int) || ownership.Properties.Contains(property))
-                && pk.Properties.Count == ownership.Properties.Count + (ownership.IsUnique ? 0 : 1)
-                && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty)))
-            {
-                return "";
-            }
-        }
-
-        if (property.IsRowVersion())
-        {
-            return RowVersion.DefaultElementName;
-        }
-
-        if (property.IsTypeDiscriminator())
-        {
-             return "_t";
-        }
-
-        return property.Name;
+            _ when property.IsOwnedTypeKey() => "",
+            _ when property.IsRowVersion() => RowVersion.DefaultElementName,
+            _ when property.IsTypeDiscriminator() => "_t",
+            _ => property.Name
+        };
     }
 
     private static bool IsTypeDiscriminator(this IReadOnlyProperty property)
     {
         if (property.DeclaringType is not IEntityType entityType) return false;
         var discriminatorProperty = entityType.FindDiscriminatorProperty();
-        if (discriminatorProperty == null) return false;
-        return property.Name == discriminatorProperty.Name;
+        return property == discriminatorProperty;
     }
 
     /// <summary>
@@ -87,7 +67,7 @@ public static class MongoPropertyExtensions
             ? BsonRepresentationConfiguration.CreateFrom(value)
             : null;
 
-    internal static bool IsOwnedTypeKey(this IProperty property)
+    internal static bool IsOwnedTypeKey(this IReadOnlyProperty property)
     {
         var entityType = (IReadOnlyEntityType)property.DeclaringType;
         if (entityType.IsDocumentRoot())

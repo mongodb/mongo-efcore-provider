@@ -63,30 +63,33 @@ internal static class BsonBinding
 
         if (mappedType == typeof(BsonDocument))
         {
-            return CreateGetBsonDocument(bsonDocExpression, name, required, declaredType);
+            return CreateGetBsonDocument(bsonDocExpression, name, required);
         }
 
-        var targetProperty = declaredType.FindProperty(name);
-        if (targetProperty != null)
+        if (declaredType != null)
         {
-            return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty),
-                targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType);
-        }
-
-        if (declaredType is IEntityType entityType)
-        {
-            var navigationProperty = entityType.FindNavigation(name);
-            if (navigationProperty != null)
+            var targetProperty = declaredType.FindProperty(name);
+            if (targetProperty != null)
             {
-                var fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
-                return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
+                return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty),
+                    targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType);
+            }
+
+            if (declaredType is IEntityType entityType)
+            {
+                var navigationProperty = entityType.FindNavigation(name);
+                if (navigationProperty != null)
+                {
+                    var fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
+                    return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
+                }
             }
         }
 
         throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, declaredType.DisplayName()));
     }
 
-    private static Expression CreateGetBsonArray(Expression bsonDocExpression, string name)
+    private static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
     private static readonly MethodInfo GetBsonArrayMethodInfo
@@ -110,22 +113,20 @@ internal static class BsonBinding
     }
 
     private static MethodCallExpression CreateGetBsonDocument(
-        Expression bsonDocExpression, string name, bool required, ITypeBase entityType)
+        Expression bsonDocExpression, string name, bool required)
         => Expression.Call(null, GetBsonDocumentMethodInfo, bsonDocExpression, Expression.Constant(name),
-            Expression.Constant(required),
-            Expression.Constant(entityType));
+            Expression.Constant(required));
 
     private static readonly MethodInfo GetBsonDocumentMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetBsonDocument));
 
-    private static BsonDocument? GetBsonDocument(BsonDocument parent, string name, bool required, IReadOnlyTypeBase entityType)
+    private static BsonDocument? GetBsonDocument(BsonDocument parent, string name, bool required)
     {
         var value = parent.GetValue(name, BsonNull.Value);
         if (value == BsonNull.Value && required)
         {
-            throw new InvalidOperationException($"Field '{name}' required but not present in BsonDocument for a '{
-                entityType.DisplayName()}'.");
+            throw new InvalidOperationException($"Field '{name}' required but not present in BsonDocument.");
         }
 
         return value == BsonNull.Value ? null : value.AsBsonDocument;

@@ -203,7 +203,6 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(); });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Where(p => p.name != "bob").ToList());
-        Assert.Contains(nameof(PersonWithLocation), ex.Message);
         Assert.Contains(nameof(PersonWithLocation.location), ex.Message);
     }
 
