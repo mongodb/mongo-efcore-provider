@@ -19,13 +19,12 @@ using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
-using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
 #nullable disable
 
-internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionVisitor
+internal abstract class ProjectionBindingRemovingExpressionVisitorBase : ExpressionVisitor
 {
     protected readonly ParameterExpression DocParameter;
     private readonly bool _trackQueryResults;
@@ -35,7 +34,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     private readonly Dictionary<Expression, Expression> _ordinalParameterBindings = new();
     private List<IncludeExpression> _pendingIncludes = [];
 
-    protected ProjectionBindingRemovingExpressionVisitor(
+    protected ProjectionBindingRemovingExpressionVisitorBase(
         ParameterExpression docParameter,
         bool trackQueryResults)
     {
@@ -54,6 +53,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     return CreateGetValueExpression(
                         DocParameter,
                         projection.Alias,
+                        !projectionBindingExpression.Type.IsNullableType(),
                         projectionBindingExpression.Type);
                 }
 
@@ -154,6 +154,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             if (parameterExpression.Type == typeof(BsonDocument) || parameterExpression.Type == typeof(BsonArray))
             {
                 string elementName = null;
+                var elementRequired = false;
 
                 var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
                 if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
@@ -188,6 +189,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                             innerAccessExpression = innerObjectAccessExpression.AccessExpression;
                             _ownerMappings[accessExpression] =
                                 (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
+                            elementRequired = innerObjectAccessExpression.Required;
                             break;
                         case RootReferenceExpression:
                             innerAccessExpression = DocParameter;
@@ -199,7 +201,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                 }
 
                 var valueExpression =
-                    CreateGetValueExpression(innerAccessExpression, elementName, parameterExpression.Type);
+                    CreateGetValueExpression(innerAccessExpression, elementName, elementRequired, parameterExpression.Type);
 
                 return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
             }
@@ -253,7 +255,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             {
                 var projection = GetProjection(projectionBindingExpression);
                 innerExpression =
-                    CreateGetValueExpression(DocParameter, projection.Alias, typeof(BsonDocument));
+                    CreateGetValueExpression(DocParameter, projection.Alias, projection.Required, typeof(BsonDocument));
             }
             else
             {
@@ -342,10 +344,8 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             return Expression.Default(type);
         }
 
-        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
-
         return Expression.Convert(
-            CreateGetValueExpression(docExpression, serializationInfo.ElementName, type.MakeNullable(), property.GetTypeMapping()),
+            CreateGetValueExpression(docExpression, property.Name, !type.IsNullableType(), type, property.DeclaringType, property.GetTypeMapping()),
             type);
     }
 
@@ -367,7 +367,9 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     protected abstract Expression CreateGetValueExpression(
         Expression docExpression,
         string elementName,
+        bool required,
         Type type,
+        ITypeBase declaringType = null,
         CoreTypeMapping typeMapping = null);
 
     private BlockExpression AddIncludes(BlockExpression shaperBlock)
@@ -438,7 +440,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     }
 
     private static readonly MethodInfo IncludeReferenceMethodInfo
-        = typeof(ProjectionBindingRemovingExpressionVisitor).GetTypeInfo()
+        = typeof(ProjectionBindingRemovingExpressionVisitorBase).GetTypeInfo()
             .GetDeclaredMethod(nameof(IncludeReference));
 
     private static void IncludeReference<TIncludingEntity, TIncludedEntity>(
@@ -483,7 +485,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     }
 
     private static readonly MethodInfo IncludeCollectionMethodInfo
-        = typeof(ProjectionBindingRemovingExpressionVisitor).GetTypeInfo()
+        = typeof(ProjectionBindingRemovingExpressionVisitorBase).GetTypeInfo()
             .GetDeclaredMethod(nameof(IncludeCollection));
 
     private static void IncludeCollection<TIncludingEntity, TIncludedEntity>(
@@ -588,7 +590,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             Expression.Constant(true));
 
     private static readonly MethodInfo PopulateCollectionMethodInfo
-        = typeof(ProjectionBindingRemovingExpressionVisitor).GetTypeInfo()
+        = typeof(ProjectionBindingRemovingExpressionVisitorBase).GetTypeInfo()
             .GetDeclaredMethod(nameof(PopulateCollection));
 
     private static readonly MethodInfo IsAssignableFromMethodInfo
