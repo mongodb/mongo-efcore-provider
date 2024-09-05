@@ -59,13 +59,6 @@ public class MongoQueryCompilationContext : QueryCompilationContext
     /// <inheritdoc />
     public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression originalQuery)
     {
-#pragma warning disable CS0618 // Type or member is obsolete
-        if (BsonDefaults.GuidRepresentationMode != GuidRepresentationMode.V3)
-        {
-            BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3;
-        }
-#pragma warning restore CS0618 // Type or member is obsolete
-
         var query = Dependencies.QueryTranslationPreprocessorFactory.Create(this).Process(originalQuery);
         query = Dependencies.QueryableMethodTranslatingExpressionVisitorFactory.Create(this).Visit(query);
 

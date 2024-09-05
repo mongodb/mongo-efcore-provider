@@ -48,7 +48,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
         => Exerciser.TestConvertedValueRoundTrip(database,
             expectedValue,
             a => new Decimal128(a),
-            mb => mb.Entity<EntityWithId<ObjectId>>().Property(e => e._id).HasBsonRepresentation(BsonType.Decimal128));
+            mb => mb.Entity<EntityWithValue<decimal>>().Property(e => e.value).HasBsonRepresentation(BsonType.Decimal128));
 
     public static readonly TheoryData<int> IntData
         = new()

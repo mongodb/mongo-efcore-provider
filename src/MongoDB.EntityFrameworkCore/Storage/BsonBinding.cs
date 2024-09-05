@@ -84,9 +84,11 @@ internal static class BsonBinding
                     return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
                 }
             }
+
+            throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, declaredType.DisplayName()));
         }
 
-        throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, declaredType.DisplayName()));
+        throw new InvalidOperationException($"The property '{name}' could not be found. Ensure that the property exists and has been included in the model.");
     }
 
     private static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
