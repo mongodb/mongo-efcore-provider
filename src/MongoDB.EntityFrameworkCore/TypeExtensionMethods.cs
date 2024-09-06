@@ -127,7 +127,7 @@ internal static class TypeExtensions
     /// Check if a type is nullable or not.
     /// </summary>
     /// <param name="type">The <see cref="Type"/> to check.</param>
-    /// <returns><see langref="true"/> is the object is nullable, otherwise <see langref="false"/>.</returns>
+    /// <returns><see langword="true"/> is the object is nullable, otherwise <see langword="false"/>.</returns>
     public static bool IsNullableType(this Type type)
         => !type.IsValueType || type.IsNullableValueType();
 
@@ -135,7 +135,7 @@ internal static class TypeExtensions
     /// Check if a value type is nullable or not.
     /// </summary>
     /// <param name="type">The value <see cref="Type"/> to check.</param>
-    /// <returns><see langref="true"/> is the object is nullable, otherwise <see langref="false"/>.</returns>
+    /// <returns><see langword="true"/> is the object is nullable, otherwise <see langword="false"/>.</returns>
     public static bool IsNullableValueType(this Type type)
         => type.IsConstructedGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>);
 

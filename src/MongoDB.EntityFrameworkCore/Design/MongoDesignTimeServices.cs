@@ -21,6 +21,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace MongoDB.EntityFrameworkCore.Design;
 
+/// <inheritdoc />
 public class MongoDesignTimeServices : IDesignTimeServices
 {
     /// <inheritdoc />

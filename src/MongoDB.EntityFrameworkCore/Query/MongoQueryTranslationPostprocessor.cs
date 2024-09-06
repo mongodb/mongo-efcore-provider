@@ -19,15 +19,13 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
-public class MongoQueryTranslationPostprocessor : QueryTranslationPostprocessor
+/// <inheritdoc />
+public class MongoQueryTranslationPostprocessor(
+    QueryTranslationPostprocessorDependencies dependencies,
+    QueryCompilationContext queryCompilationContext)
+    : QueryTranslationPostprocessor(dependencies, queryCompilationContext)
 {
-    public MongoQueryTranslationPostprocessor(
-        QueryTranslationPostprocessorDependencies dependencies,
-        QueryCompilationContext queryCompilationContext)
-        : base(dependencies, queryCompilationContext)
-    {
-    }
-
+    /// <inheritdoc />
     public override Expression Process(Expression query)
     {
         query = base.Process(query);

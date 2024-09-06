@@ -1,7 +1,7 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-// Originally from EFCore 9's ListOfNullableValueTyesComparer.cs
+// Originally from EFCore 9's ListOfNullableValueTypesComparer.cs
 
 using System;
 using System.Collections.Generic;

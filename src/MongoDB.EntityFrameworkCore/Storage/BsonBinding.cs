@@ -37,8 +37,8 @@ internal static class BsonBinding
     /// <param name="bsonDocExpression">The expression to obtain the current <see cref="BsonDocument"/>.</param>
     /// <param name="name">The name of the field in the document that contains the desired value.</param>
     /// <param name="required">
-    /// <see langref="true"/> if the field is required to be present in the document,
-    /// <see langref="false"/> if it is optional.
+    /// <see langword="true"/> if the field is required to be present in the document,
+    /// <see langword="false"/> if it is optional.
     /// </param>
     /// <param name="mappedType">What <see cref="Type"/> to the value is to be treated as.</param>
     /// <param name="declaredType">The <see cref="IEntityType"/> the value will belong to in order to obtaining additional metadata.</param>

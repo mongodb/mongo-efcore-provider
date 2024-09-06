@@ -27,8 +27,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoQueryExpression : Expression
 {
-    private IDictionary<ProjectionMember, Expression> _projectionMapping = new Dictionary<ProjectionMember, Expression>();
-    private readonly List<ProjectionExpression> _projection = new();
+    private Dictionary<ProjectionMember, Expression> _projectionMapping = new();
+    private readonly List<ProjectionExpression> _projection = [];
 
     /// <summary>
     /// Create a <see cref="MongoQueryExpression"/> for the given entity type.

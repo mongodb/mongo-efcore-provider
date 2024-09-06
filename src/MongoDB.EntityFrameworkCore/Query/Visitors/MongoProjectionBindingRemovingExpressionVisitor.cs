@@ -39,8 +39,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitorBase : ProjectionB
     /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> this visitor should use.</param>
     /// <param name="docParameter">The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.</param>
     /// <param name="trackQueryResults">
-    /// <see langref="true"/> if the results from this query are being tracked for changes,
-    /// <see langref="false"/> if they are not.
+    /// <see langword="true"/> if the results from this query are being tracked for changes,
+    /// <see langword="false"/> if they are not.
     /// </param>
     public MongoProjectionBindingRemovingExpressionVisitorBase(
         IEntityType rootEntityType,

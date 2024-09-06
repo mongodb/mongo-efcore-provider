@@ -19,15 +19,13 @@ using MongoDB.EntityFrameworkCore.Query.Visitors;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
-public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
+/// <inheritdoc />
+public class MongoQueryTranslationPreprocessor(
+    QueryTranslationPreprocessorDependencies dependencies,
+    QueryCompilationContext queryCompilationContext)
+    : QueryTranslationPreprocessor(dependencies, queryCompilationContext)
 {
-    public MongoQueryTranslationPreprocessor(
-        QueryTranslationPreprocessorDependencies dependencies,
-        QueryCompilationContext queryCompilationContext)
-        : base(dependencies, queryCompilationContext)
-    {
-    }
-
+    /// <inheritdoc />
     public override Expression Process(Expression query)
     {
         query = FinalPredicateHoistingVisitor.Hoist(query);

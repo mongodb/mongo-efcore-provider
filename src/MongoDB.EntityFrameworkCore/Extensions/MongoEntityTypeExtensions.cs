@@ -63,7 +63,7 @@ public static class MongoEntityTypeExtensions
     /// Determines if an entity is a root document or whether it is an owned entity/complex type.
     /// </summary>
     /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> to check.</param>
-    /// <returns><see langref="true"/> if the entity is a root, <see langref="false"/> if it is owned.</returns>
+    /// <returns><see langword="true"/> if the entity is a root, <see langword="false"/> if it is owned.</returns>
     public static bool IsDocumentRoot(this IReadOnlyEntityType entityType)
         => entityType.BaseType?.IsDocumentRoot()
            ?? entityType.FindOwnership() == null

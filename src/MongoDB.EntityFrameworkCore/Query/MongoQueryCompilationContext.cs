@@ -44,6 +44,7 @@ public class MongoQueryCompilationContext : QueryCompilationContext
         _expressionPrinter = new ExpressionPrinter();
     }
 
+    /// <inheritdoc />
     public override ParameterExpression RegisterRuntimeParameter(string name, LambdaExpression valueExtractor)
     {
         if (valueExtractor.Parameters.Count != 1

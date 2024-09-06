@@ -47,14 +47,7 @@ public static class MongoPropertyExtensions
             _ when property.IsRowVersion() => RowVersion.DefaultElementName,
             _ when property.IsTypeDiscriminator() => "_t",
             _ => property.Name
-        };
-    }
-
-    private static bool IsTypeDiscriminator(this IReadOnlyProperty property)
-    {
-        if (property.DeclaringType is not IEntityType entityType) return false;
-        var discriminatorProperty = entityType.FindDiscriminatorProperty();
-        return property == discriminatorProperty;
+        };    
     }
 
     /// <summary>
