@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using MongoDB.Bson;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Metadata.Conventions;
