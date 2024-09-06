@@ -74,6 +74,7 @@ public class MongoModelValidator : ModelValidator
         ValidateNoShadowProperties(model);
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
+        ValidateNoTablePerType(model);
     }
 
     /// <summary>
@@ -364,6 +365,19 @@ public class MongoModelValidator : ModelValidator
                 {
                     throw new InvalidOperationException(CoreStrings.MutableKeyProperty(mutableProperty.Name));
                 }
+            }
+        }
+    }
+
+    private static void ValidateNoTablePerType(IModel model)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            var mappingStrategy = (string?)entityType.FindAnnotation("Relational:MappingStrategy")?.Value;
+            if (mappingStrategy != null && mappingStrategy != "TPH")
+            {
+                throw new NotSupportedException(
+                    $"Entity '{entityType.DisplayName()}' is mapped with a {mappingStrategy} strategy which is not supported by the MongoDB provider.");
             }
         }
     }
