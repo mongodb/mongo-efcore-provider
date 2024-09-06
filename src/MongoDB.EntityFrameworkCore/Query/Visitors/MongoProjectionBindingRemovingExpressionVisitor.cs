@@ -65,12 +65,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
     /// <inheritdoc />
     protected override Expression CreateGetValueExpression(
         Expression docExpression,
-        string? fieldName,
-        bool fieldRequired,
+        string? propertyName,
+        bool required,
         Type type,
+        ITypeBase? declaredType = null,
         CoreTypeMapping? typeMapping = null)
     {
-        var entityType = docExpression switch
+        var entityType = declaredType ?? docExpression switch
         {
             RootReferenceExpression rootReferenceExpression => rootReferenceExpression.EntityType,
             ObjectAccessExpression docAccessExpression => docAccessExpression.Navigation.TargetEntityType,
@@ -86,15 +87,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ProjectionBindi
         {
             innerExpression = docExpression switch
             {
-                RootReferenceExpression => CreateGetValueExpression(DocParameter, null, fieldRequired, typeof(BsonDocument)),
+                RootReferenceExpression => CreateGetValueExpression(DocParameter, null, required, typeof(BsonDocument)),
                 ObjectAccessExpression docAccessExpression => CreateGetValueExpression(docAccessExpression.AccessExpression,
-                    docAccessExpression.Name, fieldRequired, typeof(BsonDocument)),
+                    docAccessExpression.Name, required, typeof(BsonDocument)),
                 _ => innerExpression
             };
         }
 
-        return BsonBinding.CreateGetValueExpression(innerExpression, fieldName, fieldRequired, typeMapping?.ClrType ?? type,
-            entityType);
+        var elementType = typeMapping?.ClrType ?? type;
+        return BsonBinding.CreateGetValueExpression(innerExpression, propertyName, required, elementType, entityType);
     }
 
     private int GetProjectionIndex(ProjectionBindingExpression projectionBindingExpression)

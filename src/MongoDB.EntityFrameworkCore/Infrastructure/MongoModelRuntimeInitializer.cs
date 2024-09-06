@@ -13,10 +13,18 @@
  * limitations under the License.
  */
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Conventions;
+using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
@@ -27,6 +35,9 @@ namespace MongoDB.EntityFrameworkCore.Infrastructure;
 public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies dependencies)
     : ModelRuntimeInitializer(dependencies)
 {
+    private static readonly Dictionary<Type, IDiscriminatorConvention>? DiscriminatorConventionDictionary =
+        typeof(BsonSerializer).GetField("__discriminatorConventions", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as Dictionary<Type, IDiscriminatorConvention>;
+
     /// <summary>
     /// Validates and initializes the given model with runtime dependencies.
     /// </summary>
@@ -46,6 +57,7 @@ public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies de
 #if !MONGO_DRIVER_3
         ConfigureDriverConventions();
 #endif
+        SetupTypeDiscriminators(model);
 
         return model;
     }
@@ -58,4 +70,37 @@ public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies de
 #pragma warning restore CS0618 // Type or member is obsolete
     }
 #endif
+
+    private static void SetupTypeDiscriminators(IModel model)
+    {
+        // In The C# 3.0 Driver we'll stop using reflection and decorate EntitySerializer with a property
+        // capable of specifying the IDiscriminatorConvention (CSHARP-5259) but we can do this for now.
+
+        if (DiscriminatorConventionDictionary == null)
+        {
+            throw new InvalidOperationException("Unable to access MongoDB C# Driver discriminator conventions.");
+        }
+
+        var discriminatorProperties = new HashSet<IReadOnlyProperty>();
+        foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
+        {
+            var discriminatorProperty = entityType.FindDiscriminatorProperty();
+            if (discriminatorProperty != null)
+            {
+                discriminatorProperties.Add(discriminatorProperty);
+            }
+        }
+
+        foreach (var discriminatorProperty in discriminatorProperties)
+        {
+            var entityType = (IReadOnlyEntityType)discriminatorProperty.DeclaringType;
+            var newDiscriminator = new MongoEFDiscriminator(entityType);
+            if (!DiscriminatorConventionDictionary.TryAdd(entityType.ClrType, newDiscriminator)) {
+                var existingDiscriminator = DiscriminatorConventionDictionary[entityType.ClrType];
+                if (existingDiscriminator.ElementName != newDiscriminator.ElementName) {
+                    throw new NotSupportedException($"Multiple discriminator element names for entity type '{entityType.ClrType.ShortDisplayName()}' are not supported.");
+                }
+            }
+        }
+    }
 }
