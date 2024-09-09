@@ -118,6 +118,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IQueryTranslationPostprocessorFactory, MongoQueryTranslationPostprocessorFactory>()
             .TryAdd<IQueryableMethodTranslatingExpressionVisitorFactory, MongoQueryableMethodTranslatingExpressionVisitorFactory>()
             .TryAdd<IShapedQueryCompilingExpressionVisitorFactory, MongoShapedQueryCompilingExpressionVisitorFactory>()
+            .TryAdd<IModelRuntimeInitializer, MongoModelRuntimeInitializer>()
             .TryAddProviderSpecificServices(
                 b => b
                     .TryAddScoped<IMongoClientWrapper, MongoClientWrapper>()
