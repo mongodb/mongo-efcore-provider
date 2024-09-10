@@ -76,6 +76,26 @@ public class UpdateEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Unchanged_entity_marked_as_modified_is_processed_but_does_not_affect_documents()
+    {
+        var collection = database.CreateCollection<SimpleEntity>();
+        var entity = new SimpleEntity {_id = ObjectId.GenerateNewId(), name = "Modify-"};
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(entity);
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var foundEntity = db.Entities.Single();
+            db.Entry(foundEntity).State = EntityState.Modified;
+            Assert.Equal(0, db.SaveChanges());
+        }
+    }
+
+    [Fact]
     public void Update_dictionary_entity()
     {
         var collection = database.CreateCollection<DictionaryEntity>();
