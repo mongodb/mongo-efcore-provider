@@ -55,13 +55,13 @@ public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies de
     {
         model = base.Initialize(model, designTime, validationLogger);
 
-        ConfigureDriverConvention();
+        ConfigureDriverConventions();
         SetupTypeDiscriminators(model);
 
         return model;
     }
 
-    private static void ConfigureDriverConvention()
+    private static void ConfigureDriverConventions()
     {
 #pragma warning disable CS0618 // Type or member is obsolete
         BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3;
