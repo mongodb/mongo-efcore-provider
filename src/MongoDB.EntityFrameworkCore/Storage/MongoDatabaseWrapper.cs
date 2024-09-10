@@ -183,23 +183,24 @@ public class MongoDatabaseWrapper : Database
     /// <param name="batch">The <see cref="MongoUpdateBatch"/> containing details of the updates that were sent to the server.</param>
     /// <param name="result">The <see cref="BulkWriteResult{TDocument}"/> containing the results of the bulk write operation.</param>
     /// <param name="collectionNamespace">The <see class="CollectionNamespace"/> used to build the exception message on failure.</param>
-    /// <returns></returns>
+    /// <returns>Number of documents affected by the bulk write operation.</returns>
     /// <exception cref="DbUpdateConcurrencyException">
-    /// Thrown if the number of expected operations in <paramref name="batch"/> does not match the counts in <paramref name="result"/>.
+    /// Thrown if the counts in <paramref name="batch"/> does not match the counts in <paramref name="result"/>.
     /// </exception>
     private static int AssertWritesApplied(MongoUpdateBatch batch, BulkWriteResult<BsonDocument> result, CollectionNamespace collectionNamespace)
     {
-        var modifiedVariance = batch.Modified - result.ModifiedCount;
-        var insertedVariance = batch.Inserts - result.InsertedCount;
-        var deletedVariance = batch.Deletes - result.DeletedCount;
-
-        if (deletedVariance != 0 || insertedVariance != 0 || modifiedVariance != 0)
+        // Modified count does not include docs that that did not need modification - i.e. no modifications - so we use matched count instead.
+        if (result.MatchedCount != batch.Modified || result.DeletedCount != batch.Deletes || result.InsertedCount != batch.Inserts)
         {
+            var modifiedVariance = batch.Modified - result.MatchedCount;
+            var insertedVariance = batch.Inserts - result.InsertedCount;
+            var deletedVariance = batch.Deletes - result.DeletedCount;
+
             throw new DbUpdateConcurrencyException($"Conflicts were detected when performing updates to '{collectionNamespace.FullName}'. " +
                 $"Did not perform {modifiedVariance} modifications, {insertedVariance} insertions, and {deletedVariance} deletions.");
         }
 
-        return (int) (result.ModifiedCount + result.InsertedCount + result.DeletedCount);
+        return (int)(result.ModifiedCount + result.DeletedCount + result.InsertedCount);
     }
 
     private bool ShouldStartTransaction(int operationCount)
