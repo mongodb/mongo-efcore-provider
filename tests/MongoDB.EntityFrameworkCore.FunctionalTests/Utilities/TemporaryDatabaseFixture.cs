@@ -31,9 +31,6 @@ public class TemporaryDatabaseFixture : IDisposable, IAsyncDisposable
     {
         Client = TestServer.GetClient();
         MongoDatabase = Client.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
-#pragma warning disable CS0618 // Type or member is obsolete
-        BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3; // We sometimes insert with C# Driver before firing up EF Provider
-#pragma warning restore CS0618 // Type or member is obsolete
     }
 
     public IMongoDatabase MongoDatabase { get; }
