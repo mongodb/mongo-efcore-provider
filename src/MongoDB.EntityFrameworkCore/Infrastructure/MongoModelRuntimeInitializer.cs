@@ -13,16 +13,11 @@
  * limitations under the License.
  */
 
-using System;
-using System.Collections.Generic;
-using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
-using MongoDB.Bson.Serialization.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
@@ -33,9 +28,6 @@ namespace MongoDB.EntityFrameworkCore.Infrastructure;
 public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies dependencies)
     : ModelRuntimeInitializer(dependencies)
 {
-    private static readonly Dictionary<Type, IDiscriminatorConvention>? DiscriminatorConventionDictionary =
-        typeof(BsonSerializer).GetField("__discriminatorConventions", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as Dictionary<Type, IDiscriminatorConvention>;
-
     /// <summary>
     /// Validates and initializes the given model with runtime dependencies.
     /// </summary>
