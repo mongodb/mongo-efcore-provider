@@ -70,7 +70,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         if (executableQuery.Cardinality != ResultCardinality.Enumerable)
             return ExecuteScalar<T>(executableQuery);
 
-        var queryable = (IMongoQueryable<T>)executableQuery.Provider.CreateQuery<T>(executableQuery.Query);
+        var queryable = executableQuery.Provider.CreateQuery<T>(executableQuery.Query);
         log = () => _commandLogger.ExecutedMqlQuery(executableQuery);
         return queryable;
     }
