@@ -70,13 +70,15 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
         BsonDocumentSerializer resultSerializer)
     {
         var asMethodInfo = AsMethodInfo.MakeGenericMethod(query.Type.GenericTypeArguments[0], typeof(BsonDocument));
-        var cast = Expression.Convert(query, typeof(IMongoQueryable<>).MakeGenericType(query.Type.GenericTypeArguments[0]));
+#if !MONGO_DRIVER_3
+        query = Expression.Convert(query, typeof(IMongoQueryable<>).MakeGenericType(query.Type.GenericTypeArguments[0]));
+#endif
         var serializerExpression = Expression.Constant(resultSerializer, resultSerializer.GetType());
 
         return Expression.Call(
             null,
             asMethodInfo,
-            cast,
+            query,
             serializerExpression
         );
     }

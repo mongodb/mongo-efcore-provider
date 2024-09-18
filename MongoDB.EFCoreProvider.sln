@@ -23,20 +23,27 @@ Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
+		Debug 3.0 Driver|Any CPU = Debug 3.0 Driver|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Debug 3.0 Driver|Any CPU.ActiveCfg = Debug 3.0 Driver|Any CPU
+		{F50A0110-A930-4876-BBD4-78B039C12D9E}.Debug 3.0 Driver|Any CPU.Build.0 = Debug 3.0 Driver|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Debug 3.0 Driver|Any CPU.ActiveCfg = Debug 3.0 Driver|Any CPU
+		{9337C5E2-A5DB-4608-9274-5C679B92ED9E}.Debug 3.0 Driver|Any CPU.Build.0 = Debug 3.0 Driver|Any CPU
 		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Debug 3.0 Driver|Any CPU.ActiveCfg = Debug 3.0 Driver|Any CPU
+		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Debug 3.0 Driver|Any CPU.Build.0 = Debug 3.0 Driver|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

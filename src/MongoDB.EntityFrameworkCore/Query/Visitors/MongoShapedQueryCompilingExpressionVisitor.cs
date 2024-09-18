@@ -134,7 +134,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var translatedQuery = queryTranslator.Visit(queryExpression.CapturedExpression)!;
 
         var executableQuery =
-            new MongoExecutableQuery(translatedQuery, resultCardinality, source.Provider, collection.CollectionNamespace);
+            new MongoExecutableQuery(translatedQuery, resultCardinality, (IMongoQueryProvider)source.Provider, collection.CollectionNamespace);
 
         return new QueryingEnumerable<TResult, TResult>(
             mongoQueryContext,
@@ -164,7 +164,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
 
         var executableQuery =
-            new MongoExecutableQuery(translatedQuery, resultCardinality, source.Provider, collection.CollectionNamespace);
+            new MongoExecutableQuery(translatedQuery, resultCardinality, (IMongoQueryProvider)source.Provider, collection.CollectionNamespace);
 
         return new QueryingEnumerable<BsonDocument, TResult>(
             mongoQueryContext,
