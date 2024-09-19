@@ -588,11 +588,11 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     private static readonly Action<ModelBuilder> DecimalToMongoString = mb =>
-        mb.Entity<AmountIsString>()
-            .Property(e => e.amount).HasConversion(v => decimal.Parse(v), v => v.ToString());
+        mb.Entity<AmountIsDecimal>()
+            .Property(e => e.amount).HasConversion(v => v.ToString(), v => decimal.Parse(v));
 
     private static readonly Action<ModelBuilder> DefaultDecimalToMongoString = mb =>
-        mb.Entity<AmountIsString>()
+        mb.Entity<AmountIsDecimal>()
             .Property(e => e.amount).HasConversion<string>();
 
     [Theory]
