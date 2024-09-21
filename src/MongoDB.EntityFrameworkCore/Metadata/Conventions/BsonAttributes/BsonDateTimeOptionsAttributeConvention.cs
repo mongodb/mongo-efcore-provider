@@ -24,7 +24,7 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 
 /// <summary>
-/// A convention that configures the element name for entity properties based on an applied <see cref="BsonElementAttribute" /> for
+/// A convention that configures the element name for entity properties based on an applied <see cref="BsonDateTimeOptionsAttribute" /> for
 /// familiarity with the Mongo C# Driver.
 /// </summary>
 public sealed class BsonDateTimeOptionsAttributeConvention : PropertyAttributeConventionBase<BsonDateTimeOptionsAttribute>

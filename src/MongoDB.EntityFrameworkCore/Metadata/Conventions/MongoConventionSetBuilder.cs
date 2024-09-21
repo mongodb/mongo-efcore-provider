@@ -57,6 +57,7 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         conventionSet.Add(new BsonElementAttributeConvention(Dependencies));
         conventionSet.Add(new BsonIdPropertyAttributeConvention(Dependencies));
         conventionSet.Add(new BsonIgnoreAttributeConvention(Dependencies));
+        conventionSet.Add(new BsonRepresentationAttributeConvention(Dependencies));
         conventionSet.Add(new BsonRequiredPropertyAttributeConvention(Dependencies));
 
         // Unsupported attributes on properties that should throw not supported
@@ -67,7 +68,6 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         conventionSet.Add(new BsonGuidRepresentationAttributeConvention(Dependencies));
         conventionSet.Add(new BsonIgnoreIfDefaultAttributePropertyAttributeConvention(Dependencies));
         conventionSet.Add(new BsonIgnoreIfNullAttributePropertyAttributeConvention(Dependencies));
-        conventionSet.Add(new BsonRepresentationAttributeConvention(Dependencies));
         conventionSet.Add(new BsonSerializationOptionsAttributeConvention(Dependencies));
         conventionSet.Add(new BsonSerializerPropertyConvention(Dependencies));
         conventionSet.Add(new BsonBsonTimeSpanOptionsPropertyAttributeConvention(Dependencies));
