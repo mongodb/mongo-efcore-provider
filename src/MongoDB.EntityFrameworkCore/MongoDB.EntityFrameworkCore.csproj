@@ -23,7 +23,7 @@
   </PropertyGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Debug 3.0 Driver' ">
-    <PackageReference Include="MongoDB.Driver" Version="2.28.0-41-g27d46610e4" />
+    <PackageReference Include="MongoDB.Driver" Version="2.28.0-55-gf54ba02046" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' != 'Debug 3.0 Driver' ">

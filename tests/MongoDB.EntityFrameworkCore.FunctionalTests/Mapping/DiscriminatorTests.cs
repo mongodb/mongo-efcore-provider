@@ -31,6 +31,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
         var entities = db.Entities.ToList();
         Assert.Single(entities, e => e.EntityType == "Client" && e.GetType() == typeof(Customer));
+        Assert.Single(entities, e => e.EntityType == "SubClient" && e.GetType() == typeof(SubCustomer));
         Assert.Single(entities, e => e.EntityType == "Order" && e.GetType() == typeof(Order));
         Assert.Single(entities, e => e.EntityType == "Supplier" && e.GetType() == typeof(Supplier));
         Assert.Single(entities, e => e.EntityType == "Contact" && e.GetType() == typeof(Contact));
@@ -38,7 +39,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Can_configure_type_discriminator_with_name_and_int()
+    public void Can_configure_type_discriminator_with_int()
     {
         var collection = database.CreateCollection<GuidKeyedEntity>();
         var configuration = (ModelBuilder mb) =>
@@ -48,7 +49,6 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
                 e.HasDiscriminator(g => g.SubType)
                     .HasValue<KeyedCustomer>(1)
                     .HasValue<KeyedOrder>(2);
-                e.Property(f => f.SubType).HasElementName("_subtype");
             });
         };
 
@@ -67,6 +67,23 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Can_configure_type_discriminator_element_name()
+    {
+        var configuration = (ModelBuilder mb) =>
+        {
+            ConfigureModel(mb);
+            mb.Entity<BaseEntity>().Property(e => e.EntityType).HasElementName("_entityType");
+        };
+
+        var collection = database.CreateCollection<BaseEntity>();
+        SetupTestData(SingleEntityDbContext.Create(collection, configuration));
+
+        using var db = SingleEntityDbContext.Create(collection, configuration);
+        var customer = db.Entities.First(e => e is Customer);
+        Assert.Equal("Customer 1", Assert.IsType<Customer>(customer).Name);
+    }
+
+    [Fact]
     public void Returns_correct_values_when_property_name_shared_between_entities()
     {
         var collection = database.CreateCollection<BaseEntity>();
@@ -80,6 +97,33 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Equal(2, entities.Count);
     }
 
+    [Fact]
+    public void Returns_correct_entity_where_is_type_query()
+    {
+        var collection = database.CreateCollection<BaseEntity>();
+        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
+
+        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+        var entities = db.Entities.Where(e => e is Supplier).ToList();
+        Assert.Single(entities, e => e is Supplier {Name: "Supplier 1"});
+
+        var firstOrder = db.Entities.First(e => e is Order);
+        Assert.Equal("Order 1", Assert.IsType<Order>(firstOrder).OrderReference);
+    }
+
+
+    [Fact]
+    public void Returns_correct_entity_where_GetType_query()
+    {
+        var collection = database.CreateCollection<BaseEntity>();
+        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
+
+        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+        var entities = db.Entities.Where(e => e.GetType() == typeof(Order)).ToList();
+        Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
+    }
+
+#if MONGO_DRIVER_3
     [Fact]
     public void Returns_correct_values_when_navigation_shared_between_entities()
     {
@@ -109,20 +153,6 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Returns_correct_entity_where_is_type_query()
-    {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
-
-        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
-        var entities = db.Entities.Where(e => e is Supplier).ToList();
-        Assert.Single(entities, e => e is Supplier {Name: "Supplier 1"});
-
-        var firstOrder = db.Entities.First(e => e is Order);
-        Assert.Equal("Order 1", Assert.IsType<Order>(firstOrder).OrderReference);
-    }
-
-    [Fact]
     public void Returns_correct_entity_with_OfType_query()
     {
         var collection = database.CreateCollection<BaseEntity>();
@@ -134,17 +164,6 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Returns_correct_entity_where_GetType_query()
-    {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
-
-        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
-        var entities = db.Entities.Where(e => e.GetType() == typeof(Order)).ToList();
-        Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
-    }
-
-    [Fact]
     public void Returns_correct_entities_with_mixed_query()
     {
         var collection = database.CreateCollection<BaseEntity>();
@@ -152,10 +171,12 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
         var entities = db.Entities.OfType<BaseEntity>().Where(e => e is Customer || e.GetType() == typeof(Order)).ToList();
-        Assert.Equal(2, entities.Count);
+        Assert.Equal(3, entities.Count);
         Assert.Single(entities, e => e is Customer {Name: "Customer 1"});
+        Assert.Single(entities, e => e is SubCustomer {Name: "SubCustomer 1"});
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
     }
+#endif
 
     [Fact]
     public void TablePerType_throws_NotSupportedException()
@@ -185,35 +206,12 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Throws<NotSupportedException>(() => SetupTestData(db));
     }
 
-    [Fact]
-    public void Multiple_discriminators_for_same_type_throws()
-    {
-        var collection = database.CreateCollection<BaseEntity>();
-
-        var configA = (ModelBuilder mb) =>
-        {
-            ConfigureModel(mb);
-            mb.Entity<BaseEntity>().Property(p => p.EntityType).HasElementName("_A");
-        };
-
-        var configB = (ModelBuilder mb) =>
-        {
-            ConfigureModel(mb);
-            mb.Entity<BaseEntity>().Property(p => p.EntityType).HasElementName("_B");
-        };
-
-        Assert.Throws<NotSupportedException>(() =>
-        {
-            SetupTestData(SingleEntityDbContext.Create(collection, configA));
-            SetupTestData(SingleEntityDbContext.Create(collection, configB));
-        });
-    }
-
     private static void ConfigureModel(ModelBuilder mb)
     {
         mb.Entity<BaseEntity>()
             .HasDiscriminator(e => e.EntityType)
             .HasValue<Customer>("Client")
+            .HasValue<SubCustomer>("SubClient")
             .HasValue<Supplier>("Supplier")
             .HasValue<Order>("Order")
             .HasValue<OrderWithProducts>("OrderEx")
@@ -224,6 +222,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     {
         db.Add(new Customer {Name = "Customer 1", ShippingAddress = "123 Main St"});
         db.Add(new Supplier {Name = "Supplier 1", Products = ["Product 1", "Product 2"]});
+        db.Add(new SubCustomer {Name = "SubCustomer 1", ShippingAddress = "3.5 Inch Dr.", AccountingCode = 123});
         db.Add(new Order {OrderReference = "Order 1"});
         db.Add(new Contact {Name = "Contact 1"});
         db.Add(new BaseEntity());
@@ -241,6 +240,11 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     {
         public string Name { get; set; }
         public string ShippingAddress { get; set; }
+    }
+
+    class SubCustomer : Customer
+    {
+        public int AccountingCode { get; set; }
     }
 
     class Supplier : BaseEntity

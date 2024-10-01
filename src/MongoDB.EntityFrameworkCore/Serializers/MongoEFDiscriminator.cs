@@ -28,17 +28,30 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 /// Provides a bridge between EF Core and the MongoDB C# driver for handling discriminator values.
 /// </summary>
 /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> entity that forms part of the hierarchy.</param>
-internal class MongoEFDiscriminator(IReadOnlyEntityType entityType)
-    : IDiscriminatorConvention
+internal class MongoEFDiscriminator(IReadOnlyEntityType entityType) :
+#if MONGO_DRIVER_3
+    IScalarDiscriminatorConvention
+#else
+    IDiscriminatorConvention
+#endif
 {
+    private readonly IReadOnlyModel _model = entityType.Model;
+
     public Type GetActualType(IBsonReader bsonReader, Type nominalType)
-        => throw new NotImplementedException();
+        => throw new NotImplementedException($"Attempted to resolve type discriminator for '{nominalType.ShortDisplayName()}'.");
 
     public BsonValue GetDiscriminator(Type nominalType, Type actualType)
     {
-        var childEntityType = entityType.Model.FindEntityType(actualType)
-            ?? throw new InvalidOperationException($"Entity type '{actualType.ShortDisplayName()}' not found in model.");
-        return BsonValue.Create(childEntityType.GetDiscriminatorValue());
+        var actualEntityType = _model.FindEntityType(actualType)
+                              ?? throw new InvalidOperationException($"Entity type '{actualType.ShortDisplayName()}' not found in model.");
+        return BsonValue.Create(actualEntityType.GetDiscriminatorValue());
+    }
+
+    public BsonValue[] GetDiscriminatorsForTypeAndSubTypes(Type type)
+    {
+        var entityType = _model.FindEntityType(type)
+                         ?? throw new InvalidOperationException($"Entity type '{type.ShortDisplayName()}' not found in model.");
+        return entityType.GetDerivedTypes().Prepend(entityType).Select(d => BsonValue.Create(d.GetDiscriminatorValue())).ToArray();
     }
 
     public string ElementName { get; } = entityType.FindDiscriminatorProperty()?.GetElementName() ?? "_t";

@@ -35,8 +35,10 @@ namespace MongoDB.EntityFrameworkCore.Infrastructure;
 public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies dependencies)
     : ModelRuntimeInitializer(dependencies)
 {
+#if !MONGO_DRIVER_3
     private static readonly Dictionary<Type, IDiscriminatorConvention>? DiscriminatorConventionDictionary =
         typeof(BsonSerializer).GetField("__discriminatorConventions", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as Dictionary<Type, IDiscriminatorConvention>;
+#endif
 
     /// <summary>
     /// Validates and initializes the given model with runtime dependencies.
@@ -56,8 +58,8 @@ public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies de
 
 #if !MONGO_DRIVER_3
         ConfigureDriverConventions();
-#endif
         SetupTypeDiscriminators(model);
+#endif
 
         return model;
     }
@@ -69,7 +71,6 @@ public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies de
         Bson.BsonDefaults.GuidRepresentationMode = Bson.GuidRepresentationMode.V3;
 #pragma warning restore CS0618 // Type or member is obsolete
     }
-#endif
 
     private static void SetupTypeDiscriminators(IModel model)
     {
@@ -103,4 +104,5 @@ public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies de
             }
         }
     }
+#endif
 }

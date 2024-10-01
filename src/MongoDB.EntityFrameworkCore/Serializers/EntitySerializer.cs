@@ -18,6 +18,7 @@ using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
@@ -28,6 +29,9 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 /// </summary>
 /// <typeparam name="TValue">The underlying CLR type being handled by this serializer.</typeparam>
 internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocumentSerializer
+#if MONGO_DRIVER_3
+    , IHasDiscriminatorConvention
+#endif
 {
     private readonly Func<IReadOnlyProperty, bool> _isStored = p => !p.IsShadowProperty() && p.GetElementName() != "";
     private readonly IReadOnlyEntityType _entityType;
@@ -47,6 +51,7 @@ internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocument
 
         _entityType = entityType;
         _bsonSerializerFactory = bsonSerializerFactory;
+        DiscriminatorConvention = new MongoEFDiscriminator(entityType);
     }
 
     /// <inheritdoc />
@@ -117,4 +122,6 @@ internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocument
 
     private IReadOnlyProperty[] GetStoredKeyProperties()
         => _entityType.FindPrimaryKey()?.Properties.Where(_isStored).ToArray() ?? [];
+
+    public IDiscriminatorConvention DiscriminatorConvention { get; }
 }
