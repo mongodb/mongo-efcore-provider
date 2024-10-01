@@ -28,10 +28,10 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 /// and the MongoDB LINQ provider's <see cref="IBsonDocumentSerializer"/> interface.
 /// </summary>
 /// <typeparam name="TValue">The underlying CLR type being handled by this serializer.</typeparam>
-internal class EntitySerializer<TValue> : IBsonSerializer<TValue>, IBsonDocumentSerializer
-#if MONGO_DRIVER_3
-    , IHasDiscriminatorConvention
-#endif
+internal class EntitySerializer<TValue> :
+    IBsonSerializer<TValue>,
+    IBsonDocumentSerializer,
+    IHasDiscriminatorConvention
 {
     private readonly Func<IReadOnlyProperty, bool> _isStored = p => !p.IsShadowProperty() && p.GetElementName() != "";
     private readonly IReadOnlyEntityType _entityType;

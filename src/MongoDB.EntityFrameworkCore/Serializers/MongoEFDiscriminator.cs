@@ -29,11 +29,7 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 /// </summary>
 /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> entity that forms part of the hierarchy.</param>
 internal class MongoEFDiscriminator(IReadOnlyEntityType entityType) :
-#if MONGO_DRIVER_3
     IScalarDiscriminatorConvention
-#else
-    IDiscriminatorConvention
-#endif
 {
     private readonly IReadOnlyModel _model = entityType.Model;
 

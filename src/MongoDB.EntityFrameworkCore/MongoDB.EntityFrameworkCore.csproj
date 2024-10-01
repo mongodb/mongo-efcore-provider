@@ -4,7 +4,7 @@
     <Description>Official MongoDB supported provider for Entity Framework Core 8. See https://www.mongodb.com/docs/entity-framework/ for more details.</Description>
     <IsPackable>true</IsPackable>
     <PackageId>MongoDB.EntityFrameworkCore</PackageId>
-    <Configurations>Debug;Release;Debug 3.0 Driver</Configurations>
+    <Configurations>Debug;Release;</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
 
@@ -16,22 +16,10 @@
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DocumentationFile>bin\Debug\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
   </PropertyGroup>
-
-  <PropertyGroup Condition=" '$(Configuration)' == 'Debug 3.0 Driver' ">
-    <DocumentationFile>bin\Debug\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
-    <DefineConstants>MONGO_DRIVER_3</DefineConstants>
-  </PropertyGroup>
-
-  <ItemGroup Condition=" '$(Configuration)' == 'Debug 3.0 Driver' ">
-    <PackageReference Include="MongoDB.Driver" Version="2.28.0-55-gf54ba02046" />
-  </ItemGroup>
-
-  <ItemGroup Condition=" '$(Configuration)' != 'Debug 3.0 Driver' ">
-    <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
-  </ItemGroup>
-
+  
   <ItemGroup>
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
+    <PackageReference Include="MongoDB.Driver" Version="2.28.0-55-gf54ba02046" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.7" />
     <PackageReference Remove="Microsoft.SourceLink.GitHub" />
   </ItemGroup>

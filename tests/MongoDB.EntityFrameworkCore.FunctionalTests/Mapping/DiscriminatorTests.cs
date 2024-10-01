@@ -123,7 +123,6 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
     }
 
-#if MONGO_DRIVER_3
     [Fact]
     public void Returns_correct_values_when_navigation_shared_between_entities()
     {
@@ -176,7 +175,6 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Single(entities, e => e is SubCustomer {Name: "SubCustomer 1"});
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
     }
-#endif
 
     [Fact]
     public void TablePerType_throws_NotSupportedException()
