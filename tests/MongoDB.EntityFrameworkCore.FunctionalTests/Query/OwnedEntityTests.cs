@@ -20,7 +20,7 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+[XUnitCollection("QueryTests")]
 public class OwnedEntityTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

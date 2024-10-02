@@ -19,6 +19,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
 public class SkipTakeOrderingTests(ReadOnlySampleGuidesFixture database)
+    : IDisposable, IAsyncDisposable
 {
     private readonly GuidesDbContext _db = GuidesDbContext.Create(database.MongoDatabase);
 
@@ -279,4 +280,10 @@ public class SkipTakeOrderingTests(ReadOnlySampleGuidesFixture database)
             previousName = r.name;
         });
     }
+
+    public void Dispose()
+        => _db.Dispose();
+
+    public async ValueTask DisposeAsync()
+        => await _db.DisposeAsync();
 }

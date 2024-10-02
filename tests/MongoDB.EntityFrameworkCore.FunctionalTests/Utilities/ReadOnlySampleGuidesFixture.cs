@@ -25,7 +25,7 @@ public class ReadOnlySampleGuidesFixtureCollection : ICollectionFixture<ReadOnly
     // ICollectionFixture<> interfaces.
 }
 
-public class ReadOnlySampleGuidesFixture : IDisposable, IAsyncDisposable
+public class ReadOnlySampleGuidesFixture
 {
     public ReadOnlySampleGuidesFixture()
     {
@@ -36,11 +36,4 @@ public class ReadOnlySampleGuidesFixture : IDisposable, IAsyncDisposable
 
     public IMongoDatabase MongoDatabase { get; }
     public IMongoClient Client { get; }
-
-    public void Dispose()
-    {
-    }
-
-    public ValueTask DisposeAsync()
-        => ValueTask.CompletedTask;
 }
