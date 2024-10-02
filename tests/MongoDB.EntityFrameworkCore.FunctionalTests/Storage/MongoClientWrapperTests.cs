@@ -22,12 +22,13 @@ using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
+[XUnitCollection("StorageTests")]
 public class MongoClientWrapperTests
 {
     [Fact]
     public void CreateDatabase_creates_database()
     {
-        using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
         var client = context.GetService<IMongoClientWrapper>();
 
@@ -52,7 +53,7 @@ public class MongoClientWrapperTests
     [Fact]
     public async Task CreateDatabaseAsync_creates_database()
     {
-        await using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
         var client = context.GetService<IMongoClientWrapper>();
 
@@ -80,7 +81,7 @@ public class MongoClientWrapperTests
         const int expectedMaxDocs = 1024;
         const int expectedMaxSize = 4096;
 
-        using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
 
         {
             var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
@@ -120,7 +121,7 @@ public class MongoClientWrapperTests
         const int expectedMaxDocs = 1024;
         const int expectedMaxSize = 4096;
 
-        await using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
 
         {
             var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
@@ -158,7 +159,7 @@ public class MongoClientWrapperTests
     [Fact]
     public void DeleteDatabase_deletes_database()
     {
-        using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
         var client = context.GetService<IMongoClientWrapper>();
 
@@ -174,7 +175,7 @@ public class MongoClientWrapperTests
     [Fact]
     public async Task DeleteDatabaseAsync_deletes_database()
     {
-        await using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
         var client = context.GetService<IMongoClientWrapper>();
 

@@ -276,7 +276,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     {
         List<string> logs = [];
 
-        await using var guidesFixture = new SampleGuidesFixture();
+        var guidesFixture = new SampleGuidesFixture();
         await using var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, s =>
         {
             logs.Add(s);
@@ -359,7 +359,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     {
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
 
-        await using var guidesFixture = new SampleGuidesFixture();
+        var guidesFixture = new SampleGuidesFixture();
         await using var db = GuidesDbContext.Create(guidesFixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
         db.Planets.RemoveRange(db.Planets.Where(m => m.name.StartsWith("M")));

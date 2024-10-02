@@ -254,7 +254,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     [Fact]
     public void SaveChanges_multi_collection_rolls_back_on_driver_exception()
     {
-        using var tempDatabaseFixture = new TemporaryDatabaseFixture();
+        var tempDatabaseFixture = new TemporaryDatabaseFixture();
         var e1 = new Employee {Id = "E1", Name = "Roy Williams", JobTitle = "Office Manager"};
 
         {
@@ -286,7 +286,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     [Fact]
     public async Task SaveChangesAsync_multi_collection_rolls_back_on_driver_exception()
     {
-        await using var tempDatabaseFixture = new TemporaryDatabaseFixture();
+        var tempDatabaseFixture = new TemporaryDatabaseFixture();
         var e1 = new Employee {Id = "E1", Name = "Roy Williams", JobTitle = "Office Manager"};
 
         {
@@ -318,7 +318,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     [Fact]
     public void SaveChanges_multi_collection_rolls_back_on_DbUpdateConcurrencyException()
     {
-        using var tempDatabaseFixture = new TemporaryDatabaseFixture();
+        var tempDatabaseFixture = new TemporaryDatabaseFixture();
         var e1 = new Employee {Id = "E1", Name = "Roy Williams", JobTitle = "Office Manager"};
         var s1 = new Supplier {Id = "S1", Name = "Friendly Corp.", Address = "123 Main St."};
 
@@ -356,7 +356,7 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     [Fact]
     public async Task SaveChangesAsync_multi_collection_rolls_back_on_DbUpdateConcurrencyException()
     {
-        await using var tempDatabaseFixture = new TemporaryDatabaseFixture();
+        var tempDatabaseFixture = new TemporaryDatabaseFixture();
         var e1 = new Employee {Id = "E1", Name = "Roy Williams", JobTitle = "Office Manager"};
         var s1 = new Supplier {Id = "S1", Name = "Friendly Corp.", Address = "123 Main St."};
 

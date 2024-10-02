@@ -18,12 +18,13 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
+[XUnitCollection("StorageTests")]
 public class MongoDatabaseCreatorTests
 {
     [Fact]
     public void EnsureCreated_returns_true_when_database_did_not_exist()
     {
-        using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         Assert.True(db.Database.EnsureCreated());
@@ -32,7 +33,7 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public void EnsureCreated_returns_false_when_database_already_exists()
     {
-        using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         database.CreateCollection<Planet>(); // Force DB to actually exist
@@ -43,7 +44,7 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public async Task EnsureCreatedAsync_returns_true_when_database_did_not_exist()
     {
-        await using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         await using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         Assert.True(await db.Database.EnsureCreatedAsync());
@@ -52,7 +53,7 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public async Task EnsureCreatedAsync_returns_false_when_database_already_exists()
     {
-        await using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         await using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         database.CreateCollection<Planet>(); // Force DB to actually exist
@@ -63,7 +64,7 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public void EnsureDeleted_returns_true_and_deletes_database_when_it_exists()
     {
-        using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         database.CreateCollection<Planet>(); // Force DB to actually exist
@@ -76,7 +77,7 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public void EnsureDeleted_returns_false_when_it_does_not_exist()
     {
-        using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         Assert.False(db.Database.EnsureDeleted());
@@ -85,7 +86,7 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public async Task EnsureDeletedAsync_returns_true_and_deletes_database_when_it_exists()
     {
-        await using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         await using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         database.CreateCollection<Planet>(); // Force DB to actually exist
@@ -98,7 +99,7 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public async Task EnsureDeletedAsync_returns_false_when_it_does_not_exist()
     {
-        await using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         await using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         Assert.False(await db.Database.EnsureDeletedAsync());
@@ -107,17 +108,11 @@ public class MongoDatabaseCreatorTests
     [Fact]
     public void CanConnect_returns_true_when_it_can_connect()
     {
-        using var database = new TemporaryDatabaseFixture();
+        var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         Assert.True(db.Database.CanConnect());
     }
-
-    private readonly MongoClient _fastFailClient
-        = new(new MongoClientSettings {
-            Server = MongoServerAddress.Parse("localhost:27999"),
-            ServerSelectionTimeout = TimeSpan.FromSeconds(0),
-            ConnectTimeout = TimeSpan.FromSeconds(1) });
 
     [Fact]
     public void CanConnect_returns_false_when_it_cannot_connect()
@@ -134,4 +129,10 @@ public class MongoDatabaseCreatorTests
 
         Assert.False(await db.Database.CanConnectAsync());
     }
+
+    private readonly MongoClient _fastFailClient
+        = new(new MongoClientSettings {
+            Server = MongoServerAddress.Parse("localhost:27999"),
+            ServerSelectionTimeout = TimeSpan.FromSeconds(0),
+            ConnectTimeout = TimeSpan.FromSeconds(1) });
 }

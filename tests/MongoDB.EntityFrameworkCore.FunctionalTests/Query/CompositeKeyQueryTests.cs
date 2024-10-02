@@ -18,7 +18,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
+[XUnitCollection("QueryTests")]
 public class CompositeKeyQueryTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -93,7 +93,6 @@ public class CompositeKeyQueryTests(TemporaryDatabaseFixture database)
     public class Entity
     {
         public string Key1 { get; set; }
-
         public int Key2 { get; set; }
     }
 }

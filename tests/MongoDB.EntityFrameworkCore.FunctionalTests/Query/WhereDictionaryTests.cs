@@ -17,7 +17,7 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection("DictionaryTests")]
+[XUnitCollection("QueryTests")]
 public class WhereDictionaryTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

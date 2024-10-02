@@ -19,13 +19,14 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection(nameof(ReadOnlySampleGuidesFixture))]
 public class ProjectionTests(ReadOnlySampleGuidesFixture database)
+    : IDisposable, IAsyncDisposable
 {
-    private readonly IQueryable<Planet> _planets = GuidesDbContext.Create(database.MongoDatabase).Planets.Take(10);
+    private readonly GuidesDbContext _db = GuidesDbContext.Create(database.MongoDatabase);
 
     [Fact]
     public void Select_projection_no_op()
     {
-        var results = _planets.Select(p => p).ToArray();
+        var results = _db.Planets.Take(10).Select(p => p).ToArray();
         Assert.Equal(8, results.Length);
         Assert.All(results, r =>
         {
@@ -37,7 +38,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Select_projection_to_anonymous()
     {
-        var results = _planets.Select(p => new {Name = p.name, Order = p.orderFromSun});
+        var results = _db.Planets.Take(10).Select(p => new {Name = p.name, Order = p.orderFromSun});
         Assert.All(results, r =>
         {
             Assert.NotNull(r.Name);
@@ -48,7 +49,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Select_projection_to_tuple()
     {
-        var results = _planets.Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings));
+        var results = _db.Planets.Take(10).Select(p => Tuple.Create(p.name, p.orderFromSun, p.hasRings));
         Assert.All(results, r =>
         {
             Assert.NotNull(r.Item1);
@@ -59,21 +60,27 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact(Skip = "Projections not yet completely supported")]
     public void Select_projection_to_constructor_initializer()
     {
-        var results = _planets.Select(p => new NamedContainer<Planet> {Name = p.name, Item = p});
+        var results = _db.Planets.Take(10).Select(p => new NamedContainer<Planet> {Name = p.name, Item = p});
         Assert.All(results, r => { Assert.Equal(r.Name, r.Item?.name); });
     }
 
     [Fact(Skip = "Requires Select projection rewriting")]
     public void Select_projection_to_constructor_params()
     {
-        var results = _planets.Select(p => new NamedContainer<Planet>(p, p.name));
+        var results = _db.Planets.Take(10).Select(p => new NamedContainer<Planet>(p, p.name));
         Assert.All(results, r => { Assert.Equal(r.Name, r.Item?.name); });
     }
 
     [Fact(Skip = "Requires Select projection rewriting")]
     public void Select_projection_to_constructor_params_and_initializer()
     {
-        var results = _planets.Select(p => new NamedContainer<Planet>(p) {Name = p.name});
+        var results = _db.Planets.Take(10).Select(p => new NamedContainer<Planet>(p) {Name = p.name});
         Assert.All(results, r => { Assert.Equal(r.Name, r.Item?.name); });
     }
+
+    public void Dispose()
+        => _db.Dispose();
+
+    public async ValueTask DisposeAsync()
+        => await _db.DisposeAsync();
 }

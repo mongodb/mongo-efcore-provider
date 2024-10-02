@@ -18,6 +18,7 @@ using System.Reflection;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
+[XUnitCollection("QueryTests")]
 public class InvalidQueryTranslationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
