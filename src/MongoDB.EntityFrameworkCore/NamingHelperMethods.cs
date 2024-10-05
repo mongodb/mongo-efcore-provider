@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Buffers;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -72,29 +73,59 @@ public static partial class NamingHelperMethods
     /// <returns>The cleaned title-cased string.</returns>
     /// <remarks>Word boundaries are considered spaces, non-alphanumeric, a transition from
     /// lower to upper, and a transition from number to non-number.</remarks>
-    public static string ToTitleCase(
-        this string input,
-        CultureInfo culture)
+    public static string ToTitleCase(this string input, CultureInfo culture)
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        var words = WordSplitRegex().Split(input);
+        Span<char> initialBuffer = stackalloc char[512];
 
-        var result = new char[input.Length];
-        var outIndex = 0;
+        if (input.Length > initialBuffer.Length) return ToTitleCaseLarge(input, culture);
 
-        for (var inIndex = 0; inIndex < words.Length; inIndex++)
+        var written = ToTitleCaseInternal(input.AsSpan(), initialBuffer, culture);
+        return new string(initialBuffer[..written]);
+    }
+
+    private static string ToTitleCaseLarge(string input, CultureInfo culture)
+    {
+        var rentedArray = ArrayPool<char>.Shared.Rent(input.Length);
+        try
         {
-            var w = words[inIndex];
-            if (w.Length == 0) continue;
+            var written = ToTitleCaseInternal(input.AsSpan(), rentedArray, culture);
+            return new string(rentedArray, 0, written);
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(rentedArray);
+        }
+    }
 
-            result[outIndex] = char.ToUpper(w[0], culture);
-            w.ToLower(culture).CopyTo(1, result, outIndex + 1, w.Length - 1);
+    private static int ToTitleCaseInternal(ReadOnlySpan<char> input, Span<char> output, CultureInfo culture)
+    {
+        var outIndex = 0;
+        var lastIndex = 0;
 
-            outIndex += w.Length;
+        foreach (var match in WordSplitRegex().EnumerateMatches(input))
+        {
+            var wordLength = match.Index - lastIndex;
+            if (wordLength > 0)
+                ProcessWord(input.Slice(lastIndex, wordLength), output[outIndex..], culture,
+                    ref outIndex);
+
+            lastIndex = match.Index + match.Length;
         }
 
-        return new string(result, 0, outIndex);
+        if (lastIndex < input.Length)
+            ProcessWord(input[lastIndex..], output[outIndex..], culture, ref outIndex);
+
+        return outIndex;
+    }
+
+    private static void ProcessWord(ReadOnlySpan<char> word, Span<char> output, CultureInfo culture,
+        ref int outIndex)
+    {
+        output[0] = char.ToUpper(word[0], culture);
+        for (var i = 1; i < word.Length; i++) output[i] = char.ToLower(word[i], culture);
+        outIndex += word.Length;
     }
 
     // Find word boundaries.
