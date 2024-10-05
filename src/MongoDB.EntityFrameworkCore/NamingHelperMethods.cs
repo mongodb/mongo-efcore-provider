@@ -77,10 +77,9 @@ public static partial class NamingHelperMethods
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        Span<char> initialBuffer = stackalloc char[512];
+        if (input.Length > 512) return ToTitleCaseLarge(input, culture);
 
-        if (input.Length > initialBuffer.Length) return ToTitleCaseLarge(input, culture);
-
+        Span<char> initialBuffer = stackalloc char[input.Length];
         var written = ToTitleCaseInternal(input.AsSpan(), initialBuffer, culture);
         return new string(initialBuffer[..written]);
     }
