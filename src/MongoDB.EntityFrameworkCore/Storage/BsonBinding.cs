@@ -41,7 +41,7 @@ internal static class BsonBinding
     /// <see langword="false"/> if it is optional.
     /// </param>
     /// <param name="mappedType">What <see cref="Type"/> to the value is to be treated as.</param>
-    /// <param name="entityType">The <see cref="IEntityType"/> the value will belong to in order to obtaining additional metadata.</param>
+    /// <param name="declaredType">The <see cref="ITypeBase"/> the value will belong to in order to obtaining additional metadata.</param>
     /// <returns>A compilable expression the shaper can use to obtain this value from a <see cref="BsonDocument"/>.</returns>
     /// <exception cref="InvalidOperationException">If we can't find anything mapped to this name.</exception>
     public static Expression CreateGetValueExpression(
@@ -49,7 +49,7 @@ internal static class BsonBinding
         string? name,
         bool required,
         Type mappedType,
-        IEntityType entityType)
+        ITypeBase declaredType)
     {
         if (name is null)
         {
@@ -63,27 +63,30 @@ internal static class BsonBinding
 
         if (mappedType == typeof(BsonDocument))
         {
-            return CreateGetBsonDocument(bsonDocExpression, name, required, entityType);
+            return CreateGetBsonDocument(bsonDocExpression, name, required, declaredType);
         }
 
-        var targetProperty = entityType.FindProperty(name);
+        var targetProperty = declaredType.FindProperty(name);
         if (targetProperty != null)
         {
             return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty),
                 targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType);
         }
 
-        var navigationProperty = entityType.FindNavigation(name);
-        if (navigationProperty != null)
+        if (declaredType is IEntityType entityType)
         {
-            var fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
-            return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
+            var navigationProperty = entityType.FindNavigation(name);
+            if (navigationProperty != null)
+            {
+                var fieldName = navigationProperty.TargetEntityType.GetContainingElementName()!;
+                return CreateGetElementValue(bsonDocExpression, fieldName, mappedType);
+            }
         }
 
-        throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, entityType.DisplayName()));
+        throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, declaredType.DisplayName()));
     }
 
-    private static Expression CreateGetBsonArray(Expression bsonDocExpression, string name)
+    private static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
     private static readonly MethodInfo GetBsonArrayMethodInfo
@@ -107,22 +110,22 @@ internal static class BsonBinding
     }
 
     private static MethodCallExpression CreateGetBsonDocument(
-        Expression bsonDocExpression, string name, bool required, IEntityType entityType)
+        Expression bsonDocExpression, string name, bool required, ITypeBase declaredType)
         => Expression.Call(null, GetBsonDocumentMethodInfo, bsonDocExpression, Expression.Constant(name),
             Expression.Constant(required),
-            Expression.Constant(entityType));
+            Expression.Constant(declaredType));
 
     private static readonly MethodInfo GetBsonDocumentMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetBsonDocument));
 
-    private static BsonDocument? GetBsonDocument(BsonDocument parent, string name, bool required, IReadOnlyTypeBase entityType)
+    private static BsonDocument? GetBsonDocument(BsonDocument parent, string name, bool required, ITypeBase declaredType)
     {
         var value = parent.GetValue(name, BsonNull.Value);
         if (value == BsonNull.Value && required)
         {
             throw new InvalidOperationException($"Field '{name}' required but not present in BsonDocument for a '{
-                entityType.DisplayName()}'.");
+                declaredType.DisplayName()}'.");
         }
 
         return value == BsonNull.Value ? null : value.AsBsonDocument;

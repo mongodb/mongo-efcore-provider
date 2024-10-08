@@ -42,20 +42,7 @@ public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies de
         IDiagnosticsLogger<DbLoggerCategory.Model.Validation>? validationLogger = null)
     {
         model = base.Initialize(model, designTime, validationLogger);
-
-#if !MONGO_DRIVER_3
-        ConfigureDriverConventions();
-#endif
-
         return model;
     }
 
-#if !MONGO_DRIVER_3
-    private static void ConfigureDriverConventions()
-    {
-#pragma warning disable CS0618 // Type or member is obsolete
-        Bson.BsonDefaults.GuidRepresentationMode = Bson.GuidRepresentationMode.V3;
-#pragma warning restore CS0618 // Type or member is obsolete
-    }
-#endif
 }

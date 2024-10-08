@@ -344,7 +344,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
         }
 
         return Expression.Convert(
-            CreateGetValueExpression(docExpression, property.Name, !type.IsNullableType(), type, property.GetTypeMapping()),
+            CreateGetValueExpression(docExpression, property.Name, !type.IsNullableType(), type, property.DeclaringType, property.GetTypeMapping()),
             type);
     }
 
@@ -359,16 +359,18 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     /// Create a new compilable <see cref="Expression"/> the shaper can use to obtain the value from the <see cref="BsonDocument"/>.
     /// </summary>
     /// <param name="docExpression">The <see cref="Expression"/> used to access the <see cref="BsonDocument"/>.</param>
-    /// <param name="fieldName">The name of the field within the document.</param>
-    /// <param name="fieldRequired"><see langword="true"/> if the field is required, <see langword="false"/> if it is optional.</param>
+    /// <param name="propertyName">The name of the property.</param>
+    /// <param name="required"><see langword="true"/> if the field is required, <see langword="false"/> if it is optional.</param>
     /// <param name="type">The <see cref="Type"/> of the value as it is within the document.</param>
+    /// <param name="declaredType">The optional <see cref="ITypeBase"/> this element comes from.</param>
     /// <param name="typeMapping">Any associated <see cref="CoreTypeMapping"/> to be used in mapping the value.</param>
     /// <returns>A compilable <see cref="Expression"/> to obtain the desired value as the correct type.</returns>
     protected abstract Expression CreateGetValueExpression(
         Expression docExpression,
-        string fieldName,
-        bool fieldRequired,
+        string propertyName,
+        bool required,
         Type type,
+        ITypeBase declaredType = null,
         CoreTypeMapping typeMapping = null);
 
     private BlockExpression AddIncludes(BlockExpression shaperBlock)
