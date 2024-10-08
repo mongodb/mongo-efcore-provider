@@ -14,7 +14,9 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
@@ -104,13 +106,14 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
 
         using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
-        var entities = db.Entities.Where(e => e is Supplier).ToList();
-        Assert.Single(entities, e => e is Supplier {Name: "Supplier 1"});
+        var firstSupplier = db.Entities.First(e => e is Supplier);
+        Assert.Equal("Supplier 1", Assert.IsType<Supplier>(firstSupplier).Name);
 
-        var firstOrder = db.Entities.First(e => e is Order);
-        Assert.Equal("Order 1", Assert.IsType<Order>(firstOrder).OrderReference);
+        var orders = db.Entities.Where(e => e is Order).ToList();
+        Assert.Single(orders, o => o is Order {OrderReference: "Order 1"});
+        Assert.Single(orders, o => o is OrderWithProducts {OrderReference: "Order 2"});
+        Assert.Equal(2, orders.Count);
     }
-
 
     [Fact]
     public void Returns_correct_entity_where_GetType_query()
@@ -121,6 +124,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
         var entities = db.Entities.Where(e => e.GetType() == typeof(Order)).ToList();
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
+        Assert.Single(entities);
     }
 
     [Fact]
@@ -152,6 +156,42 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Enables_multiple_independent_hierarchies_with_different_collections()
+    {
+        var options = new DbContextOptionsBuilder<MultiEntityContext>()
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .Options;
+
+        {
+            using var db = new MultiEntityContext(options);
+            db.Add(new Customer {Name = "Customer 1", ShippingAddress = "123 Main St"});
+            db.Add(new Supplier {Name = "Supplier 1", Products = ["Product 1", "Product 2"]});
+            db.Add(new SubCustomer {Name = "SubCustomer 1", ShippingAddress = "3.5 Inch Dr.", AccountingCode = 123});
+            db.Add(new Order {OrderReference = "Order 1"});
+            db.Add(new OrderWithProducts {OrderReference = "Order 2", Products = ["abc", "123"]});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = new MultiEntityContext(options);
+            var customers = db.Customers.ToList();
+            Assert.Single(customers, c => c.Name == "Customer 1");
+            Assert.Single(customers, c => c is SubCustomer {Name: "SubCustomer 1"});
+            Assert.Equal(2, customers.Count);
+
+            var suppliers = db.Suppliers.ToList();
+            Assert.Single(suppliers, s => s.Name == "Supplier 1");
+            Assert.Single(suppliers);
+
+            var orders = db.Orders.ToList();
+            Assert.Single(orders, o => o.OrderReference == "Order 1");
+            Assert.Single(orders, o => o is OrderWithProducts {OrderReference: "Order 2"});
+            Assert.Equal(2, orders.Count);
+        }
+    }
+
+    [Fact]
     public void Returns_correct_entity_with_OfType_query()
     {
         var collection = database.CreateCollection<BaseEntity>();
@@ -160,6 +200,8 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
         var entities = db.Entities.OfType<Customer>().ToList();
         Assert.Single(entities, e => e.Name == "Customer 1");
+        Assert.Single(entities, e => e.Name == "SubCustomer 1");
+        Assert.Equal(2, entities.Count);
     }
 
     [Fact]
@@ -222,6 +264,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         db.Add(new Supplier {Name = "Supplier 1", Products = ["Product 1", "Product 2"]});
         db.Add(new SubCustomer {Name = "SubCustomer 1", ShippingAddress = "3.5 Inch Dr.", AccountingCode = 123});
         db.Add(new Order {OrderReference = "Order 1"});
+        db.Add(new OrderWithProducts {OrderReference = "Order 2", Products = ["abc", "123"]});
         db.Add(new Contact {Name = "Contact 1"});
         db.Add(new BaseEntity());
         db.SaveChanges();
@@ -281,4 +324,31 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     {
         public string OrderReference { get; set; }
     }
+
+    class MultiEntityContext(DbContextOptions options)
+        : DbContext(options)
+    {
+        public DbSet<Order> Orders { get; set; }
+        public DbSet<Customer> Customers { get; set; }
+        public DbSet<Supplier> Suppliers { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            base.OnModelCreating(mb);
+            mb.Entity<Customer>()
+                .ToCollection("customer-docs")
+                .HasDiscriminator(o => o.EntityType)
+                .HasValue<Customer>("c")
+                .HasValue<SubCustomer>("s");
+            mb.Entity<Order>()
+                .ToCollection("order-docs")
+                .HasDiscriminator(o => o.EntityType)
+                .HasValue<Order>("order")
+                .HasValue<OrderWithProducts>("product-order");
+            mb.Entity<Supplier>()
+                .Ignore(s => s.EntityType)
+                .ToCollection("supplier-docs");
+        }
+    }
+
 }
