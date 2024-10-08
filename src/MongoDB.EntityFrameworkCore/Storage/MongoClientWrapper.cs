@@ -25,7 +25,6 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query;
@@ -41,6 +40,7 @@ public class MongoClientWrapper : IMongoClientWrapper
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
     private readonly IMongoClient _client;
     private readonly IMongoDatabase _database;
+    private bool _useDatabaseNameFilter = true;
 
     private string DatabaseName => _database.DatabaseNamespace.DatabaseName;
 
@@ -155,19 +155,48 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <inheritdoc/>
     public bool DatabaseExists()
     {
-        using var cursor = _client.ListDatabaseNames(BuildListDbNameOptions());
-        return cursor.Any();
+        if (_useDatabaseNameFilter)
+        {
+            try
+            {
+                using var filteredCursor = _client.ListDatabaseNames(BuildListDbNameFilterOptions());
+                return filteredCursor.Any();
+            }
+            catch (MongoCommandException ex) when (ex.ErrorMessage.Contains("filter"))
+            {
+                // Shared cluster does not support filtering database names so fallback
+                _useDatabaseNameFilter = false;
+            }
+        }
+
+        using var allCursor = _client.ListDatabaseNames();
+        return allCursor.ToList().Any(d => d == DatabaseName);
     }
 
     /// <inheritdoc/>
     public async Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default)
     {
-        using var cursor = await _client
-            .ListDatabaseNamesAsync(BuildListDbNameOptions(), cancellationToken).ConfigureAwait(false);
-        return await cursor.AnyAsync(cancellationToken).ConfigureAwait(false);
+        if (_useDatabaseNameFilter)
+        {
+            try
+            {
+                using var cursor = await _client
+                    .ListDatabaseNamesAsync(BuildListDbNameFilterOptions(), cancellationToken).ConfigureAwait(false);
+                return await cursor.AnyAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (MongoCommandException ex) when (ex.ErrorMessage.Contains("filter"))
+            {
+                // Shared cluster does not support filtering database names so fallback
+                _useDatabaseNameFilter = false;
+            }
+        }
+
+        using var allCursor = await _client.ListDatabaseNamesAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        var listOfDatabases = await allCursor.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return listOfDatabases.Any(d => d == DatabaseName);
     }
 
-    private ListDatabaseNamesOptions BuildListDbNameOptions()
+    private ListDatabaseNamesOptions BuildListDbNameFilterOptions()
         => new() {Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)};
 
     private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
