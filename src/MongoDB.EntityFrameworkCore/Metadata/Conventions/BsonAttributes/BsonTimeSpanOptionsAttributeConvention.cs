@@ -23,5 +23,5 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 /// to ensure the model will throw as the attribute is not supported in the EF provider.
 /// </summary>
 /// <param name="dependencies">The <see cref="ProviderConventionSetBuilderDependencies"/> conventions depend upon.</param>
-public sealed class BsonBsonTimeSpanOptionsPropertyAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)
+public sealed class BsonTimeSpanOptionsPropertyAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)
     : NotSupportedPropertyAttributeConvention<BsonTimeSpanOptionsAttribute>(dependencies);
