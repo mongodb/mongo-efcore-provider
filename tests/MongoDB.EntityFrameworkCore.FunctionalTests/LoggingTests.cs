@@ -62,7 +62,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs,
             l => l.Contains(_dbName
-                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : NumberLong(1) }])"));
+                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : 1 }])"));
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs,
             l => l.Contains(_dbName
-                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])"));
+                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])"));
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.Contains("Executed MQL query", message);
         Assert.Contains(
             _dbName
-            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : NumberLong(1) }])",
+            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : 1 }])",
             message);
     }
 
@@ -185,7 +185,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var message = GetLogMessageByEventId(spyLogger);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains(
-            _dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])",
+            _dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])",
             message);
     }
 
@@ -248,7 +248,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         var message = GetLogMessageByEventId(spyLogger);
         Assert.Contains("Executed MQL query", message);
-        Assert.Contains("na.moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : NumberLong(2) }])",
+        Assert.Contains("na.moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])",
             message);
     }
 
