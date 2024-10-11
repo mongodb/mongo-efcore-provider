@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -795,5 +796,247 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
 
         var found = db.Entities.First(e => e._id == ObjectId.Parse(id));
         Assert.Equal(id, found._id.ToString());
+    }
+
+    [Fact]
+    public void Custom_struct_can_be_used_as_key()
+    {
+        var idValue = HexStruct.Create();
+        const string expectedName = "Any Name Works";
+        var docs = database.CreateCollection<IdIsStringWithName>();
+        docs.InsertOne(new IdIsStringWithName {_id = idValue.ToString(), name = expectedName});
+
+        var collection = database.GetCollection<IdGenericEntity<HexStruct>>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<IdGenericEntity<HexStruct>>(e =>
+            {
+                e.HasKey(f => f.Id);
+                e.Property(f => f.Id).HasElementName("_id").HasConversion(k => k.ToString(), s => new HexStruct(s));
+                e.Property(f => f.Name).HasElementName("name");
+            });
+        });
+
+        var found = db.Entities.First(e => e.Id.Equals(idValue));
+        Assert.Equal(idValue, found.Id);
+        Assert.Equal(expectedName, found.Name);
+
+        found.Name = "Test";
+        db.SaveChanges();
+    }
+
+    [Fact]
+    public void Custom_class_can_be_used_as_key()
+    {
+        var idValue = HexClass.Create();
+        const string expectedName = "Any Name Works";
+        var docs = database.CreateCollection<IdIsStringWithName>();
+        docs.InsertOne(new IdIsStringWithName {_id = idValue.ToString(), name = expectedName});
+
+        var collection = database.GetCollection<IdGenericEntity<HexClass>>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<IdGenericEntity<HexClass>>(e =>
+            {
+                e.HasKey(f => f.Id);
+                e.Property(f => f.Id).HasElementName("_id").HasConversion(k => k.ToString(), s => new HexClass(s));
+                e.Property(f => f.Name).HasElementName("name");
+            });
+        });
+
+        var found = db.Entities.First(e => e.Id.Equals(idValue));
+        Assert.Equal(idValue, found.Id);
+        Assert.Equal(expectedName, found.Name);
+
+        found.Name = "Test";
+        db.SaveChanges();
+    }
+
+    class IdIsStringWithName
+    {
+        public string _id { get; set; }
+        public string name { get; set; }
+    }
+
+    public class IdGenericEntity<T>
+    {
+        public T Id { get; set; }
+        public string Name { get; set; }
+    }
+
+    [Fact]
+    public void Custom_struct_can_be_used_as_property()
+    {
+        var propertyValue = HexStruct.Create();
+        var docs = database.CreateCollection<GenericPropertyEntity<string>>();
+        docs.InsertOne(new GenericPropertyEntity<string> { value = propertyValue.ToString()});
+
+        var collection = database.GetCollection<GenericPropertyEntity<HexStruct>>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<GenericPropertyEntity<HexStruct>>(e =>
+            {
+                e.Property(f => f.value).HasConversion(k => k.ToString(), s => new HexStruct(s));
+            });
+        });
+
+        var found = db.Entities.First(e => e.value.Equals(propertyValue));
+        Assert.Equal(propertyValue, found.value);
+
+        found.value = HexStruct.Create();
+        db.SaveChanges();
+    }
+
+    [Fact]
+    public void Custom_class_can_be_used_as_property()
+    {
+        var propertyValue = HexClass.Create();
+        var docs = database.CreateCollection<GenericPropertyEntity<string>>();
+        docs.InsertOne(new GenericPropertyEntity<string> { value = propertyValue.ToString()});
+
+        var collection = database.GetCollection<GenericPropertyEntity<HexClass>>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<GenericPropertyEntity<HexClass>>(e =>
+            {
+                e.Property(f => f.value).HasConversion(k => k.ToString(), s => new HexClass(s));
+            });
+        });
+
+        var found = db.Entities.First(e => e.value.Equals(propertyValue));
+        Assert.Equal(propertyValue, found.value);
+
+        found.value = HexClass.Create();
+        db.SaveChanges();
+    }
+
+    class GenericPropertyEntity<T>
+    {
+        public ObjectId _id { get; set; }
+        public T value { get; set; }
+    }
+
+    [Fact(Skip = "Not currently supported, see EF-169")]
+    public void Custom_struct_can_be_used_in_an_array()
+    {
+        var arrayValues = Enumerable.Range(0, 5).Select(_ => HexStruct.Create()).ToArray();
+        var collection = database.CreateCollection<ValueArrayGenericEntity<HexStruct>>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+            db.Add(new ValueArrayGenericEntity<HexStruct> {values = arrayValues});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+            var found = db.Entities.First();
+            Assert.Equal(arrayValues, found.values);
+        }
+
+        void ConfigureModel(ModelBuilder mb)
+        {
+            mb.Entity<ValueArrayGenericEntity<HexStruct>>(e =>
+            {
+                e.Property(f => f.values)
+                    .HasConversion(
+                        k => k.Select(r => r.ToString()).ToArray(),
+                        s => s.Select(r => new HexStruct(r)).ToArray());
+            });
+        }
+    }
+
+    [Fact(Skip = "Not currently supported, see EF-169")]
+    public void Custom_class_can_be_used_in_an_array()
+    {
+        var arrayValues = Enumerable.Range(0, 5).Select(_ => HexClass.Create()).ToArray();
+        var collection = database.CreateCollection<ValueArrayGenericEntity<HexClass>>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+            db.Add(new ValueArrayGenericEntity<HexClass> {values = arrayValues});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+            var found = db.Entities.First();
+            Assert.Equal(arrayValues, found.values);
+        }
+
+        void ConfigureModel(ModelBuilder mb)
+        {
+            mb.Entity<ValueArrayGenericEntity<HexClass>>(e =>
+            {
+                e.Property(f => f.values)
+                    .HasConversion(
+                        k => k.Select(r => r.ToString()).ToArray(),
+                        s => s.Select(r => new HexClass(r)).ToArray());
+            });
+        }
+    }
+
+    class ValueArrayGenericEntity<T>
+    {
+        public ObjectId _id { get; set; }
+        public T[] values { get; set; }
+    }
+
+    public readonly struct HexStruct: IEquatable<HexStruct>
+    {
+        private readonly byte[] _keyBytes;
+
+        public HexStruct(string hex)
+        {
+            _keyBytes = Convert.FromHexString(hex);
+        }
+
+        public HexStruct(byte[] keyBytes)
+        {
+            _keyBytes = keyBytes;
+        }
+
+        public override string ToString() => Convert.ToHexString(_keyBytes);
+
+        public static HexStruct Create()
+            => new(BitConverter.GetBytes(DateTime.Now.Ticks).Reverse().Concat(RandomNumberGenerator.GetBytes(8)).ToArray());
+
+        public bool Equals(HexStruct other)
+            => _keyBytes.SequenceEqual(other._keyBytes);
+
+        public override bool Equals(object? obj)
+            => obj is HexStruct other && Equals(other);
+
+        public override int GetHashCode()
+            => _keyBytes.GetHashCode();
+    }
+
+    public class HexClass: IEquatable<HexClass>
+    {
+        private readonly byte[] _keyBytes;
+
+        public HexClass(string hex)
+        {
+            _keyBytes = Convert.FromHexString(hex);
+        }
+
+        public HexClass(byte[] keyBytes)
+        {
+            _keyBytes = keyBytes;
+        }
+
+        public override string ToString() => Convert.ToHexString(_keyBytes);
+
+        public static HexClass Create()
+            => new(BitConverter.GetBytes(DateTime.Now.Ticks).Reverse().Concat(RandomNumberGenerator.GetBytes(8)).ToArray());
+
+        public bool Equals(HexClass? other)
+            => _keyBytes != null && _keyBytes.SequenceEqual(other._keyBytes);
+
+        public override bool Equals(object? obj)
+            => obj is HexStruct other && Equals(other);
+
+        public override int GetHashCode()
+            => _keyBytes.GetHashCode();
     }
 }
