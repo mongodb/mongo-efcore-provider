@@ -29,7 +29,7 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
             """{"_id":{"$oid":"670d7d952112a60d7fa17d98"},"Array":["A","B","C"],"Bool":true,"Byte":201,"Char":99,"DateTimeLocal":{"$date":"2023-10-14T19:22:45.815Z"},"DateTimeUnspecified":{"$date":"2023-10-14T19:22:45.815Z"},"DateTimeUtc":{"$date":"2024-10-14T20:22:45.815Z"},"Decimal":"123123123","Decimal128":"123456.789","Dictionary":{"A":"B","C":"D"},"Double":123123123.123123,"Enum":5,"EnumAsByte":4,"EnumAsString":"Saturday","Float":-134334.234375,"Guid":{"$binary":{"base64":"G5217JknTWKqQ4qYNSszaw==","subType":"04"}},"Int":-10001,"List":["A","B","C"],"Long":{"$numberLong":"-100001"},"Sbyte":-101,"Short":-1001,"String":"A string","TimeSpan":"1.02:03:04.0050060","Uint":1000001,"Ulong":{"$numberLong":"10000001"},"Ushort":1001,"OwnedMany":[{"Name":"Owned 1"},{"Name":"Owned 2"}],"OwnedSingle":{"Name":"Owned"}}""");
         database.CreateCollection<BsonDocument>().InsertOne(nonNullableDoc);
 
-        var collection = database.CreateCollection<NonNullables>();
+        var collection = database.GetCollection<Nullables>();
         using var db = SingleEntityDbContext.Create(collection, ConfigureDefaults);
 
         var read = db.Entities.First();
@@ -64,12 +64,12 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
     public void Can_read_nullable_clr_types_from_provider_8_1_written_doc()
     {
         var nullCompleteDoc = BsonDocument.Parse(
-            """{"_id":{"$oid":"670d7d952112a60d7fa17d98"},"Array":["A","B","C"],"Bool":true,"Byte":201,"Char":99,"DateTimeLocal":{"$date":"2023-10-14T19:22:45.815Z"},"DateTimeUnspecified":{"$date":"2023-10-14T19:22:45.815Z"},"DateTimeUtc":{"$date":"2024-10-14T20:22:45.815Z"},"Decimal":{"$numberDecimal":"123123123"},"Decimal128":{"$numberDecimal":"123456.789"},"Dictionary":{"A":"B","C":"D"},"Double":123123123.123123,"Enum":null,"Float":-134334.234375,"Guid":{"$binary":{"base64":"G5217JknTWKqQ4qYNSszaw==","subType":"04"}},"Int":-10001,"List":["A","B","C"],"Long":{"$numberLong":"-100001"},"ObjectId":null,"Sbyte":-101,"Short":-1001,"String":"A string","TimeSpan":"1.02:03:04.0050060","Uint":1000001,"Ulong":{"$numberLong":"10000001"},"Ushort":1001,"OwnedMany":[{"Name":"Owned 1"},{"Name":"Owned 2"}],"OwnedSingle":{"Name":"Owned"}}""");
+            """{"_id":{"$oid":"670d7d952112a60d7fa17d98"},"Array":["A","B","C"],"Bool":true,"Byte":201,"Char":99,"DateTimeLocal":{"$date":"2023-10-14T19:22:45.815Z"},"DateTimeUnspecified":{"$date":"2023-10-14T19:22:45.815Z"},"DateTimeUtc":{"$date":"2024-10-14T20:22:45.815Z"},"Decimal":"123123123","Decimal128":"123456.789","Dictionary":{"A":"B","C":"D"},"Double":123123123.123123,"Enum":null,"EnumAsByte":null,"EnumAsString":null,"Float":-134334.234375,"Guid":{"$binary":{"base64":"G5217JknTWKqQ4qYNSszaw==","subType":"04"}},"Int":-10001,"List":["A","B","C"],"Long":{"$numberLong":"-100001"},"ObjectId":{"$oid":"670d7d952112a60d7fa17d9f"},"Sbyte":-101,"Short":-1001,"String":"A string","TimeSpan":"1.02:03:04.0050060","Uint":1000001,"Ulong":{"$numberLong":"10000001"},"Ushort":1001,"OwnedMany":[{"Name":"Owned 1"},{"Name":"Owned 2"}],"OwnedSingle":{"Name":"Owned"}}""");
         var nullDefaultDoc = BsonDocument.Parse(
             """{"_id":{"$oid":"670d7d952112a60d7fa17d99"},"Array":null,"Bool":null,"Byte":null,"Char":null,"DateTimeLocal":null,"DateTimeUnspecified":null,"DateTimeUtc":null,"Decimal":null,"Decimal128":null,"Dictionary":null,"Double":null,"Enum":null,"Float":null,"Guid":null,"Int":null,"List":null,"Long":null,"ObjectId":null,"Sbyte":null,"Short":null,"String":null,"TimeSpan":null,"Uint":null,"Ulong":null,"Ushort":null,"OwnedMany":null,"OwnedSingle":null}""");
         database.CreateCollection<BsonDocument>().InsertMany([nullCompleteDoc, nullDefaultDoc]);
 
-        var collection = database.CreateCollection<Nullables>();
+        var collection = database.GetCollection<Nullables>();
         using var db = SingleEntityDbContext.Create(collection);
 
         CheckNullables(_nullableSet, db.Entities.First(e => e.id == _nullableSet.id));
