@@ -45,6 +45,8 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         Assert.Equal(_nonNullables.Dictionary, read.Dictionary);
         Assert.Equal(_nonNullables.Double, read.Double);
         Assert.Equal(_nonNullables.Enum, read.Enum);
+        Assert.Equal(_nonNullables.EnumAsByte, read.EnumAsByte);
+        Assert.Equal(_nonNullables.EnumAsString, read.EnumAsString);
         Assert.Equal(_nonNullables.Float, read.Float);
         Assert.Equal(_nonNullables.Guid, read.Guid);
         Assert.Equal(_nonNullables.Int, read.Int);
@@ -89,6 +91,8 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         Assert.Equal(expected.Dictionary, actual.Dictionary);
         Assert.Equal(expected.Double, actual.Double);
         Assert.Equal(expected.Enum, actual.Enum);
+        Assert.Equal(expected.EnumAsByte, actual.EnumAsByte);
+        Assert.Equal(expected.EnumAsString, actual.EnumAsString);
         Assert.Equal(expected.Float, actual.Float);
         Assert.Equal(expected.Guid, actual.Guid);
         Assert.Equal(expected.Int, actual.Int);
