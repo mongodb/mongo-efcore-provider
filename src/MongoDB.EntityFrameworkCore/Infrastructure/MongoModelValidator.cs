@@ -73,7 +73,6 @@ public class MongoModelValidator : ModelValidator
         ValidateNoUnsupportedAttributesOrAnnotations(model);
         ValidateElementNames(model);
         ValidateNoUnsupportedShadowProperties(model);
-        ValidateElementNames(model);
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
     }
