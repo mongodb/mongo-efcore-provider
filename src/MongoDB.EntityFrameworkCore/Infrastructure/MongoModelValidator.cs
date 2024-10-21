@@ -72,7 +72,8 @@ public class MongoModelValidator : ModelValidator
         ValidateMaximumOneRowVersionPerEntity(model);
         ValidateNoUnsupportedAttributesOrAnnotations(model);
         ValidateElementNames(model);
-        ValidateNoShadowProperties(model);
+        ValidateNoUnsupportedShadowProperties(model);
+        ValidateElementNames(model);
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
     }
@@ -91,7 +92,8 @@ public class MongoModelValidator : ModelValidator
             {
                 var propertyNames = string.Join(", ", rowVersionProperties.Select(p => p.Name));
                 throw new NotSupportedException(
-                    $"Entity '{entityType.DisplayName()}' has multiple properties '{propertyNames}' configured as row versions. Only one row version property per entity is supported.");
+                    $"Entity '{entityType.DisplayName()}' has multiple properties '{propertyNames
+                    }' configured as row versions. Only one row version property per entity is supported.");
             }
         }
     }
@@ -195,7 +197,7 @@ public class MongoModelValidator : ModelValidator
     /// </summary>
     /// <param name="model">The <see cref="IModel"/> to validate primary key correctness.</param>
     /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported yet.</exception>
-    /// <exception cref="InvalidOperationException">Throw when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
+    /// <exception cref="InvalidOperationException">Thrown when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
     private static void ValidatePrimaryKeys(IModel model)
     {
         foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
@@ -210,7 +212,7 @@ public class MongoModelValidator : ModelValidator
     /// </summary>
     /// <param name="model">The <see cref="IModel"/> to validate primary key correctness.</param>
     /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported.</exception>
-    /// <exception cref="InvalidOperationException">Throw when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
+    /// <exception cref="InvalidOperationException">Thrown when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
     private static void ValidateElementNames(IModel model)
     {
         foreach (var entityType in model.GetEntityTypes())
@@ -252,7 +254,7 @@ public class MongoModelValidator : ModelValidator
     /// Validate the mapped BSON element names of a given <see cref="IEntityType"/>.
     /// </summary>
     /// <param name="entityType">The <see cref="IEntityType"/> to validate the element names of.</param>
-    /// <exception cref="InvalidOperationException">Throws when naming rules are violated or duplicate names exist.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when naming rules are violated or duplicate names exist.</exception>
     private static void ValidateEntityElementNames(IEntityType entityType)
     {
         var elementPropertyMap = new Dictionary<string, IPropertyBase>();
@@ -329,15 +331,20 @@ public class MongoModelValidator : ModelValidator
     }
 
     /// <summary>
-    /// Validate that no root entities have shadow properties.
+    /// Validate that no entities have shadow unsupported properties.
     /// </summary>
     /// <param name="model">The <see cref="IModel"/> to validate for whether shadow properties are present.</param>
-    /// <exception cref="NotSupportedException">Thrown when user-defined shadow properties are found on a root entity.</exception>
-    private static void ValidateNoShadowProperties(IModel model)
+    /// <exception cref="NotSupportedException">Thrown when unsupported shadow properties are found on an entity.</exception>
+    private static void ValidateNoUnsupportedShadowProperties(IModel model)
     {
-        foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
+        foreach (var entityType in model.GetEntityTypes())
         {
-            var shadowProperty = entityType.GetProperties().FirstOrDefault(p => p.IsShadowProperty());
+            var discriminatorProperty = entityType.FindDiscriminatorProperty();
+            var shadowProperty = entityType.GetProperties()
+                .FirstOrDefault(property =>
+                    property != discriminatorProperty
+                    && property.IsShadowProperty()
+                    && !property.IsOwnedTypeKey());
             if (shadowProperty != null)
             {
                 throw new NotSupportedException(
@@ -369,6 +376,11 @@ public class MongoModelValidator : ModelValidator
         }
     }
 
+    /// <summary>
+    /// Validate that no entities are mapped with anything except table-per-hierarchy (TPH).
+    /// </summary>
+    /// <param name="model">The model to validate.</param>
+    /// <exception cref="NotSupportedException">Thrown if entities have any mappings except table-per-hierarchy, e.g. table-per-type.</exception>
     private static void ValidateNoTablePerType(IModel model)
     {
         foreach (var entityType in model.GetEntityTypes())
@@ -377,7 +389,8 @@ public class MongoModelValidator : ModelValidator
             if (mappingStrategy != null && mappingStrategy != "TPH")
             {
                 throw new NotSupportedException(
-                    $"Entity '{entityType.DisplayName()}' is mapped with a {mappingStrategy} strategy. Only TPH (the default) is supported by the MongoDB provider.");
+                    $"Entity '{entityType.DisplayName()}' is mapped with a {mappingStrategy
+                    } strategy. Only TPH (the default) is supported by the MongoDB provider.");
             }
         }
     }

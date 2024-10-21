@@ -199,7 +199,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
     internal static void WriteNonKeyProperties(IBsonWriter writer, IUpdateEntry entry, Func<IProperty, bool>? propertyFilter = null)
     {
         var properties = entry.EntityType.GetProperties()
-            .Where(p => !p.IsShadowProperty() && !p.IsPrimaryKey() && p.GetElementName() != "")
+            .Where(p => !p.IsPrimaryKey() && p.GetElementName() != "")
             .Where(p => propertyFilter == null || propertyFilter(p))
             .ToArray();
 

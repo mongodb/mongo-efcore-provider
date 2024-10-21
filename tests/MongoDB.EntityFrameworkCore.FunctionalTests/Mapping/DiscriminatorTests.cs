@@ -25,12 +25,12 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     [Fact]
-    public void Sets_type_discriminator_property_and_type_for_read_and_write()
+    public void Uses_real_property_type_discriminator_property_for_read_and_write()
     {
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
+        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
 
-        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
         var entities = db.Entities.ToList();
         Assert.Single(entities, e => e.EntityType == "Client" && e.GetType() == typeof(Customer));
         Assert.Single(entities, e => e.EntityType == "SubClient" && e.GetType() == typeof(SubCustomer));
@@ -38,6 +38,23 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Single(entities, e => e.EntityType == "Supplier" && e.GetType() == typeof(Supplier));
         Assert.Single(entities, e => e.EntityType == "Contact" && e.GetType() == typeof(Contact));
         Assert.Single(entities, e => e.EntityType == "BaseEntity" && e.GetType() == typeof(BaseEntity));
+    }
+
+    [Fact]
+    public void Uses_shadow_property_type_discriminator_for_read_and_write()
+    {
+        var collection = database.CreateCollection<BaseEntity>();
+        SetupTestData(SingleEntityDbContext.Create(collection, ShadowPropertyConfiguredModel));
+
+        using var db = SingleEntityDbContext.Create(collection, ShadowPropertyConfiguredModel);
+        var entities = db.Entities.ToList();
+        Assert.Single(entities, e => e is Customer {Name: "Customer 1"});
+        Assert.Single(entities, e => e is SubCustomer {Name: "SubCustomer 1"});
+        Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
+        Assert.Single(entities, e => e is Supplier {Name: "Supplier 1"});
+        Assert.Single(entities, e => e is Contact {Name: "Contact 1"});
+        Assert.Single(entities, e => e.GetType() == typeof(BaseEntity));
+        Assert.All(entities, e => Assert.Null(e.EntityType));
     }
 
     [Fact]
@@ -73,7 +90,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     {
         var configuration = (ModelBuilder mb) =>
         {
-            ConfigureModel(mb);
+            RealPropertyConfiguredModel(mb);
             mb.Entity<BaseEntity>().Property(e => e.EntityType).HasElementName("_entityType");
         };
 
@@ -89,9 +106,9 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     public void Returns_correct_values_when_property_name_shared_between_entities()
     {
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
+        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
 
-        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
         var entities = db.Entities.Where(e => e is Supplier || e is Contact).ToList();
 
         Assert.Single(entities, e => e is Supplier {Name: "Supplier 1"});
@@ -99,13 +116,19 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Equal(2, entities.Count);
     }
 
-    [Fact]
-    public void Returns_correct_entity_where_is_type_query()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Returns_correct_entity_where_is_type_query(bool useShadowProperty)
     {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
+        Action<ModelBuilder> configuration = useShadowProperty
+            ? ShadowPropertyConfiguredModel
+            : RealPropertyConfiguredModel;
 
-        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+        var collection = database.CreateCollection<BaseEntity>(null, useShadowProperty);
+        SetupTestData(SingleEntityDbContext.Create(collection, configuration));
+
+        using var db = SingleEntityDbContext.Create(collection, configuration);
         var firstSupplier = db.Entities.First(e => e is Supplier);
         Assert.Equal("Supplier 1", Assert.IsType<Supplier>(firstSupplier).Name);
 
@@ -113,15 +136,18 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Single(orders, o => o is Order {OrderReference: "Order 1"});
         Assert.Single(orders, o => o is OrderWithProducts {OrderReference: "Order 2"});
         Assert.Equal(2, orders.Count);
+
+        Action<object> assertion = useShadowProperty ? Assert.Null : Assert.NotNull;
+        Assert.All(db.Entities, e => assertion(e.EntityType!));
     }
 
     [Fact]
     public void Returns_correct_entity_where_GetType_query()
     {
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
+        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
 
-        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
         var entities = db.Entities.Where(e => e.GetType() == typeof(Order)).ToList();
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
         Assert.Single(entities);
@@ -134,7 +160,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         var expectedProducts = new List<string> {"Product 3", "Product 4", "Product 5"};
 
         {
-            using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+            using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
             db.Add(new Customer {Name = "Customer 1", ShippingAddress = "123 Main St"});
             db.Add(new Supplier {Name = "Supplier 1", Products = ["Product 1", "Product 2"]});
             db.Add(new Order {OrderReference = "Order 1"});
@@ -144,7 +170,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         }
 
         {
-            using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+            using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
             var entities = db.Entities.Where(e => e is Order || e is OrderWithProducts).ToList();
 
             Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
@@ -195,9 +221,9 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     public void Returns_correct_entity_with_OfType_query()
     {
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
+        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
 
-        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
         var entities = db.Entities.OfType<Customer>().ToList();
         Assert.Single(entities, e => e.Name == "Customer 1");
         Assert.Single(entities, e => e.Name == "SubCustomer 1");
@@ -208,9 +234,9 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     public void Returns_correct_entities_with_mixed_query()
     {
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ConfigureModel));
+        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
 
-        using var db = SingleEntityDbContext.Create(collection, ConfigureModel);
+        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
         var entities = db.Entities.OfType<BaseEntity>().Where(e => e is Customer || e.GetType() == typeof(Order)).ToList();
         Assert.Equal(3, entities.Count);
         Assert.Single(entities, e => e is Customer {Name: "Customer 1"});
@@ -225,7 +251,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
-            ConfigureModel(mb);
+            RealPropertyConfiguredModel(mb);
             mb.Entity<BaseEntity>().UseTptMappingStrategy();
         });
 
@@ -239,17 +265,29 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection, mb =>
         {
-            ConfigureModel(mb);
+            RealPropertyConfiguredModel(mb);
             mb.Entity<BaseEntity>().UseTpcMappingStrategy();
         });
 
         Assert.Throws<NotSupportedException>(() => SetupTestData(db));
     }
 
-    private static void ConfigureModel(ModelBuilder mb)
+    private static void RealPropertyConfiguredModel(ModelBuilder mb)
     {
         mb.Entity<BaseEntity>()
             .HasDiscriminator(e => e.EntityType)
+            .HasValue<Customer>("Client")
+            .HasValue<SubCustomer>("SubClient")
+            .HasValue<Supplier>("Supplier")
+            .HasValue<Order>("Order")
+            .HasValue<OrderWithProducts>("OrderEx")
+            .HasValue<Contact>("Contact");
+    }
+
+    private static void ShadowPropertyConfiguredModel(ModelBuilder mb)
+    {
+        mb.Entity<BaseEntity>()
+            .HasDiscriminator()
             .HasValue<Customer>("Client")
             .HasValue<SubCustomer>("SubClient")
             .HasValue<Supplier>("Supplier")
@@ -274,7 +312,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     class BaseEntity
     {
         public ObjectId _id { get; set; }
-        public string EntityType { get; set; }
+        public string? EntityType { get; set; }
     }
 
     class Customer : BaseEntity
@@ -350,5 +388,4 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
                 .ToCollection("supplier-docs");
         }
     }
-
 }
