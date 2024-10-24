@@ -311,4 +311,127 @@ public class DateAndTimeSerializationTests(TemporaryDatabaseFixture database)
     {
         public TimeSpan? aNullableTimeSpan { get; set; }
     }
+
+    [Fact]
+    public void DateOnly_round_trips()
+    {
+        var expected = new DateOnly(2024, 10, 20);
+        var collection = Database.CreateCollection<DateOnlyEntity>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new DateOnlyEntity {aDateOnly = expected});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entities.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equal(expected, result.aDateOnly);
+        }
+    }
+
+    [Fact]
+    public void Nullable_DateOnly_round_trips()
+    {
+        var expected = new DateOnly(2024, 10, 20);
+
+        var collection = Database.CreateCollection<NullableDateOnlyEntity>(values: expected);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new NullableDateOnlyEntity { aNullableDateOnly = expected});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entities.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equal(expected, result.aNullableDateOnly);
+        }
+    }
+
+    [Fact]
+    public void Missing_nullable_DateOnly_defaults_to_null()
+    {
+        var collection = SetupIdOnlyCollection<NullableDateOnlyEntity>();
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var result = db.Entities.FirstOrDefault();
+        Assert.NotNull(result);
+        Assert.Null(result.aNullableDateOnly);
+    }
+
+    class DateOnlyEntity : BaseIdEntity
+    {
+        public DateOnly aDateOnly { get; set; }
+    }
+
+    class NullableDateOnlyEntity: BaseIdEntity
+    {
+        public DateOnly? aNullableDateOnly { get; set; }
+    }
+
+    [Fact]
+    public void TimeOnly_round_trips()
+    {
+        var expected = new TimeOnly(12, 10, 20);
+        var collection = Database.CreateCollection<TimeOnlyEntity>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new TimeOnlyEntity { aTimeOnly = expected });
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entities.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equal(expected, result.aTimeOnly);
+        }
+    }
+
+    [Fact]
+    public void Nullable_TimeOnly_round_trips()
+    {
+        var expected = new TimeOnly(12, 10, 20);
+        var collection = Database.CreateCollection<NullableTimeOnlyEntity>(values: expected);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new NullableTimeOnlyEntity { aNullableTimeOnly = expected});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = db.Entities.FirstOrDefault();
+            Assert.NotNull(result);
+            Assert.Equal(expected, result.aNullableTimeOnly);
+        }
+    }
+
+    [Fact]
+    public void Missing_nullable_TimeOnly_defaults_to_null()
+    {
+        var collection = SetupIdOnlyCollection<NullableTimeOnlyEntity>();
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var result = db.Entities.FirstOrDefault();
+        Assert.NotNull(result);
+        Assert.Null(result.aNullableTimeOnly);
+    }
+
+    class TimeOnlyEntity : BaseIdEntity
+    {
+        public TimeOnly aTimeOnly { get; set; }
+    }
+
+    class NullableTimeOnlyEntity: BaseIdEntity
+    {
+        public TimeOnly? aNullableTimeOnly { get; set; }
+    }
 }
