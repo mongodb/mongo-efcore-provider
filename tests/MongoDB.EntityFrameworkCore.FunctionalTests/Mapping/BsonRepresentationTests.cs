@@ -185,4 +185,36 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             mb => mb.Entity<EntityWithValue<T>>().Property(e => e.value).HasBsonRepresentation(BsonType.String),
             caller: caller);
     }
+
+    public static readonly TheoryData<DateOnly> DateOnlyData
+        = new()
+        {
+            DateOnly.MaxValue,
+            DateOnly.MinValue,
+            new DateOnly(2024, 10, 05)
+        };
+
+    [Theory]
+    [MemberData(nameof(DateOnlyData))]
+    public void DateOnly_clr_with_DateTime_storage(DateOnly expectedValue)
+        => Exerciser.TestConvertedValueRoundTrip(database,
+            expectedValue,
+            a => a,
+            mb => mb.Entity<EntityWithValue<TimeOnly>>().Property(e => e.value).HasBsonRepresentation(BsonType.String));
+
+    public static readonly TheoryData<TimeOnly> TimeOnlyData
+        = new()
+        {
+            TimeOnly.MaxValue,
+            TimeOnly.MinValue,
+            new TimeOnly(13, 10, 05)
+        };
+
+    [Theory]
+    [MemberData(nameof(TimeOnlyData))]
+    public void TimeOnly_clr_with_DateTime_storage(TimeOnly expectedValue)
+        => Exerciser.TestConvertedValueRoundTrip(database,
+            expectedValue,
+            a => a,
+            mb => mb.Entity<EntityWithValue<TimeOnly>>().Property(e => e.value).HasBsonRepresentation(BsonType.String));
 }
