@@ -57,6 +57,8 @@ public sealed class BsonSerializerFactory
             _ when type == typeof(char) => new CharSerializer(),
             _ when type == typeof(DateTime) => GetDateTimeSerializer(property),
             _ when type == typeof(DateTimeOffset) => new DateTimeOffsetSerializer(),
+            _ when type == typeof(DateOnly) => DateOnlySerializer.Instance,
+            _ when type == typeof(TimeOnly) => TimeOnlySerializer.Instance,
             _ when type == typeof(decimal) => new DecimalSerializer(),
             _ when type == typeof(double) => DoubleSerializer.Instance,
             _ when type == typeof(Guid) => GuidSerializer.StandardInstance,
@@ -73,6 +75,7 @@ public sealed class BsonSerializerFactory
             _ when type == typeof(ulong) => new UInt64Serializer(),
             _ when type == typeof(Decimal128) => new Decimal128Serializer(),
             _ when type.IsEnum => EnumSerializer.Create(type),
+
             {IsArray: true}
                 => GetArraySerializer(type, CreateTypeSerializer(type.GetElementType()!)),
             {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
