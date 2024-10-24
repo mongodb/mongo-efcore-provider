@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
@@ -181,7 +182,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
     {
         Exerciser.TestConvertedValueRoundTrip(database,
             expectedValue,
-            a => a?.ToString(),
+            a => string.Format(CultureInfo.InvariantCulture, "{0}", a),
             mb => mb.Entity<EntityWithValue<T>>().Property(e => e.value).HasBsonRepresentation(BsonType.String),
             caller: caller);
     }

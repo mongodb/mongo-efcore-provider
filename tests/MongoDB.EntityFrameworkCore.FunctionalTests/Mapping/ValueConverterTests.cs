@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Globalization;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
@@ -590,7 +591,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
 
     private static readonly Action<ModelBuilder> DecimalToMongoString = mb =>
         mb.Entity<AmountIsDecimal>()
-            .Property(e => e.amount).HasConversion(v => v.ToString(), v => decimal.Parse(v));
+            .Property(e => e.amount).HasConversion(v => v.ToString(CultureInfo.InvariantCulture), v => decimal.Parse(v, CultureInfo.InvariantCulture));
 
     private static readonly Action<ModelBuilder> DefaultDecimalToMongoString = mb =>
         mb.Entity<AmountIsDecimal>()
@@ -613,9 +614,9 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         using var db =
             SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToMongoString : DecimalToMongoString);
 
-        var found = db.Entities.First(e => e.amount == decimal.Parse(amount));
+        var found = db.Entities.First(e => e.amount == decimal.Parse(amount, CultureInfo.InvariantCulture));
         Assert.Equal(expected._id, found._id);
-        Assert.Equal(amount, found.amount.ToString());
+        Assert.Equal(amount, found.amount.ToString(CultureInfo.InvariantCulture));
     }
 
     [Theory]
@@ -632,7 +633,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         using var db =
             SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToMongoString : DecimalToMongoString);
 
-        var original = new AmountIsDecimal {amount = decimal.Parse(amount)};
+        var original = new AmountIsDecimal {amount = decimal.Parse(amount, CultureInfo.InvariantCulture)};
         db.Entities.Add(original);
         db.SaveChanges();
 
@@ -665,7 +666,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
 
         var found = db.Entities.First(e => e.amount.ToString() == amount);
         Assert.Equal(expected._id, found._id);
-        Assert.Equal(amount, found.amount.ToString());
+        Assert.Equal(amount, found.amount.ToString(CultureInfo.InvariantCulture));
     }
 
     [Theory]
@@ -688,7 +689,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         var found = database.GetCollection<AmountIsString>(collection.CollectionNamespace)
             .AsQueryable().First();
         Assert.Equal(original._id, found._id);
-        Assert.Equal(amount.ToString(), found.amount);
+        Assert.Equal(amount.ToString(CultureInfo.InvariantCulture), found.amount);
     }
 
     class AmountIsGuid : IdIsObjectId
