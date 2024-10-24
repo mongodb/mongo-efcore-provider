@@ -75,7 +75,6 @@ public sealed class BsonSerializerFactory
             _ when type == typeof(ulong) => new UInt64Serializer(),
             _ when type == typeof(Decimal128) => new Decimal128Serializer(),
             _ when type.IsEnum => EnumSerializer.Create(type),
-
             {IsArray: true}
                 => GetArraySerializer(type, CreateTypeSerializer(type.GetElementType()!)),
             {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
