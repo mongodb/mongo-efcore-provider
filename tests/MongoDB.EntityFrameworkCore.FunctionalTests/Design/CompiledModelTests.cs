@@ -56,6 +56,11 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
 
         public TestEnum anEnum { get; set; }
 
+        public DateTime aDateTime { get; set; }
+        public TimeSpan aTimeSpan { get; set; }
+        public DateOnly aDateOnly { get; set; }
+        public TimeOnly aTimeOnly { get; set; }
+
         [BsonRepresentation(BsonType.String)]
         public int anIntRepresentedAsAString { get; set; }
 
@@ -126,6 +131,10 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
             aString = "Hello, World!",
             anIntList = [1, 2, 3],
             aStringArray = ["a", "b", "c"],
+            aDateTime = new DateTime(2024, 12, 25, 2, 22, 22, DateTimeKind.Utc),
+            aTimeSpan = new TimeSpan(22, 10, 15),
+            aDateOnly = new DateOnly(2023, 12, 12),
+            aTimeOnly = new TimeOnly(11, 23,44),
             ownedEntities = [new OwnedEntity {name = "Owned"}]
         };
 
