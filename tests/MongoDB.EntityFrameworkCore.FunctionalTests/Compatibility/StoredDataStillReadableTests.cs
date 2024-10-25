@@ -166,6 +166,8 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         public DateTime DateTimeLocal { get; set; }
         public DateTime DateTimeUnspecified { get; set; }
         public TimeSpan TimeSpan { get; set; }
+        public DateOnly DateOnly { get; set; }
+        public TimeOnly TimeOnly { get; set; }
 
         public bool Bool { get; set; }
         public Guid Guid { get; set; }
@@ -209,6 +211,8 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         DateTimeLocal = new DateTime(2023, 10, 14, 20, 22, 45, 815, DateTimeKind.Local),
         DateTimeUnspecified = new DateTime(2023, 10, 14, 20, 22, 45, 815, DateTimeKind.Unspecified),
         TimeSpan = new TimeSpan(1, 2, 3, 4, 5, 6),
+        DateOnly = new DateOnly(2024, 12, 25),
+        TimeOnly = new TimeOnly(08, 44, 30),
 
         Bool = true,
         Guid = Guid.Parse("1b9db5ec-9927-4d62-aa43-8a98352b336b"),
@@ -256,6 +260,8 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         public DateTime? DateTimeLocal { get; set; }
         public DateTime? DateTimeUnspecified { get; set; }
         public TimeSpan? TimeSpan { get; set; }
+        public DateOnly? DateOnly { get; set; }
+        public TimeOnly? TimeOnly { get; set; }
 
         public bool? Bool { get; set; }
 
@@ -297,6 +303,8 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         DateTimeLocal = new DateTime(2023, 10, 14, 20, 22, 45, 815, DateTimeKind.Local),
         DateTimeUnspecified = new DateTime(2023, 10, 14, 20, 22, 45, 815, DateTimeKind.Unspecified),
         TimeSpan = new TimeSpan(1, 2, 3, 4, 5, 6),
+        DateOnly = new DateOnly(2024, 12, 25),
+        TimeOnly = new TimeOnly(08, 44, 30),
 
         Bool = true,
         Guid = Guid.Parse("1b9db5ec-9927-4d62-aa43-8a98352b336b"),

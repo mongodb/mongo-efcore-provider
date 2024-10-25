@@ -48,6 +48,48 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                 clrType: typeof(ObjectId));
             id.AddAnnotation("Mongo:ElementName", "_id");
 
+            var aDateOnly = runtimeEntityType.AddProperty(
+                "aDateOnly",
+                typeof(DateOnly),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aDateOnly", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<aDateOnly>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: new DateOnly(1, 1, 1));
+            aDateOnly.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<DateOnly>(
+                    (DateOnly v1, DateOnly v2) => v1.Equals(v2),
+                    (DateOnly v) => v.GetHashCode(),
+                    (DateOnly v) => v),
+                keyComparer: new ValueComparer<DateOnly>(
+                    (DateOnly v1, DateOnly v2) => v1.Equals(v2),
+                    (DateOnly v) => v.GetHashCode(),
+                    (DateOnly v) => v),
+                providerValueComparer: new ValueComparer<DateOnly>(
+                    (DateOnly v1, DateOnly v2) => v1.Equals(v2),
+                    (DateOnly v) => v.GetHashCode(),
+                    (DateOnly v) => v),
+                clrType: typeof(DateOnly));
+
+            var aDateTime = runtimeEntityType.AddProperty(
+                "aDateTime",
+                typeof(DateTime),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aDateTime", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<aDateTime>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified));
+            aDateTime.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<DateTime>(
+                    (DateTime v1, DateTime v2) => v1.Equals(v2),
+                    (DateTime v) => v.GetHashCode(),
+                    (DateTime v) => v),
+                keyComparer: new ValueComparer<DateTime>(
+                    (DateTime v1, DateTime v2) => v1.Equals(v2),
+                    (DateTime v) => v.GetHashCode(),
+                    (DateTime v) => v),
+                providerValueComparer: new ValueComparer<DateTime>(
+                    (DateTime v1, DateTime v2) => v1.Equals(v2),
+                    (DateTime v) => v.GetHashCode(),
+                    (DateTime v) => v),
+                clrType: typeof(DateTime));
+
             var aDecimal = runtimeEntityType.AddProperty(
                 "aDecimal",
                 typeof(decimal),
@@ -256,6 +298,48 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (String[] v) => StructuralComparisons.StructuralEqualityComparer.GetHashCode((object)v),
                     (String[] source) => source.ToArray()),
                 clrType: typeof(string[]));
+
+            var aTimeOnly = runtimeEntityType.AddProperty(
+                "aTimeOnly",
+                typeof(TimeOnly),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aTimeOnly", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<aTimeOnly>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: new TimeOnly(0, 0, 0));
+            aTimeOnly.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<TimeOnly>(
+                    (TimeOnly v1, TimeOnly v2) => v1.Equals(v2),
+                    (TimeOnly v) => v.GetHashCode(),
+                    (TimeOnly v) => v),
+                keyComparer: new ValueComparer<TimeOnly>(
+                    (TimeOnly v1, TimeOnly v2) => v1.Equals(v2),
+                    (TimeOnly v) => v.GetHashCode(),
+                    (TimeOnly v) => v),
+                providerValueComparer: new ValueComparer<TimeOnly>(
+                    (TimeOnly v1, TimeOnly v2) => v1.Equals(v2),
+                    (TimeOnly v) => v.GetHashCode(),
+                    (TimeOnly v) => v),
+                clrType: typeof(TimeOnly));
+
+            var aTimeSpan = runtimeEntityType.AddProperty(
+                "aTimeSpan",
+                typeof(TimeSpan),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aTimeSpan", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<aTimeSpan>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                sentinel: new TimeSpan(0, 0, 0, 0, 0));
+            aTimeSpan.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ValueComparer<TimeSpan>(
+                    (TimeSpan v1, TimeSpan v2) => v1.Equals(v2),
+                    (TimeSpan v) => v.GetHashCode(),
+                    (TimeSpan v) => v),
+                keyComparer: new ValueComparer<TimeSpan>(
+                    (TimeSpan v1, TimeSpan v2) => v1.Equals(v2),
+                    (TimeSpan v) => v.GetHashCode(),
+                    (TimeSpan v) => v),
+                providerValueComparer: new ValueComparer<TimeSpan>(
+                    (TimeSpan v1, TimeSpan v2) => v1.Equals(v2),
+                    (TimeSpan v) => v.GetHashCode(),
+                    (TimeSpan v) => v),
+                clrType: typeof(TimeSpan));
 
             var anEnum = runtimeEntityType.AddProperty(
                 "anEnum",

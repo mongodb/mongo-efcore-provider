@@ -133,9 +133,19 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         public List<List<string>>? aListOfLists { get; set; }
     }
 
-    class ListOfOwnedEntityListEntity : IdEntity
+    class ListOfOwnedEntityListEntity : IdEntity  //TODO This is never used
     {
         public List<List<SomeOwnedEntity>>? aListOfLists { get; set; }
+    }
+
+    class DateOnlyEntity : IdEntity
+    {
+        public DateOnly aDateOnly { get; set; }
+    }
+
+    class TimeOnlyEntity : IdEntity
+    {
+        public TimeOnly aTimeOnly { get; set; }
     }
 
     class SomeOwnedEntity
@@ -195,6 +205,36 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aString);
+    }
+
+    [Fact]
+    public void DateOnly_read()
+    {
+        var collection = database.CreateCollection<DateOnlyEntity>();
+
+        var expected = new DateOnly(_random.Next(0, 9999), _random.Next(1, 12), _random.Next(1, 29));
+        collection.InsertOne(new DateOnlyEntity {_id = ObjectId.GenerateNewId(), aDateOnly = expected});
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected, actual.aDateOnly);
+    }
+
+    [Fact]
+    public void TimeOnly_read()
+    {
+        var collection = database.CreateCollection<TimeOnlyEntity>();
+
+        var expected = new TimeOnly(_random.Next(0, 24), _random.Next(0, 60), _random.Next(0, 60));
+        collection.InsertOne(new TimeOnlyEntity {_id = ObjectId.GenerateNewId(), aTimeOnly = expected});
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected, actual.aTimeOnly);
     }
 
     [Fact]

@@ -57,6 +57,8 @@ public sealed class BsonSerializerFactory
             _ when type == typeof(char) => new CharSerializer(),
             _ when type == typeof(DateTime) => GetDateTimeSerializer(property),
             _ when type == typeof(DateTimeOffset) => new DateTimeOffsetSerializer(),
+            _ when type == typeof(DateOnly) => DateOnlySerializer.Instance,
+            _ when type == typeof(TimeOnly) => TimeOnlySerializer.Instance,
             _ when type == typeof(decimal) => new DecimalSerializer(),
             _ when type == typeof(double) => DoubleSerializer.Instance,
             _ when type == typeof(Guid) => GuidSerializer.StandardInstance,

@@ -56,6 +56,8 @@ public class AddEntityTests(TemporaryDatabaseFixture database)
         public string aString { get; set; }
         public char aChar { get; set; }
         public DateTime aDateTime { get; set; }
+        public DateOnly aDateOnly { get; set; }
+        public TimeOnly aTimeOnly { get; set; }
         public Guid aGuid { get; set; }
     }
 
@@ -171,7 +173,9 @@ public class AddEntityTests(TemporaryDatabaseFixture database)
             aString = "Some kind of string",
             aChar = 'z',
             aGuid = Guid.NewGuid(),
-            aDateTime = DateTime.UtcNow
+            aDateTime = DateTime.UtcNow,
+            aDateOnly = DateOnly.FromDateTime(DateTime.UtcNow),
+            aTimeOnly = TimeOnly.FromDateTime(DateTime.UtcNow)
         };
 
         {
@@ -188,6 +192,8 @@ public class AddEntityTests(TemporaryDatabaseFixture database)
             Assert.Equal(expected.aChar, foundEntity.aChar);
             Assert.Equal(expected.aGuid, foundEntity.aGuid);
             Assert.Equal(expected.aDateTime.ToBsonPrecision(), foundEntity.aDateTime.ToBsonPrecision());
+            Assert.Equal(expected.aDateOnly, foundEntity.aDateOnly);
+            Assert.Equal(expected.aTimeOnly, foundEntity.aTimeOnly);
         }
     }
 
