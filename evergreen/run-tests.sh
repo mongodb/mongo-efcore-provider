@@ -4,7 +4,7 @@ set -o errexit  # Exit the script with error if any of the commands fail
 MONGODB_URI=${MONGODB_URI:=mongodb://localhost:27017/}
 
 EFCORE_PROVIDER_PROJECT_PATH="./src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj"
-if [ -n "$X_DRIVER_VERSION" ] ## Temporarily disable driver version override
+if [ -n "$DRIVER_VERSION" ]
 then
   ## Update Driver's package reference if specified
   if [ "$DRIVER_VERSION" = "latest" ]
