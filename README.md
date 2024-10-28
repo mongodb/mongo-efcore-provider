@@ -49,7 +49,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - Mapping properties to BSON elements using `[Column]` or `[BsonElement]` attributes or `HasElementName("name")` method
 - Mapping entities to collections using `[Table("name")]` attribute or `ToCollection("name")` method
 - Single or composite keys of standard types including string, `Guid` and `ObjectId`
-- Properties with typical CLR types (`int`, `string`, `Guid`, `decimal`, etc.) & MongoDB types (`ObjectId`, `Decimal128`)
+- Properties with typical CLR types (`int`, `string`, `Guid`, `decimal`, `DateOnly` etc.) & MongoDB types (`ObjectId`, `Decimal128`)
 - Properties of `Dictionary<string, ...>` type
 - Properties containing arrays and lists of simple CLR types
 - Owned entities (aka value types, sub-documents, embedded documents) both directly and within collections
@@ -61,6 +61,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - Optimistic concurrency support through `IsConcurrencyToken`/`ConcurrencyCheckAttribute` & `IsRowVersion`/`TimestampAttribute`
 - AutoTransactional `SaveChanges` & `SaveChangesAsync` - all changes committed or rolled-back together
 - `CamcelCaseElementNameConvention` for helping map Pascal-cased C# properties to came-cased BSON elements
+- Type discriminators including `OfType<T>` and `Where(e => e is T)`
 
 ## Limitations
 
@@ -70,7 +71,6 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 ### Planned for upcoming releases
 
 - Select projections with client-side operations
-- Type discriminators
 - Sum, Average, Min, Max etc. support at top level
 
 ### Not supported but considering for future releases
