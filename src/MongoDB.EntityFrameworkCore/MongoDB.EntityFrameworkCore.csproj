@@ -19,8 +19,8 @@
   
   <ItemGroup>
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
-    <PackageReference Include="MongoDB.Driver" Version="2.28.0-78-gacd6644002" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.7" />
+    <PackageReference Include="MongoDB.Driver" Version="3.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
     <PackageReference Remove="Microsoft.SourceLink.GitHub" />
   </ItemGroup>
 </Project>
