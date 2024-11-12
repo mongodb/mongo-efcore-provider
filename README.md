@@ -95,6 +95,7 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Spacial data
 - Timeseries
 - Atlas search
+- GridFS
 
 ## Breaking changes
 
