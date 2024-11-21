@@ -540,6 +540,10 @@ axes:
         display_name: "net 8.0"
         variables:
           TARGET_RUNTIME: "net80"
+      - id: "net90"
+        display_name: "net 9.0"
+        variables:
+          TARGET_RUNTIME: "net90"
 
 buildvariants:
 - matrix_name: main-tests
