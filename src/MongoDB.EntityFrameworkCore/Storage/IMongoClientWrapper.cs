@@ -31,11 +31,11 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 public interface IMongoClientWrapper
 {
     /// <summary>
-    /// Get an <see cref="IMongoCollection{T}"/> for the given <paramref name="collectionName"/>;
+    /// Get an <see cref="IMongoCollection{T}"/> for the given <paramref name="collectionName"/>.
     /// </summary>
     /// <param name="collectionName">The name of the collection to get a collection for.</param>
     /// <typeparam name="T">The type of data that will be returned by the collection.</typeparam>
-    /// <returns>The <see cref="IMongoCollection{T}"/> </returns>
+    /// <returns>The <see cref="IMongoCollection{T}"/>.</returns>
     public IMongoCollection<T> GetCollection<T>(string collectionName);
 
     /// <summary>
@@ -52,21 +52,21 @@ public interface IMongoClientWrapper
     /// Create a new database with the name specified in the connection options.
     /// </summary>
     /// <remarks>If the database already exists only new collections will be created.</remarks>
-    /// <param name="model">The <see cref="IModel"/> that informs how the database should be created.</param>
+    /// <param name="model">The <see cref="IDesignTimeModel"/> that informs how the database should be created.</param>
     /// <returns><see langword="true" /> if the database was created from scratch, <see langword="false" /> if it already existed.</returns>
-    public bool CreateDatabase(IModel model);
+    public bool CreateDatabase(IDesignTimeModel model);
 
     /// <summary>
     /// Create a new database with the name specified in the connection options asynchronously.
     /// </summary>
     /// <remarks>If the database already exists only new collections will be created.</remarks>
-    /// <param name="model">The <see cref="IModel"/> that informs how the database should be created.</param>
+    /// <param name="model">The <see cref="IDesignTimeModel"/> that informs how the database should be created.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>
     /// A <see cref="Task"/> that, when resolved, will be
     /// <see langword="true" /> if the database was created from scratch, <see langword="false" /> if it already existed.
     /// </returns>
-    public Task<bool> CreateDatabaseAsync(IModel model, CancellationToken cancellationToken = default);
+    public Task<bool> CreateDatabaseAsync(IDesignTimeModel model, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Delete the database specified in the connection options.

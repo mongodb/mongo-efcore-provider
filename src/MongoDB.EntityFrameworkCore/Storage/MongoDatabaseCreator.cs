@@ -16,6 +16,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -36,16 +37,16 @@ public class MongoDatabaseCreator(
         => clientWrapper.DeleteDatabase();
 
     /// <inheritdoc/>
-    public Task<bool> EnsureDeletedAsync(CancellationToken cancellationToken = new())
+    public Task<bool> EnsureDeletedAsync(CancellationToken cancellationToken = default)
         => clientWrapper.DeleteDatabaseAsync(cancellationToken);
 
     /// <inheritdoc/>
     public bool EnsureCreated()
-        => clientWrapper.CreateDatabase(currentDbContext.Context.Model);
+        => clientWrapper.CreateDatabase(currentDbContext.Context.GetService<IDesignTimeModel>());
 
     /// <inheritdoc/>
-    public Task<bool> EnsureCreatedAsync(CancellationToken cancellationToken = new())
-        => clientWrapper.CreateDatabaseAsync(currentDbContext.Context.Model, cancellationToken);
+    public Task<bool> EnsureCreatedAsync(CancellationToken cancellationToken = default)
+        => clientWrapper.CreateDatabaseAsync(currentDbContext.Context.GetService<IDesignTimeModel>(), cancellationToken);
 
     /// <inheritdoc/>
     public bool CanConnect()

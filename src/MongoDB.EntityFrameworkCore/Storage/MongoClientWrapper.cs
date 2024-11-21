@@ -85,59 +85,118 @@ public class MongoClientWrapper : IMongoClientWrapper
 
     /// <inheritdoc />
     public async Task<IClientSessionHandle> StartSessionAsync(CancellationToken cancellationToken = default)
-        => await _client.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        => await _client.StartSessionAsync(null, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
-    public bool CreateDatabase(IModel model)
+    public bool CreateDatabase(IDesignTimeModel model)
     {
-        var existed = DatabaseExists();
+        var didCreateNewDatabase = !DatabaseExists();
         var existingCollectionNames = _database.ListCollectionNames().ToList();
 
-        foreach (var collectionName in model.GetEntityTypes().Where(e => e.IsDocumentRoot()).Select(e => e.GetCollectionName()))
+        foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            if (existingCollectionNames.Contains(collectionName)) continue;
+            var collectionName = entityType.GetCollectionName();
+            if (!existingCollectionNames.Contains(collectionName))
+            {
+                try
+                {
+                    _database.CreateCollection(collectionName);
+                    existingCollectionNames.Add(collectionName);
+                }
+                catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
+                {
+                    // Ignore collection already exists in cases of concurrent creation
+                }
+            }
 
-            try
+            CreateIndexes(entityType);
+        }
+
+        return didCreateNewDatabase;
+    }
+
+    private void CreateIndexes(IEntityType entityType)
+    {
+        var indexManager = _database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
+        var existingIndexNames = indexManager.List().ToList().Select(i => i["name"].AsString).ToList();
+
+        foreach (var index in entityType.GetIndexes())
+        {
+            var name = index.Name ?? DefaultIndexName(index);
+            if (!existingIndexNames.Contains(name))
             {
-                _database.CreateCollection(collectionName);
+                indexManager.CreateOne(CreateIndexDocument(index, name));
             }
-            catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> CreateDatabaseAsync(IDesignTimeModel model, CancellationToken cancellationToken = default)
+    {
+        var existed = await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
+        using var collectionNamesCursor =
+            await _database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
+        var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
+
+        foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
+        {
+            var collectionName = entityType.GetCollectionName();
+            if (!existingCollectionNames.Contains(collectionName))
             {
-                // Ignore collection already exists in cases of concurrent creation
+                try
+                {
+                    await _database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+                }
+                catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
+                {
+                    // Ignore collection already exists in cases of concurrent creation
+                }
             }
+
+            await CreateIndexesAsync(entityType, cancellationToken).ConfigureAwait(false);
         }
 
         return !existed;
     }
 
-    /// <inheritdoc />
-    public async Task<bool> CreateDatabaseAsync(IModel model, CancellationToken cancellationToken = default)
+    private async Task CreateIndexesAsync(IEntityType entityType, CancellationToken cancellationToken)
     {
-        var existed = await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
-        var collectionNamesCursor = await _database.ListCollectionNamesAsync(cancellationToken: cancellationToken);
-        var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
+        var indexManager = _database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
+        var indexCursor = await indexManager.ListAsync(cancellationToken).ConfigureAwait(false);
+        var existingIndexNames = indexCursor.ToList(cancellationToken).Select(i => i["name"].AsString).ToList();
 
-        foreach (var collectionName in model.GetEntityTypes().Where(e => e.IsDocumentRoot()).Select(e => e.GetCollectionName()))
+        foreach (var index in entityType.GetIndexes())
         {
-            if (existingCollectionNames.Contains(collectionName)) continue;
-
-            try
+            var name = index.Name ?? DefaultIndexName(index);
+            if (!existingIndexNames.Contains(name))
             {
-                await _database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
-            }
-            catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
-            {
-                // Ignore collection already exists in cases of concurrent creation
+                await indexManager.CreateOneAsync(CreateIndexDocument(index, name), null, cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
+    }
 
-        return !existed;
+    private static string DefaultIndexName(IIndex index)
+    {
+        // Mimic the servers index naming convention using the property names and directions
+        var parts = new string[index.Properties.Count * 2];
+
+        var propertyIndex = 0;
+        var partsIndex = 0;
+        foreach (var property in index.Properties)
+        {
+            parts[partsIndex++] = property.GetElementName();
+            parts[partsIndex++] = GetDescending(index, propertyIndex++) ? "-1" : "1";
+        }
+
+        return string.Join('_', parts);
     }
 
     /// <inheritdoc />
     public bool DeleteDatabase()
     {
-        if (!DatabaseExists()) return false;
+        if (!DatabaseExists())
+            return false;
 
         _client.DropDatabase(DatabaseName);
         return true;
@@ -146,7 +205,8 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <inheritdoc />
     public async Task<bool> DeleteDatabaseAsync(CancellationToken cancellationToken = default)
     {
-        if (!await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false)) return false;
+        if (!await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false))
+            return false;
 
         await _client.DropDatabaseAsync(DatabaseName, cancellationToken).ConfigureAwait(false);
         return true;
@@ -159,8 +219,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         {
             try
             {
-                using var filteredCursor = _client.ListDatabaseNames(BuildListDbNameFilterOptions());
-                return filteredCursor.Any();
+                return _client.ListDatabaseNames(BuildListDbNameFilterOptions()).Any();
             }
             catch (MongoCommandException ex) when (ex.ErrorMessage.Contains("filter"))
             {
@@ -169,8 +228,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             }
         }
 
-        using var allCursor = _client.ListDatabaseNames();
-        return allCursor.ToList().Any(d => d == DatabaseName);
+        return _client.ListDatabaseNames().ToList().Any(d => d == DatabaseName);
     }
 
     /// <inheritdoc/>
@@ -191,13 +249,39 @@ public class MongoClientWrapper : IMongoClientWrapper
             }
         }
 
-        using var allCursor = await _client.ListDatabaseNamesAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        using var allCursor = await _client.ListDatabaseNamesAsync(cancellationToken).ConfigureAwait(false);
         var listOfDatabases = await allCursor.ToListAsync(cancellationToken).ConfigureAwait(false);
         return listOfDatabases.Any(d => d == DatabaseName);
     }
 
     private ListDatabaseNamesOptions BuildListDbNameFilterOptions()
         => new() {Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)};
+
+    private static CreateIndexModel<BsonDocument> CreateIndexDocument(IIndex index, string indexName)
+    {
+        var doc = new BsonDocument();
+        var propertyIndex = 0;
+
+        foreach (var property in index.Properties)
+        {
+            doc.Add(property.GetElementName(), GetDescending(index, propertyIndex++) ? -1 : 1);
+        }
+
+        var options = index.GetCreateIndexOptions() ?? new CreateIndexOptions<BsonDocument>();
+        options.Name ??= indexName;
+        options.Unique ??= index.IsUnique;
+
+        return new CreateIndexModel<BsonDocument>(doc, options);
+    }
+
+    private static bool GetDescending(IIndex index, int propertyIndex)
+        => index.IsDescending switch
+        {
+            null => false,
+            {Count: 0} => true,
+            { } i when i.Count < propertyIndex => false,
+            { } i => i.ElementAtOrDefault(propertyIndex)
+        };
 
     private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
     {

@@ -18,6 +18,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
@@ -25,15 +27,19 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 [XUnitCollection("StorageTests")]
 public class MongoClientWrapperTests
 {
-    [Fact]
-    public void CreateDatabase_creates_database()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_database_and_collections(bool async)
     {
         var database = new TemporaryDatabaseFixture();
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
         var client = context.GetService<IMongoClientWrapper>();
 
         {
-            var didCreate = client.CreateDatabase(context.Model);
+            var didCreate = async
+                ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+                : client.CreateDatabase(context.GetService<IDesignTimeModel>());
             Assert.True(didCreate);
             var collectionNames = database.MongoDatabase.ListCollectionNames().ToList();
             Assert.Equal(3, collectionNames.Count);
@@ -43,40 +49,251 @@ public class MongoClientWrapperTests
         }
 
         {
-            var didCreateSecondTime = client.CreateDatabase(context.Model);
-            Assert.False(didCreateSecondTime);
+            var didCreate = async
+                ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+                : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+            Assert.False(didCreate);
             var collectionNames = database.MongoDatabase.ListCollectionNames().ToList();
             Assert.Equal(3, collectionNames.Count);
         }
     }
 
-    [Fact]
-    public async Task CreateDatabaseAsync_creates_database()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_indexes(bool async)
     {
         var database = new TemporaryDatabaseFixture();
-        var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase, mb =>
+        {
+            mb.Entity<Customer>().HasIndex(c => c.Name);
+            mb.Entity<Order>().HasIndex(o => o.OrderRef).IsUnique();
+            mb.Entity<Address>().HasIndex(o => o.PostCode, "custom_index_name");
+        });
         var client = context.GetService<IMongoClientWrapper>();
 
+        var didCreate = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        Assert.True(didCreate);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_does_not_duplicate_indexes(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+
         {
-            var didCreate = await client.CreateDatabaseAsync(context.Model);
+            var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+                mb => mb.Entity<Address>().HasIndex(o => o.PostCode, "custom_index_name"));
+            var client = context.GetService<IMongoClientWrapper>();
+
+            var didCreate = async
+                ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+                : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
             Assert.True(didCreate);
-            var collectionNames = (await database.MongoDatabase.ListCollectionNamesAsync()).ToList();
-            Assert.Equal(3, collectionNames.Count);
-            Assert.Contains("Customers", collectionNames);
-            Assert.Contains("Orders", collectionNames);
-            Assert.Contains("Addresses", collectionNames);
+            Assert.Single(GetIndexes(database.MongoDatabase, "Customers"));
+            Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
         }
 
         {
-            var didCreateSecondTime = await client.CreateDatabaseAsync(context.Model);
-            Assert.False(didCreateSecondTime);
-            var collectionNames = (await database.MongoDatabase.ListCollectionNamesAsync()).ToList();
-            Assert.Equal(3, collectionNames.Count);
+            var context = MyContext.CreateCollectionOptions(database.MongoDatabase, mb =>
+            {
+                mb.Entity<Customer>().HasIndex(c => c.Name);
+                mb.Entity<Address>().HasIndex(o => o.PostCode, "custom_index_name");
+            });
+            var client = context.GetService<IMongoClientWrapper>();
+
+            var didCreate = async
+                ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+                : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+            Assert.False(didCreate);
+            Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
+            Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
         }
     }
 
-    [Fact]
-    public void CreateDatabase_does_not_affect_existing_collections()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_index_from_string_named_properties(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+            mb => mb.Entity<Address>().HasIndex("PostCode"));
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_index_from_multiple_string_named_properties(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+            mb => mb.Entity<Address>().HasIndex("Country", "PostCode"));
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexes = GetIndexes(database.MongoDatabase, "Addresses");
+        Assert.Equal(2, indexes.Count);
+
+        var foundIndex = Assert.Single(indexes, i => i["key"].AsBsonDocument.Names.Count() == 2);
+        Assert.Contains(foundIndex["key"].AsBsonDocument, key => key.Name == "Country");
+        Assert.Contains(foundIndex["key"].AsBsonDocument, key => key.Name == "PostCode");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_index_with_descending_property(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+            mb => mb.Entity<Address>().HasIndex(a => a.PostCode).IsDescending(true));
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexes = GetIndexes(database.MongoDatabase, "Addresses");
+        Assert.Equal(2, indexes.Count);
+
+        var foundIndex = Assert.Single(indexes, i => i["key"].AsBsonDocument.Names.Contains("PostCode"));
+        Assert.Equal(-1, foundIndex["key"].AsBsonDocument["PostCode"].AsInt32);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_index_with_two_descending_properties(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+            mb => mb.Entity<Address>().HasIndex(a => new {a.PostCode, a.Country}).IsDescending());
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexes = GetIndexes(database.MongoDatabase, "Addresses");
+        Assert.Equal(2, indexes.Count);
+
+        var foundIndex = Assert.Single(indexes, i => i["key"].AsBsonDocument.Names.Contains("PostCode"));
+        Assert.Equal(-1, foundIndex["key"].AsBsonDocument["PostCode"].AsInt32);
+        Assert.Equal(-1, foundIndex["key"].AsBsonDocument["Country"].AsInt32);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_index_with_two_properties_mixed_sort_order(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+            mb => mb.Entity<Address>().HasIndex(a => new {a.PostCode, a.Country}).IsDescending(false, true));
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexes = GetIndexes(database.MongoDatabase, "Addresses");
+        Assert.Equal(2, indexes.Count);
+
+        var foundIndex = Assert.Single(indexes, i => i["key"].AsBsonDocument.Names.Contains("PostCode"));
+        Assert.Equal(1, foundIndex["key"].AsBsonDocument["PostCode"].AsInt32);
+        Assert.Equal(-1, foundIndex["key"].AsBsonDocument["Country"].AsInt32);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_index_with_two_properties_unique(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+            mb => mb.Entity<Address>().HasIndex(a => new {a.PostCode, a.Country}).IsUnique());
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexes = GetIndexes(database.MongoDatabase, "Addresses");
+        Assert.Equal(2, indexes.Count);
+
+        var foundIndex = Assert.Single(indexes, i => i["key"].AsBsonDocument.Names.Contains("PostCode"));
+        Assert.Equal(1, foundIndex["key"].AsBsonDocument["PostCode"].AsInt32);
+        Assert.Equal(1, foundIndex["key"].AsBsonDocument["Country"].AsInt32);
+        Assert.Single(indexes, i => i.Names.Contains("unique") && i["unique"].AsBoolean);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_index_with_filter(bool async)
+    {
+        var filter = Builders<BsonDocument>.Filter.Eq(a => a["Country"], "UK");
+        var options = new CreateIndexOptions<BsonDocument> {PartialFilterExpression = filter};
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+            mb => mb.Entity<Address>().HasIndex(a => a.PostCode).HasCreateIndexOptions(options));
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexes = database.MongoDatabase.GetCollection<BsonDocument>("Addresses").Indexes.List().ToList();
+        Assert.Single(indexes,
+            i => i.Names.Contains("partialFilterExpression")
+                 && i["partialFilterExpression"].ToString() == "{ \"Country\" : \"UK\" }");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_index_with_create_index_options(bool async)
+    {
+        var options = new CreateIndexOptions {Sparse = true, Unique = true};
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
+            mb => mb.Entity<Address>().HasIndex(a => a.PostCode).HasCreateIndexOptions(options));
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexes = database.MongoDatabase.GetCollection<BsonDocument>("Addresses").Indexes.List().ToList();
+        Assert.Single(indexes,
+            i => i.Names.Contains("sparse") && i["sparse"].AsBoolean && i.Names.Contains("unique") && i["unique"].AsBoolean);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_does_not_affect_existing_collections(bool async)
     {
         const int expectedMaxDocs = 1024;
         const int expectedMaxSize = 4096;
@@ -95,9 +312,11 @@ public class MongoClientWrapperTests
             var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
             var client = context.GetService<IMongoClientWrapper>();
 
-            var didCreate = client.CreateDatabase(context.Model);
-            Assert.False(didCreate);
+            var didCreate = async
+                ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+                : client.CreateDatabase(context.GetService<IDesignTimeModel>());
 
+            Assert.False(didCreate);
             var collections = database.MongoDatabase.ListCollections().ToList();
             var allNames = collections.Select(c => c["name"].AsString).ToArray();
             Assert.Equal(4, allNames.Length);
@@ -115,49 +334,10 @@ public class MongoClientWrapperTests
         }
     }
 
-    [Fact]
-    public async Task CreateDatabaseAsync_does_not_affect_existing_collections()
-    {
-        const int expectedMaxDocs = 1024;
-        const int expectedMaxSize = 4096;
-
-        var database = new TemporaryDatabaseFixture();
-
-        {
-            var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
-            await collection.InsertOneAsync(new Customer {Name = "John Doe"});
-            await database.MongoDatabase.CreateCollectionAsync("Orders",
-                new CreateCollectionOptions {MaxDocuments = expectedMaxDocs, MaxSize = expectedMaxSize, Capped = true});
-            await database.MongoDatabase.CreateCollectionAsync("Orders2");
-        }
-
-        {
-            var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
-            var client = context.GetService<IMongoClientWrapper>();
-
-            var didCreate = await client.CreateDatabaseAsync(context.Model);
-            Assert.False(didCreate);
-
-            var collections = (await database.MongoDatabase.ListCollectionsAsync()).ToList();
-            var allNames = collections.Select(c => c["name"].AsString).ToArray();
-            Assert.Equal(4, allNames.Length);
-            Assert.Contains("Customers", allNames);
-            Assert.Contains("Orders", allNames);
-            Assert.Contains("Orders2", allNames);
-            Assert.Contains("Addresses", allNames);
-
-            var existingCollectionOptions = collections.Single(c => c["name"].AsString == "Orders")["options"];
-            Assert.True(existingCollectionOptions["capped"].AsBoolean);
-            Assert.Equal(expectedMaxDocs, existingCollectionOptions["max"].AsInt32);
-            Assert.Equal(expectedMaxSize, existingCollectionOptions["size"].AsInt32);
-
-            var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
-            Assert.Equal(1, await collection.CountDocumentsAsync(FilterDefinition<Customer>.Empty));
-        }
-    }
-
-    [Fact]
-    public void DeleteDatabase_deletes_database()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DeleteDatabase_deletes_database(bool async)
     {
         var database = new TemporaryDatabaseFixture();
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
@@ -165,27 +345,11 @@ public class MongoClientWrapperTests
 
         Assert.False(client.DatabaseExists());
 
-        client.CreateDatabase(context.Model);
+        client.CreateDatabase(context.GetService<IDesignTimeModel>());
         Assert.True(client.DatabaseExists());
 
-        client.DeleteDatabase();
+        _ = async ? await client.DeleteDatabaseAsync() : client.DeleteDatabase();
         Assert.False(client.DatabaseExists());
-    }
-
-    [Fact]
-    public async Task DeleteDatabaseAsync_deletes_database()
-    {
-        var database = new TemporaryDatabaseFixture();
-        var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
-        var client = context.GetService<IMongoClientWrapper>();
-
-        Assert.False(await client.DatabaseExistsAsync());
-
-        await client.CreateDatabaseAsync(context.Model);
-        Assert.True(await client.DatabaseExistsAsync());
-
-        await client.DeleteDatabaseAsync();
-        Assert.False(await client.DatabaseExistsAsync());
     }
 
     class MyContext(
@@ -201,6 +365,7 @@ public class MongoClientWrapperTests
             => new DbContextOptionsBuilder<MyContext>()
                 .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .Options;
 
         public static MyContext CreateCollectionOptions(
@@ -212,6 +377,14 @@ public class MongoClientWrapperTests
         {
             base.OnModelCreating(modelBuilder);
             modelBuilderAction?.Invoke(modelBuilder);
+        }
+
+        private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int Count;
+
+            public object Create(DbContext context, bool designTime)
+                => Interlocked.Increment(ref Count);
         }
     }
 
@@ -231,5 +404,10 @@ public class MongoClientWrapperTests
     {
         public ObjectId Id { get; set; }
         public string PostCode { get; set; }
+        public string Country { get; set; }
+        public string Region { get; set; }
     }
+
+    private static List<BsonDocument> GetIndexes(IMongoDatabase database, string collectionName)
+        => database.GetCollection<BsonDocument>(collectionName).Indexes.List().ToList();
 }
