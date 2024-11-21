@@ -14,18 +14,17 @@
  */
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -37,16 +36,18 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
 {
     private static readonly MethodInfo MqlFieldMethodInfo = typeof(Mql).GetMethod(nameof(Mql.Field), BindingFlags.Public | BindingFlags.Static)!;
 
-    private readonly Stack<IEntityType> _entityTypes = new();
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
+    private readonly BsonSerializerFactory _bsonSerializerFactory;
 
     internal MongoEFToLinqTranslatingExpressionVisitor(
         QueryContext queryContext,
-        Expression source)
+        Expression source,
+        BsonSerializerFactory bsonSerializerFactory)
     {
         _queryContext = queryContext;
         _source = source;
+        _bsonSerializerFactory = bsonSerializerFactory;
     }
 
     public MethodCallExpression Translate(
@@ -127,9 +128,42 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
                      && methodCallExpression.Arguments[1] is ConstantExpression propertyNameExpression:
                 var source = Visit(methodCallExpression.Arguments[0])
                              ?? throw new InvalidOperationException("Unsupported source to EF.Property expression.");
-                var propertyName = propertyNameExpression.GetConstantValue<string>();
 
-                // Try a CLR property (TODO: Remove this once shadow properties resolve nesting and don't $expr into the pipeline)
+                var propertyName = propertyNameExpression.GetConstantValue<string>();
+                var entityType = _queryContext.Context.Model.FindEntityType(source.Type);
+                if (entityType != null)
+                {
+                    // Try an EF property
+                    var efProperty = entityType.FindProperty(propertyName);
+                    if (efProperty != null)
+                    {
+                        var elementName = efProperty.IsPrimaryKey() && entityType.FindPrimaryKey()?.Properties.Count > 1
+                            ? "_id." + efProperty.GetElementName()
+                            : efProperty.GetElementName();
+                        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(source.Type, efProperty.ClrType);
+                        var serializer = BsonSerializerFactory.CreateTypeSerializer(efProperty);
+                        var callExpression = Expression.Call(null, mqlField, source,
+                            Expression.Constant(elementName),
+                            Expression.Constant(serializer));
+                        return ConvertIfRequired(callExpression, methodCallExpression.Method.ReturnType);
+                    }
+
+                    // Try an EF navigation if no property
+                    var efNavigation = entityType.FindNavigation(propertyName);
+                    if (efNavigation != null)
+                    {
+                        var elementName = efNavigation.TargetEntityType.GetContainingElementName();
+                        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(source.Type, efNavigation.ClrType);
+                        var serializer = _bsonSerializerFactory.GetNavigationSerializer(efNavigation);
+                        var callExpression = Expression.Call(null, mqlField, source,
+                            Expression.Constant(elementName),
+                            Expression.Constant(serializer));
+                        return ConvertIfRequired(callExpression, methodCallExpression.Method.ReturnType);
+                    }
+                }
+
+                // Try CLR property
+                // This should not really be required but is kept here for backwards compatibility with any edge cases.
                 var clrProperty = source.Type.GetProperties().FirstOrDefault(p => p.Name == propertyName);
                 if (clrProperty != null)
                 {
@@ -137,24 +171,10 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
                     return ConvertIfRequired(propertyExpression, methodCallExpression.Method.ReturnType);
                 }
 
-                // Try a shadow property
-                var efProperty = _entityTypes.Peek().GetProperty(propertyName);
-                if (efProperty != null)
-                {
-                    var mqlField = MqlFieldMethodInfo.MakeGenericMethod(source.Type, efProperty.ClrType);
-                    var callExpression = Expression.Call(null, mqlField, source, Expression.Constant(efProperty.GetElementName()),
-                        Expression.Constant(BsonSerializerFactory.CreateTypeSerializer(efProperty)));
-                    return ConvertIfRequired(callExpression, methodCallExpression.Method.ReturnType);
-                }
-
                 return VisitMethodCall(methodCallExpression);
 
             case MethodCallExpression {Arguments.Count: > 0} methodCallExpression when methodCallExpression.Arguments[0] is EntityQueryRootExpression e:
-                // Track the entity we're in for shadow property resolution.
-                _entityTypes.Push(e.EntityType);
-                var visited = base.Visit(expression);
-                _entityTypes.Pop();
-                return visited;
+                return base.Visit(expression);
 
             // Unwrap include expressions.
             case IncludeExpression includeExpression:
