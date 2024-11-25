@@ -135,7 +135,9 @@ public class MongoClientWrapperTests
             ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
             : client.CreateDatabase(context.GetService<IDesignTimeModel>());
 
-        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
+        var indexes = GetIndexes(database.MongoDatabase, "Addresses");
+        Assert.Equal(2, indexes.Count);
+        Assert.Single(indexes, i => i["key"].AsBsonDocument.Names.Single() == "PostCode");
     }
 
     [Theory]

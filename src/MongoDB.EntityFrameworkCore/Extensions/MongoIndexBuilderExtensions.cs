@@ -30,6 +30,21 @@ public static class MongoIndexBuilderExtensions
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
     /// <param name="options">The <see cref="CreateIndexOptions"/> for this index.</param>
+    /// <returns>A builder to further configure the index.</returns>
+    public static IndexBuilder HasCreateIndexOptions(
+        this IndexBuilder indexBuilder,
+        CreateIndexOptions? options)
+    {
+        indexBuilder.Metadata.SetCreateIndexOptions(options);
+
+        return indexBuilder;
+    }
+
+    /// <summary>
+    /// Configures the <see cref="CreateIndexOptions"/> for the index.
+    /// </summary>
+    /// <param name="indexBuilder">The builder for the index being configured.</param>
+    /// <param name="options">The <see cref="CreateIndexOptions"/> for this index.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>
     /// The same builder instance if the configuration was applied, <see langword="null" /> otherwise.
@@ -39,29 +54,26 @@ public static class MongoIndexBuilderExtensions
         CreateIndexOptions<BsonDocument>? options,
         bool fromDataAnnotation = false)
     {
-        if (indexBuilder.CanSetCreateIndexOptions(options, fromDataAnnotation))
+        if (!indexBuilder.CanSetCreateIndexOptions(options, fromDataAnnotation))
         {
-            indexBuilder.Metadata.SetCreateIndexOptions(options, fromDataAnnotation);
-            return indexBuilder;
+            return null;
         }
+
+        indexBuilder.Metadata.SetCreateIndexOptions(options, fromDataAnnotation);
         return indexBuilder;
     }
 
     /// <summary>
     /// Configures the <see cref="CreateIndexOptions"/> for the index.
     /// </summary>
+    /// <typeparam name="TEntity">The entity type being configured.</typeparam>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
     /// <param name="options">The <see cref="CreateIndexOptions"/> for this index.</param>
-    /// <returns>
-    /// The same builder instance if the configuration was applied, <see langword="null" /> otherwise.
-    /// </returns>
+    /// <returns>A builder to further configure the index.</returns>
     public static IndexBuilder<TEntity> HasCreateIndexOptions<TEntity>(
         this IndexBuilder<TEntity> indexBuilder,
-        CreateIndexOptions? options)
-    {
-        indexBuilder.Metadata.SetCreateIndexOptions(options);
-        return indexBuilder;
-    }
+        CreateIndexOptions options)
+        => (IndexBuilder<TEntity>)HasCreateIndexOptions((IndexBuilder)indexBuilder, options);
 
     /// <summary>
     /// Returns a value indicating whether the given <see cref="CreateIndexOptions"/> can be set for the index.
