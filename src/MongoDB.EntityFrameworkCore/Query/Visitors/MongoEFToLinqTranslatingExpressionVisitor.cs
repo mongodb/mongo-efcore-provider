@@ -80,10 +80,23 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : ExpressionVisi
         );
     }
 
+    private static bool IsAsQueryableMethod(MethodInfo method)
+        => method.Name == "AsQueryable" && method.DeclaringType == typeof(Queryable);
+
     public override Expression? Visit(Expression? expression)
     {
         switch (expression)
         {
+            // Replace materialization collection expression with the actual nav property in order for Mql.Exists etc. to work.
+            case MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression:
+                var subQuery = Visit(materializeCollectionNavigationExpression.Subquery);
+                if (subQuery is MethodCallExpression mce && IsAsQueryableMethod(mce.Method))
+                {
+                    return Visit(mce.Arguments[0]);
+                }
+
+                return subQuery;
+
             // Replace the QueryContext parameter values with constant values for this execution.
             case ParameterExpression parameterExpression:
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
