@@ -322,20 +322,6 @@ public static class MongoModelValidatorTests
     }
 
     [Fact]
-    public static void Validate_throws_when_entity_has_shadow_properties()
-    {
-        using var db = SingleEntityDbContext.Create<DoubleNamedEntity>(mb =>
-        {
-            var dneBuilder = mb.Entity<DoubleNamedEntity>();
-            dneBuilder.Property<DateTime>("ShadowDateTime");
-        });
-
-        var ex = Assert.Throws<NotSupportedException>(() => db.Model);
-        Assert.Contains($"'{nameof(DoubleNamedEntity)}'", ex.Message);
-        Assert.Contains("'ShadowDateTime'", ex.Message);
-    }
-
-    [Fact]
     public static void Validate_throws_when_entity_constructor_has_BsonConstructor_attribute()
     {
         using var context = SingleEntityDbContext.Create<EntityWithBsonConstructor>();
