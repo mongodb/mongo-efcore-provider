@@ -60,7 +60,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - `EnsureCreated` & `EnsureDeleted` operations
 - Optimistic concurrency support through `IsConcurrencyToken`/`ConcurrencyCheckAttribute` & `IsRowVersion`/`TimestampAttribute`
 - AutoTransactional `SaveChanges` & `SaveChangesAsync` - all changes committed or rolled-back together
-- `CamcelCaseElementNameConvention` for helping map Pascal-cased C# properties to came-cased BSON elements
+- `CamelCaseElementNameConvention` for helping map Pascal-cased C# properties to came-cased BSON elements
 - Type discriminators including `OfType<T>` and `Where(e => e is T)`
 
 ## Limitations
