@@ -72,7 +72,6 @@ public class MongoModelValidator : ModelValidator
         ValidateMaximumOneRowVersionPerEntity(model);
         ValidateNoUnsupportedAttributesOrAnnotations(model);
         ValidateElementNames(model);
-        ValidateNoUnsupportedShadowProperties(model);
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
     }
@@ -325,29 +324,6 @@ public class MongoModelValidator : ModelValidator
                 }
 
                 elementNavigationMap[elementName] = navigation;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Validate that no entities have shadow unsupported properties.
-    /// </summary>
-    /// <param name="model">The <see cref="IModel"/> to validate for whether shadow properties are present.</param>
-    /// <exception cref="NotSupportedException">Thrown when unsupported shadow properties are found on an entity.</exception>
-    private static void ValidateNoUnsupportedShadowProperties(IModel model)
-    {
-        foreach (var entityType in model.GetEntityTypes())
-        {
-            var discriminatorProperty = entityType.FindDiscriminatorProperty();
-            var shadowProperty = entityType.GetProperties()
-                .FirstOrDefault(property =>
-                    property != discriminatorProperty
-                    && property.IsShadowProperty()
-                    && !property.IsOwnedTypeKey());
-            if (shadowProperty != null)
-            {
-                throw new NotSupportedException(
-                    $"Unsupported shadow property '{shadowProperty.Name}' identified on entity type '{entityType.DisplayName()}'.");
             }
         }
     }
