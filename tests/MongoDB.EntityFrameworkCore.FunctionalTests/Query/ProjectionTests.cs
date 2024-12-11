@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using MongoDB.Bson.Serialization.Serializers;
+using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -39,6 +41,21 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     public void Select_projection_to_anonymous()
     {
         var results = _db.Planets.Take(10).Select(p => new {Name = p.name, Order = p.orderFromSun});
+        Assert.All(results, r =>
+        {
+            Assert.NotNull(r.Name);
+            Assert.InRange(r.Order, 1, 8);
+        });
+    }
+
+    [Fact]
+    public void Select_projection_to_anonymous_via_mql_field()
+    {
+        var results = _db.Planets.Take(10).Select(p => new
+        {
+            Name = Mql.Field(p, "name", StringSerializer.Instance),
+            Order = Mql.Field(p, "orderFromSun", Int32Serializer.Instance)
+        });
         Assert.All(results, r =>
         {
             Assert.NotNull(r.Name);
