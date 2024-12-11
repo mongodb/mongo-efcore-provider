@@ -14,6 +14,7 @@
  */
 
 using System.Collections;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -25,12 +26,14 @@ public class TemporaryDatabaseFixture
     public const string TestDatabasePrefix = "EFCoreTest-";
 
     private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
-    private static int Count;
+    private static int DbCount;
+
+    private int collectionIdFallback;
 
     public TemporaryDatabaseFixture()
     {
         Client = TestServer.GetClient();
-        MongoDatabase = Client.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref Count)}");
+        MongoDatabase = Client.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref DbCount)}");
     }
 
     public IMongoDatabase MongoDatabase { get; }
@@ -64,6 +67,12 @@ public class TemporaryDatabaseFixture
             return result;
         }));
 
+        if (string.IsNullOrEmpty(prefix))
+        {
+            // Sometimes on CI this is empty despite being CallerMemberName attributed so fallback to sequential number
+            prefix = Interlocked.Increment(ref collectionIdFallback).ToString();
+        }
+
         return CreateCollection<T>($"{prefix}_{valuesSuffix}");
     }
 
@@ -93,7 +102,7 @@ public class TemporaryDatabaseFixture
     public IMongoClient Client { get; }
 
     private static string? GetLastConstructorTypeNameFromStack()
-        => new System.Diagnostics.StackTrace()
+        => new StackTrace()
             .GetFrames()
             .Select(f => f.GetMethod())
             .FirstOrDefault(f => f?.Name == ".ctor")

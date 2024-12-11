@@ -240,6 +240,7 @@ functions:
           - "ARTIFACTORY_USERNAME"
           - "GRS_USERNAME"
           - "GRS_PASSWORD"
+          - "AUTHENTICODE_KEY_NAME"
         script: |
           ${PREPARE_SHELL}
           . ./evergreen/sign-packages.sh

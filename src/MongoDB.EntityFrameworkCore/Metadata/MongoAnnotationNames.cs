@@ -37,17 +37,22 @@ public static class MongoAnnotationNames
     public const string ElementName = Prefix + nameof(ElementName);
 
     /// <summary>
-    /// The key for DateTimeKind annotations.
+    /// The key for <see cref="DateTimeKind"/> annotations.
     /// </summary>
     public const string DateTimeKind = Prefix + nameof(DateTimeKind);
 
     /// <summary>
-    /// The key for NotSupportedAttribute annotations.
+    /// The key for marking annotations as not supported.
     /// </summary>
     public const string NotSupportedAttributes = Prefix + nameof(NotSupportedAttributes);
 
     /// <summary>
-    /// The key for Bson Representation annotations.
+    /// The key for Bson representation annotations.
     /// </summary>
     public const string BsonRepresentation = Prefix + nameof(BsonRepresentation);
+
+    /// <summary>
+    /// The key for create index options annotations.
+    /// </summary>
+    public const string CreateIndexOptions = Prefix + nameof(CreateIndexOptions);
 }
