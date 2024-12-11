@@ -32,7 +32,22 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
         var entities = db.Entities.ToList();
-        Assert.Single(entities, e => e.EntityType == "Client" && e.GetType() == typeof(Customer));
+        Assert.Single(entities, e => e.EntityType == "Client" && e.GetType() == typeof(Customer) && e.Status == Status.Active
+                                     && e is Customer
+                                     {
+                                         Name: "Customer 1"
+                                     });
+        Assert.Single(entities, e => e.EntityType == "Client" && e.GetType() == typeof(Customer) && e.Status == Status.Active
+                                     && e is Customer
+                                     {
+                                         Name: "Customer 2"
+                                     });
+        Assert.Single(entities, e => e.EntityType == "Client" && e.GetType() == typeof(Customer) && e.Status == Status.Inactive
+                                     && e is Customer
+                                     {
+                                         Name: "Customer 1"
+                                     });
+
         Assert.Single(entities, e => e.EntityType == "SubClient" && e.GetType() == typeof(SubCustomer));
         Assert.Single(entities, e => e.EntityType == "Order" && e.GetType() == typeof(Order));
         Assert.Single(entities, e => e.EntityType == "Supplier" && e.GetType() == typeof(Supplier));
@@ -48,7 +63,9 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection, ShadowPropertyConfiguredModel);
         var entities = db.Entities.ToList();
-        Assert.Single(entities, e => e is Customer {Name: "Customer 1"});
+        Assert.Single(entities, e => e.Status == Status.Active && e is Customer {Name: "Customer 1"});
+        Assert.Single(entities, e => e.Status == Status.Active && e is Customer {Name: "Customer 2"});
+        Assert.Single(entities, e => e.Status == Status.Inactive && e is Customer {Name: "Customer 1"});
         Assert.Single(entities, e => e is SubCustomer {Name: "SubCustomer 1"});
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
         Assert.Single(entities, e => e is Supplier {Name: "Supplier 1"});
@@ -225,9 +242,11 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
         var entities = db.Entities.OfType<Customer>().ToList();
-        Assert.Single(entities, e => e.Name == "Customer 1");
+        Assert.Single(entities, e => e is {Name: "Customer 1", Status: Status.Active});
+        Assert.Single(entities, e => e is {Name: "Customer 2", Status: Status.Active});
+        Assert.Single(entities, e => e is {Name: "Customer 1", Status: Status.Inactive});
         Assert.Single(entities, e => e.Name == "SubCustomer 1");
-        Assert.Equal(2, entities.Count);
+        Assert.Equal(4, entities.Count);
     }
 
     [Fact]
@@ -238,10 +257,29 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
         var entities = db.Entities.OfType<BaseEntity>().Where(e => e is Customer || e.GetType() == typeof(Order)).ToList();
-        Assert.Equal(3, entities.Count);
-        Assert.Single(entities, e => e is Customer {Name: "Customer 1"});
+        Assert.Equal(5, entities.Count);
+        Assert.Single(entities, e => e is Customer {Name: "Customer 1", Status: Status.Active});
+        Assert.Single(entities, e => e is Customer {Name: "Customer 1", Status: Status.Inactive});
+        Assert.Single(entities, e => e is Customer {Name: "Customer 2", Status: Status.Active});
         Assert.Single(entities, e => e is SubCustomer {Name: "SubCustomer 1"});
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
+    }
+
+    [Fact]
+    public void OfType_does_not_break_entity_serializer_association()
+    {
+        var collection = database.CreateCollection<BaseEntity>();
+        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
+
+        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
+
+        var allActiveCustomers = db.Entities.OfType<Customer>().Where(e => e.Status == Status.Active);
+        Assert.All(allActiveCustomers, f => Assert.Equal(Status.Active, f.Status));
+
+        var activeCustomer1 = db.Entities.Where(e => e.Status == Status.Active).OfType<Customer>()
+            .Single(c => c.Name == "Customer 1");
+        Assert.Equal("Customer 1", activeCustomer1.Name);
+        Assert.Equal(Status.Active, activeCustomer1.Status);
     }
 
     [Fact]
@@ -282,6 +320,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
             .HasValue<Order>("Order")
             .HasValue<OrderWithProducts>("OrderEx")
             .HasValue<Contact>("Contact");
+        mb.Entity<BaseEntity>().Property(e => e.Status).HasConversion<string>(e => e.ToString(), s => Enum.Parse<Status>(s));
     }
 
     private static void ShadowPropertyConfiguredModel(ModelBuilder mb)
@@ -294,11 +333,14 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
             .HasValue<Order>("Order")
             .HasValue<OrderWithProducts>("OrderEx")
             .HasValue<Contact>("Contact");
+        mb.Entity<BaseEntity>().Property(e => e.Status).HasConversion<string>(e => e.ToString(), s => Enum.Parse<Status>(s));
     }
 
     private static void SetupTestData(DbContext db)
     {
-        db.Add(new Customer {Name = "Customer 1", ShippingAddress = "123 Main St"});
+        db.Add(new Customer {Name = "Customer 1", ShippingAddress = "123 Main St", Status = Status.Active});
+        db.Add(new Customer {Name = "Customer 1", ShippingAddress = "123 Main St", Status = Status.Inactive});
+        db.Add(new Customer {Name = "Customer 2", ShippingAddress = "123 Main St", Status = Status.Active});
         db.Add(new Supplier {Name = "Supplier 1", Products = ["Product 1", "Product 2"]});
         db.Add(new SubCustomer {Name = "SubCustomer 1", ShippingAddress = "3.5 Inch Dr.", AccountingCode = 123});
         db.Add(new Order {OrderReference = "Order 1"});
@@ -309,10 +351,18 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         db.Dispose();
     }
 
+    enum Status
+    {
+        Active,
+        Inactive,
+        Unused
+    }
+
     class BaseEntity
     {
         public ObjectId _id { get; set; }
         public string? EntityType { get; set; }
+        public Status Status { get; set; } = Status.Inactive;
     }
 
     class Customer : BaseEntity
