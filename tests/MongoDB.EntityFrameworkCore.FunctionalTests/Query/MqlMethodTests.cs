@@ -28,7 +28,7 @@ public class MqlMethodTests(TemporaryDatabaseFixture database)
     public void Where_Mql_Exists_does_not_return_entities_with_missing_property()
     {
         database.CreateCollection<Basic>().InsertOne(_expectedBasicWithNav);
-        var collection = database.CreateCollection<Full>();
+        var collection = database.GetCollection<Full>();
         collection.InsertOne(_expectedFull);
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -51,8 +51,8 @@ public class MqlMethodTests(TemporaryDatabaseFixture database)
     public void Where_Mql_IsMissing_returns_entities_with_missing_property()
     {
         database.CreateCollection<Full>().InsertOne(_expectedFull);
-        database.CreateCollection<Basic>().InsertOne(_expectedBasic);
-        using var db = SingleEntityDbContext.Create(database.CreateCollection<BasicWithOptional>());
+        database.GetCollection<Basic>().InsertOne(_expectedBasic);
+        using var db = SingleEntityDbContext.Create(database.GetCollection<BasicWithOptional>());
 
         AssertExpected(db.Entities.Where(p => Mql.IsMissing(p.AnOptionalString)));
         AssertExpected(db.Entities.Where(p => Mql.IsMissing(EF.Property<string>(p, "AnOptionalString"))));
@@ -72,10 +72,11 @@ public class MqlMethodTests(TemporaryDatabaseFixture database)
     public void Where_Mql_IsMissingOrNull_returns_entities_with_null_or_missing_property()
     {
         database.CreateCollection<Basic>().InsertOne(_expectedBasic);
-        database.CreateCollection<Full>().InsertOne(_expectedFull);
-        database.CreateCollection<BasicWithOptional>().InsertOne(_expectedOptionalNotSet);
+        database.GetCollection<Full>().InsertOne(_expectedFull);
+        var collection = database.GetCollection<BasicWithOptional>();
+        collection.InsertOne(_expectedOptionalNotSet);
 
-        using var db = SingleEntityDbContext.Create(database.CreateCollection<BasicWithOptional>());
+        using var db = SingleEntityDbContext.Create(collection);
 
         AssertExpected(db.Entities.Where(p => Mql.IsNullOrMissing(p.AnOptionalString)));
         AssertExpected(db.Entities.Where(p => Mql.IsNullOrMissing(EF.Property<string>(p, "AnOptionalString"))));
@@ -100,7 +101,7 @@ public class MqlMethodTests(TemporaryDatabaseFixture database)
     public void Where_Mql_Exists_does_not_return_entities_with_missing_navigation()
     {
         database.CreateCollection<Keyed>().InsertOne(new Keyed());
-        var collection = database.CreateCollection<Nav>();
+        var collection = database.GetCollection<Nav>();
         collection.InsertOne(_expectedNav);
         using var db = SingleEntityDbContext.Create(collection);
 
