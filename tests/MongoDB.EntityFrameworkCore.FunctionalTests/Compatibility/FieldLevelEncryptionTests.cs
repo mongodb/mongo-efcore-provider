@@ -38,11 +38,76 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
     [Theory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void Encrypted_data_can_not_be_read_without_encrypted_client(CryptProvider cryptProvider)
+    {
+        var collection = database.CreateCollection<Patient>(null, cryptProvider);
+        SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName);
+
+        using var db = SingleEntityDbContext.Create(collection);
+
+        Assert.Throws<FormatException>(() => db.Entities.First());
+    }
+
+    [Theory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void Encrypted_data_can_not_be_read_with_wrong_master_key(CryptProvider cryptProvider)
+    {
+        // Setup data with a master key
+        var collection = database.CreateCollection<Patient>(null, cryptProvider);
+        var collectionNamespace = collection.CollectionNamespace;
+        SetupEncryptedTestData(cryptProvider, collectionNamespace.CollectionName);
+
+        // Create a second MongoDB encrypted client with a different (wrong) master key
+        var kmsWrongMaster = CreateKmsProvidersWithLocalMasterKey(CreateMasterKey());
+        var patientDataKey = CreateDataKey(database.Client, _keyVaultNamespace, kmsWrongMaster);
+        var schemaMap = CreateSchemaMap(collectionNamespace.CollectionName, patientDataKey);
+        var wrongClient = CreateEncryptedClient(collectionNamespace, kmsWrongMaster, cryptProvider,
+            schemaMap);
+
+        var alternateCollection = wrongClient
+            .GetDatabase(database.MongoDatabase.DatabaseNamespace.DatabaseName)
+            .GetCollection<Patient>(collectionNamespace.CollectionName);
+        using var db = SingleEntityDbContext.Create(alternateCollection);
+        Assert.Throws<MongoEncryptionException>(() => db.Entities.First());
+    }
+
+    [Theory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Encrypted_data_can_round_trip(CryptProvider cryptProvider)
+    {
+        var collection = database.CreateCollection<Patient>(null, cryptProvider);
+        var encryptedCollection = SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName);
+
+        // Test driver load
+        Assert.Equal("145014000", encryptedCollection.AsQueryable().First().ssn);
+
+        // Test EF Core load & save
+        {
+            using var db = SingleEntityDbContext.Create(encryptedCollection);
+            var patient = db.Entities.First();
+            Assert.Equal("145014000", patient.ssn);
+            patient.bloodType = "O-";
+            db.SaveChanges();
+        }
+
+        // Ensure saved data is correct via Driver & EF
+        Assert.Equal("O-", encryptedCollection.AsQueryable().First().bloodType);
+        Assert.Equal("O-", SingleEntityDbContext.Create(encryptedCollection).Entities.First().bloodType);
+
+        // EF Query
+        {
+            using var db = SingleEntityDbContext.Create(encryptedCollection);
+            var patient = db.Entities.First(p => p.ssn == "145014000");
+            Assert.Equal("145014000", patient.ssn);
+        }
+    }
+
+    private IMongoCollection<Patient> SetupEncryptedTestData(CryptProvider cryptProvider, string collectionName)
     {
         // Create new key for this collection
         var patientDataKey = CreateDataKey(database.Client, _keyVaultNamespace, _kmsProviders);
-        var collectionName = "patients_" + cryptProvider;
 
         // Create the schema map and an encrypted client
         var schemaMap = CreateSchemaMap(collectionName, patientDataKey);
@@ -51,6 +116,7 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
         // Insert test data using the driver
         var collection = encryptedClient.GetDatabase(database.MongoDatabase.DatabaseNamespace.DatabaseName)
             .GetCollection<Patient>(collectionName);
+
         collection.InsertMany([
             new Patient
             {
@@ -62,29 +128,9 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
             new Patient {name = "Tom Smith", ssn = "1234567", bloodType = "O-", medicalRecords = []}
         ]);
 
-        // Test driver load
-        Assert.Equal("145014000", collection.AsQueryable().First().ssn);
-
-        // Test EF Core load & save
-        {
-            using var db = SingleEntityDbContext.Create(collection);
-            var patient = db.Entities.First();
-            Assert.Equal("145014000", patient.ssn);
-            patient.bloodType = "O-";
-            db.SaveChanges();
-        }
-
-        // Ensure saved data is correct via Driver & EF
-        Assert.Equal("O-", collection.AsQueryable().First().bloodType);
-        Assert.Equal("O-", SingleEntityDbContext.Create(collection).Entities.First().bloodType);
-
-        // EF Query
-        {
-            using var db = SingleEntityDbContext.Create(collection);
-            var patient = db.Entities.First(p => p.ssn == "145014000");
-            Assert.Equal("145014000", patient.ssn);
-        }
+        return collection;
     }
+
     private Dictionary<string, BsonDocument> CreateSchemaMap(string collectionName, Guid patientDataKey)
         => new()
         {
@@ -168,11 +214,7 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
     }
 
     private static Dictionary<string, object> GetExtraOptionsForCryptShared()
-        => new()
-        {
-            {"cryptSharedLibPath", GetEnvironmentVariableOrThrow("CRYPT_SHARED_LIB_PATH")},
-            {"cryptSharedLibRequired", true}
-        };
+        => new() {{"cryptSharedLibPath", GetEnvironmentVariableOrThrow("CRYPT_SHARED_LIB_PATH")}, {"cryptSharedLibRequired", true}};
 
     private static Dictionary<string, object> GetExtraOptionsForMongocryptd()
         => new() {{"mongocryptdSpawnPath", GetEnvironmentVariableOrThrow("MONGODB_BINARIES")}};
