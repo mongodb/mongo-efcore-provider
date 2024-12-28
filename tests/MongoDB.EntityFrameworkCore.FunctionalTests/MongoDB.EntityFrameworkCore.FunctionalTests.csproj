@@ -6,6 +6,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10"/>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.10" />
+    <PackageReference Include="MongoDB.Driver.Encryption" Version="3.1.0" />
   </ItemGroup>
 
   <ItemGroup>
