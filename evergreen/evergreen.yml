@@ -60,6 +60,7 @@ functions:
 
           export MONGO_ORCHESTRATION_HOME="$DRIVERS_TOOLS/.evergreen/orchestration"
           export MONGODB_BINARIES="$DRIVERS_TOOLS/mongodb/bin"
+          export CRYPT_SHARED_LIB_PATH="$CRYPT_SHARED_LIB_PATH"
           export PROJECT_DIRECTORY="$(pwd)"
 
           cat <<EOT > expansion.yml
@@ -67,6 +68,7 @@ functions:
           DRIVERS_TOOLS: "$DRIVERS_TOOLS"
           MONGO_ORCHESTRATION_HOME: "$MONGO_ORCHESTRATION_HOME"
           MONGODB_BINARIES: "$MONGODB_BINARIES"
+          CRYPT_SHARED_LIB_PATH: "$CRYPT_SHARED_LIB_PATH"
           PROJECT_DIRECTORY: "$PROJECT_DIRECTORY"
           PACKAGE_VERSION: "$PACKAGE_VERSION"
           DOTNET_SDK_PATH: "$DOTNET_SDK_PATH"
@@ -76,6 +78,7 @@ functions:
             export DRIVERS_TOOLS="$DRIVERS_TOOLS"
             export MONGO_ORCHESTRATION_HOME="$MONGO_ORCHESTRATION_HOME"
             export MONGODB_BINARIES="$MONGODB_BINARIES"
+            export CRYPT_SHARED_LIB_PATH="$CRYPT_SHARED_LIB_PATH"
             export PROJECT_DIRECTORY="$PROJECT_DIRECTORY"
             export PACKAGE_VERSION="$PACKAGE_VERSION"
             export DOTNET_SDK_PATH="$DOTNET_SDK_PATH"

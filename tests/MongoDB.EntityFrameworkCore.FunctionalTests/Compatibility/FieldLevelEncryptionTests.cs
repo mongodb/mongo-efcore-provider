@@ -178,7 +178,7 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
         => new() {{"mongocryptdSpawnPath", GetEnvironmentVariableOrThrow("MONGODB_BINARIES")}};
 
     private static string GetEnvironmentVariableOrThrow(string variable)
-        => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"${variable}\" not set.");
+        => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"{variable}\" not set.");
 
     class Patient
     {
