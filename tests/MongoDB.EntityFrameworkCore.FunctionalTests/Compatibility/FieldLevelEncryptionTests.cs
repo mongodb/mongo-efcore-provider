@@ -167,15 +167,18 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
         return new MongoClient(clientSettings);
     }
 
-    private static Dictionary<string, object?> GetExtraOptionsForCryptShared()
+    private static Dictionary<string, object> GetExtraOptionsForCryptShared()
         => new()
         {
-            {"cryptSharedLibPath", Environment.GetEnvironmentVariable("CRYPT_SHARED_LIB_PATH")},
+            {"cryptSharedLibPath", GetEnvironmentVariableOrThrow("CRYPT_SHARED_LIB_PATH")},
             {"cryptSharedLibRequired", true}
         };
 
-    private static Dictionary<string, object?> GetExtraOptionsForMongocryptd()
-        => new() {{"mongocryptdSpawnPath", Environment.GetEnvironmentVariable("MONGODB_BINARIES")}};
+    private static Dictionary<string, object> GetExtraOptionsForMongocryptd()
+        => new() {{"mongocryptdSpawnPath", GetEnvironmentVariableOrThrow("MONGODB_BINARIES")}};
+
+    private static string GetEnvironmentVariableOrThrow(string variable)
+        => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"${variable}\" not set.");
 
     class Patient
     {
