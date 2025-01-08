@@ -13,18 +13,20 @@
  * limitations under the License.
  */
 
-using Microsoft.EntityFrameworkCore;
+using System;
+using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
-/// A convention that configures store value generation as <see cref="ValueGenerated.OnAdd" /> on properties that are
-/// part of the primary key and not part of any foreign keys or were configured to have a database default value.
+/// A convention that configures store value generation for <see cref="ObjectId"/> and <see cref="Guid"/> keys
+/// as well as the synthesized keys used internally by EF to index owned collection navigations.
 /// </summary>
 internal class MongoValueGenerationConvention : ValueGenerationConvention, IEntityTypeAnnotationChangedConvention
 {
@@ -73,7 +75,29 @@ internal class MongoValueGenerationConvention : ValueGenerationConvention, IEnti
     /// </returns>
     protected override ValueGenerated? GetValueGenerated(IConventionProperty property)
     {
-        if (property.DeclaringType is IConventionEntityType && property.ClrType == typeof(ObjectId))
+        var entityType = property.DeclaringType as IConventionEntityType;
+        var propertyType = property.ClrType.UnwrapNullableType();
+
+        // Auto-generate synthesized keys for owned collections
+        if (propertyType == typeof(int) && entityType != null)
+        {
+            var ownership = entityType.FindOwnership();
+            if (ownership is { IsUnique: false } && !entityType.IsDocumentRoot())
+            {
+                var pk = property.FindContainingPrimaryKey();
+                if (pk != null
+                    && !property.IsForeignKey()
+                    && pk.Properties.Count == ownership.Properties.Count + 1
+                    && property.IsShadowProperty()
+                    && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty)))
+                {
+                    return ValueGenerated.OnAddOrUpdate;
+                }
+            }
+        }
+
+        // Auto-generate ObjectId keys
+        if (propertyType == typeof(ObjectId))
         {
             var primaryKey = property.FindContainingPrimaryKey();
             if (primaryKey is {Properties.Count: 1})
@@ -82,11 +106,9 @@ internal class MongoValueGenerationConvention : ValueGenerationConvention, IEnti
             }
         }
 
-        if (property.DeclaringType.ContainingEntityType.IsOwned() && property.IsOwnedCollectionShadowKey())
-        {
-            return ValueGenerated.OnAddOrUpdate;
-        }
-
-        return base.GetValueGenerated(property);
+        // Do not auto-generate anything else except Guid
+        return propertyType != typeof(Guid)
+            ? null
+            : base.GetValueGenerated(property);
     }
 }
