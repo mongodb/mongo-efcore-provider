@@ -21,6 +21,4 @@ then
 fi
 
 dotnet clean "./MongoDB.EFCoreProvider.sln"
-
-
-dotnet test "./MongoDB.EFCoreProvider.sln" -e MONGODB_URI="${MONGODB_URI}" --runtime "${TARGET_RUNTIME}" --results-directory ./artifacts/test-results --logger "junit;LogFileName=TEST_{assembly}.xml;FailureBodyFormat=Verbose" --logger "console;verbosity=detailed"
+dotnet test "./MongoDB.EFCoreProvider.sln" -e MONGODB_URI="${MONGODB_URI}" --results-directory ./artifacts/test-results --logger "junit;LogFileName=TEST_{assembly}.xml;FailureBodyFormat=Verbose" --logger "console;verbosity=detailed"
