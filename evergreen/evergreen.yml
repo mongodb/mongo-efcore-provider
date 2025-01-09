@@ -60,7 +60,6 @@ functions:
 
           export MONGO_ORCHESTRATION_HOME="$DRIVERS_TOOLS/.evergreen/orchestration"
           export MONGODB_BINARIES="$DRIVERS_TOOLS/mongodb/bin"
-          export CRYPT_SHARED_LIB_PATH="$CRYPT_SHARED_LIB_PATH"
           export PROJECT_DIRECTORY="$(pwd)"
 
           cat <<EOT > expansion.yml
@@ -68,7 +67,6 @@ functions:
           DRIVERS_TOOLS: "$DRIVERS_TOOLS"
           MONGO_ORCHESTRATION_HOME: "$MONGO_ORCHESTRATION_HOME"
           MONGODB_BINARIES: "$MONGODB_BINARIES"
-          CRYPT_SHARED_LIB_PATH: "$CRYPT_SHARED_LIB_PATH"
           PROJECT_DIRECTORY: "$PROJECT_DIRECTORY"
           PACKAGE_VERSION: "$PACKAGE_VERSION"
           DOTNET_SDK_PATH: "$DOTNET_SDK_PATH"
@@ -78,7 +76,6 @@ functions:
             export DRIVERS_TOOLS="$DRIVERS_TOOLS"
             export MONGO_ORCHESTRATION_HOME="$MONGO_ORCHESTRATION_HOME"
             export MONGODB_BINARIES="$MONGODB_BINARIES"
-            export CRYPT_SHARED_LIB_PATH="$CRYPT_SHARED_LIB_PATH"
             export PROJECT_DIRECTORY="$PROJECT_DIRECTORY"
             export PACKAGE_VERSION="$PACKAGE_VERSION"
             export DOTNET_SDK_PATH="$DOTNET_SDK_PATH"
@@ -173,7 +170,7 @@ functions:
           DRIVER_VERSION=${DRIVER_VERSION} \
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
-          TARGET_RUNTIME="${TARGET_RUNTIME}" \
+          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
             ./evergreen/run-tests.sh
 
   cleanup:
@@ -257,8 +254,8 @@ functions:
           ${PREPARE_SHELL}
           DRIVER_VERSION=${DRIVER_VERSION} \
           MONGODB_URI="${MONGODB_URI}" \
-          TARGET_RUNTIME="${TARGET_RUNTIME}" \
           PACKAGE_VERSION="${PACKAGE_VERSION}" \
+          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           . ./evergreen/run-smoke-tests.sh
 
   push-packages:
@@ -537,23 +534,14 @@ axes:
         variables:
           DRIVER_VERSION: "latest"
 
-  - id: target_runtime
-    display_name: Target .net runtime
-    values:
-      - id: "net80"
-        display_name: "net 8.0"
-        variables:
-          TARGET_RUNTIME: "net80"
-
 buildvariants:
 - matrix_name: main-tests
   matrix_spec:
     version: ["5.0", "6.0", "7.0", "latest"]
     os: "*"
     driver: "*"
-    target_runtime: "*"
     topology: "replicaset"
-  display_name: "${target_runtime} ${driver} Driver on ${os} with ${version} ${topology} Server"
+  display_name: "${driver} Driver on ${os} with ${version} ${topology} Server"
   tags: ["tests-variant"]
   tasks:
     - name: main-tests
@@ -579,9 +567,8 @@ buildvariants:
     version: "latest"
     os: "*"
     driver: "latest"
-    target_runtime: "*"
     topology: "replicaset"
-  display_name: "${target_runtime} smoke tests on ${os}"
+  display_name: "Smoke tests on ${os}"
   tags: ["package-tests", "release_tag"]
   tasks:
     - name: packages-tests
