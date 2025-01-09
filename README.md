@@ -63,6 +63,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - `CamelCaseElementNameConvention` for helping map Pascal-cased C# properties to came-cased BSON elements
 - Type discriminators including `OfType<T>` and `Where(e => e is T)`
 - EF shadow properties
+- [Client Side Field Level Encryption](https://www.mongodb.com/docs/manual/core/csfle/quick-start/) compatibility
 
 ## Limitations
 
