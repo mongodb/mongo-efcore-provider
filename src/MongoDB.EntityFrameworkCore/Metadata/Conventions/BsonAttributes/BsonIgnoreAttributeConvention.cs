@@ -19,8 +19,12 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using MongoDB.Bson.Serialization.Attributes;
+#if EF8
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
+#else
+using Microsoft.EntityFrameworkCore.Internal;
+#endif
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 

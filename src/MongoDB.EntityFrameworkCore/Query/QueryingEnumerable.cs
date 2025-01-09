@@ -98,16 +98,9 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         {
             try
             {
-                _concurrencyDetector?.EnterCriticalSection();
+                using var _ = _concurrencyDetector?.EnterCriticalSection();
 
-                try
-                {
-                    return MoveNextHelper();
-                }
-                finally
-                {
-                    _concurrencyDetector?.ExitCriticalSection();
-                }
+                return MoveNextHelper();
             }
             catch (Exception exception)
             {
@@ -128,18 +121,11 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         {
             try
             {
-                _concurrencyDetector?.EnterCriticalSection();
+                using var _ = _concurrencyDetector?.EnterCriticalSection();
 
-                try
-                {
-                    _cancellationToken.ThrowIfCancellationRequested();
+                _cancellationToken.ThrowIfCancellationRequested();
 
-                    return new ValueTask<bool>(MoveNextHelper());
-                }
-                finally
-                {
-                    _concurrencyDetector?.ExitCriticalSection();
-                }
+                return new ValueTask<bool>(MoveNextHelper());
             }
             catch (Exception exception)
             {
@@ -162,7 +148,13 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
             if (_enumerator == null)
             {
+#if EF8
                 EntityFrameworkEventSource.Log.QueryExecuting();
+#else
+#pragma warning disable EF9101
+                EntityFrameworkMetricsData.ReportQueryExecuting();
+#pragma warning restore EF9101
+#endif
 
                 try
                 {

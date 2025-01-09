@@ -3,6 +3,7 @@
 
 // Originally from EFCore 9's ListOfReferenceTypesComparer.cs
 
+#if EF8
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -213,3 +214,4 @@ public sealed class ListOfReferenceTypesComparer<TConcreteCollection, TElement> 
         }
     }
 }
+#endif

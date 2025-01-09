@@ -1,12 +1,29 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configurations>Debug;Release;</Configurations>
+    <Configurations>Debug;Release;Debug EF8;Release EF8</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF8' ">
+    <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF8' ">
+    <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="MongoDB.Driver.Encryption" Version="3.1.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF8' Or '$(Configuration)' == 'Debug EF8' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.11" />
-    <PackageReference Include="MongoDB.Driver.Encryption" Version="3.1.0" />
+    <Compile Remove="Design\Generated-EF9\**" />
+    <Compile Remove="Design\Generated\SimpleContextAssemblyAttributes.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="9.0.0" />
+    <Compile Remove="Design\Generated\**" />
   </ItemGroup>
 
   <ItemGroup>
