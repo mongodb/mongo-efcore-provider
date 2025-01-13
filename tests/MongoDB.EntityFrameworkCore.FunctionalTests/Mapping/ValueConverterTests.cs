@@ -42,10 +42,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         mb.Entity<IdIsObjectId>().Property(e => e._id).HasConversion<string>();
 
     [Theory]
-    [InlineData(["507f1f77bcf86cd799439011", true])]
-    [InlineData(["507f191e810c19729de860ea", true])]
-    [InlineData(["507f1f77bcf86cd799439011", false])]
-    [InlineData(["507f191e810c19729de860ea", false])]
+    [InlineData("507f1f77bcf86cd799439011", true)]
+    [InlineData("507f191e810c19729de860ea", true)]
+    [InlineData("507f1f77bcf86cd799439011", false)]
+    [InlineData("507f191e810c19729de860ea", false)]
     public void ObjectId_can_deserialize_and_query_from_string(string id, bool defaultConverter)
     {
         var expectedId = ObjectId.Parse(id);
@@ -62,10 +62,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["507f1f77bcf86cd799439011", true])]
-    [InlineData(["507f191e810c19729de860ea", true])]
-    [InlineData(["507f1f77bcf86cd799439011", false])]
-    [InlineData(["507f191e810c19729de860ea", false])]
+    [InlineData("507f1f77bcf86cd799439011", true)]
+    [InlineData("507f191e810c19729de860ea", true)]
+    [InlineData("507f1f77bcf86cd799439011", false)]
+    [InlineData("507f191e810c19729de860ea", false)]
     public void ObjectId_can_serialize_to_string(string id, bool defaultConverter)
     {
         var collection = database.CreateCollection<IdIsObjectId>(values: [id, defaultConverter]);
@@ -87,10 +87,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
 
     [Theory]
-    [InlineData(["507f1f77bcf86cd799439011", true])]
-    [InlineData(["507f191e810c19729de860ea", true])]
-    [InlineData(["507f1f77bcf86cd799439011", false])]
-    [InlineData(["507f191e810c19729de860ea", false])]
+    [InlineData("507f1f77bcf86cd799439011", true)]
+    [InlineData("507f191e810c19729de860ea", true)]
+    [InlineData("507f1f77bcf86cd799439011", false)]
+    [InlineData("507f191e810c19729de860ea", false)]
     public void String_can_deserialize_and_query_from_ObjectId(string id, bool defaultConverter)
     {
         var expected = new IdIsObjectId {_id = ObjectId.Parse(id)};
@@ -106,10 +106,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["507f1f77bcf86cd799439011", true])]
-    [InlineData(["507f191e810c19729de860ea", true])]
-    [InlineData(["507f1f77bcf86cd799439011", false])]
-    [InlineData(["507f191e810c19729de860ea", false])]
+    [InlineData("507f1f77bcf86cd799439011", true)]
+    [InlineData("507f191e810c19729de860ea", true)]
+    [InlineData("507f1f77bcf86cd799439011", false)]
+    [InlineData("507f191e810c19729de860ea", false)]
     public void String_can_serialize_to_ObjectId(string id, bool defaultConverter)
     {
         var collection = database.CreateCollection<IdIsString>(values: [id, defaultConverter]);
@@ -143,10 +143,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
             .Property(e => e.active).HasConversion<string>();
 
     [Theory]
-    [InlineData([true, true])]
-    [InlineData([true, false])]
-    [InlineData([false, true])]
-    [InlineData([false, false])]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
     public void Bool_can_deserialize_and_query_from_string(bool active, bool defaultConverter)
     {
         var expectedActive =
@@ -164,10 +164,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData([true, true])]
-    [InlineData([true, false])]
-    [InlineData([false, true])]
-    [InlineData([false, false])]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
     public void Bool_can_serialize_to_string(bool active, bool defaultConverter)
     {
         var collection = database.CreateCollection<ActiveIsBool>(values: [active, defaultConverter]);
@@ -205,12 +205,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
             .Property(e => e.days).HasConversion<string>();
 
     [Theory]
-    [InlineData([1, true])]
-    [InlineData([1, false])]
-    [InlineData([-123, true])]
-    [InlineData([-123, false])]
-    [InlineData([0, true])]
-    [InlineData([0, false])]
+    [InlineData(1, true)]
+    [InlineData(1, false)]
+    [InlineData(-123, true)]
+    [InlineData(-123, false)]
+    [InlineData(0, true)]
+    [InlineData(0, false)]
     public void Int_can_deserialize_and_query_from_string(int days, bool defaultConverter)
     {
         var expected = new DaysIsString {days = days.ToString(), _id = ObjectId.GenerateNewId()};
@@ -226,12 +226,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData([1, true])]
-    [InlineData([1, false])]
-    [InlineData([-123, true])]
-    [InlineData([-123, false])]
-    [InlineData([0, true])]
-    [InlineData([0, false])]
+    [InlineData(1, true)]
+    [InlineData(1, false)]
+    [InlineData(-123, true)]
+    [InlineData(-123, false)]
+    [InlineData(0, true)]
+    [InlineData(0, false)]
     public void Int_can_serialize_to_string(int days, bool defaultConverter)
     {
         var collection = database.CreateCollection<DaysIsInt>(values: [days, defaultConverter]);
@@ -264,12 +264,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         mb.Entity<DayIsEnum>().Property(e => e.day).HasConversion<string>();
 
     [Theory]
-    [InlineData([DayOfWeek.Wednesday, true])]
-    [InlineData([DayOfWeek.Wednesday, false])]
-    [InlineData([DayOfWeek.Saturday, true])]
-    [InlineData([DayOfWeek.Saturday, false])]
-    [InlineData([DayOfWeek.Sunday, true])]
-    [InlineData([DayOfWeek.Sunday, false])]
+    [InlineData(DayOfWeek.Wednesday, true)]
+    [InlineData(DayOfWeek.Wednesday, false)]
+    [InlineData(DayOfWeek.Saturday, true)]
+    [InlineData(DayOfWeek.Saturday, false)]
+    [InlineData(DayOfWeek.Sunday, true)]
+    [InlineData(DayOfWeek.Sunday, false)]
     public void Enum_can_deserialize_and_query_from_string(DayOfWeek day, bool defaultConverter)
     {
         var expected = new DayIsString {day = day.ToString(), _id = ObjectId.GenerateNewId()};
@@ -285,12 +285,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData([DayOfWeek.Wednesday, true])]
-    [InlineData([DayOfWeek.Wednesday, false])]
-    [InlineData([DayOfWeek.Saturday, true])]
-    [InlineData([DayOfWeek.Saturday, false])]
-    [InlineData([DayOfWeek.Sunday, true])]
-    [InlineData([DayOfWeek.Sunday, false])]
+    [InlineData(DayOfWeek.Wednesday, true)]
+    [InlineData(DayOfWeek.Wednesday, false)]
+    [InlineData(DayOfWeek.Saturday, true)]
+    [InlineData(DayOfWeek.Saturday, false)]
+    [InlineData(DayOfWeek.Sunday, true)]
+    [InlineData(DayOfWeek.Sunday, false)]
     public void Enum_can_serialize_to_string(DayOfWeek day, bool defaultConverter)
     {
         var collection = database.CreateCollection<DayIsString>(values: [day, defaultConverter]);
@@ -318,12 +318,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         mb.Entity<DayIsEnum>().Property(e => e.day).HasConversion<int>();
 
     [Theory]
-    [InlineData([DayOfWeek.Wednesday, true])]
-    [InlineData([DayOfWeek.Wednesday, false])]
-    [InlineData([DayOfWeek.Saturday, true])]
-    [InlineData([DayOfWeek.Saturday, false])]
-    [InlineData([DayOfWeek.Sunday, true])]
-    [InlineData([DayOfWeek.Sunday, false])]
+    [InlineData(DayOfWeek.Wednesday, true)]
+    [InlineData(DayOfWeek.Wednesday, false)]
+    [InlineData(DayOfWeek.Saturday, true)]
+    [InlineData(DayOfWeek.Saturday, false)]
+    [InlineData(DayOfWeek.Sunday, true)]
+    [InlineData(DayOfWeek.Sunday, false)]
     public void Enum_can_deserialize_and_query_from_int(DayOfWeek day, bool defaultConverter)
     {
         var expected = new DayIsInt {day = (int)day, _id = ObjectId.GenerateNewId()};
@@ -339,12 +339,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData([DayOfWeek.Wednesday, true])]
-    [InlineData([DayOfWeek.Wednesday, false])]
-    [InlineData([DayOfWeek.Saturday, true])]
-    [InlineData([DayOfWeek.Saturday, false])]
-    [InlineData([DayOfWeek.Sunday, true])]
-    [InlineData([DayOfWeek.Sunday, false])]
+    [InlineData(DayOfWeek.Wednesday, true)]
+    [InlineData(DayOfWeek.Wednesday, false)]
+    [InlineData(DayOfWeek.Saturday, true)]
+    [InlineData(DayOfWeek.Saturday, false)]
+    [InlineData(DayOfWeek.Sunday, true)]
+    [InlineData(DayOfWeek.Sunday, false)]
     public void Enum_can_serialize_to_int(DayOfWeek day, bool defaultConverter)
     {
         var collection = database.CreateCollection<DayIsInt>(values: [day, defaultConverter]);
@@ -372,9 +372,9 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     // There is no default TimeSpan to Int in EF
 
     [Theory]
-    [InlineData([1633])]
-    [InlineData([-123])]
-    [InlineData([0])]
+    [InlineData(1633)]
+    [InlineData(-123)]
+    [InlineData(0)]
     public void TimeSpan_can_deserialize_and_query_from_int(int days)
     {
         var expected = new DaysIsInt {days = days, _id = ObjectId.GenerateNewId()};
@@ -390,9 +390,9 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData([1024])]
-    [InlineData([-123])]
-    [InlineData([0])]
+    [InlineData(1024)]
+    [InlineData(-123)]
+    [InlineData(0)]
     public void TimeSpan_can_serialize_to_int(int days)
     {
         var collection = database.CreateCollection<DaysIsTimeSpan>(values: days);
@@ -417,12 +417,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
             .Property(e => e.days).HasConversion<int>();
 
     [Theory]
-    [InlineData([1, true])]
-    [InlineData([-123, true])]
-    [InlineData([0, true])]
-    [InlineData([1, false])]
-    [InlineData([-123, false])]
-    [InlineData([0, false])]
+    [InlineData(1, true)]
+    [InlineData(-123, true)]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(-123, false)]
+    [InlineData(0, false)]
     public void String_can_deserialize_and_query_from_int(int days, bool defaultConverter)
     {
         var expected = new DaysIsInt {days = days, _id = ObjectId.GenerateNewId()};
@@ -439,12 +439,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData([1, true])]
-    [InlineData([-123, true])]
-    [InlineData([0, true])]
-    [InlineData([1, false])]
-    [InlineData([-123, false])]
-    [InlineData([0, false])]
+    [InlineData(1, true)]
+    [InlineData(-123, true)]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(-123, false)]
+    [InlineData(0, false)]
     public void String_can_serialize_to_int(int days, bool defaultConverter)
     {
         var collection =
@@ -481,12 +481,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
             .Property(e => e.amount).HasConversion(v => new Decimal128(v), v => Decimal128.ToDecimal(v));
 
     [Theory]
-    [InlineData(["1.1234", true])]
-    [InlineData(["-123.213", true])]
-    [InlineData(["0", true])]
-    [InlineData(["1.1234", false])]
-    [InlineData(["-123.213", false])]
-    [InlineData(["0", false])]
+    [InlineData("1.1234", true)]
+    [InlineData("-123.213", true)]
+    [InlineData("0", true)]
+    [InlineData("1.1234", false)]
+    [InlineData("-123.213", false)]
+    [InlineData("0", false)]
     public void Decimal_can_deserialize_and_query_from_Decimal128(string amountString, bool defaultConverter)
     {
         var amount = decimal.Parse(amountString);
@@ -504,12 +504,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["1.1234", true])]
-    [InlineData(["-123.213", true])]
-    [InlineData(["0", true])]
-    [InlineData(["1.1234", false])]
-    [InlineData(["-123.213", false])]
-    [InlineData(["0", false])]
+    [InlineData("1.1234", true)]
+    [InlineData("-123.213", true)]
+    [InlineData("0", true)]
+    [InlineData("1.1234", false)]
+    [InlineData("-123.213", false)]
+    [InlineData("0", false)]
     public void Decimal_can_serialize_to_Decimal128(string amountString, bool defaultConverter)
     {
         var amount = decimal.Parse(amountString);
@@ -537,12 +537,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
             .Property(e => e.amount).HasConversion<decimal>();
 
     [Theory]
-    [InlineData(["1.1234", true])]
-    [InlineData(["-123.213", true])]
-    [InlineData(["0", true])]
-    [InlineData(["1.1234", false])]
-    [InlineData(["-123.213", false])]
-    [InlineData(["0", false])]
+    [InlineData("1.1234", true)]
+    [InlineData("-123.213", true)]
+    [InlineData("0", true)]
+    [InlineData("1.1234", false)]
+    [InlineData("-123.213", false)]
+    [InlineData("0", false)]
     public void Decimal128_can_deserialize_and_query_from_Decimal(string amountString, bool defaultConverter)
     {
         var amount = decimal.Parse(amountString);
@@ -560,12 +560,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["1.1234", true])]
-    [InlineData(["-123.213", true])]
-    [InlineData(["0", true])]
-    [InlineData(["1.1234", false])]
-    [InlineData(["-123.213", false])]
-    [InlineData(["0", false])]
+    [InlineData("1.1234", true)]
+    [InlineData("-123.213", true)]
+    [InlineData("0", true)]
+    [InlineData("1.1234", false)]
+    [InlineData("-123.213", false)]
+    [InlineData("0", false)]
     public void Decimal128_can_serialize_to_Decimal(string amountString, bool defaultConverter)
     {
         var amount = decimal.Parse(amountString);
@@ -598,12 +598,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
             .Property(e => e.amount).HasConversion<string>();
 
     [Theory]
-    [InlineData(["1.1234", true])]
-    [InlineData(["-123.213", true])]
-    [InlineData(["0", true])]
-    [InlineData(["1.1234", false])]
-    [InlineData(["-123.213", false])]
-    [InlineData(["0", false])]
+    [InlineData("1.1234", true)]
+    [InlineData("-123.213", true)]
+    [InlineData("0", true)]
+    [InlineData("1.1234", false)]
+    [InlineData("-123.213", false)]
+    [InlineData("0", false)]
     public void Decimal_can_deserialize_and_query_from_string(string amount, bool defaultConverter)
     {
         var expected = new AmountIsString {amount = amount, _id = ObjectId.GenerateNewId()};
@@ -620,12 +620,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["1.1234", true])]
-    [InlineData(["-123.213", true])]
-    [InlineData(["0", true])]
-    [InlineData(["1.1234", false])]
-    [InlineData(["-123.213", false])]
-    [InlineData(["0", false])]
+    [InlineData("1.1234", true)]
+    [InlineData("-123.213", true)]
+    [InlineData("0", true)]
+    [InlineData("1.1234", false)]
+    [InlineData("-123.213", false)]
+    [InlineData("0", false)]
     public void Decimal_can_serialize_to_string(string amount, bool defaultConverter)
     {
         var collection =
@@ -649,9 +649,9 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["1.1234"])]
-    [InlineData(["-123.213"])]
-    [InlineData(["0"])]
+    [InlineData("1.1234")]
+    [InlineData("-123.213")]
+    [InlineData("0")]
     public void Double_can_deserialize_and_query_from_string_default(string amount)
     {
         var expected = new AmountIsString {amount = amount, _id = ObjectId.GenerateNewId()};
@@ -670,9 +670,9 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData([1.1234f])]
-    [InlineData([-123.213f])]
-    [InlineData([0f])]
+    [InlineData(1.1234f)]
+    [InlineData(-123.213f)]
+    [InlineData(0f)]
     public void Double_can_serialize_to_string_default(double amount)
     {
         var collection =
@@ -698,10 +698,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["6ec635e0-06e0-11ef-93e0-325096b39f47"])]
-    [InlineData(["380bb5de-fb71-4f6d-a349-2b83908ab43b"])]
-    [InlineData(["018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff"])]
-    [InlineData(["00000000-0000-0000-0000-000000000000"])]
+    [InlineData("6ec635e0-06e0-11ef-93e0-325096b39f47")]
+    [InlineData("380bb5de-fb71-4f6d-a349-2b83908ab43b")]
+    [InlineData("018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
     public void Guid_can_deserialize_and_query_from_string_default(string amount)
     {
         var expected = new AmountIsString {amount = amount, _id = ObjectId.GenerateNewId()};
@@ -720,10 +720,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["6ec635e0-06e0-11ef-93e0-325096b39f47"])]
-    [InlineData(["380bb5de-fb71-4f6d-a349-2b83908ab43b"])]
-    [InlineData(["018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff"])]
-    [InlineData(["00000000-0000-0000-0000-000000000000"])]
+    [InlineData("6ec635e0-06e0-11ef-93e0-325096b39f47")]
+    [InlineData("380bb5de-fb71-4f6d-a349-2b83908ab43b")]
+    [InlineData("018f2ea7-a7a7-7c33-bd63-c6b1b1d5ecff")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
     public void Guid_can_serialize_to_string_default(string amountString)
     {
         var amount = Guid.Parse(amountString);
@@ -745,8 +745,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["507f1f77bcf86cd799439011"])]
-    [InlineData(["507f191e810c19729de860ea"])]
+    [InlineData("507f1f77bcf86cd799439011")]
+    [InlineData("507f191e810c19729de860ea")]
     public void String_can_deserialize_and_query_from_ObjectId_default(string id)
     {
         var docs = database.CreateCollection<IdIsObjectId>(values: id.Substring(6));
@@ -763,8 +763,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["507f1f77bcf86cd799439011"])]
-    [InlineData(["507f191e810c19729de860ea"])]
+    [InlineData("507f1f77bcf86cd799439011")]
+    [InlineData("507f191e810c19729de860ea")]
     public void String_can_serialize_to_ObjectId_default(string id)
     {
         var docs = database.CreateCollection<IdIsString>(values: id.Substring(6));
@@ -782,8 +782,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(["507f1f77bcf86cd799439011"])]
-    [InlineData(["507f191e810c19729de860ea"])]
+    [InlineData("507f1f77bcf86cd799439011")]
+    [InlineData("507f191e810c19729de860ea")]
     public void ObjectId_can_deserialize_and_query_from_string_default(string id)
     {
         var docs = database.CreateCollection<IdIsString>(values: id.Substring(6));
