@@ -3,7 +3,7 @@
 
 // Originally from EFCore 9's ListOfReferenceTypesComparer.cs
 
-#if EF8
+#if !EF9
 using System;
 using System.Collections;
 using System.Collections.Generic;

@@ -205,10 +205,10 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
         var callerDirectory = Path.GetDirectoryName(callerFilePath);
         Assert.NotNull(callerDirectory);
 
-#if EF8
-        var generatedCodePath = Path.Combine(callerDirectory, "Generated");
-#else
+#if EF9
         var generatedCodePath = Path.Combine(callerDirectory, "Generated-EF9");
+#else
+        var generatedCodePath = Path.Combine(callerDirectory, "Generated");
 #endif
         Directory.CreateDirectory(generatedCodePath);
 

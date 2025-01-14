@@ -4,7 +4,7 @@
     <Description>Official MongoDB supported provider for Entity Framework Core. See https://www.mongodb.com/docs/entity-framework/ for more details.</Description>
     <IsPackable>true</IsPackable>
     <PackageId>MongoDB.EntityFrameworkCore</PackageId>
-    <Configurations>Debug;Release;Debug EF8;Release EF8</Configurations>
+    <Configurations>Debug;Release;Debug EF9;Release EF9</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
 
@@ -17,22 +17,22 @@
     <DocumentationFile>bin\Debug\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
   </PropertyGroup>
 
-  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF8' ">
-    <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
+    <DefineConstants>TRACE;DEBUG;EF9</DefineConstants>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
 
-  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF8' ">
-    <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF9' ">
+    <DefineConstants>TRACE;RELEASE;EF9</DefineConstants>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
-  <ItemGroup Condition=" '$(Configuration)' == 'Release EF8' Or '$(Configuration)' == 'Debug EF8' ">
+  <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.11" />
   </ItemGroup>
 
-  <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.1" />
   </ItemGroup>
 
   <ItemGroup>

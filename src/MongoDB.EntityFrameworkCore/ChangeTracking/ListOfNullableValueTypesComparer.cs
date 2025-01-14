@@ -3,7 +3,7 @@
 
 // Originally from EFCore 9's ListOfNullableValueTypesComparer.cs
 
-#if EF8
+#if !EF9
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;

@@ -148,12 +148,12 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
             if (_enumerator == null)
             {
-#if EF8
-                EntityFrameworkEventSource.Log.QueryExecuting();
-#else
+#if EF9
 #pragma warning disable EF9101
                 EntityFrameworkMetricsData.ReportQueryExecuting();
 #pragma warning restore EF9101
+#else
+                EntityFrameworkEventSource.Log.QueryExecuting();
 #endif
 
                 try
