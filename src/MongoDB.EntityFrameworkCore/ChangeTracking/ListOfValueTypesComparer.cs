@@ -3,6 +3,7 @@
 
 // Originally from EFCore 9's ListOfValueTypesComparer.cs
 
+#if !EF9
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -202,3 +203,4 @@ public sealed class ListOfValueTypesComparer<TConcreteCollection, TElement> : Va
         }
     }
 }
+#endif

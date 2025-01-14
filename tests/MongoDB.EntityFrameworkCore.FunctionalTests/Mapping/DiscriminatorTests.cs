@@ -282,6 +282,8 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Equal(Status.Active, activeCustomer1.Status);
     }
 
+#if !EF9 // TPC/TPT methods were moved to relational in EF9
+
     [Fact]
     public void TablePerType_throws_NotSupportedException()
     {
@@ -309,6 +311,8 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         Assert.Throws<NotSupportedException>(() => SetupTestData(db));
     }
+
+#endif
 
     private static void RealPropertyConfiguredModel(ModelBuilder mb)
     {
