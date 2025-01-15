@@ -47,7 +47,7 @@ public sealed class BsonSerializerFactory
         _entitySerializersCache.GetOrAdd(entityType, CreateEntitySerializer);
 
     internal IBsonSerializer CreateEntitySerializer(IReadOnlyEntityType entityType) =>
-        CreateGenericSerializer(typeof(EntitySerializer<>), [ entityType.ClrType ], entityType, this)!;
+        CreateGenericSerializer(typeof(EntitySerializer<>), [ entityType.ClrType ], entityType, this);
 
     internal static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty? property = null)
         => type switch
@@ -84,7 +84,7 @@ public sealed class BsonSerializerFactory
             {IsGenericType: true}
                 => GetCollectionSerializer(type, CreateTypeSerializer(type.GetGenericArguments()[0])),
 
-            _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'."),
+            _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'.")
         };
 
 
@@ -95,11 +95,13 @@ public sealed class BsonSerializerFactory
         IBsonSerializer serializer;
         if (typeMapping is {Converter: { } converter})
         {
-            var valueConverterSerializerType = typeof(ValueConverterSerializer<,>)
+            var valueConverterSerializerType = (converter.ModelClrType.IsNullableType()
+                ? typeof(NullableValueConverterSerializer<,>)
+                : typeof(ValueConverterSerializer<,>))
                 .MakeGenericType(converter.ModelClrType, converter.ProviderClrType);
 
-            var providerSerializer = CreateTypeSerializer(converter.ProviderClrType);
-            serializer = (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, [converter, providerSerializer])
+            var typeSerializer = CreateTypeSerializer(converter.ProviderClrType);
+            serializer = (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, converter, typeSerializer)
                 ?? throw new InvalidOperationException($"Unable to create serializer to handle '{converter.GetType().ShortDisplayName()}'");
         }
         else
@@ -201,10 +203,8 @@ public sealed class BsonSerializerFactory
         if (property.IsPrimaryKey() && property.DeclaringType is IEntityType entityType
                                     && entityType.FindPrimaryKey()?.Properties.Count > 1)
         {
-            return BsonSerializationInfo.CreateWithPath(new[]
-            {
-                "_id", property.GetElementName()
-            }, serializer, serializer.ValueType);
+            return BsonSerializationInfo.CreateWithPath(
+                ["_id", property.GetElementName()], serializer, serializer.ValueType);
         }
 
         return new BsonSerializationInfo(property.GetElementName(), serializer, serializer.ValueType);

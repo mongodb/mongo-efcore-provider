@@ -198,6 +198,12 @@ internal static class BsonBinding
             }
         }
 
+        if (rawValue == BsonNull.Value)
+        {
+            value = default;
+            return true;
+        }
+
         if (rawValue != null)
         {
             value = (T)elementSerializationInfo.DeserializeValue(rawValue);

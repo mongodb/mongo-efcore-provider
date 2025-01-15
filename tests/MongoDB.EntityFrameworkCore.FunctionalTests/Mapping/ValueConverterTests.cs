@@ -264,6 +264,68 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         mb.Entity<DayIsEnum>().Property(e => e.day).HasConversion<string>();
 
     [Theory]
+    [InlineData(2, true)]
+    [InlineData(2, false)]
+    [InlineData(-1234, true)]
+    [InlineData(-1234, false)]
+    [InlineData(0, true)]
+    [InlineData(0, false)]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    public void Nullable_int_can_deserialize_and_query_from_string(int? days, bool defaultConverter)
+    {
+        var expected = new DaysIsString {days = days?.ToString()!, _id = ObjectId.GenerateNewId()};
+        var docs = database.CreateCollection<DaysIsString>(values: [days, defaultConverter]);
+        docs.InsertOne(expected);
+
+        var collection = database.GetCollection<DaysIsNullableInt>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection,
+            defaultConverter ? DefaultNullableIntToMongoString : NullableIntToMongoString);
+
+        var found = db.Entities.First(e => e.days == days);
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(days, found.days);
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(1, false)]
+    [InlineData(-123, true)]
+    [InlineData(-123, false)]
+    [InlineData(0, true)]
+    [InlineData(0, false)]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    public void Nullable_int_can_serialize_to_string(int? days, bool defaultConverter)
+    {
+        var collection = database.CreateCollection<DaysIsNullableInt>(values: [days, defaultConverter]);
+        using var db = SingleEntityDbContext.Create(collection,
+            defaultConverter ? DefaultNullableIntToMongoString : NullableIntToMongoString);
+
+        var original = new DaysIsNullableInt {days = days};
+        db.Entities.Add(original);
+        db.SaveChanges();
+
+        var found = database.GetCollection<DaysIsString>(collection.CollectionNamespace)
+            .AsQueryable().First();
+        Assert.Equal(original._id, found._id);
+        Assert.Equal(days?.ToString(), found.days);
+    }
+
+    class DaysIsNullableInt : IdIsObjectId
+    {
+        public int? days { get; set; }
+    }
+
+    private static readonly Action<ModelBuilder>? NullableIntToMongoString = mb =>
+        mb.Entity<DaysIsNullableInt>()
+            .Property(e => e.days).HasConversion(v => v.HasValue ? v.ToString() : null, v => v == null ? null : int.Parse(v));
+
+    private static readonly Action<ModelBuilder>? DefaultNullableIntToMongoString = mb =>
+        mb.Entity<DaysIsNullableInt>()
+            .Property(e => e.days).HasConversion<string>();
+
+    [Theory]
     [InlineData(DayOfWeek.Wednesday, true)]
     [InlineData(DayOfWeek.Wednesday, false)]
     [InlineData(DayOfWeek.Saturday, true)]
@@ -305,6 +367,129 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         Assert.Equal(original._id, found._id);
         Assert.Equal(day.ToString(), found.day);
     }
+
+    class DayIsNullableEnum : IdIsObjectId
+    {
+        public DayOfWeek? day { get; set; }
+    }
+
+    private static readonly Action<ModelBuilder>? NullableEnumToMongoString = mb =>
+        mb.Entity<DayIsNullableEnum>().Property(e => e.day).HasConversion<string>(e => e == null ? null : e.ToString(),
+            s => s == null ? null : Enum.Parse<DayOfWeek>(s));
+
+    private static readonly Action<ModelBuilder>? DefaultNullableEnumToMongoString = mb =>
+        mb.Entity<DayIsNullableEnum>().Property(e => e.day).HasConversion<string>();
+
+    [Theory]
+    [InlineData(DayOfWeek.Wednesday, true)]
+    [InlineData(DayOfWeek.Wednesday, false)]
+    [InlineData(DayOfWeek.Saturday, true)]
+    [InlineData(DayOfWeek.Saturday, false)]
+    [InlineData(DayOfWeek.Sunday, true)]
+    [InlineData(DayOfWeek.Sunday, false)]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    public void Nullable_enum_can_deserialize_and_query_from_string(DayOfWeek? day, bool defaultConverter)
+    {
+        var expected = new DayIsString {day = day == null ? null! : day.ToString()!, _id = ObjectId.GenerateNewId()};
+        var docs = database.CreateCollection<DayIsString>(values: [day, defaultConverter]);
+        docs.InsertOne(expected);
+
+        var collection = database.GetCollection<DayIsNullableEnum>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection,
+            defaultConverter ? DefaultNullableEnumToMongoString : NullableEnumToMongoString);
+
+        var found = db.Entities.First(e => e.day == day);
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(day, found.day);
+    }
+
+    [Theory]
+    [InlineData(DayOfWeek.Wednesday, true)]
+    [InlineData(DayOfWeek.Wednesday, false)]
+    [InlineData(DayOfWeek.Saturday, true)]
+    [InlineData(DayOfWeek.Saturday, false)]
+    [InlineData(DayOfWeek.Sunday, true)]
+    [InlineData(DayOfWeek.Sunday, false)]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    public void Nullable_enum_can_serialize_to_string(DayOfWeek? day, bool defaultConverter)
+    {
+        var collection = database.CreateCollection<DayIsNullableEnum>(values: [day, defaultConverter]);
+        using var db = SingleEntityDbContext.Create(collection,
+            defaultConverter ? DefaultNullableEnumToMongoString : NullableEnumToMongoString);
+
+        var original = new DayIsNullableEnum {day = day};
+        db.Entities.Add(original);
+        db.SaveChanges();
+
+        var found = database.GetCollection<DayIsString>(collection.CollectionNamespace)
+            .AsQueryable().First();
+        Assert.Equal(original._id, found._id);
+        Assert.Equal(day?.ToString(), found.day);
+    }
+
+    class DayIsNullableInt : IdIsObjectId
+    {
+        public int? day { get; set; }
+    }
+
+    private static readonly Action<ModelBuilder>? NullableEnumToMongoNullableInt = mb =>
+        mb.Entity<DayIsNullableEnum>().Property(e => e.day)
+            .HasConversion<int?>(e => e == null ? null : (int)e, i => i == null ? null : (DayOfWeek)i);
+
+    private static readonly Action<ModelBuilder>? DefaultNullableEnumToNullableInt = mb =>
+        mb.Entity<DayIsNullableEnum>().Property(e => e.day).HasConversion<int?>();
+
+    [Theory]
+    [InlineData(DayOfWeek.Wednesday, true)]
+    [InlineData(DayOfWeek.Wednesday, false)]
+    [InlineData(DayOfWeek.Saturday, true)]
+    [InlineData(DayOfWeek.Saturday, false)]
+    [InlineData(DayOfWeek.Sunday, true)]
+    [InlineData(DayOfWeek.Sunday, false)]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    public void Nullable_enum_can_deserialize_and_query_from_nullable_int(DayOfWeek? day, bool defaultConverter)
+    {
+        var expected = new DayIsNullableInt {day = day == null ? null : (int)day, _id = ObjectId.GenerateNewId()};
+        var docs = database.CreateCollection<DayIsNullableInt>(values: [day, defaultConverter]);
+        docs.InsertOne(expected);
+
+        var collection = database.GetCollection<DayIsNullableEnum>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection,
+            defaultConverter ? DefaultNullableEnumToNullableInt : NullableEnumToMongoNullableInt);
+
+        var found = db.Entities.First(e => e.day == day);
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(day, found.day);
+    }
+
+    [Theory]
+    [InlineData(DayOfWeek.Wednesday, true)]
+    [InlineData(DayOfWeek.Wednesday, false)]
+    [InlineData(DayOfWeek.Saturday, true)]
+    [InlineData(DayOfWeek.Saturday, false)]
+    [InlineData(DayOfWeek.Sunday, true)]
+    [InlineData(DayOfWeek.Sunday, false)]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    public void Nullable_enum_can_serialize_to_nullable_int(DayOfWeek? day, bool defaultConverter)
+    {
+        var collection = database.CreateCollection<DayIsNullableEnum>(values: [day, defaultConverter]);
+        using var db = SingleEntityDbContext.Create(collection,
+            defaultConverter ? DefaultNullableEnumToNullableInt : NullableEnumToMongoNullableInt);
+
+        var original = new DayIsNullableEnum {day = day};
+        db.Entities.Add(original);
+        db.SaveChanges();
+
+        var found = database.GetCollection<DayIsNullableInt>(collection.CollectionNamespace)
+            .AsQueryable().First();
+        Assert.Equal(original._id, found._id);
+        Assert.Equal(day, (DayOfWeek?)found.day);
+    }
+
 
     class DayIsInt : IdIsObjectId
     {
@@ -368,8 +553,6 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     private static readonly Action<ModelBuilder>? TimeSpanToMongoInt = mb =>
         mb.Entity<DaysIsTimeSpan>()
             .Property(e => e.days).HasConversion(v => v.TotalDays, v => TimeSpan.FromDays(v));
-
-    // There is no default TimeSpan to Int in EF
 
     [Theory]
     [InlineData(1633)]
@@ -591,7 +774,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
 
     private static readonly Action<ModelBuilder> DecimalToMongoString = mb =>
         mb.Entity<AmountIsDecimal>()
-            .Property(e => e.amount).HasConversion(v => v.ToString(CultureInfo.InvariantCulture), v => decimal.Parse(v, CultureInfo.InvariantCulture));
+            .Property(e => e.amount).HasConversion(v => v.ToString(CultureInfo.InvariantCulture),
+                v => decimal.Parse(v, CultureInfo.InvariantCulture));
 
     private static readonly Action<ModelBuilder> DefaultDecimalToMongoString = mb =>
         mb.Entity<AmountIsDecimal>()
@@ -870,7 +1054,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     {
         var propertyValue = HexStruct.Create();
         var docs = database.CreateCollection<GenericPropertyEntity<string>>();
-        docs.InsertOne(new GenericPropertyEntity<string> { value = propertyValue.ToString()});
+        docs.InsertOne(new GenericPropertyEntity<string> {value = propertyValue.ToString()});
 
         var collection = database.GetCollection<GenericPropertyEntity<HexStruct>>(docs.CollectionNamespace);
         using var db = SingleEntityDbContext.Create(collection, mb =>
@@ -893,7 +1077,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     {
         var propertyValue = HexClass.Create();
         var docs = database.CreateCollection<GenericPropertyEntity<string>>();
-        docs.InsertOne(new GenericPropertyEntity<string> { value = propertyValue.ToString()});
+        docs.InsertOne(new GenericPropertyEntity<string> {value = propertyValue.ToString()});
 
         var collection = database.GetCollection<GenericPropertyEntity<HexClass>>(docs.CollectionNamespace);
         using var db = SingleEntityDbContext.Create(collection, mb =>
@@ -983,7 +1167,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         public T[] values { get; set; }
     }
 
-    public readonly struct HexStruct: IEquatable<HexStruct>
+    public readonly struct HexStruct : IEquatable<HexStruct>
     {
         private readonly byte[] _keyBytes;
 
@@ -1012,7 +1196,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
             => _keyBytes.GetHashCode();
     }
 
-    public class HexClass: IEquatable<HexClass>
+    public class HexClass : IEquatable<HexClass>
     {
         private readonly byte[] _keyBytes;
 

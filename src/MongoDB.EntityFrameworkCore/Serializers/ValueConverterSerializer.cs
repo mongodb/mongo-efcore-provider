@@ -15,7 +15,9 @@
 
 using System;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
@@ -27,8 +29,8 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 /// <typeparam name="TStorage">The CLR type being used for storage this serializer.</typeparam>
 internal class ValueConverterSerializer<TActual, TStorage> : IBsonSerializer<TActual>
 {
-    private readonly ValueConverter<TActual, TStorage> _valueConverter;
-    private readonly IBsonSerializer<TStorage> _storageSerializer;
+    protected readonly ValueConverter<TActual, TStorage> _valueConverter;
+    protected readonly IBsonSerializer<TStorage> _storageSerializer;
 
     /// <summary>
     /// Create a new instance of <see cref="ValueConverterSerializer{TActual,TStorage}"/>.
@@ -55,13 +57,25 @@ internal class ValueConverterSerializer<TActual, TStorage> : IBsonSerializer<TAc
 
     /// <inheritdoc />
     public void Serialize(BsonSerializationContext context, BsonSerializationArgs args, TActual value)
-        => _storageSerializer.Serialize(context, args, _valueConverter.ConvertToProviderTyped(value));
+        => SerializeValueOrNull(context, args, value);
 
     /// <inheritdoc />
     object IBsonSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
         => Deserialize(context, args)!;
 
     /// <inheritdoc />
-    void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
-        => Serialize(context, args, (TActual)value);
+    void IBsonSerializer.Serialize(BsonSerializationContext context, BsonSerializationArgs args, object? value)
+        => SerializeValueOrNull(context, args, value);
+
+    private void SerializeValueOrNull(BsonSerializationContext context, BsonSerializationArgs args, object? value)
+    {
+        if (value == null)
+        {
+            BsonNullSerializer.Instance.Serialize(context, args, BsonNull.Value);
+        }
+        else
+        {
+            _storageSerializer.Serialize(context, args, _valueConverter.ConvertToProviderTyped((TActual)value));
+        }
+    }
 }
