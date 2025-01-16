@@ -16,6 +16,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -54,8 +55,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<IdIsObjectId>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultObjectIdToString : ObjectIdToString);
+        using var db = SingleEntityDbContext.Create(collection, defaultConverter ? DefaultObjectIdToString : ObjectIdToString);
 
         var found = db.Entities.First(e => e._id == expectedId);
         Assert.Equal(expectedId, found._id);
@@ -69,8 +69,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     public void ObjectId_can_serialize_to_string(string id, bool defaultConverter)
     {
         var collection = database.CreateCollection<IdIsObjectId>(values: [id, defaultConverter]);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultObjectIdToString : ObjectIdToString);
+        using var db = SingleEntityDbContext.Create(collection, defaultConverter ? DefaultObjectIdToString : ObjectIdToString);
 
         var original = new IdIsObjectId {_id = ObjectId.Parse(id)};
         db.Entities.Add(original);
@@ -98,8 +97,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<IdIsString>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultStringToObjectId : StringToObjectId);
+        using var db = SingleEntityDbContext.Create(collection, defaultConverter ? DefaultStringToObjectId : StringToObjectId);
 
         var found = db.Entities.First(e => e._id == expected._id.ToString());
         Assert.Equal(expected._id.ToString(), found._id);
@@ -135,12 +133,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     private static readonly Action<ModelBuilder>? BoolToString = mb =>
-        mb.Entity<ActiveIsBool>()
-            .Property(e => e.active).HasConversion(v => v.ToString(), v => bool.Parse(v));
+        mb.Entity<ActiveIsBool>().Property(e => e.active).HasConversion(v => v.ToString(), v => bool.Parse(v));
 
     private static readonly Action<ModelBuilder>? DefaultBoolToString = mb =>
-        mb.Entity<ActiveIsBool>()
-            .Property(e => e.active).HasConversion<string>();
+        mb.Entity<ActiveIsBool>().Property(e => e.active).HasConversion<string>();
 
     [Theory]
     [InlineData(true, true)]
@@ -149,8 +145,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     [InlineData(false, false)]
     public void Bool_can_deserialize_and_query_from_string(bool active, bool defaultConverter)
     {
-        var expectedActive =
-            defaultConverter ? active ? "1" : "0" : active.ToString(); // EF default uses "0" and "1" not "false" and "true"
+        // EF default uses "0" and "1" not "false" and "true"
+        var expectedActive = defaultConverter ? active ? "1" : "0" : active.ToString();
         var expected = new ActiveIsString {active = expectedActive, _id = ObjectId.GenerateNewId()};
         var docs = database.CreateCollection<ActiveIsString>(values: [active, defaultConverter]);
         docs.InsertOne(expected);
@@ -177,12 +173,11 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<ActiveIsString>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<ActiveIsString>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
 
-        var expectedActive =
-            defaultConverter ? active ? "1" : "0" : active.ToString(); // EF default uses "0" and "1" not "false" and "true"
+        // EF default uses "0" and "1" not "false" and "true"
+        var expectedActive = defaultConverter ? active ? "1" : "0" : active.ToString();
         Assert.Equal(expectedActive, found.active);
     }
 
@@ -197,12 +192,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     private static readonly Action<ModelBuilder>? IntToString = mb =>
-        mb.Entity<DaysIsInt>()
-            .Property(e => e.days).HasConversion(v => v.ToString(), v => int.Parse(v));
+        mb.Entity<DaysIsInt>().Property(e => e.days).HasConversion(v => v.ToString(), v => int.Parse(v));
 
     private static readonly Action<ModelBuilder>? DefaultIntToString = mb =>
-        mb.Entity<DaysIsInt>()
-            .Property(e => e.days).HasConversion<string>();
+        mb.Entity<DaysIsInt>().Property(e => e.days).HasConversion<string>();
 
     [Theory]
     [InlineData(1, true)]
@@ -241,8 +234,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<DaysIsString>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<DaysIsString>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(days.ToString(), found.days);
     }
@@ -258,7 +250,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     private static readonly Action<ModelBuilder>? EnumToString = mb =>
-        mb.Entity<DayIsEnum>().Property(e => e.day).HasConversion<string>(e => e.ToString(), s => Enum.Parse<DayOfWeek>(s));
+        mb.Entity<DayIsEnum>().Property(e => e.day).HasConversion(e => e.ToString(), s => Enum.Parse<DayOfWeek>(s));
 
     private static readonly Action<ModelBuilder>? DefaultEnumToString = mb =>
         mb.Entity<DayIsEnum>().Property(e => e.day).HasConversion<string>();
@@ -279,8 +271,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<DaysIsNullableInt>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultNullableIntToString : NullableIntToString);
+        using var db =
+            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultNullableIntToString : NullableIntToString);
 
         var found = db.Entities.First(e => e.days == days);
         Assert.Equal(expected._id, found._id);
@@ -299,15 +291,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     public void Nullable_int_can_serialize_to_string(int? days, bool defaultConverter)
     {
         var collection = database.CreateCollection<DaysIsNullableInt>(values: [days, defaultConverter]);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultNullableIntToString : NullableIntToString);
+        using var db =
+            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultNullableIntToString : NullableIntToString);
 
         var original = new DaysIsNullableInt {days = days};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<DaysIsString>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<DaysIsString>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(days?.ToString(), found.days);
     }
@@ -318,12 +309,11 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     private static readonly Action<ModelBuilder>? NullableIntToString = mb =>
-        mb.Entity<DaysIsNullableInt>()
-            .Property(e => e.days).HasConversion(v => v.HasValue ? v.ToString() : null, v => v == null ? null : int.Parse(v));
+        mb.Entity<DaysIsNullableInt>().Property(e => e.days)
+            .HasConversion(new ValueConverter<int, string>(v => v.ToString(), v => int.Parse(v)));
 
     private static readonly Action<ModelBuilder>? DefaultNullableIntToString = mb =>
-        mb.Entity<DaysIsNullableInt>()
-            .Property(e => e.days).HasConversion<string>();
+        mb.Entity<DaysIsNullableInt>().Property(e => e.days).HasConversion<string>();
 
     [Theory]
     [InlineData(DayOfWeek.Wednesday, true)]
@@ -362,23 +352,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<DayIsString>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<DayIsString>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(day.ToString(), found.day);
     }
 
-    class DayIsNullableEnum : IdIsObjectId
-    {
-        public DayOfWeek? day { get; set; }
-    }
-
-    private static readonly Action<ModelBuilder>? NullableEnumToString = mb =>
-        mb.Entity<DayIsNullableEnum>().Property(e => e.day).HasConversion<string>(e => e == null ? null : e.ToString(),
-            s => s == null ? null : Enum.Parse<DayOfWeek>(s));
-
-    private static readonly Action<ModelBuilder>? DefaultNullableEnumToString = mb =>
-        mb.Entity<DayIsNullableEnum>().Property(e => e.day).HasConversion<string>();
+    private static readonly Action<ModelBuilder>? UnsupportedNullableConverter = mb =>
+        mb.Entity<DaysIsNullableInt>().Property(e => e.days)
+            .HasConversion(v => v == null ? null : v.ToString(), v => v == null ? null : int.Parse(v));
 
     [Theory]
     [InlineData(DayOfWeek.Wednesday, true)]
@@ -396,8 +377,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<DayIsNullableEnum>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultNullableEnumToString : NullableEnumToString);
+        using var db =
+            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultNullableEnumToString : NullableEnumToString);
 
         var found = db.Entities.First(e => e.day == day);
         Assert.Equal(expected._id, found._id);
@@ -416,15 +397,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     public void Nullable_enum_can_serialize_to_string(DayOfWeek? day, bool defaultConverter)
     {
         var collection = database.CreateCollection<DayIsNullableEnum>(values: [day, defaultConverter]);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultNullableEnumToString : NullableEnumToString);
+        using var db =
+            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultNullableEnumToString : NullableEnumToString);
 
         var original = new DayIsNullableEnum {day = day};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<DayIsString>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<DayIsString>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(day?.ToString(), found.day);
     }
@@ -436,10 +416,90 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
 
     private static readonly Action<ModelBuilder>? NullableEnumToNullableInt = mb =>
         mb.Entity<DayIsNullableEnum>().Property(e => e.day)
-            .HasConversion<int?>(e => e == null ? null : (int)e, i => i == null ? null : (DayOfWeek)i);
+            .HasConversion(new ValueConverter<DayOfWeek, int>(e => (int)e, i => (DayOfWeek)i));
 
     private static readonly Action<ModelBuilder>? DefaultNullableEnumToNullableInt = mb =>
-        mb.Entity<DayIsNullableEnum>().Property(e => e.day).HasConversion<int?>();
+        mb.Entity<DayIsNullableEnum>().Property(e => e.day).HasConversion<int>();
+
+    [Theory]
+    [InlineData(DayOfWeek.Wednesday)]
+    [InlineData(DayOfWeek.Saturday)]
+    [InlineData(DayOfWeek.Sunday)]
+    public void Enum_can_deserialize_and_query_from_string_global(DayOfWeek day)
+    {
+        var expected = new DayIsString {day = day.ToString(), _id = ObjectId.GenerateNewId()};
+        var docs = database.CreateCollection<DayIsString>(values: [day]);
+        docs.InsertOne(expected);
+
+        var collection = database.GetCollection<DayIsEnum>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection, null, ConfigDefaultEnumToString);
+
+        var found = db.Entities.First(e => e.day == day);
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(day, found.day);
+    }
+
+    [Theory]
+    [InlineData(DayOfWeek.Wednesday)]
+    [InlineData(DayOfWeek.Saturday)]
+    [InlineData(DayOfWeek.Sunday)]
+    public void Enum_can_serialize_to_string_global(DayOfWeek day)
+    {
+        var collection = database.CreateCollection<DayIsNullableEnum>(values: [day]);
+        using var db = SingleEntityDbContext.Create(collection, null, ConfigDefaultEnumToString);
+
+        var original = new DayIsNullableEnum {day = day};
+        db.Entities.Add(original);
+        db.SaveChanges();
+
+        var found = database.GetCollection<DayIsString>(collection.CollectionNamespace).AsQueryable().First();
+        Assert.Equal(original._id, found._id);
+        Assert.Equal(day.ToString(), found.day);
+    }
+
+    private static readonly Action<ModelConfigurationBuilder>? ConfigDefaultEnumToString = cb =>
+        cb.Properties<DayOfWeek>().HaveConversion<string>();
+
+    [Theory]
+    [InlineData(DayOfWeek.Wednesday)]
+    [InlineData(DayOfWeek.Saturday)]
+    [InlineData(DayOfWeek.Sunday)]
+    [InlineData(null)]
+    public void Nullable_enum_can_deserialize_and_query_from_string_global(DayOfWeek? day)
+    {
+        var expected = new DayIsString {day = day == null ? null! : day.ToString()!, _id = ObjectId.GenerateNewId()};
+        var docs = database.CreateCollection<DayIsString>(values: [day]);
+        docs.InsertOne(expected);
+
+        var collection = database.GetCollection<DayIsNullableEnum>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection, null, ConfigDefaultNullableEnumToString);
+
+        var found = db.Entities.First(e => e.day == day);
+        Assert.Equal(expected._id, found._id);
+        Assert.Equal(day, found.day);
+    }
+
+    [Theory]
+    [InlineData(DayOfWeek.Wednesday)]
+    [InlineData(DayOfWeek.Saturday)]
+    [InlineData(DayOfWeek.Sunday)]
+    [InlineData(null)]
+    public void Nullable_enum_can_serialize_to_string_global(DayOfWeek? day)
+    {
+        var collection = database.CreateCollection<DayIsNullableEnum>(values: [day]);
+        using var db = SingleEntityDbContext.Create(collection, null, ConfigDefaultNullableEnumToString);
+
+        var original = new DayIsNullableEnum {day = day};
+        db.Entities.Add(original);
+        db.SaveChanges();
+
+        var found = database.GetCollection<DayIsString>(collection.CollectionNamespace).AsQueryable().First();
+        Assert.Equal(original._id, found._id);
+        Assert.Equal(day?.ToString(), found.day);
+    }
+
+    private static readonly Action<ModelConfigurationBuilder>? ConfigDefaultNullableEnumToString = cb =>
+        cb.Properties<DayOfWeek>().HaveConversion<string>();
 
     [Theory]
     [InlineData(DayOfWeek.Wednesday, true)]
@@ -490,7 +550,6 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         Assert.Equal(day, (DayOfWeek?)found.day);
     }
 
-
     class DayIsInt : IdIsObjectId
     {
         public int day { get; set; }
@@ -539,8 +598,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<DayIsInt>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<DayIsInt>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal((int)day, found.day);
     }
@@ -551,8 +609,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     private static readonly Action<ModelBuilder>? TimeSpanToInt = mb =>
-        mb.Entity<DaysIsTimeSpan>()
-            .Property(e => e.days).HasConversion(v => v.TotalDays, v => TimeSpan.FromDays(v));
+        mb.Entity<DaysIsTimeSpan>().Property(e => e.days).HasConversion(v => v.TotalDays, v => TimeSpan.FromDays(v));
 
     [Theory]
     [InlineData(1633)]
@@ -585,19 +642,16 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<DaysIsInt>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<DaysIsInt>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(days, found.days);
     }
 
     private static readonly Action<ModelBuilder>? StringToInt = mb =>
-        mb.Entity<DaysIsString>()
-            .Property(e => e.days).HasConversion(v => int.Parse(v), v => v.ToString());
+        mb.Entity<DaysIsString>().Property(e => e.days).HasConversion(v => int.Parse(v), v => v.ToString());
 
     private static readonly Action<ModelBuilder>? DefaultStringToInt = mb =>
-        mb.Entity<DaysIsString>()
-            .Property(e => e.days).HasConversion<int>();
+        mb.Entity<DaysIsString>().Property(e => e.days).HasConversion<int>();
 
     [Theory]
     [InlineData(1, true)]
@@ -613,8 +667,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<DaysIsString>(docs.CollectionNamespace);
-        using var db =
-            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultStringToInt : StringToInt);
+        using var db = SingleEntityDbContext.Create(collection, defaultConverter ? DefaultStringToInt : StringToInt);
 
         var found = db.Entities.First(e => e.days == days.ToString());
         Assert.Equal(expected._id, found._id);
@@ -630,17 +683,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     [InlineData(0, false)]
     public void String_can_serialize_to_int(int days, bool defaultConverter)
     {
-        var collection =
-            database.CreateCollection<DaysIsString>(values: [days, defaultConverter]);
-        using var db =
-            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultStringToInt : StringToInt);
+        var collection = database.CreateCollection<DaysIsString>(values: [days, defaultConverter]);
+        using var db = SingleEntityDbContext.Create(collection, defaultConverter ? DefaultStringToInt : StringToInt);
 
         var original = new DaysIsString {days = days.ToString()};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<DaysIsInt>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<DaysIsInt>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(days, found.days);
     }
@@ -656,12 +706,10 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     private static readonly Action<ModelBuilder>? DefaultDecimalToDecimal128 = mb =>
-        mb.Entity<AmountIsDecimal>()
-            .Property(e => e.amount).HasConversion<Decimal128>();
+        mb.Entity<AmountIsDecimal>().Property(e => e.amount).HasConversion<Decimal128>();
 
     private static readonly Action<ModelBuilder>? DecimalToDecimal128 = mb =>
-        mb.Entity<AmountIsDecimal>()
-            .Property(e => e.amount).HasConversion(v => new Decimal128(v), v => Decimal128.ToDecimal(v));
+        mb.Entity<AmountIsDecimal>().Property(e => e.amount).HasConversion(v => new Decimal128(v), v => Decimal128.ToDecimal(v));
 
     [Theory]
     [InlineData("1.1234", true)]
@@ -678,8 +726,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<AmountIsDecimal>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultDecimalToDecimal128 : DecimalToDecimal128);
+        using var db =
+            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToDecimal128 : DecimalToDecimal128);
 
         var found = db.Entities.First(e => e.amount == amount);
         Assert.Equal(expected._id, found._id);
@@ -696,28 +744,24 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     public void Decimal_can_serialize_to_Decimal128(string amountString, bool defaultConverter)
     {
         var amount = decimal.Parse(amountString);
-        var collection =
-            database.CreateCollection<AmountIsDecimal>(values: [amount, defaultConverter]);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultDecimalToDecimal128 : DecimalToDecimal128);
+        var collection = database.CreateCollection<AmountIsDecimal>(values: [amount, defaultConverter]);
+        using var db =
+            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToDecimal128 : DecimalToDecimal128);
 
         var original = new AmountIsDecimal {amount = amount};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<AmountIsDecimal128>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<AmountIsDecimal128>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount, found.amount);
     }
 
     private static readonly Action<ModelBuilder>? Decimal128ToDecimal = mb =>
-        mb.Entity<AmountIsDecimal128>()
-            .Property(e => e.amount).HasConversion(v => Decimal128.ToDecimal(v), v => new Decimal128(v));
+        mb.Entity<AmountIsDecimal128>().Property(e => e.amount).HasConversion(v => Decimal128.ToDecimal(v), v => new Decimal128(v));
 
     private static readonly Action<ModelBuilder>? DefaultDecimal128ToDecimal = mb =>
-        mb.Entity<AmountIsDecimal128>()
-            .Property(e => e.amount).HasConversion<decimal>();
+        mb.Entity<AmountIsDecimal128>().Property(e => e.amount).HasConversion<decimal>();
 
     [Theory]
     [InlineData("1.1234", true)]
@@ -734,8 +778,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<AmountIsDecimal>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultDecimal128ToDecimal : Decimal128ToDecimal);
+        using var db =
+            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimal128ToDecimal : Decimal128ToDecimal);
 
         var found = db.Entities.First(e => e.amount == amount);
         Assert.Equal(expected._id, found._id);
@@ -754,15 +798,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         var amount = decimal.Parse(amountString);
         var collection =
             database.CreateCollection<AmountIsDecimal128>(values: [amount, defaultConverter]);
-        using var db = SingleEntityDbContext.Create(collection,
-            defaultConverter ? DefaultDecimal128ToDecimal : Decimal128ToDecimal);
+        using var db =
+            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimal128ToDecimal : Decimal128ToDecimal);
 
         var original = new AmountIsDecimal128 {amount = amount};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<AmountIsDecimal>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<AmountIsDecimal>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount, found.amount);
     }
@@ -773,13 +816,11 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     private static readonly Action<ModelBuilder> DecimalToString = mb =>
-        mb.Entity<AmountIsDecimal>()
-            .Property(e => e.amount).HasConversion(v => v.ToString(CultureInfo.InvariantCulture),
-                v => decimal.Parse(v, CultureInfo.InvariantCulture));
+        mb.Entity<AmountIsDecimal>().Property(e => e.amount)
+            .HasConversion(v => v.ToString(CultureInfo.InvariantCulture), v => decimal.Parse(v, CultureInfo.InvariantCulture));
 
     private static readonly Action<ModelBuilder> DefaultDecimalToString = mb =>
-        mb.Entity<AmountIsDecimal>()
-            .Property(e => e.amount).HasConversion<string>();
+        mb.Entity<AmountIsDecimal>().Property(e => e.amount).HasConversion<string>();
 
     [Theory]
     [InlineData("1.1234", true)]
@@ -795,8 +836,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<AmountIsDecimal>(docs.CollectionNamespace);
-        using var db =
-            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToString : DecimalToString);
+        using var db = SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToString : DecimalToString);
 
         var found = db.Entities.First(e => e.amount == decimal.Parse(amount, CultureInfo.InvariantCulture));
         Assert.Equal(expected._id, found._id);
@@ -812,17 +852,14 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     [InlineData("0", false)]
     public void Decimal_can_serialize_to_string(string amount, bool defaultConverter)
     {
-        var collection =
-            database.CreateCollection<AmountIsDecimal>(values: [amount, defaultConverter]);
-        using var db =
-            SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToString : DecimalToString);
+        var collection = database.CreateCollection<AmountIsDecimal>(values: [amount, defaultConverter]);
+        using var db = SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToString : DecimalToString);
 
         var original = new AmountIsDecimal {amount = decimal.Parse(amount, CultureInfo.InvariantCulture)};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<AmountIsString>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<AmountIsString>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount, found.amount);
     }
@@ -843,10 +880,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<AmountIsDouble>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection, mb =>
-        {
-            mb.Entity<AmountIsDouble>().Property(e => e.amount).HasConversion<string>();
-        });
+        using var db = SingleEntityDbContext.Create(collection,
+            mb => mb.Entity<AmountIsDouble>().Property(e => e.amount).HasConversion<string>());
 
         var found = db.Entities.First(e => e.amount.ToString() == amount);
         Assert.Equal(expected._id, found._id);
@@ -859,19 +894,15 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     [InlineData(0f)]
     public void Double_can_serialize_to_string_default(double amount)
     {
-        var collection =
-            database.CreateCollection<AmountIsDouble>(values: amount);
-        using var db = SingleEntityDbContext.Create(collection, mb =>
-        {
-            mb.Entity<AmountIsDouble>().Property(e => e.amount).HasConversion<string>();
-        });
+        var collection = database.CreateCollection<AmountIsDouble>(values: amount);
+        using var db = SingleEntityDbContext.Create(collection,
+            mb => mb.Entity<AmountIsDouble>().Property(e => e.amount).HasConversion<string>());
 
         var original = new AmountIsDouble {amount = amount};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<AmountIsString>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<AmountIsString>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount.ToString(CultureInfo.InvariantCulture), found.amount);
     }
@@ -893,10 +924,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(expected);
 
         var collection = database.GetCollection<AmountIsGuid>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection, mb =>
-        {
-            mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>();
-        });
+        using var db = SingleEntityDbContext.Create(collection,
+            mb => mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>());
 
         var found = db.Entities.First(e => e.amount.ToString() == amount);
         Assert.Equal(expected._id, found._id);
@@ -911,19 +940,15 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     public void Guid_can_serialize_to_string_default(string amountString)
     {
         var amount = Guid.Parse(amountString);
-        var collection =
-            database.CreateCollection<AmountIsGuid>(values: amountString.Substring(6));
-        using var db = SingleEntityDbContext.Create(collection, mb =>
-        {
-            mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>();
-        });
+        var collection = database.CreateCollection<AmountIsGuid>(values: amountString.Substring(6));
+        using var db = SingleEntityDbContext.Create(collection,
+            mb => mb.Entity<AmountIsGuid>().Property(e => e.amount).HasConversion<string>());
 
         var original = new AmountIsGuid {amount = amount};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<AmountIsString>(collection.CollectionNamespace)
-            .AsQueryable().First();
+        var found = database.GetCollection<AmountIsString>(collection.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id);
         Assert.Equal(amount.ToString(), found.amount);
     }
@@ -937,10 +962,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(new IdIsObjectId {_id = ObjectId.Parse(id)});
 
         var collection = database.GetCollection<IdIsString>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection, mb =>
-        {
-            mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
-        });
+        using var db = SingleEntityDbContext.Create(collection,
+            mb => mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>());
 
         var found = db.Entities.First(e => e._id == id);
         Assert.Equal(id, found._id);
@@ -952,16 +975,13 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     public void String_can_serialize_to_ObjectId_default(string id)
     {
         var docs = database.CreateCollection<IdIsString>(values: id.Substring(6));
-        using var db = SingleEntityDbContext.Create(docs, mb =>
-        {
-            mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>();
-        });
+        using var db =
+            SingleEntityDbContext.Create(docs, mb => mb.Entity<IdIsString>().Property(e => e._id).HasConversion<ObjectId>());
         var original = new IdIsString {_id = id};
         db.Entities.Add(original);
         db.SaveChanges();
 
-        var found = database.GetCollection<IdIsObjectId>(docs.CollectionNamespace).AsQueryable()
-            .First();
+        var found = database.GetCollection<IdIsObjectId>(docs.CollectionNamespace).AsQueryable().First();
         Assert.Equal(original._id, found._id.ToString());
     }
 
@@ -974,10 +994,8 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         docs.InsertOne(new IdIsString {_id = id});
 
         var collection = database.GetCollection<IdIsObjectId>(docs.CollectionNamespace);
-        using var db = SingleEntityDbContext.Create(collection, mb =>
-        {
-            mb.Entity<IdIsObjectId>().Property(e => e._id).HasConversion<string>();
-        });
+        using var db = SingleEntityDbContext.Create(collection,
+            mb => mb.Entity<IdIsObjectId>().Property(e => e._id).HasConversion<string>());
 
         var found = db.Entities.First(e => e._id == ObjectId.Parse(id));
         Assert.Equal(id, found._id.ToString());
@@ -1101,6 +1119,30 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         public T value { get; set; }
     }
 
+    [Fact]
+    public void Unsupported_nullable_value_conversion_throws()
+    {
+        var collection = database.GetCollection<DaysIsNullableInt>();
+        using var db = SingleEntityDbContext.Create(collection, UnsupportedNullableConverter);
+
+        var ex = Assert.Throws<InvalidCastException>(() => db.Entities.First(e => e.days == null));
+        Assert.Contains(nameof(DaysIsNullableInt), ex.Message);
+        Assert.Contains(nameof(DaysIsNullableInt.days), ex.Message);
+        Assert.Contains("HasConversion", ex.Message);
+    }
+
+    class DayIsNullableEnum : IdIsObjectId
+    {
+        public DayOfWeek? day { get; set; }
+    }
+
+    private static readonly Action<ModelBuilder>? NullableEnumToString = mb =>
+        mb.Entity<DayIsNullableEnum>().Property(e => e.day)
+            .HasConversion(new ValueConverter<DayOfWeek, string>(e => e.ToString(), f => Enum.Parse<DayOfWeek>(f)));
+
+    private static readonly Action<ModelBuilder>? DefaultNullableEnumToString = mb =>
+        mb.Entity<DayIsNullableEnum>().Property(e => e.day).HasConversion<string>();
+
     [Fact(Skip = "Not currently supported, see EF-169")]
     public void Custom_struct_can_be_used_in_an_array()
     {
@@ -1194,6 +1236,16 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
 
         public override int GetHashCode()
             => _keyBytes.GetHashCode();
+
+        public static bool operator ==(HexStruct left, HexStruct right)
+        {
+            return left.Equals(right);
+        }
+
+        public static bool operator !=(HexStruct left, HexStruct right)
+        {
+            return !(left == right);
+        }
     }
 
     public class HexClass : IEquatable<HexClass>
@@ -1216,7 +1268,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
             => new(BitConverter.GetBytes(DateTime.Now.Ticks).Reverse().Concat(RandomNumberGenerator.GetBytes(8)).ToArray());
 
         public bool Equals(HexClass? other)
-            => _keyBytes != null && _keyBytes.SequenceEqual(other._keyBytes);
+            => _keyBytes.SequenceEqual(other._keyBytes);
 
         public override bool Equals(object? obj)
             => obj is HexStruct other && Equals(other);
