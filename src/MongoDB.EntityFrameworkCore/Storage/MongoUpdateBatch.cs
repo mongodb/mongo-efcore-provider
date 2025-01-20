@@ -15,19 +15,19 @@
 
 using System.Collections.Generic;
 using System.Linq;
-using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
-internal class MongoUpdateBatch(string collectionName, List<WriteModel<BsonDocument>> models)
+internal class MongoUpdateBatch(string collectionName, List<MongoUpdate> updates)
 {
     public string CollectionName { get => collectionName; }
-    public List<WriteModel<BsonDocument>> Models { get => models; }
+    public List<MongoUpdate> Updates { get => updates; }
 
-    public long Modified => models.Count(b => b.ModelType == WriteModelType.UpdateOne);
-    public long Inserts => models.Count(b => b.ModelType == WriteModelType.InsertOne);
-    public long Deletes => models.Count(b => b.ModelType == WriteModelType.DeleteOne);
+    public long Modified => updates.Count(u => u.Model.ModelType == WriteModelType.UpdateOne);
+    public long Inserts => updates.Count(u => u.Model.ModelType == WriteModelType.InsertOne);
+    public long Deletes => updates.Count(u => u.Model.ModelType == WriteModelType.DeleteOne);
 
     public static IEnumerable<MongoUpdateBatch> CreateBatches(IEnumerable<MongoUpdate> updates)
     {
@@ -40,9 +40,9 @@ internal class MongoUpdateBatch(string collectionName, List<WriteModel<BsonDocum
             }
             else
             {
-                if (batch.CollectionName == update.CollectionName)
+                if (batch.CollectionName == update.Entry.EntityType.GetCollectionName())
                 {
-                    batch.Models.Add(update.Model);
+                    batch.Updates.Add(update);
                 }
                 else
                 {
@@ -59,5 +59,5 @@ internal class MongoUpdateBatch(string collectionName, List<WriteModel<BsonDocum
     }
 
     public static MongoUpdateBatch Create(MongoUpdate update)
-        => new(update.CollectionName, [update.Model]);
+        => new(update.Entry.EntityType.GetCollectionName(), [update]);
 }

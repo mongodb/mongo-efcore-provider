@@ -51,6 +51,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         entityInstance1.Text = "Update via instance 1";
         var ex = Assert.Throws<DbUpdateConcurrencyException>(() => db1.SaveChanges());
         Assert.Contains("1 modification", ex.Message);
+        Assert.Equal(entityInstance1, Assert.Single(ex.Entries).Entity);
     }
 
     [Fact]
@@ -73,6 +74,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         entityInstance1.Text = "Update via instance 1";
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db1.SaveChangesAsync());
         Assert.Contains("1 modification", ex.Message);
+        Assert.Equal(entityInstance1, Assert.Single(ex.Entries).Entity);
     }
 
     [Fact]
@@ -95,6 +97,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         entityInstance1.Text = "Update via instance 1";
         var ex = Assert.Throws<DbUpdateConcurrencyException>(() => db1.SaveChanges());
         Assert.Contains("1 modification", ex.Message);
+        Assert.Equal(entityInstance1, Assert.Single(ex.Entries).Entity);
     }
 
     [Fact]
@@ -117,6 +120,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         entityInstance1.Text = "Update via instance 1";
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db1.SaveChangesAsync());
         Assert.Contains("1 modification", ex.Message);
+        Assert.Equal(entityInstance1, Assert.Single(ex.Entries).Entity);
     }
 
     [Fact]
@@ -138,6 +142,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         db2.Remove(entityInstance2);
         var ex = Assert.Throws<DbUpdateConcurrencyException>(() => db2.SaveChanges());
         Assert.Contains("1 deletion", ex.Message);
+        Assert.Equal(entityInstance2, Assert.Single(ex.Entries).Entity);
     }
 
     [Fact]
@@ -159,6 +164,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         db2.Remove(entityInstance2);
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db2.SaveChangesAsync());
         Assert.Contains("1 deletion", ex.Message);
+        Assert.Equal(entityInstance2, Assert.Single(ex.Entries).Entity);
     }
 
     [Fact]
@@ -180,6 +186,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         db2.Remove(entityInstance2);
         var ex = Assert.Throws<DbUpdateConcurrencyException>(() => db2.SaveChanges());
         Assert.Contains("1 deletion", ex.Message);
+        Assert.Equal(entityInstance2, Assert.Single(ex.Entries).Entity);
     }
 
     [Fact]
@@ -201,6 +208,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         db2.Remove(entityInstance2);
         var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db2.SaveChangesAsync());
         Assert.Contains("1 deletion", ex.Message);
+        Assert.Equal(entityInstance2, Assert.Single(ex.Entries).Entity);
     }
 
     class ConcurrentEntity2
@@ -234,5 +242,159 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         entityInstance1.TextB = "Update B via instance 1";
         var ex = Assert.Throws<DbUpdateConcurrencyException>(() => db1.SaveChanges());
         Assert.Contains("1 modification", ex.Message);
+        Assert.Equal(entityInstance1, Assert.Single(ex.Entries).Entity);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_when_modifying_two_checked_entity_that_has_been_modified()
+    {
+        var collection = database.CreateCollection<ConcurrentEntity2>();
+
+        await using var db1 = SingleEntityDbContext.Create(collection);
+        var entityInstance1 = new ConcurrentEntity2 {TextA = "Initial A on instance 1", TextB = "Initial B on instance 1"};
+        db1.Entities.Add(entityInstance1);
+        await db1.SaveChangesAsync();
+
+        {
+            await using var db2 = SingleEntityDbContext.Create(collection);
+            var entityInstance2 = db2.Entities.First();
+            entityInstance2.TextA = "New A state on instance 2";
+            await db2.SaveChangesAsync();
+        }
+
+        entityInstance1.TextB = "Update B via instance 1";
+        var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db1.SaveChangesAsync());
+        Assert.Contains("1 modification", ex.Message);
+        Assert.Equal(entityInstance1, Assert.Single(ex.Entries).Entity);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void SaveChanges_throws_DbUpdateConcurrencyException_with_subset_of_entries_from_batch_that_might_be_cause(
+        bool conflictDeletes, bool conflictUpdates)
+    {
+        var collection = database.CreateCollection<ConcurrentEntity2>();
+
+        using var db1 = SingleEntityDbContext.Create(collection);
+        var deletes = Enumerable.Range(0, 4).Select(i => new ConcurrentEntity2 {TextA = "Delete " + i, TextB = "Hi"}).ToList();
+        var updates = Enumerable.Range(0, 4).Select(i => new ConcurrentEntity2 {TextA = "Modify " + i, TextB = "Hi"}).ToList();
+        db1.AddRange(deletes);
+        db1.AddRange(updates.Take(2));
+        db1.SaveChanges();
+
+        {
+            using var db2 = SingleEntityDbContext.Create(collection);
+
+            if (conflictDeletes)
+            {
+                var idsToDelete = deletes.Take(2).Select(d => d._id);
+                db2.RemoveRange(db2.Entities.Where(e => idsToDelete.Contains(e._id)));
+            }
+
+            if (conflictUpdates)
+            {
+                var idsToModify = updates.Take(2).Select(d => d._id);
+                foreach (var entity in db2.Entities.Where(e => idsToModify.Contains(e._id)))
+                {
+                    entity.TextA = "Update by second context";
+                }
+            }
+
+            db2.SaveChanges();
+        }
+
+        if (conflictDeletes)
+        {
+            db1.RemoveRange(deletes.Take(3));
+        }
+
+        if (conflictUpdates)
+        {
+            foreach (var entity in updates.Take(3))
+            {
+                entity.TextA = "Update in the first context";
+            }
+        }
+
+        var ex = Assert.Throws<DbUpdateConcurrencyException>(() => db1.SaveChanges());
+        var allEntities = ex.Entries.Select(e => e.Entity).OfType<ConcurrentEntity2>().ToList();
+
+        if (conflictDeletes)
+        {
+            Assert.Contains(allEntities, e => deletes.Take(3).Contains(e));
+        }
+
+        if (conflictUpdates)
+        {
+            Assert.Contains(allEntities, e => updates.Take(3).Contains(e));
+        }
+
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_with_subset_of_entries_from_batch_that_might_be_cause(
+        bool conflictDeletes, bool conflictUpdates)
+    {
+        var collection = database.CreateCollection<ConcurrentEntity2>();
+
+        await using var db1 = SingleEntityDbContext.Create(collection);
+        var deletes = Enumerable.Range(0, 4).Select(i => new ConcurrentEntity2 {TextA = "Delete " + i, TextB = "Hi"}).ToList();
+        var updates = Enumerable.Range(0, 4).Select(i => new ConcurrentEntity2 {TextA = "Modify " + i, TextB = "Hi"}).ToList();
+        await db1.AddRangeAsync(deletes);
+        await db1.AddRangeAsync(updates.Take(2));
+        await db1.SaveChangesAsync();
+
+        {
+            await using var db2 = SingleEntityDbContext.Create(collection);
+
+            if (conflictDeletes)
+            {
+                var idsToDelete = deletes.Take(2).Select(d => d._id);
+                db2.RemoveRange(db2.Entities.Where(e => idsToDelete.Contains(e._id)));
+            }
+
+            if (conflictUpdates)
+            {
+                var idsToModify = updates.Take(2).Select(d => d._id);
+                foreach (var entity in db2.Entities.Where(e => idsToModify.Contains(e._id)))
+                {
+                    entity.TextA = "Update by second context";
+                }
+            }
+
+            await db2.SaveChangesAsync();
+        }
+
+        if (conflictDeletes)
+        {
+            db1.RemoveRange(deletes.Take(3));
+        }
+
+        if (conflictUpdates)
+        {
+            foreach (var entity in updates.Take(3))
+            {
+                entity.TextA = "Update in the first context";
+            }
+        }
+
+        var ex = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db1.SaveChangesAsync());
+        var allEntities = ex.Entries.Select(e => e.Entity).OfType<ConcurrentEntity2>().ToList();
+
+        if (conflictDeletes)
+        {
+            Assert.Contains(allEntities, e => deletes.Take(3).Contains(e));
+        }
+
+        if (conflictUpdates)
+        {
+            Assert.Contains(allEntities, e => updates.Take(3).Contains(e));
+        }
+
     }
 }

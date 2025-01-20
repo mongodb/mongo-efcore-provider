@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -150,7 +151,7 @@ public class MongoDatabaseWrapper : Database
             stopwatch.Restart();
             var collection = _mongoClient.GetCollection<BsonDocument>(batch.CollectionName);
             _updateLogger.ExecutingBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, batch.Inserts, batch.Deletes, batch.Modified);
-            var result = collection.BulkWrite(session, batch.Models);
+            var result = collection.BulkWrite(session, batch.Updates.Select(u => u.Model));
             documentsAffected += AssertWritesApplied(batch, result, collection.CollectionNamespace);
             _updateLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
         }
@@ -168,7 +169,7 @@ public class MongoDatabaseWrapper : Database
             stopwatch.Restart();
             var collection = _mongoClient.GetCollection<BsonDocument>(batch.CollectionName);
             _updateLogger.ExecutingBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, batch.Inserts, batch.Deletes, batch.Modified);
-            var result = await collection.BulkWriteAsync(session, batch.Models, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var result = await collection.BulkWriteAsync(session, batch.Updates.Select(u => u.Model), cancellationToken: cancellationToken).ConfigureAwait(false);
             documentsAffected += AssertWritesApplied(batch, result, collection.CollectionNamespace);
             _updateLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
         }
@@ -196,8 +197,16 @@ public class MongoDatabaseWrapper : Database
             var insertedVariance = batch.Inserts - result.InsertedCount;
             var deletedVariance = batch.Deletes - result.DeletedCount;
 
+            // We can't determine the exact entry that caused the conflict but we can narrow it down to which type(s) of entries
+            // within this bulk write batch.
+            var conflictingEntries = batch.Updates.Where(u => u.Model.ModelType == WriteModelType.DeleteOne && deletedVariance != 0
+                                                              || u.Model.ModelType == WriteModelType.InsertOne
+                                                              && insertedVariance != 0
+                                                              || u.Model.ModelType == WriteModelType.UpdateOne
+                                                              && modifiedVariance != 0).Select(u => u.Entry).ToList();
+
             throw new DbUpdateConcurrencyException($"Conflicts were detected when performing updates to '{collectionNamespace.FullName}'. " +
-                $"Did not perform {modifiedVariance} modifications, {insertedVariance} insertions, and {deletedVariance} deletions.");
+                $"Did not perform {modifiedVariance} modifications, {insertedVariance} insertions, and {deletedVariance} deletions.", conflictingEntries);
         }
 
         return (int)(result.ModifiedCount + result.DeletedCount + result.InsertedCount);
