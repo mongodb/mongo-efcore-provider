@@ -275,7 +275,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
     public void SaveChanges_throws_DbUpdateConcurrencyException_with_subset_of_entries_from_batch_that_might_be_cause(
         bool conflictDeletes, bool conflictUpdates)
     {
-        var collection = database.CreateCollection<ConcurrentEntity2>();
+        var collection = database.CreateCollection<ConcurrentEntity2>(null, conflictDeletes, conflictUpdates);
 
         using var db1 = SingleEntityDbContext.Create(collection);
         var deletes = Enumerable.Range(0, 4).Select(i => new ConcurrentEntity2 {TextA = "Delete " + i, TextB = "Hi"}).ToList();
@@ -340,7 +340,7 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
     public async Task SaveChangesAsync_throws_DbUpdateConcurrencyException_with_subset_of_entries_from_batch_that_might_be_cause(
         bool conflictDeletes, bool conflictUpdates)
     {
-        var collection = database.CreateCollection<ConcurrentEntity2>();
+        var collection = database.CreateCollection<ConcurrentEntity2>(null, conflictDeletes, conflictUpdates);
 
         await using var db1 = SingleEntityDbContext.Create(collection);
         var deletes = Enumerable.Range(0, 4).Select(i => new ConcurrentEntity2 {TextA = "Delete " + i, TextB = "Hi"}).ToList();
@@ -395,6 +395,5 @@ public class ConcurrencyCheckTests(TemporaryDatabaseFixture database)
         {
             Assert.Contains(allEntities, e => updates.Take(3).Contains(e));
         }
-
     }
 }
