@@ -1125,7 +1125,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         var collection = database.GetCollection<DaysIsNullableInt>();
         using var db = SingleEntityDbContext.Create(collection, UnsupportedNullableConverter);
 
-        var ex = Assert.Throws<InvalidCastException>(() => db.Entities.First(e => e.days == null));
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.First(e => e.days == null));
         Assert.Contains(nameof(DaysIsNullableInt), ex.Message);
         Assert.Contains(nameof(DaysIsNullableInt.days), ex.Message);
         Assert.Contains("HasConversion", ex.Message);
