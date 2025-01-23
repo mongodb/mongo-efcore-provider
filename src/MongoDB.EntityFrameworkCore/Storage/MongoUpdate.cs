@@ -30,23 +30,8 @@ using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
-/// <summary>
-/// Represents an update to a MongoDB database by specifying the collection
-/// name and the appropriate document inside a <see cref="WriteModel{BsonDocument}"/> which indicates
-/// the type of operation.
-/// </summary>
-/// <param name="collectionName">The name of the collection this update applies to.</param>
-/// <param name="model">The <see cref="WriteModel{BsonDocument}"/> containing the update.</param>
-public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
+internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
 {
-    /// <summary>
-    /// The name of the collection this update applies to.
-    /// </summary>
-    public string CollectionName
-    {
-        get => collectionName;
-    }
-
     /// <summary>
     /// The <see cref="WriteModel{BsonDocument}"/> that contains both the document
     /// being modified and indication of the type of update being performed.
@@ -54,6 +39,14 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
     public WriteModel<BsonDocument> Model
     {
         get => model;
+    }
+
+    /// <summary>
+    /// The <see cref="IUpdateEntry"/> that is the source of this update.
+    /// </summary>
+    public IUpdateEntry Entry
+    {
+        get => entry;
     }
 
     /// <summary>
@@ -84,12 +77,12 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         SetStoreGeneratedValues(entry);
         WriteEntity(writer, entry);
 
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), new InsertOneModel<BsonDocument>(document));
+        return new MongoUpdate(entry, new InsertOneModel<BsonDocument>(document));
     }
 
     private static MongoUpdate ConvertDeleted(IUpdateEntry entry)
     {
-        return new MongoUpdate(entry.EntityType.GetCollectionName(), new DeleteOneModel<BsonDocument>(CreateWhereFilter(entry)));
+        return new MongoUpdate(entry, new DeleteOneModel<BsonDocument>(CreateWhereFilter(entry)));
     }
 
     private static MongoUpdate ConvertModified(IUpdateEntry entry)
@@ -102,8 +95,7 @@ public class MongoUpdate(string collectionName, WriteModel<BsonDocument> model)
         WriteEntity(writer, entry);
 
         var updateDefinition = new BsonDocumentUpdateDefinition<BsonDocument>(new BsonDocument("$set", document));
-        return new MongoUpdate(entry.EntityType.GetCollectionName(),
-            new UpdateOneModel<BsonDocument>(whereFilter, updateDefinition));
+        return new MongoUpdate(entry, new UpdateOneModel<BsonDocument>(whereFilter, updateDefinition));
     }
 
     private static FilterDefinition<BsonDocument> CreateWhereFilter(IUpdateEntry entry)
