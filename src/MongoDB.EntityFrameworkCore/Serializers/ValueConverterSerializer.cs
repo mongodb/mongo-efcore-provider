@@ -29,8 +29,8 @@ namespace MongoDB.EntityFrameworkCore.Serializers;
 /// <typeparam name="TStorage">The CLR type being used for storage this serializer.</typeparam>
 internal class ValueConverterSerializer<TActual, TStorage> : IBsonSerializer<TActual>
 {
-    protected readonly ValueConverter<TActual, TStorage> _valueConverter;
-    protected readonly IBsonSerializer<TStorage> _storageSerializer;
+    private readonly ValueConverter<TActual, TStorage> _valueConverter;
+    private readonly IBsonSerializer<TStorage> _storageSerializer;
 
     /// <summary>
     /// Create a new instance of <see cref="ValueConverterSerializer{TActual,TStorage}"/>.
