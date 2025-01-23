@@ -22,6 +22,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Options;
@@ -47,7 +48,7 @@ public sealed class BsonSerializerFactory
         _entitySerializersCache.GetOrAdd(entityType, CreateEntitySerializer);
 
     internal IBsonSerializer CreateEntitySerializer(IReadOnlyEntityType entityType) =>
-        CreateGenericSerializer(typeof(EntitySerializer<>), [ entityType.ClrType ], entityType, this)!;
+        CreateGenericSerializer(typeof(EntitySerializer<>), [entityType.ClrType], entityType, this);
 
     internal static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty? property = null)
         => type switch
@@ -84,7 +85,7 @@ public sealed class BsonSerializerFactory
             {IsGenericType: true}
                 => GetCollectionSerializer(type, CreateTypeSerializer(type.GetGenericArguments()[0])),
 
-            _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'."),
+            _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'.")
         };
 
 
@@ -95,12 +96,23 @@ public sealed class BsonSerializerFactory
         IBsonSerializer serializer;
         if (typeMapping is {Converter: { } converter})
         {
+            if (converter.ModelClrType.IsNullableValueType())
+            {
+                throw new NotSupportedException(
+                    $"Unsupported ValueConverter for Nullable<{converter.ModelClrType.UnwrapNullableType().Name
+                    }> encountered. Null conversion must be left to EF Core. "
+                    + $"If using HasConversion with conversion expressions directly move them to constructor arguments of a ValueConverter instead. "
+                    + $"For example: mb.Entity<{property.DeclaringType.DisplayName()}>().Property(e => e.{property.Name
+                    }).HasConversion(x => x, y => y) becomes .HasConversion(new ValueConverter(x => x, y => y));");
+            }
+
             var valueConverterSerializerType = typeof(ValueConverterSerializer<,>)
                 .MakeGenericType(converter.ModelClrType, converter.ProviderClrType);
 
-            var providerSerializer = CreateTypeSerializer(converter.ProviderClrType);
-            serializer = (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, [converter, providerSerializer])
-                ?? throw new InvalidOperationException($"Unable to create serializer to handle '{converter.GetType().ShortDisplayName()}'");
+            var typeSerializer = CreateTypeSerializer(converter.ProviderClrType);
+            serializer = (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, converter, typeSerializer)
+                         ?? throw new InvalidOperationException($"Unable to create serializer to handle '{
+                             converter.GetType().ShortDisplayName()}'");
         }
         else
         {
@@ -112,7 +124,8 @@ public sealed class BsonSerializerFactory
             : serializer;
     }
 
-    private static IBsonSerializer ApplyBsonRepresentation(BsonRepresentationConfiguration representation, IBsonSerializer typeSerializer)
+    private static IBsonSerializer ApplyBsonRepresentation(BsonRepresentationConfiguration representation,
+        IBsonSerializer typeSerializer)
     {
         if (typeSerializer is not IRepresentationConfigurable representationConfigurable)
         {
@@ -201,10 +214,8 @@ public sealed class BsonSerializerFactory
         if (property.IsPrimaryKey() && property.DeclaringType is IEntityType entityType
                                     && entityType.FindPrimaryKey()?.Properties.Count > 1)
         {
-            return BsonSerializationInfo.CreateWithPath(new[]
-            {
-                "_id", property.GetElementName()
-            }, serializer, serializer.ValueType);
+            return BsonSerializationInfo.CreateWithPath(
+                ["_id", property.GetElementName()], serializer, serializer.ValueType);
         }
 
         return new BsonSerializationInfo(property.GetElementName(), serializer, serializer.ValueType);
@@ -226,12 +237,14 @@ public sealed class BsonSerializerFactory
             var concreteType = type.IsInterface
                 ? typeof(Dictionary<,>).MakeGenericType(keyType, valueType)
                 : type;
-            return CreateGenericSerializer(typeof(DictionaryInterfaceImplementerSerializer<,,>), [concreteType, keyType, valueType]);
+            return CreateGenericSerializer(typeof(DictionaryInterfaceImplementerSerializer<,,>),
+                [concreteType, keyType, valueType]);
         }
 
         var readOnlyDictionaryInterface = genericTypeDefinition == typeof(IReadOnlyDictionary<,>)
             ? type
-            : type.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>));
+            : type.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>));
 
         if (readOnlyDictionaryInterface != null)
         {
@@ -241,7 +254,8 @@ public sealed class BsonSerializerFactory
             var concreteType = type.IsInterface
                 ? typeof(ReadOnlyDictionary<,>).MakeGenericType(keyType, valueType)
                 : type;
-            return CreateGenericSerializer(typeof(ReadOnlyDictionaryInterfaceImplementerSerializer<,,>), [concreteType, keyType, valueType]);
+            return CreateGenericSerializer(typeof(ReadOnlyDictionaryInterfaceImplementerSerializer<,,>),
+                [concreteType, keyType, valueType]);
         }
 
         throw new NotSupportedException($"Unsupported dictionary type '{type.ShortDisplayName()}'.");
