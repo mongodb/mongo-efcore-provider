@@ -10,24 +10,22 @@
     <DefineConstants>TRACE;RELEASE;EF9</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
     <PackageReference Include="MongoDB.Driver.Encryption" Version="3.1.0" />
+    <Compile Remove="Design\Generated\**" />
   </ItemGroup>
+
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.12" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.12" />
-    <Compile Remove="Design\Generated-EF9\**" />
+    <Compile Include="Design\Generated\EF8\**" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="9.0.1" />
-    <Compile Remove="Design\Generated\**" />
-    <Compile Remove="Design\Generated\SimpleContextAssemblyAttributes.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
+    <Compile Include="Design\Generated\EF9\**" />
   </ItemGroup>
 
   <ItemGroup>
