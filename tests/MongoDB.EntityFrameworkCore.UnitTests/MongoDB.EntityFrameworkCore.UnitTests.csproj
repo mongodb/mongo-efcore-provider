@@ -6,15 +6,16 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="8.0.12"/>
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.1"/>
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.12"/>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2"/>
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.1"/>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.1"/>
   </ItemGroup>
 
   <ItemGroup>
