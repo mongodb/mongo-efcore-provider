@@ -14,8 +14,8 @@
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.12" />
     <Compile Remove="Design\Generated-EF9\**" />
   </ItemGroup>
 
