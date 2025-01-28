@@ -142,7 +142,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
             ? ShadowPropertyConfiguredModel
             : RealPropertyConfiguredModel;
 
-        var collection = database.CreateCollection<BaseEntity>(null, useShadowProperty);
+        var collection = database.CreateCollection<BaseEntity>(values: useShadowProperty);
         SetupTestData(SingleEntityDbContext.Create(collection, configuration));
 
         using var db = SingleEntityDbContext.Create(collection, configuration);

@@ -40,7 +40,7 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Encrypted_data_can_not_be_read_without_encrypted_client(CryptProvider cryptProvider)
     {
-        var collection = database.CreateCollection<Patient>(null, cryptProvider);
+        var collection = database.CreateCollection<Patient>(values: cryptProvider);
         SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName);
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -54,7 +54,7 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
     public void Encrypted_data_can_not_be_read_with_wrong_master_key(CryptProvider cryptProvider)
     {
         // Setup data with a master key
-        var collection = database.CreateCollection<Patient>(null, cryptProvider);
+        var collection = database.CreateCollection<Patient>(values: cryptProvider);
         var collectionNamespace = collection.CollectionNamespace;
         SetupEncryptedTestData(cryptProvider, collectionNamespace.CollectionName);
 
@@ -77,7 +77,7 @@ public class FieldLevelEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Encrypted_data_can_round_trip(CryptProvider cryptProvider)
     {
-        var collection = database.CreateCollection<Patient>(null, cryptProvider);
+        var collection = database.CreateCollection<Patient>(values: cryptProvider);
         var encryptedCollection = SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName);
 
         // Test driver load

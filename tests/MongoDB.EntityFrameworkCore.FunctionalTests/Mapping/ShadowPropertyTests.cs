@@ -33,7 +33,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Can_retrieve_doc_element_into_shadow_property<T>(T value)
     {
         var expected = new KeyedDocWithActualProperty<T> {StoredValue = value};
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
         collection.InsertOne(expected);
 
         var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<KeyedEntity>().Property<T>("storedValue"));
@@ -50,7 +50,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Shadow_properties_use_element_names_from_configuration<T>(T value)
     {
         var expected = new KeyedDocWithActualProperty<T> {StoredValue = value};
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
         collection.InsertOne(expected);
 
         var db = SingleEntityDbContext.Create(collection,
@@ -68,7 +68,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Shadow_properties_use_element_names_from_convention<T>(T value)
     {
         var expected = new KeyedDocWithActualProperty<T> {StoredValue = value};
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
         collection.InsertOne(expected);
 
         var db = SingleEntityDbContext.Create(collection,
@@ -87,7 +87,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Shadow_properties_use_has_conversion<T>(T value)
     {
         var expected = new KeyedDocWithActualProperty<string> {StoredValue = value.ToString()!};
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
         collection.InsertOne(expected);
 
         var db = SingleEntityDbContext.Create(collection,
@@ -105,7 +105,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Shadow_properties_use_bson_type_representation<T>(T value)
     {
         var expected = new KeyedDocWithActualProperty<string> {StoredValue = value.ToString()!};
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
         collection.InsertOne(expected);
 
         var db = SingleEntityDbContext.Create(collection,
@@ -123,7 +123,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Can_store_shadow_property_into_doc_element<T>(T value)
     {
         var expected = new KeyedEntity();
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
 
         {
             var db = SingleEntityDbContext.Create(collection,
@@ -148,7 +148,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Can_query_on_shadow_property<T>(T value)
     {
         var expected = new KeyedEntity();
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
 
         {
             var db = SingleEntityDbContext.Create(collection, ConfigureModel);
@@ -174,7 +174,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Can_query_on_shadow_property_declared_on_parent<T>(T value)
     {
         var expected = new KeyedEntity();
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
 
         {
             var db = SingleEntityDbContext.Create(collection, ConfigureModel);
@@ -206,7 +206,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Can_query_on_shadow_property_both_sides<T>(T value)
     {
         var expected = new KeyedEntity();
-        var collection = database.CreateCollection<KeyedEntity>(null, value);
+        var collection = database.CreateCollection<KeyedEntity>(values: value);
 
         {
             var db = SingleEntityDbContext.Create(collection, ConfigureModel);
@@ -240,7 +240,7 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     public void Can_query_on_shadow_property_with_conversion<TDoc, TClr>(TDoc docValue, TClr clrValue)
     {
         var expected = new KeyedDocWithActualProperty<TDoc> {StoredValue = docValue};
-        var collection = database.CreateCollection<KeyedEntity>(null, docValue);
+        var collection = database.CreateCollection<KeyedEntity>(values: docValue);
         collection.InsertOne(expected);
 
         var db = SingleEntityDbContext.Create(collection, ConfigureModel);
