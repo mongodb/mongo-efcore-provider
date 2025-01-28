@@ -22,6 +22,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -109,24 +110,36 @@ public class MongoClientWrapper : IMongoClientWrapper
                 }
             }
 
-            CreateIndexes(entityType);
+            var indexManager = _database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
+            var existingIndexNames = indexManager.List().ToList().Select(i => i["name"].AsString).ToList();
+            CreateIndexes(entityType, indexManager, existingIndexNames, []);
         }
 
         return didCreateNewDatabase;
     }
 
-    private void CreateIndexes(IEntityType entityType)
+    private static void CreateIndexes(
+        IEntityType entityType,
+        IMongoIndexManager<BsonDocument> indexManager,
+        List<string> existingIndexNames,
+        string[] path)
     {
-        var indexManager = _database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
-        var existingIndexNames = indexManager.List().ToList().Select(i => i["name"].AsString).ToList();
-
         foreach (var index in entityType.GetIndexes())
         {
-            var name = index.Name ?? DefaultIndexName(index);
+            var name = index.Name ?? DefaultIndexName(index, path);
             if (!existingIndexNames.Contains(name))
             {
-                indexManager.CreateOne(CreateIndexDocument(index, name));
+                indexManager.CreateOne(CreateIndexDocument(index, name, path));
             }
+        }
+
+        var ownedEntityTypes = entityType.Model.GetEntityTypes()
+            .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
+        foreach (var ownedEntityType in ownedEntityTypes)
+        {
+            var elementName = ownedEntityType.GetContainingElementName()!;
+            var newPath = path.Append(elementName).ToArray();
+            CreateIndexes(ownedEntityType, indexManager, existingIndexNames, newPath);
         }
     }
 
@@ -153,30 +166,44 @@ public class MongoClientWrapper : IMongoClientWrapper
                 }
             }
 
-            await CreateIndexesAsync(entityType, cancellationToken).ConfigureAwait(false);
+            var indexManager = _database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
+            var indexCursor = await indexManager.ListAsync(cancellationToken).ConfigureAwait(false);
+            var existingIndexNames = indexCursor.ToList(cancellationToken).Select(i => i["name"].AsString).ToList();
+            await CreateIndexesAsync(entityType, indexManager, existingIndexNames, [], cancellationToken).ConfigureAwait(false);
         }
 
         return !existed;
     }
 
-    private async Task CreateIndexesAsync(IEntityType entityType, CancellationToken cancellationToken)
+    private static async Task CreateIndexesAsync(
+        IEntityType entityType,
+        IMongoIndexManager<BsonDocument> indexManager,
+        List<string> existingIndexNames,
+        string[] path,
+        CancellationToken cancellationToken)
     {
-        var indexManager = _database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
-        var indexCursor = await indexManager.ListAsync(cancellationToken).ConfigureAwait(false);
-        var existingIndexNames = indexCursor.ToList(cancellationToken).Select(i => i["name"].AsString).ToList();
-
         foreach (var index in entityType.GetIndexes())
         {
-            var name = index.Name ?? DefaultIndexName(index);
+            var name = index.Name ?? DefaultIndexName(index, path);
             if (!existingIndexNames.Contains(name))
             {
-                await indexManager.CreateOneAsync(CreateIndexDocument(index, name), null, cancellationToken)
+                await indexManager.CreateOneAsync(CreateIndexDocument(index, name, path), null, cancellationToken)
                     .ConfigureAwait(false);
             }
         }
+
+        var ownedEntityTypes = entityType.Model.GetEntityTypes()
+            .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
+        foreach (var ownedEntityType in ownedEntityTypes)
+        {
+            var elementName = ownedEntityType.GetContainingElementName();
+            var newPath = path.Append(elementName).ToArray();
+            await CreateIndexesAsync(ownedEntityType, indexManager, existingIndexNames, newPath, cancellationToken)
+                .ConfigureAwait(false);
+        }
     }
 
-    private static string DefaultIndexName(IIndex index)
+    private static string DefaultIndexName(IIndex index, string[] path)
     {
         // Mimic the servers index naming convention using the property names and directions
         var parts = new string[index.Properties.Count * 2];
@@ -189,7 +216,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             parts[partsIndex++] = GetDescending(index, propertyIndex++) ? "-1" : "1";
         }
 
-        return string.Join('_', parts);
+        return string.Join('_', path.Concat(parts));
     }
 
     /// <inheritdoc />
@@ -257,14 +284,14 @@ public class MongoClientWrapper : IMongoClientWrapper
     private ListDatabaseNamesOptions BuildListDbNameFilterOptions()
         => new() {Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)};
 
-    private static CreateIndexModel<BsonDocument> CreateIndexDocument(IIndex index, string indexName)
+    private static CreateIndexModel<BsonDocument> CreateIndexDocument(IIndex index, string indexName, string[] path)
     {
         var doc = new BsonDocument();
         var propertyIndex = 0;
 
         foreach (var property in index.Properties)
         {
-            doc.Add(property.GetElementName(), GetDescending(index, propertyIndex++) ? -1 : 1);
+            doc.Add(string.Join('.', path.Append(property.GetElementName())), GetDescending(index, propertyIndex++) ? -1 : 1);
         }
 
         var options = index.GetCreateIndexOptions() ?? new CreateIndexOptions<BsonDocument>();

@@ -85,6 +85,102 @@ public class MongoClientWrapperTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task CreateDatabase_creates_nested_index_on_owns_one(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var collection = database.CreateCollection<Product>(values: async);
+        var context = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<Product>(p =>
+            {
+                p.HasIndex(o => o.Name);
+                p.OwnsOne(p => p.PrimaryCertificate, q =>
+                {
+                    q.HasIndex(r => r.Name);
+                });
+            });
+        });
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexList = async
+            ? (await collection.Indexes.ListAsync()).ToList()
+            : collection.Indexes.List().ToList();
+
+        Assert.Equal(3, indexList.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_nested_index_on_owns_many(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var collection = database.CreateCollection<Product>(values: async);
+        var context = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<Product>(p =>
+            {
+                p.HasIndex(o => o.Name);
+                p.OwnsMany(p => p.SecondaryCertificates, q =>
+                {
+                    q.HasIndex(r => r.Name);
+                });
+            });
+        });
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexList = async
+            ? (await collection.Indexes.ListAsync()).ToList()
+            : collection.Indexes.List().ToList();
+
+        Assert.Equal(3, indexList.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_nested_index_on_owns_many_owns_one(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var collection = database.CreateCollection<Product>(values: async);
+        var context = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<Product>(p =>
+            {
+                p.OwnsMany(p => p.SecondaryCertificates, q =>
+                {
+                    q.OwnsOne(c => c.Issuer, i =>
+                    {
+                        i.HasIndex(j => j.OrganizationName);
+                        i.HasIndex(j => j.Country);
+                    });
+                });
+            });
+        });
+        var client = context.GetService<IMongoClientWrapper>();
+
+        _ = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        var indexList = async
+            ? (await collection.Indexes.ListAsync()).ToList()
+            : collection.Indexes.List().ToList();
+
+        Assert.Equal(3, indexList.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task CreateDatabase_does_not_duplicate_indexes(bool async)
     {
         var database = new TemporaryDatabaseFixture();
@@ -408,6 +504,26 @@ public class MongoClientWrapperTests
         public string PostCode { get; set; }
         public string Country { get; set; }
         public string Region { get; set; }
+    }
+
+    class Product
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; }
+        public Certificate PrimaryCertificate { get; set; }
+        public List<Certificate> SecondaryCertificates { get; set; }
+    }
+
+    class Certificate
+    {
+        public string Name { get; set; }
+        public Issuer? Issuer { get; set; }
+    }
+
+    class Issuer
+    {
+        public string OrganizationName { get; set; }
+        public string Country { get; set; }
     }
 
     private static List<BsonDocument> GetIndexes(IMongoDatabase database, string collectionName)
