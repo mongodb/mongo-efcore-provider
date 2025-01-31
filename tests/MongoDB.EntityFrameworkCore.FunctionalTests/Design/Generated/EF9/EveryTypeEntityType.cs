@@ -20,7 +20,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                 "MongoDB.EntityFrameworkCore.FunctionalTests.Design.CompiledModelTests+EveryType",
                 typeof(CompiledModelTests.EveryType),
                 baseEntityType,
-                propertyCount: 19,
+                propertyCount: 20,
                 navigationCount: 1,
                 keyCount: 1);
 
@@ -33,6 +33,12 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                 afterSaveBehavior: PropertySaveBehavior.Throw,
                 sentinel: MongoDB.Bson.ObjectId.Parse("000000000000000000000000"));
             id.AddAnnotation("Mongo:ElementName", "_id");
+
+            var aByteArray = runtimeEntityType.AddProperty(
+                "aByteArray",
+                typeof(byte[]),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aByteArray", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<aByteArray>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly));
 
             var aDateOnly = runtimeEntityType.AddProperty(
                 "aDateOnly",
