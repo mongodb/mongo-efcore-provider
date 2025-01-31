@@ -64,6 +64,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - Type discriminators including `OfType<T>` and `Where(e => e is T)`
 - EF shadow properties
 - [Client Side Field Level Encryption](https://www.mongodb.com/docs/manual/core/csfle/quick-start/) compatibility
+- Foreign keys and navigation traversal via EF.Proxy
 
 ## Limitations
 
@@ -77,9 +78,7 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - ExecuteUpdate & ExecuteDelete
 - Binary/byte array properties
 - GroupBy operations
-- Relationships between entities
 - Includes/joins
-- Foreign keys and navigation traversal
 
 ### Not supported & out-of-scope features
 
