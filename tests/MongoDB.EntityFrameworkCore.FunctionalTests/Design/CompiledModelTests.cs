@@ -61,6 +61,8 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
         public DateOnly aDateOnly { get; set; }
         public TimeOnly aTimeOnly { get; set; }
 
+        public byte[] aByteArray { get; set; }
+
         [BsonRepresentation(BsonType.String)]
         public int anIntRepresentedAsAString { get; set; }
 
@@ -116,6 +118,9 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
     [InlineData(true)]
     public void Can_roundtrip(bool useCompiledModel)
     {
+        var byteArray = new byte[1024];
+        Random.Shared.NextBytes(byteArray);
+
         var expected = new EveryType
         {
             id = ObjectId.GenerateNewId(),
@@ -124,6 +129,7 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
             aDouble = 789.10,
             aFloat = 11.12f,
             aGuid = Guid.NewGuid(),
+            aByteArray = byteArray,
             aLong = 678901,
             aLongRepresentedAsAInt = 987654321,
             anInt = 23456,

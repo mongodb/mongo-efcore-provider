@@ -148,6 +148,11 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         public TimeOnly aTimeOnly { get; set; }
     }
 
+    class ByteArrayEntity : IdEntity
+    {
+        public Byte[] aByteArray { get; set; }
+    }
+
     class SomeOwnedEntity
     {
         public string name { get; set; }
@@ -235,6 +240,22 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
 
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.aTimeOnly);
+    }
+
+    [Fact]
+    public void ByteArray_read()
+    {
+        var collection = database.CreateCollection<ByteArrayEntity>();
+
+        var expected = new byte[4096];
+        Random.Shared.NextBytes(expected);
+        collection.InsertOne(new ByteArrayEntity { _id = ObjectId.GenerateNewId(), aByteArray = expected});
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected, actual.aByteArray);
     }
 
     [Fact]
@@ -969,6 +990,21 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
 
         Assert.NotNull(actual);
         Assert.Equal(value, actual.Value);
+    }
+
+    [Fact]
+    public void Type_mapping_test_list_byte_array()
+    {
+        var expected = new byte[8192];
+        Random.Shared.NextBytes(expected);
+        var collection = database.CreateCollection<Entity<byte[]>>();
+        collection.InsertOne(new Entity<byte[]> {_id = ObjectId.GenerateNewId(), Value = expected});
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected, actual.Value);
     }
 
     private enum TestEnum

@@ -48,6 +48,26 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                 clrType: typeof(ObjectId));
             id.AddAnnotation("Mongo:ElementName", "_id");
 
+            var aByteArray = runtimeEntityType.AddProperty(
+                "aByteArray",
+                typeof(byte[]),
+                propertyInfo: typeof(CompiledModelTests.EveryType).GetProperty("aByteArray", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<aByteArray>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly));
+            aByteArray.TypeMapping = MongoTypeMapping.Default.Clone(
+                comparer: new ListOfValueTypesComparer<byte[], byte>(new ValueComparer<byte>(
+                    (byte v1, byte v2) => v1 == v2,
+                    (byte v) => (int)v,
+                    (byte v) => v)),
+                keyComparer: new ValueComparer<byte[]>(
+                    (Byte[] v1, Byte[] v2) => StructuralComparisons.StructuralEqualityComparer.Equals((object)v1, (object)v2),
+                    (Byte[] v) => StructuralComparisons.StructuralEqualityComparer.GetHashCode((object)v),
+                    (Byte[] source) => source.ToArray()),
+                providerValueComparer: new ValueComparer<byte[]>(
+                    (Byte[] v1, Byte[] v2) => StructuralComparisons.StructuralEqualityComparer.Equals((object)v1, (object)v2),
+                    (Byte[] v) => StructuralComparisons.StructuralEqualityComparer.GetHashCode((object)v),
+                    (Byte[] source) => source.ToArray()),
+                clrType: typeof(byte[]));
+
             var aDateOnly = runtimeEntityType.AddProperty(
                 "aDateOnly",
                 typeof(DateOnly),
