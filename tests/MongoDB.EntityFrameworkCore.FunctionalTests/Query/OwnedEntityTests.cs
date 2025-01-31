@@ -16,6 +16,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -278,6 +279,84 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             Assert.Equal(expected.locations[0].longitude, actual.locations[0].longitude);
             Assert.Equal(expected.locations[1].latitude, actual.locations[1].latitude);
             Assert.Equal(expected.locations[1].longitude, actual.locations[1].longitude);
+        }
+    }
+
+
+    [Fact]
+    public void OwnedEntity_can_set_single_owned_entity_element_name()
+    {
+        var collection = database.CreateCollection<PersonWithLocation>();
+
+        var id = ObjectId.GenerateNewId();
+        var expectedName = Guid.NewGuid().ToString();
+        var expectedLocation = new Location {latitude = 1.234m, longitude = 1.567m};
+
+        var modelBuilder = (ModelBuilder mb) =>
+        {
+            mb.Entity<PersonWithLocation>(p =>
+            {
+                p.OwnsOne(e => e.location, f =>
+                {
+                    f.HasElementName("Location");
+                    f.Property(g => g.longitude)
+                        .HasElementName("Longitude")
+                        .HasBsonRepresentation(BsonType.String);
+                });
+            });
+        };
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            dbContext.Entities.Add(new PersonWithLocation {_id = id, name = expectedName, location = expectedLocation});
+            dbContext.SaveChanges();
+        }
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            var found = dbContext.Entities.Single(f => f._id == id);
+            Assert.Equal(expectedName, found.name);
+            Assert.Equal(expectedLocation.latitude, found.location.latitude);
+            Assert.Equal(expectedLocation.longitude, found.location.longitude);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_can_set_meta_on_owned_entity_element_name()
+    {
+        var collection = database.CreateCollection<PersonWithMultipleLocations>();
+
+        var id = ObjectId.GenerateNewId();
+        var expectedName = Guid.NewGuid().ToString();
+        var expectedLocation = new Location {latitude = 1.234m, longitude = 1.567m};
+
+        var modelBuilder = (ModelBuilder mb) =>
+        {
+            mb.Entity<PersonWithMultipleLocations>(p =>
+            {
+                p.OwnsMany(e => e.locations, f =>
+                {
+                    f.HasElementName("Locations");
+                    f.Property(g => g.longitude)
+                        .HasElementName("Longitude")
+                        .HasBsonRepresentation(BsonType.String);
+                });
+            });
+        };
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            dbContext.Entities.Add(new PersonWithMultipleLocations {_id = id, name = expectedName, locations = [ expectedLocation ]});
+            dbContext.SaveChanges();
+        }
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            var found = dbContext.Entities.Single(f => f._id == id);
+            Assert.Equal(expectedName, found.name);
+            var foundLocation = Assert.Single(found.locations);
+            Assert.Equal(expectedLocation.latitude, foundLocation.latitude);
+            Assert.Equal(expectedLocation.longitude, foundLocation.longitude);
         }
     }
 
