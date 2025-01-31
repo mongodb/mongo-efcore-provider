@@ -51,7 +51,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - Single or composite keys of standard types including string, `Guid` and `ObjectId`
 - Properties with typical CLR types (`int`, `string`, `Guid`, `decimal`, `DateOnly` etc.) & MongoDB types (`ObjectId`, `Decimal128`)
 - Properties of `Dictionary<string, ...>` type
-- Properties containing arrays and lists of simple CLR types
+- Properties containing arrays and lists of simple CLR types including binary `byte[]`
 - Owned entities (aka value types, sub-documents, embedded documents) both directly and within collections
 - `BsonIgnore`, `BsonId`, `BsonDateTimeOptions`, `BsonElement`, `BsonRepresentation` and `BsonRequired` support
 - Value converters using `HasConversion`
@@ -76,7 +76,6 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Select projections with client-side operations
 - Sum, Average, Min, Max etc. support at top level
 - ExecuteUpdate & ExecuteDelete
-- Binary/byte array properties
 - GroupBy operations
 - Includes/joins
 
