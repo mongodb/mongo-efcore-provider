@@ -18,6 +18,7 @@ using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
@@ -700,6 +701,12 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         public decimal amount { get; set; }
     }
 
+    class AmountIsDecimal128AsString : IdIsObjectId
+    {
+        [BsonRepresentation(BsonType.String)]
+        public Decimal128 amount { get; set; }
+    }
+
     class AmountIsDecimal128 : IdIsObjectId
     {
         public Decimal128 amount { get; set; }
@@ -886,6 +893,63 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
         var found = db.Entities.First(e => e.amount.ToString() == amount);
         Assert.Equal(expected._id, found._id);
         Assert.Equal(amount, found.amount.ToString(CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [InlineData("1.1234")]
+    [InlineData("-123.213")]
+    [InlineData("0")]
+    public void Decimal_can_deserialize_and_query_from_decimal128_with_string_representation(string stringAmount)
+    {
+        var amount = decimal.Parse(stringAmount, CultureInfo.InvariantCulture);
+
+        var docs = database.CreateCollection<AmountIsDecimal128AsString>(values: amount);
+        var expected = new AmountIsDecimal {amount = decimal.Parse(stringAmount, CultureInfo.InvariantCulture)};
+
+        {
+            var collection = database.GetCollection<AmountIsDecimal>(docs.CollectionNamespace);
+            using var db = SingleEntityDbContext.Create(collection,
+                mb => mb.Entity<AmountIsDecimal>().Property(e => e.amount)
+                    .HasConversion<Decimal128>()
+                    .HasBsonRepresentation(BsonType.String));
+            db.Entities.Add(expected);
+            db.SaveChanges();
+        }
+
+        var found = docs.AsQueryable().Where(d => d.amount == amount).ToList();
+        Assert.Single(found, f => f._id == expected._id && f.amount == decimal.Parse(stringAmount, CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void DateTime_can_deserialize_and_query_from_long_with_string_representation_attribute()
+    {
+        var dateTime = DateTime.Now;
+
+        var docs = database.CreateCollection<WhenIsAString>(values: dateTime);
+        var expected = new WhenIsDateAsString {when = dateTime, _id = ObjectId.GenerateNewId()};
+
+        {
+            var collection = database.GetCollection<WhenIsDateAsString>(docs.CollectionNamespace);
+            using var db = SingleEntityDbContext.Create(collection,
+                mb => mb.Entity<WhenIsDateAsString>().Property(e => e.when)
+                    .HasConversion<DateTimeToTicksConverter>());
+            db.Entities.Add(expected);
+            db.SaveChanges();
+        }
+
+        var found = docs.AsQueryable().Where(d => d.when == dateTime.Ticks.ToString()).ToList();
+        Assert.Single(found, f => f._id == expected._id && f.when == dateTime.Ticks.ToString());
+    }
+
+    class WhenIsAString : IdIsObjectId
+    {
+        public string when { get; set; }
+    }
+
+    class WhenIsDateAsString : IdIsObjectId
+    {
+        [BsonRepresentation(BsonType.String)]
+        public DateTime when { get; set; }
     }
 
     [Theory]
