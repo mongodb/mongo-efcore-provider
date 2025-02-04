@@ -22,7 +22,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
-using Microsoft.EntityFrameworkCore.Query;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Options;
@@ -92,40 +92,46 @@ public sealed class BsonSerializerFactory
 
     internal static IBsonSerializer CreateTypeSerializer(IReadOnlyProperty property)
     {
-        var typeMapping = property.FindTypeMapping();
-
-        IBsonSerializer serializer;
-        if (typeMapping is {Converter: { } converter})
+        if (property.FindTypeMapping() is {Converter: { } converter})
         {
-            if (converter.ModelClrType.IsNullableValueType())
-            {
-                throw new NotSupportedException(
-                    $"Unsupported ValueConverter for Nullable<{converter.ModelClrType.UnwrapNullableType().Name
-                    }> encountered. Null conversion must be left to EF Core. "
-                    + $"If using HasConversion with conversion expressions directly move them to constructor arguments of a ValueConverter instead. "
-                    + $"For example: mb.Entity<{property.DeclaringType.DisplayName()}>().Property(e => e.{property.Name
-                    }).HasConversion(x => x, y => y) becomes .HasConversion(new ValueConverter(x => x, y => y));");
-            }
-
-            var valueConverterSerializerType = typeof(ValueConverterSerializer<,>)
-                .MakeGenericType(converter.ModelClrType, converter.ProviderClrType);
-
-            var typeSerializer = CreateTypeSerializer(converter.ProviderClrType);
-            serializer = (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, converter, typeSerializer)
-                         ?? throw new InvalidOperationException($"Unable to create serializer to handle '{
-                             converter.GetType().ShortDisplayName()}'");
+            return CreateValueConverterSerializer(converter, property);
         }
-        else
-        {
-            serializer = CreateTypeSerializer(property.ClrType, property);
-        }
+
+        var serializer = CreateTypeSerializer(property.ClrType, property);
 
         return property.GetBsonRepresentation() is { } bsonRepresentation
             ? ApplyBsonRepresentation(bsonRepresentation, serializer)
             : serializer;
     }
 
-    private static IBsonSerializer ApplyBsonRepresentation(BsonRepresentationConfiguration representation,
+    private static IBsonSerializer CreateValueConverterSerializer(ValueConverter converter, IReadOnlyProperty property)
+    {
+        if (converter.ModelClrType.IsNullableValueType())
+        {
+            throw new NotSupportedException(
+                $"Unsupported ValueConverter for Nullable<{converter.ModelClrType.UnwrapNullableType().Name
+                }> encountered. Null conversion must be left to EF Core. "
+                + $"If using HasConversion with conversion expressions directly move them to constructor arguments of a ValueConverter instead. "
+                + $"For example: mb.Entity<{property.DeclaringType.DisplayName()}>().Property(e => e.{property.Name
+                }).HasConversion(x => x, y => y) becomes .HasConversion(new ValueConverter(x => x, y => y));");
+        }
+
+        var typeSerializer = CreateTypeSerializer(converter.ProviderClrType);
+
+        if (property.GetBsonRepresentation() is { } bsonRepresentation)
+        {
+            typeSerializer = ApplyBsonRepresentation(bsonRepresentation, typeSerializer);
+        }
+
+        var valueConverterSerializerType = typeof(ValueConverterSerializer<,>)
+            .MakeGenericType(converter.ModelClrType, converter.ProviderClrType);
+
+        return (IBsonSerializer?)Activator.CreateInstance(valueConverterSerializerType, converter, typeSerializer)
+               ?? throw new InvalidOperationException($"Unable to create '{valueConverterSerializerType.ShortDisplayName()}'.");
+    }
+
+    private static IBsonSerializer ApplyBsonRepresentation(
+        BsonRepresentationConfiguration representation,
         IBsonSerializer typeSerializer)
     {
         if (typeSerializer is not IRepresentationConfigurable representationConfigurable)
