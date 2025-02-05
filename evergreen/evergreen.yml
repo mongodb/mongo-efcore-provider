@@ -256,7 +256,7 @@ functions:
           MONGODB_URI="${MONGODB_URI}" \
           PACKAGE_VERSION="${PACKAGE_VERSION}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
-          . ./evergreen/run-smoke-tests.sh
+            ./evergreen/run-smoke-tests.sh
 
   push-packages:
     - command: shell.exec
