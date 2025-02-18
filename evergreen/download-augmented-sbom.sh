@@ -10,7 +10,6 @@ mkdir -p "${SSDLC_PATH}"
 echo "Downloading augmented sbom from silk"
 
 docker run --platform="linux/amd64" --rm -v ${PWD}:/pwd \
-  -e SILK_CLIENT_ID \
-  -e SILK_CLIENT_SECRET \
-  artifactory.corp.mongodb.com/release-tools-container-registry-public-local/silkbomb:1.0 \
-  download --silk-asset-group mongo-efcore-provider --sbom-out /pwd/${SSDLC_PATH}/augmented-sbom.json
+  --env-file ${workdir}/kondukto_credentials.env \
+  artifactory.corp.mongodb.com/release-tools-container-registry-public-local/silkbomb:2.0 \
+  augment --repo mongodb/mongo-efcore-provider --branch ${branch_name} --sbom-out /pwd/${SSDLC_PATH}/augmented-sbom.json

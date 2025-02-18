@@ -342,12 +342,28 @@ functions:
           - "mongo-efcore-provider/artifacts/nuget/MongoDB.EntityFrameworkCore.${PACKAGE_VERSION}.snupkg"
 
   download-and-promote-augmented-sbom-to-s3-bucket:
+    - command: ec2.assume_role
+      display_name: Assume IAM role with permissions to pull Kondukto API token
+      params:
+        role_arn: ${kondukto_role_arn}
+    - command: shell.exec
+      display_name: Pull Kondukto API token from AWS Secrets Manager and write it to file
+      params:
+        silent: true
+        shell: bash
+        working_dir: mongo-efcore-provider
+        include_expansions_in_env: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN]
+        script: |
+          # use AWS CLI to get the Kondukto API token from AWS Secrets Manager
+          kondukto_token=$(aws secretsmanager get-secret-value --secret-id "kondukto-token" --region "us-east-1" --query 'SecretString' --output text)
+          if [ $? -ne 0 ]; then
+              exit 1
+          fi
+          # set the KONDUKTO_TOKEN environment variable
+          echo "KONDUKTO_TOKEN=$kondukto_token" > ${workdir}/kondukto_credentials.env
     - command: shell.exec
       params:
         working_dir: mongo-efcore-provider
-        include_expansions_in_env:
-          - "SILK_CLIENT_ID"
-          - "SILK_CLIENT_SECRET"
         script: |
           ${PREPARE_SHELL}
           ./evergreen/download-augmented-sbom.sh
