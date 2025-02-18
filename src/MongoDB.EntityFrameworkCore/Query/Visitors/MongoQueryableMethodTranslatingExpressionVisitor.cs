@@ -26,12 +26,12 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
 /// <summary>
 /// Captures the final query expression in the chain so it can be run against the MongoDB LINQ v3 provider while also
-/// following the shape of the transformation so that the shaper may be correctly adjusted.
+/// following the shape of the transformation so that the shaper may be correctly adjusted and early-terminates any
+/// unsupported operations.
 /// </summary>
 internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : QueryableMethodTranslatingExpressionVisitor
 {
     private readonly MongoProjectionBindingExpressionVisitor _projectionBindingExpressionVisitor = new();
-
     private Expression? _finalExpression;
 
     /// <summary>
@@ -46,7 +46,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     {
     }
 
-    /// <inheritdoc />
     public override Expression? Visit(Expression? expression)
     {
         _finalExpression ??= expression;
@@ -63,49 +62,63 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
         var method = methodCallExpression.Method;
-        if (method.DeclaringType == typeof(Queryable))
+        if (method.DeclaringType != typeof(Queryable)) return QueryCompilationContext.NotTranslatedExpression;
+
+        var source = Visit(methodCallExpression.Arguments[0]);
+        if (source is ShapedQueryExpression shapedQueryExpression)
         {
-            var source = Visit(methodCallExpression.Arguments[0]);
-            if (source is ShapedQueryExpression shapedQueryExpression)
+            var methodDefinition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : method;
+            switch (method.Name)
             {
-                var genericMethod = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
+                // Operations that need tweaks
+                case nameof(Queryable.Select) when methodDefinition == QueryableMethods.Select:
+                case nameof(Queryable.OfType) when methodDefinition == QueryableMethods.OfType:
 
-                var visitedShapedQuery = shapedQueryExpression;
-                switch (method.Name)
-                {
-                    case nameof(Queryable.Select) when genericMethod == QueryableMethods.Select:
-                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
-                        break;
-                    case nameof(Queryable.Count) when genericMethod == QueryableMethods.CountWithoutPredicate:
-                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
-                        break;
-                    case nameof(Queryable.LongCount) when genericMethod == QueryableMethods.LongCountWithoutPredicate:
-                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
-                        break;
-                    case nameof(Queryable.Any) when genericMethod == QueryableMethods.AnyWithoutPredicate:
-                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
-                        break;
-                    case nameof(Queryable.OfType) when genericMethod == QueryableMethods.OfType:
-                        visitedShapedQuery = (ShapedQueryExpression)base.VisitMethodCall(methodCallExpression);
-                        break;
-                }
+                // Operations that only require reshaping
+                case nameof(Queryable.Any) when methodDefinition == QueryableMethods.AnyWithoutPredicate:
+                case nameof(Queryable.All) when methodDefinition == QueryableMethods.All:
+                case nameof(Queryable.Cast) when methodDefinition == QueryableMethods.Cast:
+                case nameof(Queryable.Count) when methodDefinition == QueryableMethods.CountWithoutPredicate:
+                case nameof(Queryable.LongCount) when methodDefinition == QueryableMethods.LongCountWithoutPredicate:
+                case nameof(Queryable.Average) when QueryableMethods.IsAverageWithSelector(methodDefinition)
+                                                    || QueryableMethods.IsAverageWithoutSelector(methodDefinition):
+                case nameof(Queryable.Sum) when QueryableMethods.IsSumWithSelector(methodDefinition)
+                                                || QueryableMethods.IsSumWithoutSelector(methodDefinition):
+                case nameof(Queryable.Min) when methodDefinition == QueryableMethods.MinWithoutSelector
+                                                || methodDefinition == QueryableMethods.MinWithSelector:
+                case nameof(Queryable.Max) when methodDefinition == QueryableMethods.MaxWithoutSelector
+                                                || methodDefinition == QueryableMethods.MaxWithSelector:
 
-                var newCardinality = GetResultCardinality(method);
-                if (newCardinality != visitedShapedQuery.ResultCardinality)
-                    visitedShapedQuery = visitedShapedQuery.UpdateResultCardinality(newCardinality);
+                // Operations not supported, but we want to bubble through for better error messages
+                case nameof(Queryable.GroupBy) when methodDefinition == QueryableMethods.GroupByWithKeySelector
+                                                    || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector:
+                case nameof(Queryable.Contains) when methodDefinition == QueryableMethods.Contains:
+                case nameof(Queryable.Except) when methodDefinition == QueryableMethods.Except:
+                case nameof(Queryable.Join) when methodDefinition == QueryableMethods.Join:
+                case nameof(Queryable.SelectMany) when methodDefinition == QueryableMethods.SelectManyWithCollectionSelector:
+                    {
+                        if (base.VisitMethodCall(methodCallExpression) is not ShapedQueryExpression visitedShapedQueryExpression)
+                        {
+                            return QueryCompilationContext.NotTranslatedExpression;
+                        }
 
-                ((MongoQueryExpression)visitedShapedQuery.QueryExpression).CapturedExpression = _finalExpression;
-                return visitedShapedQuery;
+                        shapedQueryExpression = visitedShapedQueryExpression;
+                        break;
+                    }
             }
+
+            var newCardinality = GetResultCardinality(method);
+            if (newCardinality != shapedQueryExpression.ResultCardinality)
+                shapedQueryExpression = shapedQueryExpression.UpdateResultCardinality(newCardinality);
+
+            ((MongoQueryExpression)shapedQueryExpression.QueryExpression).CapturedExpression = _finalExpression;
+            return shapedQueryExpression;
         }
 
         return QueryCompilationContext.NotTranslatedExpression;
     }
 
-    /// <inheritdoc />
-    protected override ShapedQueryExpression TranslateSelect(
-        ShapedQueryExpression source,
-        LambdaExpression selector)
+    protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector)
     {
         // Handle .Select(p => p) no-op/pass-thru
         if (selector.Body == selector.Parameters[0])
@@ -121,40 +134,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return source.UpdateShaperExpression(newShaper);
     }
 
-    /// <inheritdoc />
-    protected override ShapedQueryExpression TranslateCount(
-        ShapedQueryExpression source,
-        LambdaExpression? predicate)
-    {
-        return source.UpdateShaperExpression(
-            Expression.Convert(
-                new ProjectionBindingExpression(source.QueryExpression, new ProjectionMember(), typeof(int?)),
-                typeof(int)));
-    }
-
-    /// <inheritdoc />
-    protected override ShapedQueryExpression TranslateLongCount(
-        ShapedQueryExpression source,
-        LambdaExpression? predicate)
-    {
-        return source.UpdateShaperExpression(
-            Expression.Convert(
-                new ProjectionBindingExpression(source.QueryExpression, new ProjectionMember(), typeof(long?)),
-                typeof(long)));
-    }
-
-    /// <inheritdoc />
-    protected override ShapedQueryExpression TranslateAny(
-        ShapedQueryExpression source,
-        LambdaExpression? predicate)
-    {
-        return source.UpdateShaperExpression(
-            Expression.Convert(
-                new ProjectionBindingExpression(source.QueryExpression, new ProjectionMember(), typeof(bool?)),
-                typeof(bool)));
-    }
-
-    /// <inheritdoc />
     protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
     {
         var queryExpression = new MongoQueryExpression(entityType);
@@ -250,113 +229,133 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return null;
     }
 
-    #region Not implemented as we're capturing the query rather than translating here
-
-    protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor() =>
-        throw new NotImplementedException();
+    #region Methods that just require shaper reshaping
 
     protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate) =>
-        throw new NotImplementedException();
+        ReshapeShaperExpression(source, typeof(bool));
+
+    protected override ShapedQueryExpression TranslateAny(ShapedQueryExpression source, LambdaExpression? predicate)
+        => ReshapeShaperExpression(source, typeof(bool));
 
     protected override ShapedQueryExpression TranslateAverage(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => throw new NotImplementedException();
+        Type resultType)
+        => ReshapeShaperExpression(source, resultType);
 
-    protected override ShapedQueryExpression TranslateCast(ShapedQueryExpression source, Type castType) =>
-        throw new NotImplementedException();
+    protected override ShapedQueryExpression TranslateCast(ShapedQueryExpression source, Type castType)
+        => ReshapeShaperExpression(source, castType);
 
-    protected override ShapedQueryExpression TranslateConcat(ShapedQueryExpression source1, ShapedQueryExpression source2) =>
-        throw new NotImplementedException();
+    protected override ShapedQueryExpression TranslateContains(ShapedQueryExpression source, Expression item)
+        => ReshapeShaperExpression(source, typeof(bool)); // We don't support but a later step has a better error message
 
-    protected override ShapedQueryExpression TranslateContains(ShapedQueryExpression source, Expression item) =>
-        throw new NotImplementedException();
+    protected override ShapedQueryExpression TranslateCount(ShapedQueryExpression source, LambdaExpression? predicate)
+        => ReshapeShaperExpression(source, typeof(int));
 
-    protected override ShapedQueryExpression TranslateDefaultIfEmpty(ShapedQueryExpression source, Expression? defaultValue) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateDistinct(ShapedQueryExpression source) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateElementAtOrDefault(ShapedQueryExpression source, Expression index,
-        bool returnDefault) => throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateExcept(ShapedQueryExpression source1, ShapedQueryExpression source2) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateFirstOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
-        Type returnType,
-        bool returnDefault) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateGroupBy(ShapedQueryExpression source, LambdaExpression keySelector,
-        LambdaExpression? elementSelector, LambdaExpression? resultSelector) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
-        LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
-        LambdaExpression outerKeySelector,
-        LambdaExpression innerKeySelector, LambdaExpression resultSelector) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
-        LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
-        Type returnType,
-        bool returnDefault) =>
-        throw new NotImplementedException();
+    protected override ShapedQueryExpression TranslateLongCount(ShapedQueryExpression source, LambdaExpression? predicate)
+        => ReshapeShaperExpression(source, typeof(long));
 
     protected override ShapedQueryExpression TranslateMax(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => throw new NotImplementedException();
+        Type resultType) => ReshapeShaperExpression(source, resultType);
 
     protected override ShapedQueryExpression TranslateMin(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateOrderBy(ShapedQueryExpression source, LambdaExpression keySelector,
-        bool ascending) => throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateReverse(ShapedQueryExpression source) => throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateSelectMany(ShapedQueryExpression source, LambdaExpression collectionSelector,
-        LambdaExpression resultSelector) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateSelectMany(ShapedQueryExpression source, LambdaExpression selector) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateSingleOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
-        Type returnType,
-        bool returnDefault) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateSkip(ShapedQueryExpression source, Expression count) =>
-        throw new NotImplementedException();
-
-    protected override ShapedQueryExpression TranslateSkipWhile(ShapedQueryExpression source, LambdaExpression predicate) =>
-        throw new NotImplementedException();
+        Type resultType) => ReshapeShaperExpression(source, resultType);
 
     protected override ShapedQueryExpression TranslateSum(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => throw new NotImplementedException();
+        Type resultType) => ReshapeShaperExpression(source, resultType);
 
-    protected override ShapedQueryExpression? TranslateTake(ShapedQueryExpression source, Expression count) => null;
+    private static ShapedQueryExpression ReshapeShaperExpression(ShapedQueryExpression source, Type returnType)
+        => source.UpdateShaperExpression(
+            Expression.Convert(
+                new ProjectionBindingExpression(
+                    source.QueryExpression, new ProjectionMember(), returnType.MakeNullable()), returnType));
 
-    protected override ShapedQueryExpression TranslateTakeWhile(ShapedQueryExpression source, LambdaExpression predicate) =>
-        throw new NotImplementedException();
+    #endregion
 
-    protected override ShapedQueryExpression TranslateThenBy(ShapedQueryExpression source, LambdaExpression keySelector,
-        bool ascending) => throw new NotImplementedException();
+    #region Never called by visit as translation is handled by C# Driver LINQ (with some minor tweaks)
 
-    protected override ShapedQueryExpression TranslateUnion(ShapedQueryExpression source1, ShapedQueryExpression source2) =>
-        throw new NotImplementedException();
+    protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor()
+        => throw new NotSupportedException("Subqueries are not supported by MongoDB.");
 
-    protected override ShapedQueryExpression TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate) =>
-        throw new NotSupportedException();
+    protected override ShapedQueryExpression? TranslateConcat(ShapedQueryExpression source1, ShapedQueryExpression source2)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateDefaultIfEmpty(ShapedQueryExpression source, Expression? defaultValue)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateDistinct(ShapedQueryExpression source)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateElementAtOrDefault(ShapedQueryExpression source,
+        Expression index, bool returnDefault)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateExcept(ShapedQueryExpression source1, ShapedQueryExpression source2)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateFirstOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
+        Type returnType, bool returnDefault)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateGroupBy(ShapedQueryExpression source, LambdaExpression keySelector,
+        LambdaExpression? elementSelector, LambdaExpression? resultSelector)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
+        LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
+        LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
+        LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
+        Type returnType, bool returnDefault)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateOrderBy(ShapedQueryExpression source, LambdaExpression keySelector,
+        bool ascending)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateReverse(ShapedQueryExpression source)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateSelectMany(ShapedQueryExpression source, LambdaExpression collectionSelector,
+        LambdaExpression resultSelector)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateSelectMany(ShapedQueryExpression source, LambdaExpression selector)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateSingleOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
+        Type returnType, bool returnDefault)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateSkip(ShapedQueryExpression source, Expression count)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateSkipWhile(ShapedQueryExpression source, LambdaExpression predicate)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateTake(ShapedQueryExpression source, Expression count)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateTakeWhile(ShapedQueryExpression source, LambdaExpression predicate)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateThenBy(ShapedQueryExpression source, LambdaExpression keySelector,
+        bool ascending) => null;
+
+    protected override ShapedQueryExpression? TranslateUnion(ShapedQueryExpression source1, ShapedQueryExpression source2)
+        => null;
+
+    protected override ShapedQueryExpression? TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate)
+        => null;
 
     #endregion
 }

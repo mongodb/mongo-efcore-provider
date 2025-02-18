@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using System;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
@@ -44,7 +43,6 @@ internal class FinalPredicateHoistingVisitor : ExpressionVisitor
         return Instance.Visit(expression);
     }
 
-    /// <inheritdoc/>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
         var method = methodCallExpression.Method;
@@ -75,10 +73,6 @@ internal class FinalPredicateHoistingVisitor : ExpressionVisitor
                         Expression.Call(null,
                             QueryableMethods.Where.MakeGenericMethod(genericType),
                             methodCallExpression.Arguments));
-
-                // We do not support All at this time as there is no predicate-less version we can use
-                case nameof(Queryable.All) when genericMethod == QueryableMethods.All:
-                    throw new NotImplementedException("All() is not supported at this time.");
             }
         }
 

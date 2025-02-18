@@ -25,6 +25,102 @@ public class TopScalarTests(ReadOnlySampleGuidesFixture database)
     private readonly GuidesDbContext _db = GuidesDbContext.Create(database.MongoDatabase);
 
     [Fact]
+    public void All_with_selector()
+    {
+        var all = _db.Planets.All(p => p.orderFromSun > 0);
+
+        Assert.True(all);
+    }
+
+    [Fact]
+    public void Any_with_no_predicate()
+    {
+        var result = _db.Planets.Any();
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void Any_with_no_predicate_after_where()
+    {
+        var result = _db.Planets.Where(p => p.orderFromSun < 1).Any();
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void Any_with_predicate()
+    {
+        var result = _db.Planets.Any(p => p.hasRings);
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void Any_with_predicate_after_where()
+    {
+        var result = _db.Planets.Where(p => p.orderFromSun < 5).Any(p => p.hasRings);
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task AnyAsync_with_no_predicate()
+    {
+        var result = await _db.Planets.AnyAsync();
+        Assert.True(result);
+    }
+
+    [Fact]
+    public async Task AnyAsync_with_no_predicate_after_where()
+    {
+        var result = await _db.Planets.Where(p => p.orderFromSun < 1).AnyAsync();
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task AnyAsync_with_predicate()
+    {
+        var result = await _db.Planets.AnyAsync(p => p.hasRings);
+        Assert.True(result);
+    }
+
+    [Fact]
+    public async Task AnyAsync_with_predicate_after_where()
+    {
+        var result = await _db.Planets.Where(p => p.orderFromSun < 5).AnyAsync(p => p.hasRings);
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void Average_with_selector()
+    {
+        var average = _db.Planets.Average(p => p.orderFromSun);
+
+        Assert.Equal(4.5, average);
+    }
+
+    [Fact]
+    public void Average_without_selector()
+    {
+        var average = _db.Planets.Select(p => p.orderFromSun).Average();
+
+        Assert.Equal(4.5, average);
+    }
+
+    [Fact]
+    public async Task AverageAsync_with_selector()
+    {
+        var average = await _db.Planets.AverageAsync(p => p.orderFromSun);
+
+        Assert.Equal(4.5, average);
+    }
+
+    [Fact]
+    public async Task AverageAsync_without_selector()
+    {
+        var average = await _db.Planets.Select(p => p.orderFromSun).AverageAsync();
+
+        Assert.Equal(4.5, average);
+    }
+
+    [Fact]
     public void Count_with_no_predicate()
     {
         var result = _db.Planets.Count();
@@ -58,7 +154,6 @@ public class TopScalarTests(ReadOnlySampleGuidesFixture database)
         var result = await _db.Planets.CountAsync();
         Assert.Equal(8, result);
     }
-
 
     [Fact]
     public async Task CountAsync_with_no_predicate_after_where()
@@ -138,59 +233,99 @@ public class TopScalarTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Any_with_no_predicate()
+    public void Sum_with_selector()
     {
-        var result = _db.Planets.Any();
-        Assert.True(result);
+        var sum = _db.Planets.Sum(p => p.orderFromSun);
+
+        Assert.Equal(36, sum);
     }
 
     [Fact]
-    public void Any_with_no_predicate_after_where()
+    public void Sum_without_selector()
     {
-        var result = _db.Planets.Where(p => p.orderFromSun < 1).Any();
-        Assert.False(result);
+        var sum = _db.Planets.Select(p => p.orderFromSun).Sum();
+
+        Assert.Equal(36, sum);
     }
 
     [Fact]
-    public void Any_with_predicate()
+    public async Task SumSync_with_selector()
     {
-        var result = _db.Planets.Any(p => p.hasRings);
-        Assert.True(result);
+        var sum = await _db.Planets.SumAsync(p => p.orderFromSun);
+
+        Assert.Equal(36, sum);
     }
 
     [Fact]
-    public void Any_with_predicate_after_where()
+    public async Task SumSync_without_selector()
     {
-        var result = _db.Planets.Where(p => p.orderFromSun < 5).Any(p => p.hasRings);
-        Assert.False(result);
+        var sum = await _db.Planets.Select(p => p.orderFromSun).SumAsync();
+
+        Assert.Equal(36, sum);
     }
 
     [Fact]
-    public async Task AnyAsync_with_no_predicate()
+    public void Max_with_selector()
     {
-        var result = await _db.Planets.AnyAsync();
-        Assert.True(result);
+        var sum = _db.Planets.Max(p => p.orderFromSun);
+
+        Assert.Equal(8, sum);
     }
 
     [Fact]
-    public async Task AnyAsync_with_no_predicate_after_where()
+    public void Max_without_selector()
     {
-        var result = await _db.Planets.Where(p => p.orderFromSun < 1).AnyAsync();
-        Assert.False(result);
+        var sum = _db.Planets.Select(p => p.orderFromSun).Max();
+
+        Assert.Equal(8, sum);
     }
 
     [Fact]
-    public async Task AnyAsync_with_predicate()
+    public async Task MaxAsync_with_selector()
     {
-        var result = await _db.Planets.AnyAsync(p => p.hasRings);
-        Assert.True(result);
+        var sum = await _db.Planets.MaxAsync(p => p.orderFromSun);
+
+        Assert.Equal(8, sum);
     }
 
     [Fact]
-    public async Task AnyAsync_with_predicate_after_where()
+    public async Task MaxAsync_without_selector()
     {
-        var result = await _db.Planets.Where(p => p.orderFromSun < 5).AnyAsync(p => p.hasRings);
-        Assert.False(result);
+        var sum = await _db.Planets.Select(p => p.orderFromSun).MaxAsync();
+
+        Assert.Equal(8, sum);
+    }
+
+    [Fact]
+    public void Min_with_selector()
+    {
+        var sum = _db.Planets.Min(p => p.orderFromSun);
+
+        Assert.Equal(1, sum);
+    }
+
+    [Fact]
+    public void Min_without_selector()
+    {
+        var sum = _db.Planets.Select(p => p.orderFromSun).Min();
+
+        Assert.Equal(1, sum);
+    }
+
+    [Fact]
+    public async Task MinAsync_with_selector()
+    {
+        var sum = await _db.Planets.MinAsync(p => p.orderFromSun);
+
+        Assert.Equal(1, sum);
+    }
+
+    [Fact]
+    public async Task MinAsync_without_selector()
+    {
+        var sum = await _db.Planets.Select(p => p.orderFromSun).MinAsync();
+
+        Assert.Equal(1, sum);
     }
 
     public void Dispose()
