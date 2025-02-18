@@ -95,10 +95,7 @@ internal static class BsonBinding
 
     private static BsonArray? GetBsonArray(BsonDocument document, string name)
     {
-        if (!document.TryGetValue(name, out var bsonValue))
-        {
-            throw new InvalidOperationException($"Document element '{name}' is mapped collection but missing.");
-        }
+        if (!document.TryGetValue(name, out var bsonValue)) return null;
 
         return bsonValue switch
         {
