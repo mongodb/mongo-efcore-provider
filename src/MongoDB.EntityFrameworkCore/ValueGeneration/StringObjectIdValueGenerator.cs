@@ -20,20 +20,19 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.ValueGeneration;
 
 /// <summary>
-/// Generates unique <see cref="ObjectId"/> values. This is the default generator
-/// for MongoDB `_id` <see cref="ObjectId"/> fields. These generated values persist
-/// to the server instead of using server-generated values and round-tripping.
+/// Generates unique <see cref="string"/> values. This is the default generator
+/// for strings properties mapped to <see cref="ObjectId"/> elements.
 /// </summary>
-public class ObjectIdValueGenerator : ValueGenerator<ObjectId>
+public class StringObjectIdValueGenerator : ValueGenerator<string>
 {
     /// <summary>
-    /// Generates a unique <see cref="ObjectId"/>.
+    /// Generates a unique <see cref="ObjectId"/> as a string.
     /// </summary>
     /// <param name="entry">The <see cref="EntityEntry"/> this <see cref="ObjectId"/>
-    /// will be used by.</param>
-    /// <returns>A unique <see cref="ObjectId"/>.</returns>
-    public override ObjectId Next(EntityEntry entry)
-        => ObjectId.GenerateNewId();
+    /// as a string will be used by.</param>
+    /// <returns>A unique <see cref="string"/>.</returns>
+    public override string Next(EntityEntry entry)
+        => ObjectId.GenerateNewId().ToString();
 
     /// <summary>
     /// Always <see langword="false"/> as this generator is only used for permanent values.
