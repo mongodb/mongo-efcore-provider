@@ -181,7 +181,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void OwnedEntity_materializes_when_missing_non_required_owned_entity()
+    public void OwnedEntity_materializes_when_null_non_required_owned_entity()
     {
         var collection = database.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithMissingLocation1);
@@ -192,6 +192,21 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
 
         Assert.NotEmpty(actual);
         Assert.Equal("Elizabeth", actual[0].name);
+        Assert.Null(actual[0].location);
+    }
+
+    [Fact]
+    public void OwnedEntity_materializes_when_missing_non_required_owned_entity()
+    {
+        var collection = database.CreateCollection<Person>();
+        collection.WriteTestDocs([new Person {name = "Henry"}]);
+        using var db = SingleEntityDbContext.Create(database.GetCollection<PersonWithLocation>(),
+            mb => { mb.Entity<PersonWithLocation>().Navigation(p => p.location).IsRequired(false); });
+
+        var actual = db.Entities.Where(p => p.name == "Henry").ToList();
+
+        Assert.NotEmpty(actual);
+        Assert.Equal("Henry", actual[0].name);
         Assert.Null(actual[0].location);
     }
 
@@ -281,7 +296,6 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             Assert.Equal(expected.locations[1].longitude, actual.locations[1].longitude);
         }
     }
-
 
     [Fact]
     public void OwnedEntity_can_set_single_owned_entity_element_name()
@@ -436,25 +450,25 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void OwnedEntity_non_nullable_collection_throws_when_missing()
+    public void OwnedEntity_non_nullable_collection_is_null_when_missing()
     {
         var collection = database.CreateCollection<MissingNullableCollection>();
         collection.WriteTestDocs([new MissingNullableCollection()]);
-        using var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNullableCollection>(collection);
+        using var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNonNullableCollection>(collection);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.First());
-        Assert.Contains(nameof(SimpleNullableCollection.children), ex.Message);
+        var actual = db.Entities.First();
+        Assert.Null(actual.children);
     }
 
     [Fact]
-    public void OwnedEntity_nullable_collection_throws_when_missing()
+    public void OwnedEntity_nullable_collection_is_null_when_missing()
     {
         var collection = database.CreateCollection<MissingNullableCollection>();
         collection.WriteTestDocs([new MissingNullableCollection()]);
         using var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNullableCollection>(collection);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.First());
-        Assert.Contains(nameof(SimpleNullableCollection.children), ex.Message);
+        var actual = db.Entities.First();
+        Assert.Null(actual.children);
     }
 
     [Fact]
