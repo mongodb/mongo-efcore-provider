@@ -55,13 +55,17 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Single(entities, e => e.EntityType == "BaseEntity" && e.GetType() == typeof(BaseEntity));
     }
 
-    [Fact]
-    public void Uses_shadow_property_type_discriminator_for_read_and_write()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Uses_shadow_property_type_discriminator_for_read_and_write(bool hasValues)
     {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, ShadowPropertyConfiguredModel));
+        Action<ModelBuilder> mapping = hasValues ? ShadowPropertyConfiguredModel : ShadowPropertyNoValuesConfiguredModel;
 
-        using var db = SingleEntityDbContext.Create(collection, ShadowPropertyConfiguredModel);
+        var collection = database.CreateCollection<BaseEntity>(values: [hasValues]);
+        SetupTestData(SingleEntityDbContext.Create(collection, mapping));
+
+        using var db = SingleEntityDbContext.Create(collection, mapping);
         var entities = db.Entities.ToList();
         Assert.Single(entities, e => e.Status == Status.Active && e is Customer {Name: "Customer 1"});
         Assert.Single(entities, e => e.Status == Status.Active && e is Customer {Name: "Customer 2"});
@@ -119,13 +123,17 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Equal("Customer 1", Assert.IsType<Customer>(customer).Name);
     }
 
-    [Fact]
-    public void Returns_correct_values_when_property_name_shared_between_entities()
+    [Theory]
+    [InlineData(MappingMode.RealProperty)]
+    [InlineData(MappingMode.ShadowPropertyWithValues)]
+    [InlineData(MappingMode.ShadowPropertyDefaults)]
+    public void Returns_correct_values_when_property_name_shared_between_entities(MappingMode mode)
     {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
+        var mapping = GetMapping(mode);
+        var collection = database.CreateCollection<BaseEntity>(values: [mode]);
+        SetupTestData(SingleEntityDbContext.Create(collection, mapping));
 
-        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
+        using var db = SingleEntityDbContext.Create(collection, mapping);
         var entities = db.Entities.Where(e => e is Supplier || e is Contact).ToList();
 
         Assert.Single(entities, e => e is Supplier {Name: "Supplier 1"});
@@ -158,26 +166,34 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.All(db.Entities, e => assertion(e.EntityType!));
     }
 
-    [Fact]
-    public void Returns_correct_entity_where_GetType_query()
+    [Theory]
+    [InlineData(MappingMode.RealProperty)]
+    [InlineData(MappingMode.ShadowPropertyWithValues)]
+    [InlineData(MappingMode.ShadowPropertyDefaults)]
+    public void Returns_correct_entity_where_GetType_query(MappingMode mode)
     {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
+        var mapping = GetMapping(mode);
+        var collection = database.CreateCollection<BaseEntity>(values: [mode]);
+        SetupTestData(SingleEntityDbContext.Create(collection, mapping));
 
-        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
+        using var db = SingleEntityDbContext.Create(collection, mapping);
         var entities = db.Entities.Where(e => e.GetType() == typeof(Order)).ToList();
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
         Assert.Single(entities);
     }
 
-    [Fact]
-    public void Returns_correct_values_when_navigation_shared_between_entities()
+    [Theory]
+    [InlineData(MappingMode.RealProperty)]
+    [InlineData(MappingMode.ShadowPropertyWithValues)]
+    [InlineData(MappingMode.ShadowPropertyDefaults)]
+    public void Returns_correct_values_when_navigation_shared_between_entities(MappingMode mode)
     {
-        var collection = database.CreateCollection<BaseEntity>();
+        var mapping = GetMapping(mode);
+        var collection = database.CreateCollection<BaseEntity>(values: [mode]);
         var expectedProducts = new List<string> {"Product 3", "Product 4", "Product 5"};
 
         {
-            using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
+            using var db = SingleEntityDbContext.Create(collection, mapping);
             db.Add(new Customer {Name = "Customer 1", ShippingAddress = "123 Main St"});
             db.Add(new Supplier {Name = "Supplier 1", Products = ["Product 1", "Product 2"]});
             db.Add(new Order {OrderReference = "Order 1"});
@@ -187,7 +203,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         }
 
         {
-            using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
+            using var db = SingleEntityDbContext.Create(collection, mapping);
             var entities = db.Entities.Where(e => e is Order || e is OrderWithProducts).ToList();
 
             Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
@@ -234,13 +250,17 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Fact]
-    public void Returns_correct_entity_with_OfType_query()
+    [Theory]
+    [InlineData(MappingMode.RealProperty)]
+    [InlineData(MappingMode.ShadowPropertyWithValues)]
+    [InlineData(MappingMode.ShadowPropertyDefaults)]
+    public void Returns_correct_entity_with_OfType_query(MappingMode mode)
     {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
+        var mapping = GetMapping(mode);
+        var collection = database.CreateCollection<BaseEntity>(values: [mode]);
+        SetupTestData(SingleEntityDbContext.Create(collection, mapping));
 
-        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
+        using var db = SingleEntityDbContext.Create(collection, mapping);
         var entities = db.Entities.OfType<Customer>().ToList();
         Assert.Single(entities, e => e is {Name: "Customer 1", Status: Status.Active});
         Assert.Single(entities, e => e is {Name: "Customer 2", Status: Status.Active});
@@ -249,13 +269,17 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Equal(4, entities.Count);
     }
 
-    [Fact]
-    public void Returns_correct_entities_with_mixed_query()
+    [Theory]
+    [InlineData(MappingMode.RealProperty)]
+    [InlineData(MappingMode.ShadowPropertyWithValues)]
+    [InlineData(MappingMode.ShadowPropertyDefaults)]
+    public void Returns_correct_entities_with_mixed_query(MappingMode mode)
     {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
+        var mapping = GetMapping(mode);
+        var collection = database.CreateCollection<BaseEntity>(values: [mode]);
+        SetupTestData(SingleEntityDbContext.Create(collection, mapping));
 
-        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
+        using var db = SingleEntityDbContext.Create(collection, mapping);
         var entities = db.Entities.OfType<BaseEntity>().Where(e => e is Customer || e.GetType() == typeof(Order)).ToList();
         Assert.Equal(5, entities.Count);
         Assert.Single(entities, e => e is Customer {Name: "Customer 1", Status: Status.Active});
@@ -265,13 +289,17 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Single(entities, e => e is Order {OrderReference: "Order 1"});
     }
 
-    [Fact]
-    public void OfType_does_not_break_entity_serializer_association()
+    [Theory]
+    [InlineData(MappingMode.RealProperty)]
+    [InlineData(MappingMode.ShadowPropertyWithValues)]
+    [InlineData(MappingMode.ShadowPropertyDefaults)]
+    public void OfType_does_not_break_entity_serializer_association(MappingMode mode)
     {
-        var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel));
+        var mapping = GetMapping(mode);
+        var collection = database.CreateCollection<BaseEntity>(values: [mode]);
+        SetupTestData(SingleEntityDbContext.Create(collection, mapping));
 
-        using var db = SingleEntityDbContext.Create(collection, RealPropertyConfiguredModel);
+        using var db = SingleEntityDbContext.Create(collection, mapping);
 
         var allActiveCustomers = db.Entities.OfType<Customer>().Where(e => e.Status == Status.Active);
         Assert.All(allActiveCustomers, f => Assert.Equal(Status.Active, f.Status));
@@ -283,7 +311,6 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     }
 
 #if !EF9 // TPC/TPT methods were moved to relational in EF9
-
     [Fact]
     public void TablePerType_throws_NotSupportedException()
     {
@@ -314,6 +341,22 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
 #endif
 
+    public enum MappingMode
+    {
+        RealProperty,
+        ShadowPropertyWithValues,
+        ShadowPropertyDefaults
+    }
+
+    private static Action<ModelBuilder> GetMapping(MappingMode mappingMode)
+        => mappingMode switch
+        {
+            MappingMode.RealProperty => RealPropertyConfiguredModel,
+            MappingMode.ShadowPropertyDefaults => ShadowPropertyConfiguredModel,
+            MappingMode.ShadowPropertyWithValues => ShadowPropertyNoValuesConfiguredModel,
+            _ => throw new ArgumentOutOfRangeException(nameof(mappingMode), mappingMode, null)
+        };
+
     private static void RealPropertyConfiguredModel(ModelBuilder mb)
     {
         mb.Entity<BaseEntity>()
@@ -337,6 +380,21 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
             .HasValue<Order>("Order")
             .HasValue<OrderWithProducts>("OrderEx")
             .HasValue<Contact>("Contact");
+        mb.Entity<BaseEntity>().Property(e => e.Status).HasConversion<string>(e => e.ToString(), s => Enum.Parse<Status>(s));
+    }
+
+    private static void ShadowPropertyNoValuesConfiguredModel(ModelBuilder mb)
+    {
+        mb.Entity<BaseEntity>()
+            .HasDiscriminator();
+        // There is no HasValue without a value, this is the required syntax.
+        mb.Entity<Customer>();
+        mb.Entity<Order>();
+        mb.Entity<SubCustomer>();
+        mb.Entity<Supplier>();
+        mb.Entity<OrderWithProducts>();
+        mb.Entity<Contact>();
+
         mb.Entity<BaseEntity>().Property(e => e.Status).HasConversion<string>(e => e.ToString(), s => Enum.Parse<Status>(s));
     }
 
