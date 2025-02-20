@@ -51,6 +51,16 @@ public class MongoValueGeneratorSelector : ValueGeneratorSelector
             return new ObjectIdValueGenerator();
         }
 
+        // Allow strings stored as ObjectId's to be generated too
+        if (clrType == typeof(string) && IsStoredAsObjectId(property))
+        {
+            return new StringObjectIdValueGenerator();
+        }
+
         return base.FindForType(property, typeBase, clrType);
     }
+
+    private static bool IsStoredAsObjectId(IProperty property)
+        => property.GetValueConverter() is { } converter && converter.ModelClrType == typeof(ObjectId)
+           || property.GetBsonRepresentation() is {BsonType: BsonType.ObjectId};
 }
