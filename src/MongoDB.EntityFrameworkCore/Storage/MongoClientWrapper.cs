@@ -196,7 +196,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
         foreach (var ownedEntityType in ownedEntityTypes)
         {
-            var elementName = ownedEntityType.GetContainingElementName();
+            var elementName = ownedEntityType.GetContainingElementName()!;
             var newPath = path.Append(elementName).ToArray();
             await CreateIndexesAsync(ownedEntityType, indexManager, existingIndexNames, newPath, cancellationToken)
                 .ConfigureAwait(false);
