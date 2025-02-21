@@ -27,17 +27,17 @@
     <Optimize>true</Optimize>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
+    <PackageReference Remove="Microsoft.SourceLink.GitHub" />
+    <PackageReference Include="MongoDB.Driver" Version="3.1.0" />
+  </ItemGroup>
+
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.12" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.1" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
-    <PackageReference Include="MongoDB.Driver" Version="3.1.0" />
-    <PackageReference Remove="Microsoft.SourceLink.GitHub" />
   </ItemGroup>
 </Project>

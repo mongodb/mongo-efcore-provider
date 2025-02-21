@@ -38,14 +38,7 @@ functions:
         shell: bash
         working_dir: mongo-efcore-provider
         script: |
-          # Get the current unique version of this checkout
-          if [ "${is_patch}" = "true" ]; then
-            CURRENT_VERSION=$(git describe)-patch-${version_id}
-          else
-            CURRENT_VERSION=latest
-          fi
-
-          PACKAGE_VERSION=$(bash ./evergreen/generate-version.sh)
+          PACKAGE_VERSION=$(bash triggered_by_git_tag=${triggered_by_git_tag} ./evergreen/generate-version.sh)
 
           export DRIVERS_TOOLS="$(pwd)/../drivers-tools"
           export DOTNET_SDK_PATH="$(pwd)/../.dotnet"
@@ -53,9 +46,6 @@ functions:
           if [ "Windows_NT" = "$OS" ]; then # Magic variable in cygwin
             # Python has cygwin path problems on Windows. Detect prospective mongo-orchestration home directory
             export DRIVERS_TOOLS=$(cygpath -m $DRIVERS_TOOLS)
-          else
-            # non windows OSs don't have dotnet in the PATH
-            export PATH=$PATH:/usr/share/dotnet
           fi
 
           export MONGO_ORCHESTRATION_HOME="$DRIVERS_TOOLS/.evergreen/orchestration"
@@ -63,7 +53,6 @@ functions:
           export PROJECT_DIRECTORY="$(pwd)"
 
           cat <<EOT > expansion.yml
-          CURRENT_VERSION: "$CURRENT_VERSION"
           DRIVERS_TOOLS: "$DRIVERS_TOOLS"
           MONGO_ORCHESTRATION_HOME: "$MONGO_ORCHESTRATION_HOME"
           MONGODB_BINARIES: "$MONGODB_BINARIES"
@@ -143,7 +132,7 @@ functions:
   upload-test-results:
     - command: attach.xunit_results
       params:
-        file: ./mongo-efcore-provider/artifacts/test-results/TEST*.xml
+        file: ./mongo-efcore-provider/artifacts/test-results/**/TEST*.xml
 
   bootstrap-mongo-orchestration:
     - command: shell.exec
@@ -171,6 +160,19 @@ functions:
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
+          BUILD_CONFIGURATION="Debug" \
+            ./evergreen/run-tests.sh
+    - command: shell.exec
+      type: test
+      params:
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          DRIVER_VERSION=${DRIVER_VERSION} \
+          OS=${OS} \
+          MONGODB_URI="${MONGODB_URI}" \
+          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
+          BUILD_CONFIGURATION="Debug EF9" \
             ./evergreen/run-tests.sh
 
   cleanup:
