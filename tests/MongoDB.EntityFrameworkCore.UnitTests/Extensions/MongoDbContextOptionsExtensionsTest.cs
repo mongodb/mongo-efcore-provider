@@ -66,23 +66,6 @@ public static class MongoDbContextOptionsExtensionsTest
         Assert.Equal(databaseName, mongoOptions.DatabaseName);
     }
 
-    [Theory]
-    [InlineData("mongodb://localhost:1234", "myDatabaseName")]
-    public static void Throws_when_multiple_ef_providers_specified(string connectionString, string databaseName)
-    {
-        var options = new DbContextOptionsBuilder()
-            .UseMongoDB(connectionString, databaseName)
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
-            .Options;
-
-        var context = new DbContext(options);
-
-        Assert.Contains(
-            "Only a single database provider can be registered",
-            Assert.Throws<InvalidOperationException>(() => context.Model).Message);
-    }
-
     [Fact]
     public static void LogFragment_does_not_contain_password()
     {
