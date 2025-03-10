@@ -35,6 +35,7 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
 
         var representation = property.GetBsonRepresentation();
         Assert.NotNull(representation);
+        Assert.Equal(bsonType, representation.BsonType);
     }
 
     [Theory]
