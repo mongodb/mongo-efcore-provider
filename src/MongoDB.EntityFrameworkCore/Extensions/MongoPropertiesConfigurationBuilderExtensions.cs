@@ -61,4 +61,19 @@ public static class MongoPropertiesConfigurationBuilderExtensions
         bool? allowOverflow = null,
         bool? allowTruncation = null)
         => (PropertiesConfigurationBuilder<TProperty>)HaveBsonRepresentation((PropertiesConfigurationBuilder)propertiesConfigurationBuilder, bsonType, allowOverflow, allowTruncation);
+
+    /// <summary>
+    /// Configures the <see cref="DateTimeKind"/> that <see cref="DateTime"/> and <see cref="DateTimeOffset"/> properties are stored as when targeting MongoDB.
+    /// </summary>
+    /// <param name="propertiesConfigurationBuilder">The builder for the properties being configured.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to store these properties as.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertiesConfigurationBuilder HaveDateTimeKind(
+        this PropertiesConfigurationBuilder propertiesConfigurationBuilder,
+        DateTimeKind dateTimeKind)
+    {
+        propertiesConfigurationBuilder.HaveAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind);
+
+        return propertiesConfigurationBuilder;
+    }
 }
