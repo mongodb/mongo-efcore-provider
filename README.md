@@ -45,7 +45,7 @@ db.Database.EnsureCreated();
 Entity Framework Core and MongoDB have a wide variety of features. This provider supports a subset of the functionality available in both, specifically:
 
 - Querying with `Where`, `Find`, `First`, `Single`, `OrderBy`, `ThenBy`, `Skip`, `Take` etc.
-- Top-level aggregates of `Any`, `Count`, `LongCount`
+- Top-level aggregates of `Any`, `Count`, `LongCount`, `Sum`, `Min`, `Max`, `Average`, `All`
 - Mapping properties to BSON elements using `[Column]` or `[BsonElement]` attributes or `HasElementName("name")` method
 - Mapping entities to collections using `[Table("name")]` attribute or `ToCollection("name")` method
 - Single or composite keys of standard types including string, `Guid` and `ObjectId`
@@ -74,12 +74,12 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 ### Planned for future releases
 
 - Select projections with client-side operations
-- Sum, Average, Min, Max etc. support at top level
 - ExecuteUpdate & ExecuteDelete
 - GroupBy operations
 - Includes/joins
+- Geospacial
 
-### Not supported & out-of-scope features
+### Not supported, out-of-scope features
 
 - Keyless entity types
 - Schema migrations
@@ -87,7 +87,6 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Alternate keys
 - Document (table) splitting
 - Temporal tables
-- Spacial data
 - Timeseries
 - Atlas search
 - GridFS
