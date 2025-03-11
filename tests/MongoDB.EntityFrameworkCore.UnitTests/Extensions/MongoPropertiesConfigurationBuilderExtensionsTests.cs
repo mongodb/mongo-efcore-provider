@@ -43,7 +43,8 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
     [InlineData(BsonType.Double, false, false)]
     [InlineData(BsonType.Decimal128, null, false)]
     [InlineData(BsonType.Int64, true, true)]
-    public void HaveBsonRepresentation_can_set_type_overflow_and_truncation_on_property(BsonType bsonType, bool? allowOverflow, bool? allowTruncation)
+    public void HaveBsonRepresentation_can_set_type_overflow_and_truncation_on_property(BsonType bsonType, bool? allowOverflow,
+        bool? allowTruncation)
     {
         using var db = new TestDbContext(bsonType, allowOverflow, allowTruncation);
 
@@ -57,6 +58,20 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
         Assert.Equal(allowTruncation, representation.AllowTruncation);
     }
 
+    [Theory]
+    [InlineData(DateTimeKind.Unspecified)]
+    [InlineData(DateTimeKind.Local)]
+    [InlineData(DateTimeKind.Utc)]
+    public void HaveDateTimeKind_can_set_DateTimeKind_on_property(DateTimeKind dateTimeKind)
+    {
+        using var db = new TestDbContext(dateTimeKind: dateTimeKind);
+
+        var property = db.GetProperty((TestEntity t) => t.DateTimeOffsetProperty);
+        Assert.NotNull(property);
+
+        var foundDateTimeKind = property.GetDateTimeKind();
+        Assert.Equal(dateTimeKind, foundDateTimeKind);
+    }
 
     private class TestEntity
     {
@@ -69,7 +84,11 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
         public string StringProperty { get; set; }
     }
 
-    private class TestDbContext(BsonType bsonType, bool? allowOverflow = null, bool? allowTruncation = null) : DbContext
+    private class TestDbContext(
+        BsonType? bsonType = null,
+        bool? allowOverflow = null,
+        bool? allowTruncation = null,
+        DateTimeKind? dateTimeKind = null) : DbContext
     {
         public DbSet<TestEntity> Tests { get; set; }
 
@@ -78,11 +97,19 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
                 .UseMongoDB("mongodb://localhost:27017", $"UnitTests{Guid.NewGuid()}")
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
-        protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+        protected override void ConfigureConventions(ModelConfigurationBuilder cb)
         {
-            base.ConfigureConventions(configurationBuilder);
+            base.ConfigureConventions(cb);
 
-            configurationBuilder.Properties<DateTimeOffset>().HaveBsonRepresentation(bsonType, allowOverflow, allowTruncation);
+            if (bsonType != null)
+            {
+                cb.Properties<DateTimeOffset>().HaveBsonRepresentation(bsonType.Value, allowOverflow, allowTruncation);
+            }
+
+            if (dateTimeKind != null)
+            {
+                cb.Properties<DateTimeOffset>().HaveDateTimeKind(dateTimeKind.Value);
+            }
         }
     }
 }
