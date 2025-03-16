@@ -48,6 +48,11 @@ public class UpdateEntityTests(TemporaryDatabaseFixture database)
         public Dictionary<string, string> dictionary { get; set; } = new();
     }
 
+    class DictionaryMoneyEntity : SimpleEntity
+    {
+        public Dictionary<string, MonetaryAmount> dictionary { get; set; } = new();
+    }
+
     class DictionaryOfDictionaryEntity : SimpleEntity
     {
         public Dictionary<string, Dictionary<string, string>> dictionary { get; set; } = new();
@@ -72,6 +77,56 @@ public class UpdateEntityTests(TemporaryDatabaseFixture database)
             var foundEntity = db.Entities.Single();
             Assert.Equal(entity._id, foundEntity._id);
             Assert.Equal("After", foundEntity.name);
+        }
+    }
+
+    record struct MonetaryAmount(string Currency, decimal Amount);
+
+    [Fact]
+    public void Update_dictionary_property_with_struct_value()
+    {
+        var collection = database.CreateCollection<DictionaryMoneyEntity>();
+        Action<ModelBuilder> config = mb => mb.Entity<DictionaryMoneyEntity>().Property(d => d.dictionary);
+        var expectedTotal1 = new MonetaryAmount("USD", 11.6m);
+        var expectedTotal2 = new MonetaryAmount("USD", 11m);
+        var expectedSubtotal = new MonetaryAmount("USD", 45.6m);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, config);
+            var entity = new DictionaryMoneyEntity
+            {
+                _id = ObjectId.GenerateNewId(),
+                name = "Before",
+                dictionary = new Dictionary<string, MonetaryAmount> {["Total"] = new("GBP", 123.45m)}
+            };
+            db.Entities.Add(entity);
+            db.SaveChanges();
+
+            entity.name = "After";
+            entity.dictionary["Total"] = expectedTotal1;
+            entity.dictionary["Subtotal"] = expectedSubtotal;
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, config);
+            var found = db.Entities.First();
+            Assert.Equal(expectedTotal1, found.dictionary["Total"]);
+            Assert.Equal(expectedSubtotal, found.dictionary["Subtotal"]);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, config);
+            var found = db.Entities.First(e => e.dictionary["Total"].Equals(expectedTotal1));
+            Assert.Equal(expectedTotal1, found.dictionary["Total"]);
+            found.dictionary["Total"] = expectedTotal2;
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, config);
+            var found = db.Entities.First(e => e.dictionary["Total"] == expectedTotal2);
+            Assert.Equal(expectedTotal2, found.dictionary["Total"]);
         }
     }
 
