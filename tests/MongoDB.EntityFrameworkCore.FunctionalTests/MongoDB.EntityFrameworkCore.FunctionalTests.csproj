@@ -11,7 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
-    <PackageReference Include="MongoDB.Driver.Encryption" Version="3.2.1" />
+    <PackageReference Include="MongoDB.Driver.Encryption" Version="3.3.0" />
     <Compile Remove="Design\Generated\**" />
   </ItemGroup>
 
