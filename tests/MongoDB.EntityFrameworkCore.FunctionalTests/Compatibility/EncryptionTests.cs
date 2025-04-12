@@ -35,11 +35,22 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         MongoClientSettings.Extensions.AddAutoEncryption();
     }
 
+    public static IEnumerable<object[]> CryptProviderAndEncryptionModeData
+    {
+        get
+        {
+            yield return [CryptProvider.Mongocryptd, EncryptionMode.ClientSideFieldLevelEncryption];
+            yield return [CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.ClientSideFieldLevelEncryption];
+            if (ShouldRunQueryableEncryptionTests)
+            {
+                yield return [CryptProvider.Mongocryptd, EncryptionMode.QueryableEncryption];
+                yield return [CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.QueryableEncryption];
+            }
+        }
+    }
+
     [Theory]
-    [InlineData(CryptProvider.Mongocryptd, EncryptionMode.ClientSideFieldLevelEncryption)]
-    [InlineData(CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.ClientSideFieldLevelEncryption)]
-    [InlineData(CryptProvider.Mongocryptd, EncryptionMode.QueryableEncryption)]
-    [InlineData(CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.QueryableEncryption)]
+    [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_without_encrypted_client(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
         var collection = database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
@@ -51,10 +62,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(CryptProvider.Mongocryptd, EncryptionMode.ClientSideFieldLevelEncryption)]
-    [InlineData(CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.ClientSideFieldLevelEncryption)]
-    [InlineData(CryptProvider.Mongocryptd, EncryptionMode.QueryableEncryption)]
-    [InlineData(CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.QueryableEncryption)]
+    [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_with_wrong_master_key(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
         // Setup data with a master key
@@ -82,10 +90,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(CryptProvider.Mongocryptd, EncryptionMode.ClientSideFieldLevelEncryption)]
-    [InlineData(CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.ClientSideFieldLevelEncryption)]
-    [InlineData(CryptProvider.Mongocryptd, EncryptionMode.QueryableEncryption)]
-    [InlineData(CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.QueryableEncryption)]
+    [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_round_trip(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
         var collection = database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
@@ -116,11 +121,13 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Encrypted_data_can_be_queried_with_range_for_queryable_encryption(CryptProvider cryptProvider)
     {
+        if (!ShouldRunQueryableEncryptionTests) return;
+
         var collection = database.CreateCollection<Patient>(values: [cryptProvider]);
         var encryptedCollection =
             SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName, EncryptionMode.QueryableEncryption);
@@ -302,6 +309,25 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
 
     private static string GetEnvironmentVariableOrThrow(string variable)
         => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"{variable}\" not set.");
+
+    private static bool ShouldRunQueryableEncryptionTests =>
+        Environment.GetEnvironmentVariable("VERSION") switch
+        {
+            null => true,
+            "latest" => true,
+            var v when Version.TryParse(v, out var parsedVersion) && parsedVersion >= new Version(8, 0) => true,
+            _ => false
+        };
+
+    public class QueryableEncryptionTheory : TheoryAttribute
+    {
+        public override string? Skip
+        {
+            get => ShouldRunQueryableEncryptionTests
+                ? null
+                : "These Queryable Encryption tests require MongoDB 8.0 or later as declared by the VERSION environment variable.";
+        }
+    }
 
     class Patient
     {
