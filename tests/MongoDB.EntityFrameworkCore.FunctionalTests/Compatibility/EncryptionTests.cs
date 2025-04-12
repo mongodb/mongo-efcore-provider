@@ -311,7 +311,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"{variable}\" not set.");
 
     private static bool ShouldRunQueryableEncryptionTests =>
-        Environment.GetEnvironmentVariable("VERSION") switch
+        Environment.GetEnvironmentVariable("MONGODB_VERSION") switch
         {
             null => true,
             "latest" => true,
