@@ -16,7 +16,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -139,11 +138,11 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_missing_document_element_does_not_throw()
     {
-        database.CreateCollection<Person>("personNoLocation").WriteTestDocs([
+        database.CreateCollection<Person>().WriteTestDocs([
             new Person {name = "Bill"}
         ]);
 
-        var collection = database.MongoDatabase.GetCollection<PersonWithOptionalLocation>("personNoLocation");
+        var collection = database.GetCollection<PersonWithOptionalLocation>();
         using var db = SingleEntityDbContext.Create(collection);
 
         var person = db.Entities.First();
@@ -526,8 +525,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         var expectedLocation = new Location {latitude = 1.01m, longitude = 1.02m};
         var collection = database.CreateCollection<PersonWithIEnumerableLocations>();
-        collection.WriteTestDocs(new PersonWithIEnumerableLocations[]
-        {
+        collection.WriteTestDocs([
             new()
             {
                 _id = ObjectId.GenerateNewId(),
@@ -540,7 +538,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
                 name = "IEnumerableRound2",
                 locations = new List<Location> {new() {latitude = 1.03m, longitude = 1.04m}}
             }
-        });
+        ]);
 
         var actual = SingleEntityDbContext.Create(collection).Entities.ToList();
 
@@ -1169,12 +1167,5 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
                 ]
             }
         ]
-    };
-
-    private static readonly FirstLevel FirstLevel1NullChildren = new()
-    {
-        _id = Guid.NewGuid(),
-        day = DayOfWeek.Monday,
-        reference = new() {day = DayOfWeek.Friday, name = "This is the first level name"},
     };
 }
