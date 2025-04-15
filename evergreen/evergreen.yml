@@ -159,6 +159,7 @@ functions:
           DRIVER_VERSION=${DRIVER_VERSION} \
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
+          MONGODB_VERSION="${version}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug" \
             ./evergreen/run-tests.sh
@@ -171,6 +172,7 @@ functions:
           DRIVER_VERSION=${DRIVER_VERSION} \
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
+          MONGODB_VERSION="${version}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF9" \
             ./evergreen/run-tests.sh
@@ -416,8 +418,6 @@ tasks:
     commands:
       - func: bootstrap-mongo-orchestration
       - func: run-tests
-        vars:
-          MONGODB_VERSION: ${version}
 
   - name: pack-packages
     commands:
