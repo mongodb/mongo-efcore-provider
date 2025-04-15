@@ -45,10 +45,7 @@ public static class Exerciser
         var collectionName = caller + expectedValue;
         var collection = database.CreateCollection<EntityWithValue<TEntity>>(collectionName);
 
-        var expected = new EntityWithValue<TEntity>
-        {
-            _id = ObjectId.GenerateNewId(), value = expectedValue
-        };
+        var expected = new EntityWithValue<TEntity> {_id = ObjectId.GenerateNewId(), value = expectedValue};
 
         modelConfig ??= _ => { };
 
@@ -87,10 +84,7 @@ public static class Exerciser
             // Create native one in MongoDB C# Driver & read via EF
             var mongoCollectionName = collectionName + "_";
             var mongoCollection = database.CreateCollection<EntityWithValue<TStorage>>(mongoCollectionName);
-            var expectedMongo = new EntityWithValue<TStorage>
-            {
-                _id = ObjectId.GenerateNewId(), value = converter(expectedValue)
-            };
+            var expectedMongo = new EntityWithValue<TStorage> {_id = ObjectId.GenerateNewId(), value = converter(expectedValue)};
             mongoCollection.InsertOne(expectedMongo);
 
             var efCollection = database.GetCollection<EntityWithValue<TEntity>>(mongoCollectionName);
@@ -110,23 +104,19 @@ public static class Exerciser
         var collectionName = caller + expectedId;
         var collection = database.CreateCollection<EntityWithId<TEntity>>(collectionName);
 
-        var expected = new EntityWithId<TEntity>
-        {
-            _id = expectedId
-        };
+        var expected = new EntityWithId<TEntity> {_id = expectedId};
 
         modelConfig ??= _ => { };
 
-        // Test creation via EF
         {
+            // Test creation via EF
             using var db = SingleEntityDbContext.Create(collection, modelConfig);
             db.Entities.Add(expected);
-
             Assert.Equal(1, db.SaveChanges());
         }
 
-        // Test retrieval via EF
         {
+            // Test retrieval via EF
             using var db = SingleEntityDbContext.Create(collection, modelConfig);
             var found = db.Entities.First();
             Assert.Equal(expectedId, found._id);
@@ -150,10 +140,7 @@ public static class Exerciser
             // Create native one in MongoDB C# Driver & read via EF
             var mongoCollectionName = collectionName + "_";
             var mongoCollection = database.CreateCollection<EntityWithId<TStorage>>(mongoCollectionName);
-            var expectedMongo = new EntityWithId<TStorage>
-            {
-                _id = converter(expectedId)
-            };
+            var expectedMongo = new EntityWithId<TStorage> {_id = converter(expectedId)};
             mongoCollection.InsertOne(expectedMongo);
 
             var efCollection = database.GetCollection<EntityWithId<TEntity>>(mongoCollectionName);
