@@ -134,6 +134,12 @@ public sealed class BsonSerializerFactory
         BsonRepresentationConfiguration representation,
         IBsonSerializer typeSerializer)
     {
+        if (typeSerializer is INullableSerializer nullableSerializer)
+        {
+            var valueSerializer = ApplyBsonRepresentation(representation, nullableSerializer.ValueSerializer);
+            return NullableSerializer.Create(valueSerializer);
+        }
+
         if (typeSerializer is not IRepresentationConfigurable representationConfigurable)
         {
             return typeSerializer;

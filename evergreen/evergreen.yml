@@ -418,6 +418,8 @@ tasks:
     commands:
       - func: bootstrap-mongo-orchestration
       - func: run-tests
+        vars:
+          MONGODB_VERSION: ${version}
 
   - name: pack-packages
     commands:

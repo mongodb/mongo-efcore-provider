@@ -16,7 +16,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -139,11 +138,11 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_missing_document_element_does_not_throw()
     {
-        database.CreateCollection<Person>("personNoLocation").WriteTestDocs([
+        database.CreateCollection<Person>().WriteTestDocs([
             new Person {name = "Bill"}
         ]);
 
-        var collection = database.MongoDatabase.GetCollection<PersonWithOptionalLocation>("personNoLocation");
+        var collection = database.GetCollection<PersonWithOptionalLocation>();
         using var db = SingleEntityDbContext.Create(collection);
 
         var person = db.Entities.First();
@@ -360,7 +359,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
 
         {
             using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
-            dbContext.Entities.Add(new PersonWithMultipleLocations {_id = id, name = expectedName, locations = [ expectedLocation ]});
+            dbContext.Entities.Add(new PersonWithMultipleLocations {_id = id, name = expectedName, locations = [expectedLocation]});
             dbContext.SaveChanges();
         }
 
@@ -526,8 +525,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         var expectedLocation = new Location {latitude = 1.01m, longitude = 1.02m};
         var collection = database.CreateCollection<PersonWithIEnumerableLocations>();
-        collection.WriteTestDocs(new PersonWithIEnumerableLocations[]
-        {
+        collection.WriteTestDocs([
             new()
             {
                 _id = ObjectId.GenerateNewId(),
@@ -540,7 +538,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
                 name = "IEnumerableRound2",
                 locations = new List<Location> {new() {latitude = 1.03m, longitude = 1.04m}}
             }
-        });
+        ]);
 
         var actual = SingleEntityDbContext.Create(collection).Entities.ToList();
 
@@ -823,6 +821,81 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         }
     }
 
+    [Fact]
+    public void OwnedEntity_collection_can_be_tested_for_not_null()
+    {
+        var collection = database.CreateCollection<A>();
+        var expected = new A {_id = "1", children = [new B {name = "child1"}, new B {name = "child2"}]};
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(expected, new A {_id = "2", children = null!});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            Assert.Equivalent(expected, db.Entities.FirstOrDefault(e => e.children != null && e.children.Count > 0));
+            Assert.Equivalent(expected, db.Entities.FirstOrDefault(e => null != e.children && e.children.Count > 0));
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_field_can_be_tested_for_not_null()
+    {
+        var collection = database.CreateCollection<AField>();
+        var expected = new AField {_id = "1", children = [new B {name = "child1"}, new B {name = "child2"}]};
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<AField>().OwnsMany(f => f.children));
+            db.Entities.AddRange(expected, new AField {_id = "2", children = null!});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<AField>().OwnsMany(f => f.children));
+            Assert.Equivalent(expected, db.Entities.FirstOrDefault(e => e.children != null && e.children.Count > 0));
+            Assert.Equivalent(expected, db.Entities.FirstOrDefault(e => null != e.children && e.children.Count > 0));
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_can_be_tested_for_null()
+    {
+        var collection = database.CreateCollection<A>();
+        var expected = new A {_id = "1"};
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(expected, new A {_id = "2", children = [new B {name = "child1"}, new B {name = "child2"}]});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            Assert.Equivalent(expected, db.Entities.FirstOrDefault(e => e.children == null));
+            Assert.Equivalent(expected, db.Entities.FirstOrDefault(e => null == e.children));
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_field_can_be_tested_for_null()
+    {
+        var collection = database.CreateCollection<AField>();
+        var expected = new AField {_id = "1"};
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<AField>().OwnsMany(f => f.children));
+            db.Entities.AddRange(expected, new AField {_id = "2", children = [new B {name = "child1"}, new B {name = "child2"}]});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<AField>().OwnsMany(f => f.children));
+            Assert.Equivalent(expected, db.Entities.FirstOrDefault(e => e.children == null));
+            Assert.Equivalent(expected, db.Entities.FirstOrDefault(e => null == e.children));
+        }
+    }
 
     [Theory]
     [InlineData(typeof(int))]
@@ -873,11 +946,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         {
             docs.InsertOne(new BsonDocument("_id", id)
             {
-                ["children"] = new BsonArray
-                {
-                    new BsonDocument("name", "child1"),
-                    new BsonDocument("name", "child2")
-                }
+                ["children"] = new BsonArray {new BsonDocument("name", "child1"), new BsonDocument("name", "child2")}
             });
         }
 
@@ -925,6 +994,12 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         public string _id { get; set; }
         public List<B> children { get; set; }
+    }
+
+    record AField
+    {
+        public string _id { get; set; }
+        public List<B> children;
     }
 
     record B
