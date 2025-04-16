@@ -4,6 +4,40 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+## Breaking changes in 8.3.0 / 9.0.0
+
+Nullable properties configured with an alternative BSON representation either by the `[BsonRepresentation]` attribute or `HasBsonRepresentation()` fluent API were not being applied in previous versions. This has been fixed but you will remedy the discrepancy one of two ways:
+
+### Continue to use the default representation
+
+If it is not critical you use the alternative BSON representation you can do this by simply removing the configuration from your application before it starts.
+
+or
+
+### Update affected elements to new representation 
+
+As part of your upgrade process you can use the [updateMany](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateMany/) method per affected MongoDB collection to rewrite any affected nullable properties/elements into the desired BSON representation using the `$convert`  operation.
+
+An example of converting a `dateOfBirth` element in a collection named `people` from a BSON `date` into a BSON `int` representation would look like this:
+
+```js
+db.people.updateMany(
+   { dateOfBirth: { $type: "date" } },
+   [
+      {
+         $set: {
+            dateOfBirth: {
+               $convert: {
+                  input: "$dateOfBirth",
+                  to: "int"
+               }
+            }
+         }
+      }
+   ]
+)
+```
+
 ## Breaking changes in 8.2.0
 
 No explicit breaking changes are intended in this EF Core Provider release but the underlying [MongoDB.Driver has many breaking changes in the 3.0 release](https://www.mongodb.com/docs/drivers/csharp/v3.0/upgrade/v3/#version-3.0-breaking-changes). If you are using the MongoDB C# Driver explicitly you will likely be affected there and even if not you should ensure compatibilty with your application and data.
