@@ -29,7 +29,8 @@ db.people.updateMany(
             dateOfBirth: {
                $convert: {
                   input: "$dateOfBirth",
-                  to: "int"
+                  to: "int",
+                  onNull: null
                }
             }
          }
