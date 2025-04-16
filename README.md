@@ -2,7 +2,7 @@
 
 [![MongoDB.EntityFrameworkCore](https://img.shields.io/nuget/v/MongoDB.EntityFrameworkCore.svg)](https://www.nuget.org/packages/MongoDB.EntityFrameworkCore/)
 
-The MongoDB EF Core Provider requires Entity Framework Core 8 on .NET 8 or later and a MongoDB database server 5.0 or later, preferably in a transaction-enabled configuration.
+The MongoDB EF Core Provider requires Entity Framework Core 8 or 9 on .NET 8 or later and a MongoDB database server 5.0 or later, preferably in a transaction-enabled configuration.
 
 ## Getting Started
 
@@ -45,39 +45,37 @@ db.Database.EnsureCreated();
 Entity Framework Core and MongoDB have a wide variety of features. This provider supports a subset of the functionality available in both, specifically:
 
 - Querying with `Where`, `Find`, `First`, `Single`, `OrderBy`, `ThenBy`, `Skip`, `Take` etc.
-- Top-level aggregates of `Any`, `Count`, `LongCount`, `Sum`, `Min`, `Max`, `Average`, `All`
+- Top-level aggregate `Any`, `Count`, `LongCount`, `Sum`, `Min`, `Max`, `Average`, `All`
 - Mapping properties to BSON elements using `[Column]` or `[BsonElement]` attributes or `HasElementName("name")` method
-- Mapping entities to collections using `[Table("name")]` attribute or `ToCollection("name")` method
-- Single or composite keys of standard types including string, `Guid` and `ObjectId`
+- Mapping entities to collections via `[Table("name")]`,  `ToCollection("name")` or by convention from the DbSet property name
+- Single or composite keys of standard types including string, `Guid` and `ObjectId` etc.
 - Properties with typical CLR types (`int`, `string`, `Guid`, `decimal`, `DateOnly` etc.) & MongoDB types (`ObjectId`, `Decimal128`)
-- Properties of `Dictionary<string, ...>` type
-- Properties containing arrays and lists of simple CLR types including binary `byte[]`
-- Owned entities (aka value types, sub-documents, embedded documents) both directly and within collections
+- Properties that are arrays, lists, dictionaries (string keys) of simple CLR types including binary `byte[]`
+- Owned entities (aka value types, sub-documents, embedded documents) both directly and in collection properties
 - `BsonIgnore`, `BsonId`, `BsonDateTimeOptions`, `BsonElement`, `BsonRepresentation` and `BsonRequired` support
-- Value converters using `HasConversion`
-- Query and update logging including MQL (sensitive mode only)
-- Some mapping configuration options for `DateTime`
-- `EnsureCreated` & `EnsureDeleted` operations
+- Storage type configuration through EF ValueConverters or BSON representation attributes and fluent APIs
+- Query and update logging of MQL (sensitive logging must be enabled)
+- `EnsureCreated` & `EnsureDeleted` to ensure collections and the database created at app start-up
 - Optimistic concurrency support through `IsConcurrencyToken`/`ConcurrencyCheckAttribute` & `IsRowVersion`/`TimestampAttribute`
 - AutoTransactional `SaveChanges` & `SaveChangesAsync` - all changes committed or rolled-back together
-- `CamelCaseElementNameConvention` for helping map Pascal-cased C# properties to came-cased BSON elements
+- `CamelCaseElementNameConvention` for helping map Pascal-cased C# properties to camel-cased BSON elements
 - Type discriminators including `OfType<T>` and `Where(e => e is T)`
-- EF shadow properties
-- [Client Side Field Level Encryption](https://www.mongodb.com/docs/manual/core/csfle/quick-start/) compatibility
-- Foreign keys and navigation traversal via EF.Proxy
+- Support for EF shadow properties and EF.Proxy for navigation traversal
+- [Client Side Field Level Encryption](https://www.mongodb.com/docs/manual/core/csfle/quick-start/) and [Queryable Encryption](https://www.mongodb.com/docs/manual/core/queryable-encryption/) compatibility
 
 ## Limitations
 
 A number of Entity Framework Core features are not currently supported but planned for future release. If you require use of these facilities
-in the mean-time consider using the existing [MongoDB C# Driver's](https://github.com/mongodb/mongo-csharp-driver) LINQ provider which supports them.
+in the mean-time consider using the existing [MongoDB C# Driver's](https://github.com/mongodb/mongo-csharp-driver) LINQ provider which may support them.
 
 ### Planned for future releases
 
 - Select projections with client-side operations
-- ExecuteUpdate & ExecuteDelete
 - GroupBy operations
 - Includes/joins
-- Geospacial
+- Geospatial
+- Atlas search
+- ExecuteUpdate & ExecuteDelete bulk operations (EF 9 only)
 
 ### Not supported, out-of-scope features
 
@@ -88,7 +86,6 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Document (table) splitting
 - Temporal tables
 - Timeseries
-- Atlas search
 - GridFS
 
 ## Breaking changes
@@ -99,7 +96,7 @@ This project's version-numbers are aligned with Entity Framework Core and as-suc
 
 - [MongoDB](https://www.mongodb.com/docs)
 - [EF Provider Guide](https://www.mongodb.com/docs/entity-framework/current/)
-- [EF Provider API Docs](https://mongodb.github.io/mongo-efcore-provider/8.0.0/api/index.html)
+- [EF Provider API Docs](https://mongodb.github.io/mongo-efcore-provider/8.2.0/api/index.html)
 
 ## Questions/Bug Reports
 
