@@ -80,7 +80,7 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 ### Not supported, out-of-scope features
 
 - Keyless entity types
-- Schema migrations
+- Migrations (including Seeding)
 - Database-first & model-first
 - Alternate keys
 - Document (table) splitting
