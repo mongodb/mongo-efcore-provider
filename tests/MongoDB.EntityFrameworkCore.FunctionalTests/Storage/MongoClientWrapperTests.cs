@@ -77,7 +77,7 @@ public class MongoClientWrapperTests
             : client.CreateDatabase(context.GetService<IDesignTimeModel>());
 
         Assert.True(didCreate);
-        Assert.Equal(3, GetIndexes(database.MongoDatabase, "Customers").Count);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
         Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
         Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
     }
@@ -187,7 +187,7 @@ public class MongoClientWrapperTests
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase, mb =>
         {
             mb.Entity<Customer>().HasAlternateKey(c => c.SSN);
-            mb.Entity<Order>().HasAlternateKey(o => o.OrderRef);
+            mb.Entity<Order>().HasAlternateKey(o =>new { o.OrderRef, o.CustomerId });
             mb.Entity<Address>().HasAlternateKey(o => o.UniqueRef);
         });
         var client = context.GetService<IMongoClientWrapper>();
@@ -197,9 +197,24 @@ public class MongoClientWrapperTests
             : client.CreateDatabase(context.GetService<IDesignTimeModel>());
 
         Assert.True(didCreate);
-        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
-        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
-        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
+
+        var customerIndexes = GetIndexes(database.MongoDatabase, "Customers");
+        Assert.Equal(2, customerIndexes.Count);
+        var customerAlternateKeyIndex = Assert.Single(customerIndexes, i => i["name"] == "SSN_1");
+        Assert.Equal(BsonBoolean.True, customerAlternateKeyIndex["unique"]);
+        Assert.Equal(new BsonDocument("SSN", 1), customerAlternateKeyIndex["key"]);
+
+        var orderIndexes = GetIndexes(database.MongoDatabase, "Orders");
+        Assert.Equal(2, orderIndexes.Count);
+        var orderAlternateKeyIndex = Assert.Single(orderIndexes, i => i["name"] == "OrderRef_1_CustomerId_1");
+        Assert.Equal(BsonBoolean.True, orderAlternateKeyIndex["unique"]);
+        Assert.Equal(new BsonDocument { ["OrderRef"] = 1, ["CustomerId"] = 1 }, orderAlternateKeyIndex["key"]);
+
+        var addressIndexes = GetIndexes(database.MongoDatabase, "Addresses");
+        Assert.Equal(2, addressIndexes.Count);
+        var addressAlternateKeyIndex = Assert.Single(addressIndexes, i => i["name"] == "UniqueRef_1");
+        Assert.Equal(BsonBoolean.True, addressAlternateKeyIndex["unique"]);
+        Assert.Equal(new BsonDocument("UniqueRef", 1), addressAlternateKeyIndex["key"]);
     }
 
     [Theory]
@@ -358,11 +373,11 @@ public class MongoClientWrapperTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task CreateDatabase_creates_index_with_two_properties_unique(bool async)
+    public async Task CreateDatabase_creates_index_with_two_properties_unique_descending(bool async)
     {
         var database = new TemporaryDatabaseFixture();
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
-            mb => mb.Entity<Address>().HasIndex(a => new {a.PostCode, a.Country}).IsUnique());
+            mb => mb.Entity<Address>().HasIndex(a => new {a.PostCode, a.Country}).IsUnique().IsDescending());
         var client = context.GetService<IMongoClientWrapper>();
 
         _ = async
@@ -373,8 +388,8 @@ public class MongoClientWrapperTests
         Assert.Equal(2, indexes.Count);
 
         var foundIndex = Assert.Single(indexes, i => i["key"].AsBsonDocument.Names.Contains("PostCode"));
-        Assert.Equal(1, foundIndex["key"].AsBsonDocument["PostCode"].AsInt32);
-        Assert.Equal(1, foundIndex["key"].AsBsonDocument["Country"].AsInt32);
+        Assert.Equal(-1, foundIndex["key"].AsBsonDocument["PostCode"].AsInt32);
+        Assert.Equal(-1, foundIndex["key"].AsBsonDocument["Country"].AsInt32);
         Assert.Single(indexes, i => i.Names.Contains("unique") && i["unique"].AsBoolean);
     }
 
@@ -528,6 +543,7 @@ public class MongoClientWrapperTests
     class Order
     {
         public ObjectId Id { get; set; }
+        public string CustomerId { get; set; }
         public string OrderRef { get; set; }
     }
 

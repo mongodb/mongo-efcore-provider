@@ -247,10 +247,10 @@ public class MongoClientWrapper : IMongoClientWrapper
         var partsIndex = 0;
         foreach (var property in key.Properties)
         {
-            parts[partsIndex++] = property.GetElementName();
+            parts[partsIndex++] = property.GetElementName() + "_1";
         }
 
-        return string.Join('_', path.Concat(parts)) + "_unique";
+        return string.Join('_', path.Concat(parts));
     }
 
     /// <inheritdoc />
