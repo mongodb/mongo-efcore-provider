@@ -126,15 +126,25 @@ public class MongoClientWrapper : IMongoClientWrapper
     {
         foreach (var index in entityType.GetIndexes())
         {
-            var name = index.Name ?? DefaultIndexName(index, path);
+            var name = index.Name ?? MakeIndexName(index, path);
             if (!existingIndexNames.Contains(name))
             {
                 indexManager.CreateOne(CreateIndexDocument(index, name, path));
             }
         }
 
+        foreach (var key in entityType.GetKeys().Where(k => !k.IsPrimaryKey()))
+        {
+            var name = MakeIndexName(key, path);
+            if (!existingIndexNames.Contains(name))
+            {
+                indexManager.CreateOne(CreateKeyIndexDocument(key, name, path));
+            }
+        }
+
         var ownedEntityTypes = entityType.Model.GetEntityTypes()
             .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
+
         foreach (var ownedEntityType in ownedEntityTypes)
         {
             var elementName = ownedEntityType.GetContainingElementName()!;
@@ -184,7 +194,7 @@ public class MongoClientWrapper : IMongoClientWrapper
     {
         foreach (var index in entityType.GetIndexes())
         {
-            var name = index.Name ?? DefaultIndexName(index, path);
+            var name = index.Name ?? MakeIndexName(index, path);
             if (!existingIndexNames.Contains(name))
             {
                 await indexManager.CreateOneAsync(CreateIndexDocument(index, name, path), null, cancellationToken)
@@ -192,8 +202,19 @@ public class MongoClientWrapper : IMongoClientWrapper
             }
         }
 
+        foreach (var key in entityType.GetKeys().Where(k => !k.IsPrimaryKey()))
+        {
+            var name = MakeIndexName(key, path);
+            if (!existingIndexNames.Contains(name))
+            {
+                await indexManager.CreateOneAsync(CreateKeyIndexDocument(key, name, path), null, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
         var ownedEntityTypes = entityType.Model.GetEntityTypes()
             .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
+
         foreach (var ownedEntityType in ownedEntityTypes)
         {
             var elementName = ownedEntityType.GetContainingElementName()!;
@@ -203,7 +224,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
     }
 
-    private static string DefaultIndexName(IIndex index, string[] path)
+    private static string MakeIndexName(IIndex index, string[] path)
     {
         // Mimic the servers index naming convention using the property names and directions
         var parts = new string[index.Properties.Count * 2];
@@ -217,6 +238,19 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
 
         return string.Join('_', path.Concat(parts));
+    }
+
+    private static string MakeIndexName(IKey key, string[] path)
+    {
+        var parts = new string[key.Properties.Count];
+
+        var partsIndex = 0;
+        foreach (var property in key.Properties)
+        {
+            parts[partsIndex++] = property.GetElementName();
+        }
+
+        return string.Join('_', path.Concat(parts)) + "_unique";
     }
 
     /// <inheritdoc />
@@ -298,6 +332,19 @@ public class MongoClientWrapper : IMongoClientWrapper
         options.Name ??= indexName;
         options.Unique ??= index.IsUnique;
 
+        return new CreateIndexModel<BsonDocument>(doc, options);
+    }
+
+    private static CreateIndexModel<BsonDocument> CreateKeyIndexDocument(IKey key, string indexName, string[] path)
+    {
+        var doc = new BsonDocument();
+
+        foreach (var property in key.Properties)
+        {
+            doc.Add(string.Join('.', path.Append(property.GetElementName())), 1);
+        }
+
+        var options = new CreateIndexOptions<BsonDocument> {Name = indexName, Unique = true};
         return new CreateIndexModel<BsonDocument>(doc, options);
     }
 

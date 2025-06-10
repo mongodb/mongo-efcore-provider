@@ -77,7 +77,7 @@ public class MongoClientWrapperTests
             : client.CreateDatabase(context.GetService<IDesignTimeModel>());
 
         Assert.True(didCreate);
-        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
+        Assert.Equal(3, GetIndexes(database.MongoDatabase, "Customers").Count);
         Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
         Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
     }
@@ -94,7 +94,7 @@ public class MongoClientWrapperTests
             mb.Entity<Product>(p =>
             {
                 p.HasIndex(o => o.Name);
-                p.OwnsOne(p => p.PrimaryCertificate, q =>
+                p.OwnsOne(q => q.PrimaryCertificate, q =>
                 {
                     q.HasIndex(r => r.Name);
                 });
@@ -125,7 +125,7 @@ public class MongoClientWrapperTests
             mb.Entity<Product>(p =>
             {
                 p.HasIndex(o => o.Name);
-                p.OwnsMany(p => p.SecondaryCertificates, q =>
+                p.OwnsMany(q => q.SecondaryCertificates, q =>
                 {
                     q.HasIndex(r => r.Name);
                 });
@@ -155,7 +155,7 @@ public class MongoClientWrapperTests
         {
             mb.Entity<Product>(p =>
             {
-                p.OwnsMany(p => p.SecondaryCertificates, q =>
+                p.OwnsMany(q => q.SecondaryCertificates, q =>
                 {
                     q.OwnsOne(c => c.Issuer, i =>
                     {
@@ -181,13 +181,42 @@ public class MongoClientWrapperTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task CreateDatabase_creates_alternate_keys(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase, mb =>
+        {
+            mb.Entity<Customer>().HasAlternateKey(c => c.SSN);
+            mb.Entity<Order>().HasAlternateKey(o => o.OrderRef);
+            mb.Entity<Address>().HasAlternateKey(o => o.UniqueRef);
+        });
+        var client = context.GetService<IMongoClientWrapper>();
+
+        var didCreate = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>())
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>());
+
+        Assert.True(didCreate);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task CreateDatabase_does_not_duplicate_indexes(bool async)
     {
         var database = new TemporaryDatabaseFixture();
 
         {
             var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
-                mb => mb.Entity<Address>().HasIndex(o => o.PostCode, "custom_index_name"));
+                mb =>
+                {
+                    mb.Entity<Address>().HasIndex(o => o.PostCode, "custom_index_name");
+                    mb.Entity<Order>().HasAlternateKey(o => o.OrderRef);
+                }
+            );
             var client = context.GetService<IMongoClientWrapper>();
 
             var didCreate = async
@@ -197,6 +226,7 @@ public class MongoClientWrapperTests
             Assert.True(didCreate);
             Assert.Single(GetIndexes(database.MongoDatabase, "Customers"));
             Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
+            Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
         }
 
         {
@@ -204,6 +234,7 @@ public class MongoClientWrapperTests
             {
                 mb.Entity<Customer>().HasIndex(c => c.Name);
                 mb.Entity<Address>().HasIndex(o => o.PostCode, "custom_index_name");
+                mb.Entity<Order>().HasAlternateKey(o => o.OrderRef);
             });
             var client = context.GetService<IMongoClientWrapper>();
 
@@ -214,6 +245,7 @@ public class MongoClientWrapperTests
             Assert.False(didCreate);
             Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
             Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
+            Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
         }
     }
 
@@ -490,6 +522,7 @@ public class MongoClientWrapperTests
     {
         public ObjectId Id { get; set; }
         public string Name { get; set; }
+        public string SSN { get; set; }
     }
 
     class Order
@@ -504,6 +537,7 @@ public class MongoClientWrapperTests
         public string PostCode { get; set; }
         public string Country { get; set; }
         public string Region { get; set; }
+        public string UniqueRef { get; set; }
     }
 
     class Product
