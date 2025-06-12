@@ -88,26 +88,26 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
             SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName, encryptionMode);
 
         // Test driver load
-        Assert.Equal("145014000", encryptedCollection.AsQueryable().First().ssn);
+        Assert.Equal("145014000", encryptedCollection.AsQueryable().First().SSN);
 
         // Test EF Core load & save
         {
             using var db = SingleEntityDbContext.Create(encryptedCollection);
             var patient = db.Entities.First();
-            Assert.Equal("145014000", patient.ssn);
-            patient.bloodType = "O-";
+            Assert.Equal("145014000", patient.SSN);
+            patient.BloodType = "O-";
             db.SaveChanges();
         }
 
         // Ensure saved data is correct via Driver & EF
-        Assert.Equal("O-", encryptedCollection.AsQueryable().First().bloodType);
-        Assert.Equal("O-", SingleEntityDbContext.Create(encryptedCollection).Entities.First().bloodType);
+        Assert.Equal("O-", encryptedCollection.AsQueryable().First().BloodType);
+        Assert.Equal("O-", SingleEntityDbContext.Create(encryptedCollection).Entities.First().BloodType);
 
         // EF Query
         {
             using var db = SingleEntityDbContext.Create(encryptedCollection);
-            var patient = db.Entities.First(p => p.ssn == "145014000");
-            Assert.Equal("145014000", patient.ssn);
+            var patient = db.Entities.First(p => p.SSN == "145014000");
+            Assert.Equal("145014000", patient.SSN);
         }
     }
 
@@ -120,11 +120,16 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
 
         var collection = _database.CreateCollection<Patient>(values: [cryptProvider]);
         var encryptedCollection =
-            SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName, EncryptionMode.QueryableEncryption);
+            SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName,
+                EncryptionMode.QueryableEncryption);
 
         using var db = SingleEntityDbContext.Create(encryptedCollection);
-        var patient = db.Entities.First(e => e.sequence > 10);
-        Assert.Equal(20, patient.sequence);
+
+        var patientOne = db.Entities.First(e => e.Sequence > 10);
+        Assert.Equal(20, patientOne.Sequence);
+
+        var patientTwo = db.Entities.First(e => e.DateOfBirth < new DateTime(2000, 01, 26, 0, 0, 0, DateTimeKind.Utc));
+        Assert.Equal(1985, patientTwo.DateOfBirth.Year);
     }
 
     private IMongoCollection<Patient> SetupEncryptedTestData(
@@ -140,7 +145,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
             ? CreateEncryptedFieldsMap(collectionName)
             : null;
         var encryptedClient =
-            CreateEncryptedClient(_keyVaultNamespace, _kmsProviders, cryptProvider, schemaMap, encryptedFieldsMap);
+            CreateEncryptedClient(KeyVaultNamespace, KmsProviders, cryptProvider, schemaMap, encryptedFieldsMap);
 
         // Insert test data using the driver
         var collection = encryptedClient.GetDatabase(_database.MongoDatabase.DatabaseNamespace.DatabaseName)
@@ -149,19 +154,23 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         collection.InsertMany([
             new Patient
             {
-                name = "Jon Doe",
-                ssn = "145014000",
-                bloodType = "AB-",
-                sequence = 10,
-                medicalRecords = [new MedicalRecord {weight = 180, bloodPressure = "120/80"}]
+                Name = "Calvin McFly",
+                SSN = "145014000",
+                DateOfBirth = new DateTime(1985, 10, 26, 0, 0, 0, DateTimeKind.Utc),
+                BloodType = "AB-",
+                Doctor = "Mr Smith",
+                Sequence = 10,
+                BloodPressureReadings = [new BloodPressureReading { Diastolic = 120, Systolic = 80 }],
+                WeightMeasurements = [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }]
             },
             new Patient
             {
-                name = "Tom Smith",
-                ssn = "1234567",
-                bloodType = "O-",
-                sequence = 20,
-                medicalRecords = []
+                Name = "Tom Smith",
+                SSN = "1234567",
+                DateOfBirth = new DateTime(2000, 1, 26, 0, 0, 0, DateTimeKind.Utc),
+                BloodType = "O-",
+                Sequence = 20,
+                BloodPressureReadings = []
             }
         ]);
 
@@ -169,7 +178,10 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     }
 
     private Dictionary<string, BsonDocument> CreateSchemaMap(string collectionName)
-        => new() {{_database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptionSchema()}};
+        => new()
+        {
+            { _database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptionSchema() }
+        };
 
     private const string AesDeterministic = "AEAD_AES_256_CBC_HMAC_SHA_512-Deterministic";
     private const string AesRandom = "AEAD_AES_256_CBC_HMAC_SHA_512-Random";
@@ -177,32 +189,31 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     private BsonDocument CreatePatientEncryptionSchema()
         => new()
         {
-            {"bsonType", "object"},
+            { "bsonType", "object" },
             {
                 "encryptMetadata",
-                new BsonDocument
-                {
-                    {"algorithm", AesDeterministic},
-                    {
-                        "keyId",
-                        new BsonArray([CreateDataKeyAsBinary()])
-                    }
-                }
+                new BsonDocument { { "algorithm", AesDeterministic }, { "keyId", new BsonArray([CreateDataKeyAsBinary()]) } }
             },
             {
                 "properties",
                 new BsonDocument
                 {
-                    {"ssn", new BsonDocument {{"encrypt", new BsonDocument {{"bsonType", "string"}}}}},
+                    { "SSN", new BsonDocument { { "encrypt", new BsonDocument { { "bsonType", "string" } } } } },
                     {
-                        "bloodType",
-                        new BsonDocument {{"encrypt", new BsonDocument {{"bsonType", "string"}, {"algorithm", AesRandom}}}}
+                        "BloodType",
+                        new BsonDocument
+                        {
+                            { "encrypt", new BsonDocument { { "bsonType", "string" }, { "algorithm", AesRandom } } }
+                        }
                     },
                     {
-                        "medicalRecords",
-                        new BsonDocument {{"encrypt", new BsonDocument {{"bsonType", "array"}, {"algorithm", AesRandom}}}}
+                        "MedicalRecords",
+                        new BsonDocument
+                        {
+                            { "encrypt", new BsonDocument { { "bsonType", "array" }, { "algorithm", AesRandom } } }
+                        }
                     },
-                    {"sequence", new BsonDocument {{"encrypt", new BsonDocument {{"bsonType", "int"}}}}}
+                    { "Sequence", new BsonDocument { { "encrypt", new BsonDocument { { "bsonType", "int" } } } } }
                 }
             }
         };
@@ -218,22 +229,5 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     {
         ClientSideFieldLevelEncryption,
         QueryableEncryption
-    }
-
-    class Patient
-    {
-        public ObjectId _id { get; set; }
-        public string name { get; set; }
-        public string ssn { get; set; }
-        public string bloodType { get; set; }
-        public int sequence { get; set; }
-        public List<MedicalRecord> medicalRecords { get; set; }
-    }
-
-    class MedicalRecord
-    {
-        public DateTimeOffset when { get; set; }
-        public int weight { get; set; }
-        public string bloodPressure { get; set; }
     }
 }

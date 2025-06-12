@@ -23,10 +23,10 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    protected readonly Dictionary<string, IReadOnlyDictionary<string, object>> _kmsProviders =
+    protected readonly Dictionary<string, IReadOnlyDictionary<string, object>> KmsProviders =
         CreateKmsProvidersWithLocalMasterKey(CreateMasterKey());
 
-    protected readonly CollectionNamespace _keyVaultNamespace =
+    protected readonly CollectionNamespace KeyVaultNamespace =
         CollectionNamespace.FromFullName(database.MongoDatabase.DatabaseNamespace.DatabaseName + "._keyVault");
 
     static EncryptionTestsBase()
@@ -77,7 +77,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     protected static byte[] CreateMasterKey()
         => RandomNumberGenerator.GetBytes(96);
 
-    protected static Guid CreateDataKey(
+    private static Guid CreateDataKey(
         IMongoClient client,
         CollectionNamespace keyVaultNamespace,
         Dictionary<string, IReadOnlyDictionary<string, object>> kmsProviders)
@@ -90,47 +90,101 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     protected Dictionary<string, BsonDocument> CreateEncryptedFieldsMap(string collectionName)
         => new()
         {
-            {database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptedFieldsMap()}
+            { database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptedFieldsMap() }
         };
 
     protected BsonBinaryData CreateDataKeyAsBinary()
-        => new(CreateDataKey(database.Client, _keyVaultNamespace, _kmsProviders), GuidRepresentation.Standard);
+        => new(CreateDataKey(database.Client, KeyVaultNamespace, KmsProviders), GuidRepresentation.Standard);
 
     private BsonDocument CreatePatientEncryptedFieldsMap()
         => new()
         {
             {
-                "fields",
-                new BsonArray
+                "fields", new BsonArray
                 {
                     new BsonDocument
                     {
-                        {"keyId", CreateDataKeyAsBinary() },
-                        {"path", "ssn"},
-                        {"bsonType", "string"},
-                        {"queries", new BsonDocument("queryType", "equality")}
+                        { "keyId", CreateDataKeyAsBinary() },
+                        { "path", "SSN" },
+                        { "bsonType", "string" },
+                        { "queries", new BsonDocument("queryType", "equality") }
                     },
                     new BsonDocument
                     {
-                        {"keyId", CreateDataKeyAsBinary() },
-                        {"path", "sequence"},
-                        {"bsonType", "int"},
-                        {"queries", new BsonDocument("queryType", "range")}
+                        { "keyId", CreateDataKeyAsBinary() },
+                        { "path", "Sequence" },
+                        { "bsonType", "int" },
+                        { "queries", new BsonDocument("queryType", "range") }
+                    },
+                    new BsonDocument
+                    {
+                        { "keyId", CreateDataKeyAsBinary() },
+                        { "path", "DateOfBirth" },
+                        { "bsonType", "date" },
+                        {
+                            "queries", new BsonDocument
+                            {
+                                { "queryType", "range" },
+                            }
+                        }
                     }
                 }
             }
         };
 
 
-    protected static Dictionary<string, IReadOnlyDictionary<string, object>> CreateKmsProvidersWithLocalMasterKey(byte[] masterKey)
-        => new() {{"local", new Dictionary<string, object> {{"key", masterKey}}}};
+    protected static Dictionary<string,
+        IReadOnlyDictionary<string, object>> CreateKmsProvidersWithLocalMasterKey(byte[] masterKey)
+        => new() { { "local", new Dictionary<string, object> { { "key", masterKey } } } };
 
     private static Dictionary<string, object> GetExtraOptionsForCryptShared()
-        => new() {{"cryptSharedLibPath", GetEnvironmentVariableOrThrow("CRYPT_SHARED_LIB_PATH")}, {"cryptSharedLibRequired", true}};
+        => new()
+        {
+            { "cryptSharedLibPath", GetEnvironmentVariableOrThrow("CRYPT_SHARED_LIB_PATH") }, { "cryptSharedLibRequired", true }
+        };
 
     private static Dictionary<string, object> GetExtraOptionsForMongocryptd()
-        => new() {{"mongocryptdSpawnPath", GetEnvironmentVariableOrThrow("MONGODB_BINARIES")}};
+        => new() { { "mongocryptdSpawnPath", GetEnvironmentVariableOrThrow("MONGODB_BINARIES") } };
 
     private static string GetEnvironmentVariableOrThrow(string variable)
         => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"{variable}\" not set.");
+
+    public class Patient
+    {
+        public ObjectId Id { get; set; }
+
+        public string Name { get; set; }
+        public string SSN { get; set; }
+        public DateTime DateOfBirth { get; set; }
+        public Decimal MonthlySubscription { get; set; }
+
+        public string BloodType { get; set; }
+        public string? Doctor { get; set; }
+        public string? InsuranceCompany { get; set; }
+        public string? PolicyReference { get; set; }
+        public int Sequence { get; set; }
+
+        public List<BloodPressureReading> BloodPressureReadings { get; set; }
+        public List<WeightMeasurement> WeightMeasurements { get; set; }
+
+        public LongTermCarePlan? LongTermCarePlan { get; set; }
+    }
+
+    public class WeightMeasurement
+    {
+        public DateTime When { get; set; }
+        public decimal WeightKilograms { get; set; }
+    }
+
+    public class BloodPressureReading
+    {
+        public DateTime When { get; set; }
+        public int Diastolic { get; set; }
+        public int Systolic { get; set; }
+    }
+
+    public class LongTermCarePlan
+    {
+        public string Instructions { get; set; }
+    }
 }
