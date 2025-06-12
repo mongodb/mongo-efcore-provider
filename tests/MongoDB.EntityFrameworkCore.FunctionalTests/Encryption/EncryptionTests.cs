@@ -13,27 +13,17 @@
  * limitations under the License.
  */
 
-using System.Security.Cryptography;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Compatibility;
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 
 [XUnitCollection("EncryptionTests")]
 public class EncryptionTests(TemporaryDatabaseFixture database)
-    : IClassFixture<TemporaryDatabaseFixture>
+    : EncryptionTestsBase(database)
 {
-    private readonly Dictionary<string, IReadOnlyDictionary<string, object>> _kmsProviders =
-        CreateKmsProvidersWithLocalMasterKey(CreateMasterKey());
-
-    private readonly CollectionNamespace _keyVaultNamespace =
-        CollectionNamespace.FromFullName(database.MongoDatabase.DatabaseNamespace.DatabaseName + "._keyVault");
-
-    static EncryptionTests()
-    {
-        MongoClientSettings.Extensions.AddAutoEncryption();
-    }
+    private readonly TemporaryDatabaseFixture _database = database;
 
     public static IEnumerable<object[]> CryptProviderAndEncryptionModeData
     {
@@ -53,7 +43,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_without_encrypted_client(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
-        var collection = database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
+        var collection = _database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
         SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName, encryptionMode);
 
         using var db = SingleEntityDbContext.Create(collection);
@@ -66,7 +56,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     public void Encrypted_data_can_not_be_read_with_wrong_master_key(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
         // Setup data with a master key
-        var collection = database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
+        var collection = _database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
         var collectionNamespace = collection.CollectionNamespace;
         SetupEncryptedTestData(cryptProvider, collectionNamespace.CollectionName, encryptionMode);
 
@@ -81,7 +71,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         var wrongClient = CreateEncryptedClient(collectionNamespace, kmsWrongMaster, cryptProvider, schemaMap, encryptedFieldsMap);
 
         var alternateCollection = wrongClient
-            .GetDatabase(database.MongoDatabase.DatabaseNamespace.DatabaseName)
+            .GetDatabase(_database.MongoDatabase.DatabaseNamespace.DatabaseName)
             .GetCollection<Patient>(collectionNamespace.CollectionName);
         using var db = SingleEntityDbContext.Create(alternateCollection);
 
@@ -93,7 +83,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_round_trip(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
-        var collection = database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
+        var collection = _database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
         var encryptedCollection =
             SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName, encryptionMode);
 
@@ -128,7 +118,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     {
         if (!ShouldRunQueryableEncryptionTests) return;
 
-        var collection = database.CreateCollection<Patient>(values: [cryptProvider]);
+        var collection = _database.CreateCollection<Patient>(values: [cryptProvider]);
         var encryptedCollection =
             SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName, EncryptionMode.QueryableEncryption);
 
@@ -153,7 +143,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
             CreateEncryptedClient(_keyVaultNamespace, _kmsProviders, cryptProvider, schemaMap, encryptedFieldsMap);
 
         // Insert test data using the driver
-        var collection = encryptedClient.GetDatabase(database.MongoDatabase.DatabaseNamespace.DatabaseName)
+        var collection = encryptedClient.GetDatabase(_database.MongoDatabase.DatabaseNamespace.DatabaseName)
             .GetCollection<Patient>(collectionName);
 
         collection.InsertMany([
@@ -179,30 +169,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     }
 
     private Dictionary<string, BsonDocument> CreateSchemaMap(string collectionName)
-        => new() {{database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptionSchema()}};
-
-
-    private Dictionary<string, BsonDocument> CreateEncryptedFieldsMap(string collectionName)
-        => new()
-        {
-            {database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptedFieldsMap()}
-        };
-
-    private static byte[] CreateMasterKey()
-        => RandomNumberGenerator.GetBytes(96);
-
-    private static Guid CreateDataKey(
-        IMongoClient client,
-        CollectionNamespace keyVaultNamespace,
-        Dictionary<string, IReadOnlyDictionary<string, object>> kmsProviders)
-    {
-        var clientEncryptionOptions = new ClientEncryptionOptions(client, keyVaultNamespace, kmsProviders);
-        using var clientEncryption = new ClientEncryption(clientEncryptionOptions);
-        return clientEncryption.CreateDataKey("local", new DataKeyOptions(), CancellationToken.None);
-    }
-
-    private static Dictionary<string, IReadOnlyDictionary<string, object>> CreateKmsProvidersWithLocalMasterKey(byte[] masterKey)
-        => new() {{"local", new Dictionary<string, object> {{"key", masterKey}}}};
+        => new() {{_database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptionSchema()}};
 
     private const string AesDeterministic = "AEAD_AES_256_CBC_HMAC_SHA_512-Deterministic";
     private const string AesRandom = "AEAD_AES_256_CBC_HMAC_SHA_512-Random";
@@ -240,33 +207,6 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
             }
         };
 
-    private BsonBinaryData CreateDataKeyAsBinary()
-        => new(CreateDataKey(database.Client, _keyVaultNamespace, _kmsProviders), GuidRepresentation.Standard);
-
-    private BsonDocument CreatePatientEncryptedFieldsMap()
-        => new()
-        {
-            {
-                "fields",
-                new BsonArray
-                {
-                    new BsonDocument
-                    {
-                        {"keyId", CreateDataKeyAsBinary() },
-                        {"path", "ssn"},
-                        {"bsonType", "string"},
-                        {"queries", new BsonDocument("queryType", "equality")}
-                    },
-                    new BsonDocument
-                    {
-                        {"keyId", CreateDataKeyAsBinary() },
-                        {"path", "sequence"},
-                        {"bsonType", "int"},
-                        {"queries", new BsonDocument("queryType", "range")}
-                    }
-                }
-            }
-        };
 
     public enum CryptProvider
     {
@@ -278,55 +218,6 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     {
         ClientSideFieldLevelEncryption,
         QueryableEncryption
-    }
-
-    private MongoClient CreateEncryptedClient(
-        CollectionNamespace keyVaultNamespace,
-        Dictionary<string, IReadOnlyDictionary<string, object>> kmsProviders,
-        CryptProvider cryptProvider,
-        Dictionary<string, BsonDocument>? schemaMap,
-        Dictionary<string, BsonDocument>? encryptedFieldsMap)
-    {
-        var extraOptions = cryptProvider == CryptProvider.Mongocryptd
-            ? GetExtraOptionsForMongocryptd()
-            : GetExtraOptionsForCryptShared();
-
-        var clientSettings = database.Client.Settings.Clone();
-        clientSettings.AutoEncryptionOptions = new AutoEncryptionOptions(
-            keyVaultNamespace,
-            kmsProviders,
-            schemaMap: schemaMap,
-            encryptedFieldsMap: encryptedFieldsMap,
-            extraOptions: extraOptions);
-        return new MongoClient(clientSettings);
-    }
-
-    private static Dictionary<string, object> GetExtraOptionsForCryptShared()
-        => new() {{"cryptSharedLibPath", GetEnvironmentVariableOrThrow("CRYPT_SHARED_LIB_PATH")}, {"cryptSharedLibRequired", true}};
-
-    private static Dictionary<string, object> GetExtraOptionsForMongocryptd()
-        => new() {{"mongocryptdSpawnPath", GetEnvironmentVariableOrThrow("MONGODB_BINARIES")}};
-
-    private static string GetEnvironmentVariableOrThrow(string variable)
-        => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"{variable}\" not set.");
-
-    private static bool ShouldRunQueryableEncryptionTests =>
-        Environment.GetEnvironmentVariable("MONGODB_VERSION") switch
-        {
-            null => true,
-            "latest" => true,
-            var v when Version.TryParse(v, out var parsedVersion) && parsedVersion >= new Version(8, 0) => true,
-            _ => false
-        };
-
-    public class QueryableEncryptionTheory : TheoryAttribute
-    {
-        public override string? Skip
-        {
-            get => ShouldRunQueryableEncryptionTests
-                ? null
-                : "These Queryable Encryption tests require MongoDB 8.0 or later as declared by the VERSION environment variable.";
-        }
     }
 
     class Patient
