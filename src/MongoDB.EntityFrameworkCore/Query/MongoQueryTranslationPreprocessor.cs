@@ -29,7 +29,7 @@ public class MongoQueryTranslationPreprocessor(
     public override Expression Process(Expression query)
     {
         query = FinalPredicateHoistingVisitor.Hoist(query);
-        query = new EntityFrameworkDetourExpressionVisitor(queryCompilationContext).Visit(query);
+        query = new EntityFrameworkDetourExpressionVisitor(QueryCompilationContext).Visit(query);
         return base.Process(query);
     }
 }
