@@ -17,6 +17,7 @@ using System;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -70,7 +71,6 @@ internal static class MongoLoggerExtensions
         }
     }
 
-
     private static string LoggedStagesToMql(BsonDocument[]? documents)
         => documents == null
             ? ""
@@ -109,4 +109,50 @@ internal static class MongoLoggerExtensions
     }
 
     private const string LogExecutedMqlQueryString = "Executed MQL query{newLine}{collectionNamespace}.aggregate([{queryMql}])";
+
+    public static void RecommendedMinMaxRangeMissing(
+        this IDiagnosticsLogger<DbLoggerCategory.Model.Validation> diagnostics,
+        IProperty property)
+    {
+        var definition = LogRecommendedMinMaxRangeMissing(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(diagnostics, property.DeclaringType.DisplayName(), property.Name);
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new PropertyEventData(
+                definition,
+                (d, p) => ((EventDefinition<string, string>)d).GenerateMessage(
+                    ((PropertyEventData)p).Property.DeclaringType.DisplayName(), ((PropertyEventData)p).Property.Name),
+                property);
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static EventDefinition<string, string> LogRecommendedMinMaxRangeMissing(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogRecommendedMinMaxRangeMissing;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogRecommendedMinMaxRangeMissing,
+                logger,
+                static logger => new EventDefinition<string, string>(
+                    logger.Options,
+                    MongoEventId.RecommendedMinMaxRangeMissing,
+                    LogLevel.Warning,
+                    "MongoEventId.NoRecommendedMinMaxRangeDefined",
+                    level => LoggerMessage.Define<string, string>(
+                        level,
+                        MongoEventId.RecommendedMinMaxRangeMissing,
+                        LogRecommendedMinMaxRangeMissingString)));
+        }
+
+        return (EventDefinition<string, string>)definition;
+    }
+
+    private const string LogRecommendedMinMaxRangeMissingString = "The property '{entityType}.{propertyType}' is configured for Queryable Encryption range queries but is missing the recommended min/max values.";
 }
