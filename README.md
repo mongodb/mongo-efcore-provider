@@ -40,6 +40,8 @@ var db = PlanetDbContext.Create(mongoClient.GetDatabase("planets"));
 db.Database.EnsureCreated();
 ```
 
+For complete working examples (such as dependency injection) in an ASP.NET Core Web API, check out the [examples/](examples/) directory.
+
 ## Supported Features
 
 Entity Framework Core and MongoDB have a wide variety of features. This provider supports a subset of the functionality available in both, specifically:
@@ -103,7 +105,7 @@ This project's version-numbers are aligned with Entity Framework Core and as-suc
 - [Forums](https://www.mongodb.com/community/forums/)
 - [Jira](https://jira.mongodb.org/projects/EF/)
 
-If you’ve identified a security vulnerability in a driver or any other MongoDB project, please report it according to the [instructions here](https://www.mongodb.com/docs/manual/tutorial/create-a-vulnerability-report).
+If you've identified a security vulnerability in a driver or any other MongoDB project, please report it according to the [instructions here](https://www.mongodb.com/docs/manual/tutorial/create-a-vulnerability-report).
 
 ## Contributing
 

@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  # MongoDB Server
+  mongodb:
+    image: mongo
+    container_name: dependency_injection_mongodb
+    ports:
+      - 10431:27017
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: myuser
+      MONGO_INITDB_ROOT_PASSWORD: mypass
+    volumes:
+      - mongo_data:/data/db
+
+networks:
+  seamls-network:
+    driver: bridge
+
+volumes:
+  mongo_data:
