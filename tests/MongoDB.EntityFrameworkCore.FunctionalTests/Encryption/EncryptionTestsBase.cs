@@ -37,11 +37,11 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     protected MongoClient CreateEncryptedClient(
         CollectionNamespace keyVaultNamespace,
         Dictionary<string, IReadOnlyDictionary<string, object>> kmsProviders,
-        EncryptionTests.CryptProvider cryptProvider,
+        CryptProvider cryptProvider,
         Dictionary<string, BsonDocument>? schemaMap,
         Dictionary<string, BsonDocument>? encryptedFieldsMap)
     {
-        var extraOptions = cryptProvider == EncryptionTests.CryptProvider.Mongocryptd
+        var extraOptions = cryptProvider == CryptProvider.Mongocryptd
             ? GetExtraOptionsForMongocryptd()
             : GetExtraOptionsForCryptShared();
 
@@ -131,7 +131,6 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
                 }
             }
         };
-
 
     protected static Dictionary<string,
         IReadOnlyDictionary<string, object>> CreateKmsProvidersWithLocalMasterKey(byte[] masterKey)

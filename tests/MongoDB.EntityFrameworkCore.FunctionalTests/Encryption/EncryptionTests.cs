@@ -218,13 +218,6 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
             }
         };
 
-
-    public enum CryptProvider
-    {
-        AutoEncryptSharedLibrary,
-        Mongocryptd
-    }
-
     public enum EncryptionMode
     {
         ClientSideFieldLevelEncryption,
