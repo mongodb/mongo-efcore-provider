@@ -93,8 +93,11 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
             { database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptedFieldsMap() }
         };
 
+    protected Guid CreateDataKey() =>
+        CreateDataKey(database.Client, KeyVaultNamespace, KmsProviders);
+
     protected BsonBinaryData CreateDataKeyAsBinary()
-        => new(CreateDataKey(database.Client, KeyVaultNamespace, KmsProviders), GuidRepresentation.Standard);
+        => new(CreateDataKey(), GuidRepresentation.Standard);
 
     private BsonDocument CreatePatientEncryptedFieldsMap()
         => new()
@@ -147,6 +150,31 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
 
     private static string GetEnvironmentVariableOrThrow(string variable)
         => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"{variable}\" not set.");
+
+    protected static Patient[] CreateSamplePatients =>
+    [
+        new()
+        {
+            Name = "Calvin McFly",
+            SSN = "145014000",
+            DateOfBirth = new DateTime(1985, 10, 26, 0, 0, 0, DateTimeKind.Utc),
+            BloodType = "AB-",
+            Doctor = "Mr Smith",
+            Sequence = 10,
+            BloodPressureReadings = [new BloodPressureReading { Diastolic = 120, Systolic = 80 }],
+            WeightMeasurements =
+                [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }]
+        },
+        new()
+        {
+            Name = "Tom Smith",
+            SSN = "1234567",
+            DateOfBirth = new DateTime(2000, 1, 26, 0, 0, 0, DateTimeKind.Utc),
+            BloodType = "O-",
+            Sequence = 20,
+            BloodPressureReadings = []
+        }
+    ];
 
     public class Patient
     {

@@ -25,17 +25,21 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
 {
     private readonly TemporaryDatabaseFixture _database = database;
 
-    public static IEnumerable<object[]> CryptProviderAndEncryptionModeData
+    public static TheoryData<CryptProvider, EncryptionMode> CryptProviderAndEncryptionModeData
     {
         get
         {
-            yield return [CryptProvider.Mongocryptd, EncryptionMode.ClientSideFieldLevelEncryption];
-            yield return [CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.ClientSideFieldLevelEncryption];
+            var data = new TheoryData<CryptProvider, EncryptionMode>
+            {
+                { CryptProvider.Mongocryptd, EncryptionMode.ClientSideFieldLevelEncryption },
+                { CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.ClientSideFieldLevelEncryption }
+            };
             if (ShouldRunQueryableEncryptionTests)
             {
-                yield return [CryptProvider.Mongocryptd, EncryptionMode.QueryableEncryption];
-                yield return [CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.QueryableEncryption];
+                data.Add(CryptProvider.Mongocryptd, EncryptionMode.QueryableEncryption);
+                data.Add(CryptProvider.AutoEncryptSharedLibrary, EncryptionMode.QueryableEncryption);
             }
+            return data;
         }
     }
 
@@ -151,28 +155,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         var collection = encryptedClient.GetDatabase(_database.MongoDatabase.DatabaseNamespace.DatabaseName)
             .GetCollection<Patient>(collectionName);
 
-        collection.InsertMany([
-            new Patient
-            {
-                Name = "Calvin McFly",
-                SSN = "145014000",
-                DateOfBirth = new DateTime(1985, 10, 26, 0, 0, 0, DateTimeKind.Utc),
-                BloodType = "AB-",
-                Doctor = "Mr Smith",
-                Sequence = 10,
-                BloodPressureReadings = [new BloodPressureReading { Diastolic = 120, Systolic = 80 }],
-                WeightMeasurements = [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }]
-            },
-            new Patient
-            {
-                Name = "Tom Smith",
-                SSN = "1234567",
-                DateOfBirth = new DateTime(2000, 1, 26, 0, 0, 0, DateTimeKind.Utc),
-                BloodType = "O-",
-                Sequence = 20,
-                BloodPressureReadings = []
-            }
-        ]);
+        collection.InsertMany(CreateSamplePatients);
 
         return collection;
     }
