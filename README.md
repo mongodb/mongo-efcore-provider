@@ -6,7 +6,8 @@ The MongoDB EF Core Provider requires Entity Framework Core 8 or 9 on .NET 8 or 
 
 ## Getting Started
 
-Setup a DbContext with your desired entities and configuration
+### Basic Setup
+First, create a DbContext with the desired entities and configuration:
 
 ```csharp
 internal class PlanetDbContext : DbContext
@@ -31,16 +32,41 @@ internal class PlanetDbContext : DbContext
 }
 ```
 
-To get going with the DbContext:
+### Connection Options
 
+#### Option 1: Direct Database Connection
 ```csharp
 var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI");
 var mongoClient = new MongoClient(mongoConnectionString);
 var db = PlanetDbContext.Create(mongoClient.GetDatabase("planets"));
 db.Database.EnsureCreated();
+var planet = db.Planets.FirstOrDefault(x => x.Name == "Earth");
 ```
 
-For complete working examples (such as dependency injection) in an ASP.NET Core Web API, check out the [examples/](examples/) directory.
+#### Option 2: Using Dependency Injection
+```csharp
+var nosqlConnectionString = builder.Configuration.GetConnectionString(ConnectionStringKey)!;
+builder.Services.AddDbContext<PlanetDbContext>(options =>
+{
+    options.UseMongoDB(nosqlConnectionString, DatabaseName);
+});
+```
+
+If you need some more configuration, you can create the `MongoClient` and inject it into the DbContext:
+
+```csharp
+var nosqlConnectionString = builder.Configuration.GetConnectionString(ConnectionStringKey)!;
+var mongoUrl = new MongoUrl(nosqlConnectionString);
+var mongoClient = new MongoClient(mongoUrl);
+builder.Services.AddSingleton<IMongoClient>(mongoClient);
+builder.Services.AddDbContext<PlanetDbContext>((provider, options) =>
+{
+    var client = provider.GetRequiredService<IMongoClient>();
+    options.UseMongoDB(client, DatabaseName);
+});
+```
+
+Later on, simply inject `PlanetDbContext` where it's needed and continue as you would normally.
 
 ## Supported Features
 
