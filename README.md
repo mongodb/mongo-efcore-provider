@@ -45,7 +45,7 @@ var planet = db.Planets.FirstOrDefault(x => x.Name == "Earth");
 
 #### Option 2: Using Dependency Injection
 ```csharp
-var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI");
+var mongoConnectionString = builder.Configuration.GetConnectionString("MongoDbUri")!;
 builder.Services.AddDbContext<PlanetDbContext>(options =>
 {
     options.UseMongoDB(mongoConnectionString, DatabaseName);
@@ -55,7 +55,7 @@ builder.Services.AddDbContext<PlanetDbContext>(options =>
 If you need some more configuration, you can create the `MongoClient` and inject it into the DbContext:
 
 ```csharp
-var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI");
+var mongoConnectionString = builder.Configuration.GetConnectionString("MongoDbUri")!;
 var mongoUrl = new MongoUrl(mongoConnectionString);
 var mongoClient = new MongoClient(mongoUrl);
 builder.Services.AddSingleton<IMongoClient>(mongoClient);
