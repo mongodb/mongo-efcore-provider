@@ -199,6 +199,16 @@ public static class MongoPropertyExtensions
         return dateTimeKindAnnotation?.Value == null ? DateTimeKind.Unspecified : (DateTimeKind)dateTimeKindAnnotation.Value;
     }
 
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the <see cref="DateTimeKind"/> for the property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the <see cref="DateTimeKind"/> for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the <see cref="DateTimeKind"/> was specified by for this property.
+    /// </returns>
+    public static ConfigurationSource? GetDateKindConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.DateTimeKind)?.GetConfigurationSource();
+
 
     private static bool IsTypeDiscriminator(this IReadOnlyProperty property)
     {
