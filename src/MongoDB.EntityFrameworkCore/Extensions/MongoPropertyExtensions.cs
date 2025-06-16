@@ -50,44 +50,6 @@ public static class MongoPropertyExtensions
         };
     }
 
-    private static bool IsTypeDiscriminator(this IReadOnlyProperty property)
-    {
-        if (property.DeclaringType is not IEntityType entityType) return false;
-        var discriminatorProperty = entityType.FindDiscriminatorProperty();
-        return property == discriminatorProperty;
-    }
-
-    /// <summary>
-    /// Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as when targeting MongoDB.
-    /// </summary>
-    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the element name for.</param>
-    /// <returns>Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as.</returns>
-    public static BsonRepresentationConfiguration? GetBsonRepresentation(this IReadOnlyProperty property)
-        => property[MongoAnnotationNames.BsonRepresentation] is IDictionary<string, object> value
-            ? BsonRepresentationConfiguration.CreateFrom(value)
-            : null;
-
-    internal static bool IsOwnedTypeKey(this IReadOnlyProperty property)
-    {
-        var entityType = (IReadOnlyEntityType)property.DeclaringType;
-        if (entityType.IsDocumentRoot())
-        {
-            return false;
-        }
-
-        var ownership = entityType.FindOwnership();
-        if (ownership == null)
-        {
-            return false;
-        }
-
-        var pk = property.FindContainingPrimaryKey();
-        return pk != null
-               && (property.ClrType == typeof(int) || ownership.Properties.Contains(property))
-               && pk.Properties.Count == ownership.Properties.Count + (ownership.IsUnique ? 0 : 1)
-               && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty));
-    }
-
     /// <summary>
     ///  Sets the document element name that the property is mapped to when targeting MongoDB.
     /// </summary>
@@ -118,6 +80,17 @@ public static class MongoPropertyExtensions
     /// </returns>
     public static ConfigurationSource? GetElementNameConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.ElementName)?.GetConfigurationSource();
+
+
+    /// <summary>
+    /// Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the element name for.</param>
+    /// <returns>Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as.</returns>
+    public static BsonRepresentationConfiguration? GetBsonRepresentation(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.BsonRepresentation] is IDictionary<string, object> value
+            ? BsonRepresentationConfiguration.CreateFrom(value)
+            : null;
 
     /// <summary>
     /// Sets the BSON representation for the property to configure how it is stored within MongoDB.
@@ -181,6 +154,7 @@ public static class MongoPropertyExtensions
     public static ConfigurationSource? GetBsonRepresentationConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.BsonRepresentation)?.GetConfigurationSource();
 
+
     /// <summary>
     /// Sets the <see cref="DateTimeKind"/> of the DateTime property is mapped to when targeting MongoDB.
     /// </summary>
@@ -223,6 +197,35 @@ public static class MongoPropertyExtensions
     {
         var dateTimeKindAnnotation = property.FindAnnotation(MongoAnnotationNames.DateTimeKind);
         return dateTimeKindAnnotation?.Value == null ? DateTimeKind.Unspecified : (DateTimeKind)dateTimeKindAnnotation.Value;
+    }
+
+
+    private static bool IsTypeDiscriminator(this IReadOnlyProperty property)
+    {
+        if (property.DeclaringType is not IEntityType entityType) return false;
+        var discriminatorProperty = entityType.FindDiscriminatorProperty();
+        return property == discriminatorProperty;
+    }
+
+    internal static bool IsOwnedTypeKey(this IReadOnlyProperty property)
+    {
+        var entityType = (IReadOnlyEntityType)property.DeclaringType;
+        if (entityType.IsDocumentRoot())
+        {
+            return false;
+        }
+
+        var ownership = entityType.FindOwnership();
+        if (ownership == null)
+        {
+            return false;
+        }
+
+        var pk = property.FindContainingPrimaryKey();
+        return pk != null
+               && (property.ClrType == typeof(int) || ownership.Properties.Contains(property))
+               && pk.Properties.Count == ownership.Properties.Count + (ownership.IsUnique ? 0 : 1)
+               && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty));
     }
 
     internal static bool IsOwnedCollectionShadowKey(this IReadOnlyProperty property)
