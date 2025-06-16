@@ -45,18 +45,18 @@ var planet = db.Planets.FirstOrDefault(x => x.Name == "Earth");
 
 #### Option 2: Using Dependency Injection
 ```csharp
-var nosqlConnectionString = builder.Configuration.GetConnectionString(ConnectionStringKey)!;
+var mongoConnectionString = builder.Configuration.GetConnectionString(ConnectionStringKey)!;
 builder.Services.AddDbContext<PlanetDbContext>(options =>
 {
-    options.UseMongoDB(nosqlConnectionString, DatabaseName);
+    options.UseMongoDB(mongoConnectionString, DatabaseName);
 });
 ```
 
 If you need some more configuration, you can create the `MongoClient` and inject it into the DbContext:
 
 ```csharp
-var nosqlConnectionString = builder.Configuration.GetConnectionString(ConnectionStringKey)!;
-var mongoUrl = new MongoUrl(nosqlConnectionString);
+var mongoConnectionString = builder.Configuration.GetConnectionString(ConnectionStringKey)!;
+var mongoUrl = new MongoUrl(mongoConnectionString);
 var mongoClient = new MongoClient(mongoUrl);
 builder.Services.AddSingleton<IMongoClient>(mongoClient);
 builder.Services.AddDbContext<PlanetDbContext>((provider, options) =>
