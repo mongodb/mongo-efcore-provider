@@ -110,7 +110,6 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Keyless entity types
 - Migrations (including Seeding)
 - Database-first & model-first
-- Alternate keys
 - Document (table) splitting
 - Temporal tables
 - Timeseries
