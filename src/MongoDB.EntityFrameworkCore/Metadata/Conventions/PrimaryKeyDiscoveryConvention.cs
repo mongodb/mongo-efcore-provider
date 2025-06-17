@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
@@ -44,7 +43,7 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
     {
         var entityType = entityTypeBuilder.Metadata;
         if (entityType.BaseType != null
-            || (entityType.IsKeyless && entityType.GetIsKeylessConfigurationSource() != ConfigurationSource.Convention)
+            || entityType.IsKeyless && entityType.GetIsKeylessConfigurationSource() != ConfigurationSource.Convention
             || !entityTypeBuilder.CanSetPrimaryKey((IReadOnlyList<IConventionProperty>?)null))
         {
             return;
@@ -58,7 +57,7 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
             {
                 var keyProperties = ownership.Properties.ToList();
 
-                // Ones in a collection need their parent Id + an index
+                // Owned in a collection need their parent Id + an index
                 if (!ownership.IsUnique)
                 {
                     var uniqueShadowKeyProperty = entityTypeBuilder
@@ -79,24 +78,18 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
                                           entityProperties.FirstOrDefault(p => p.Name == "_id");
         if (underscoreIdElementProperty != null)
         {
-            entityTypeBuilder.PrimaryKey(new[]
-            {
-                underscoreIdElementProperty
-            });
+            entityTypeBuilder.PrimaryKey([underscoreIdElementProperty]);
             return;
         }
 
         // Try the standard provider to look for "Id", "EntityId" etc.
         base.TryConfigurePrimaryKey(entityTypeBuilder);
 
-        var keys = entityType.GetKeys().ToArray();
-        switch (keys.Length)
+        // Set what we decided to use for the primary key as "_id" in the document
+        var keys = entityType.GetKeys().Where(k => k.IsPrimaryKey()).ToArray();
+        if (keys.Length == 1)
         {
-            case > 1:
-                throw new NotSupportedException("Alternate keys are not supported by the MongoDB EF Core Provider.");
-            case 1:
-                keys[0].Properties[0].SetElementName("_id");
-                break;
+            keys[0].Properties[0].SetElementName("_id");
         }
     }
 }
