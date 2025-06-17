@@ -96,8 +96,8 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     protected Guid CreateDataKey() =>
         CreateDataKey(database.Client, KeyVaultNamespace, KmsProviders);
 
-    protected BsonBinaryData CreateDataKeyAsBinary()
-        => new(CreateDataKey(), GuidRepresentation.Standard);
+    protected static BsonBinaryData AsBsonBinary(Guid dataKey)
+        => new(dataKey, GuidRepresentation.Standard);
 
     private BsonDocument CreatePatientEncryptedFieldsMap()
         => new()
@@ -107,21 +107,21 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
                 {
                     new BsonDocument
                     {
-                        { "keyId", CreateDataKeyAsBinary() },
+                        { "keyId", AsBsonBinary(CreateDataKey()) },
                         { "path", "SSN" },
                         { "bsonType", "string" },
                         { "queries", new BsonDocument("queryType", "equality") }
                     },
                     new BsonDocument
                     {
-                        { "keyId", CreateDataKeyAsBinary() },
+                        { "keyId", AsBsonBinary(CreateDataKey()) },
                         { "path", "Sequence" },
                         { "bsonType", "int" },
                         { "queries", new BsonDocument("queryType", "range") }
                     },
                     new BsonDocument
                     {
-                        { "keyId", CreateDataKeyAsBinary() },
+                        { "keyId", AsBsonBinary(CreateDataKey()) },
                         { "path", "DateOfBirth" },
                         { "bsonType", "date" },
                         {

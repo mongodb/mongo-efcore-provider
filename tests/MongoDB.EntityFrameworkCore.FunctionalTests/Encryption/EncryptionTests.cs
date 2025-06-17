@@ -175,7 +175,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
             { "bsonType", "object" },
             {
                 "encryptMetadata",
-                new BsonDocument { { "algorithm", AesDeterministic }, { "keyId", new BsonArray([CreateDataKeyAsBinary()]) } }
+                new BsonDocument { { "algorithm", AesDeterministic }, { "keyId", new BsonArray([AsBsonBinary(CreateDataKey())]) } }
             },
             {
                 "properties",
