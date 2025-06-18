@@ -6,7 +6,8 @@ The MongoDB EF Core Provider requires Entity Framework Core 8 or 9 on .NET 8 or 
 
 ## Getting Started
 
-Setup a DbContext with your desired entities and configuration
+### Basic Setup
+First, create a DbContext with the desired entities and configuration:
 
 ```csharp
 internal class PlanetDbContext : DbContext
@@ -31,14 +32,41 @@ internal class PlanetDbContext : DbContext
 }
 ```
 
-To get going with the DbContext:
+### Connection Options
 
+#### Option 1: Direct Database Connection
 ```csharp
 var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI");
 var mongoClient = new MongoClient(mongoConnectionString);
 var db = PlanetDbContext.Create(mongoClient.GetDatabase("planets"));
 db.Database.EnsureCreated();
+var planet = db.Planets.FirstOrDefault(x => x.Name == "Earth");
 ```
+
+#### Option 2: Using Dependency Injection
+```csharp
+var mongoConnectionString = builder.Configuration.GetConnectionString("MongoDbUri")!;
+builder.Services.AddDbContext<PlanetDbContext>(options =>
+{
+    options.UseMongoDB(mongoConnectionString, DatabaseName);
+});
+```
+
+If you need some more configuration, you can create the `MongoClient` and inject it into the DbContext:
+
+```csharp
+var mongoConnectionString = builder.Configuration.GetConnectionString("MongoDbUri")!;
+var mongoUrl = new MongoUrl(mongoConnectionString);
+var mongoClient = new MongoClient(mongoUrl);
+builder.Services.AddSingleton<IMongoClient>(mongoClient);
+builder.Services.AddDbContext<PlanetDbContext>((provider, options) =>
+{
+    var client = provider.GetRequiredService<IMongoClient>();
+    options.UseMongoDB(client, DatabaseName);
+});
+```
+
+Later on, simply inject `PlanetDbContext` where it's needed and continue as you would normally.
 
 ## Supported Features
 
@@ -80,9 +108,8 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 ### Not supported, out-of-scope features
 
 - Keyless entity types
-- Schema migrations
+- Migrations (including Seeding)
 - Database-first & model-first
-- Alternate keys
 - Document (table) splitting
 - Temporal tables
 - Timeseries
@@ -103,7 +130,7 @@ This project's version-numbers are aligned with Entity Framework Core and as-suc
 - [Forums](https://www.mongodb.com/community/forums/)
 - [Jira](https://jira.mongodb.org/projects/EF/)
 
-If you’ve identified a security vulnerability in a driver or any other MongoDB project, please report it according to the [instructions here](https://www.mongodb.com/docs/manual/tutorial/create-a-vulnerability-report).
+If you've identified a security vulnerability in a driver or any other MongoDB project, please report it according to the [instructions here](https://www.mongodb.com/docs/manual/tutorial/create-a-vulnerability-report).
 
 ## Contributing
 
