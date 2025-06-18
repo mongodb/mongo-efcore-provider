@@ -130,7 +130,9 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// <inheritdoc />
     public virtual void Validate(IDbContextOptions options)
     {
-        if (ConnectionString != null && MongoClient != null)
+        var dbOptions = options.FindExtension<MongoOptionsExtension>();
+
+        if (dbOptions is { ConnectionString: not null, MongoClient: not null })
         {
             throw new InvalidOperationException(MultipleConnectionConfigSpecifiedException);
         }
