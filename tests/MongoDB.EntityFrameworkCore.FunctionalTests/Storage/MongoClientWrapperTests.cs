@@ -525,14 +525,6 @@ public class MongoClientWrapperTests
             base.OnModelCreating(modelBuilder);
             modelBuilderAction?.Invoke(modelBuilder);
         }
-
-        private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
-        {
-            private static int Count;
-
-            public object Create(DbContext context, bool designTime)
-                => Interlocked.Increment(ref Count);
-        }
     }
 
     class Customer
