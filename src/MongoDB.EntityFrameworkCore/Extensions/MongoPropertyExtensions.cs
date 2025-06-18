@@ -39,17 +39,6 @@ public static class MongoPropertyExtensions
         => (string?)property[MongoAnnotationNames.ElementName]
            ?? GetDefaultElementName(property);
 
-    private static string GetDefaultElementName(IReadOnlyProperty property)
-    {
-        return property switch
-        {
-            _ when property.IsOwnedTypeKey() => "",
-            _ when property.IsRowVersion() => RowVersion.DefaultElementName,
-            _ when property.IsTypeDiscriminator() => "_t",
-            _ => property.Name
-        };
-    }
-
     /// <summary>
     ///  Sets the document element name that the property is mapped to when targeting MongoDB.
     /// </summary>
@@ -156,6 +145,16 @@ public static class MongoPropertyExtensions
 
 
     /// <summary>
+    /// Gets the <see cref="DateTimeKind"/> of the <see cref="DateTime"/> property is mapped to when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the <see cref="DateTimeKind"/> for.</param>
+    public static DateTimeKind GetDateTimeKind(this IReadOnlyProperty property)
+    {
+        var dateTimeKindAnnotation = property.FindAnnotation(MongoAnnotationNames.DateTimeKind);
+        return dateTimeKindAnnotation?.Value == null ? DateTimeKind.Unspecified : (DateTimeKind)dateTimeKindAnnotation.Value;
+    }
+
+    /// <summary>
     /// Sets the <see cref="DateTimeKind"/> of the DateTime property is mapped to when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IMutableProperty"/> to set the DateTimeKind for.</param>
@@ -190,16 +189,6 @@ public static class MongoPropertyExtensions
     }
 
     /// <summary>
-    /// Gets the <see cref="DateTimeKind"/> of the <see cref="DateTime"/> property is mapped to when targeting MongoDB.
-    /// </summary>
-    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the <see cref="DateTimeKind"/> for.</param>
-    public static DateTimeKind GetDateTimeKind(this IReadOnlyProperty property)
-    {
-        var dateTimeKindAnnotation = property.FindAnnotation(MongoAnnotationNames.DateTimeKind);
-        return dateTimeKindAnnotation?.Value == null ? DateTimeKind.Unspecified : (DateTimeKind)dateTimeKindAnnotation.Value;
-    }
-
-    /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the <see cref="DateTimeKind"/> for the property when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to obtain the <see cref="DateTimeKind"/> for.</param>
@@ -209,6 +198,15 @@ public static class MongoPropertyExtensions
     public static ConfigurationSource? GetDateKindConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.DateTimeKind)?.GetConfigurationSource();
 
+
+    private static string GetDefaultElementName(IReadOnlyProperty property) =>
+        property switch
+        {
+            _ when property.IsOwnedTypeKey() => "",
+            _ when property.IsRowVersion() => RowVersion.DefaultElementName,
+            _ when property.IsTypeDiscriminator() => "_t",
+            _ => property.Name
+        };
 
     private static bool IsTypeDiscriminator(this IReadOnlyProperty property)
     {
@@ -238,12 +236,10 @@ public static class MongoPropertyExtensions
                && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty));
     }
 
-    internal static bool IsOwnedCollectionShadowKey(this IReadOnlyProperty property)
-    {
-        return property.FindContainingPrimaryKey()
-                is {Properties.Count: > 1} && !property.IsForeignKey()
-                                           && property.ClrType == typeof(int)
-                                           && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
-                                           && property.GetElementName().Length == 0;
-    }
+    internal static bool IsOwnedCollectionShadowKey(this IReadOnlyProperty property) =>
+        property.FindContainingPrimaryKey()
+            is {Properties.Count: > 1} && !property.IsForeignKey()
+                                       && property.ClrType == typeof(int)
+                                       && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
+                                       && property.GetElementName().Length == 0;
 }
