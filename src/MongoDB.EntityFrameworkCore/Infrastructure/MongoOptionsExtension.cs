@@ -20,6 +20,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
 namespace Microsoft.EntityFrameworkCore;
@@ -44,10 +45,14 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// </summary>
     public MongoOptionsExtension(MongoOptionsExtension copyFrom)
     {
+        ClientSettings = copyFrom.ClientSettings;
         ConnectionString = copyFrom.ConnectionString;
         DatabaseName = copyFrom.DatabaseName;
         MongoClient = copyFrom.MongoClient;
-        MongoClientSettings = copyFrom.MongoClientSettings;
+        CryptProvider = copyFrom.CryptProvider;
+        CryptProviderPath = copyFrom.CryptProviderPath;
+        KeyVaultNamespace = copyFrom.KeyVaultNamespace;
+        KmsProviders = copyFrom.KmsProviders;
         _loggableConnectionString = SanitizeConnectionStringForLogging(ConnectionString);
     }
 
@@ -78,6 +83,25 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     }
 
     /// <summary>
+    /// Obtains the current <see cref="MongoClientSettings"/>, or null if not set.
+    /// </summary>
+    public MongoClientSettings? ClientSettings { get; private set; }
+
+    /// <summary>
+    /// Specifies client settings to use to connect to a MongoDB server.
+    /// </summary>
+    /// <param name="clientSettings">The client settings to use.</param>
+    /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
+    public virtual MongoOptionsExtension WithClientSettings(MongoClientSettings? clientSettings)
+    {
+        ArgumentNullException.ThrowIfNull(clientSettings);
+
+        var clone = Clone();
+        clone.ClientSettings = clientSettings;
+        return clone;
+    }
+
+    /// <summary>
     /// Obtains the current database name if one is specified, otherwise null.
     /// </summary>
     public string? DatabaseName { get; private set; }
@@ -96,6 +120,63 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         return clone;
     }
 
+    /// <summary>
+    /// Obtains the current key value namespace if one is specified, otherwise null.
+    /// </summary>
+    public CollectionNamespace? KeyVaultNamespace { get; private set; }
+
+    /// <summary>
+    /// Specifies a key vault namespace to identify keys on the MongoDB server.
+    /// </summary>
+    /// <param name="keyVaultNamespace">The name of the database to use.</param>
+    /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
+    public virtual MongoOptionsExtension WithKeyVaultNamespace(CollectionNamespace? keyVaultNamespace)
+    {
+        var clone = Clone();
+        clone.KeyVaultNamespace = keyVaultNamespace;
+        return clone;
+    }
+
+    /// <summary>
+    /// Obtains the current KMS Providers to use for data encryption if specified, otherwise null.
+    /// </summary>
+    public Dictionary<string, IReadOnlyDictionary<string, object>>? KmsProviders { get; private set; }
+
+    /// <summary>
+    /// Specifies KMS Providers to use for data encryption.
+    /// </summary>
+    /// <param name="kmsProviders">The KMS Providers to use.</param>
+    /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
+    public virtual MongoOptionsExtension WithKmsProviders(Dictionary<string, IReadOnlyDictionary<string, object>>? kmsProviders)
+    {
+        var clone = Clone();
+        clone.KmsProviders = kmsProviders;
+        return clone;
+    }
+
+    /// <summary>
+    /// Obtains the current encryption provider.
+    /// </summary>
+    public CryptProvider? CryptProvider { get; private set; }
+
+    /// <summary>
+    /// Obtain the current encryption provider path.
+    /// </summary>
+    public string? CryptProviderPath { get; private set; }
+
+    /// <summary>
+    /// Specifies the encryption provider to use.
+    /// </summary>
+    /// <param name="cryptProvider">The <see cref="CryptProvider"/> to use.</param>
+    /// <param name="cryptPath">The path where the library that supports this <paramref name="cryptProvider"/> can be found.</param>
+    /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
+    public virtual MongoOptionsExtension WithCryptProvider(CryptProvider? cryptProvider, string? cryptPath)
+    {
+        var clone = Clone();
+        clone.CryptProvider = cryptProvider;
+        clone.CryptProviderPath = cryptPath;
+        return clone;
+    }
 
     /// <summary>
     /// Obtains the current <see cref="IMongoClient"/> if one is specified, otherwise null.
@@ -114,27 +195,6 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
 
         var clone = Clone();
         clone.MongoClient = mongoClient;
-        return clone;
-    }
-
-    /// <summary>
-    /// Obtains the current <see cref="MongoClientSettings"/> if one is specified, otherwise null.
-    /// </summary>
-    public MongoClientSettings? MongoClientSettings { get; private set; }
-
-    /// <summary>
-    /// Specify a <see cref="MongoClientSettings"/> to use for connecting to the MongoDB server,
-    /// </summary>
-    /// <param name="mongoClientSettings"></param>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
-    public virtual MongoOptionsExtension WithMongoClientSettings(MongoClientSettings mongoClientSettings)
-    {
-        ArgumentNullException.ThrowIfNull(mongoClientSettings);
-        EnsureConnectionNotAlreadyConfigured(nameof(MongoClientSettings));
-
-        var clone = Clone();
-        clone.MongoClientSettings = mongoClientSettings;
         return clone;
     }
 
@@ -167,10 +227,10 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
                 $"Can not set {setting} as {nameof(MongoClient)} is already set. Specify only one connection configuration.");
         }
 
-        if (setting != nameof(MongoClientSettings) && MongoClientSettings != null)
+        if (setting != nameof(ClientSettings) && ClientSettings != null)
         {
             throw new InvalidOperationException(
-                $"Can not set {setting} as {nameof(MongoClientSettings)} is already set. Specify only one connection configuration.");
+                $"Can not set {setting} as {nameof(ClientSettings)} is already set. Specify only one connection configuration.");
         }
     }
 
@@ -205,8 +265,8 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
             => other is ExtensionInfo otherInfo
                && Extension.ConnectionString == otherInfo.Extension.ConnectionString
                && Extension.MongoClient == otherInfo.Extension.MongoClient
-               && (Extension.MongoClientSettings == otherInfo.Extension.MongoClientSettings ||
-                   Extension.MongoClientSettings != null && Extension.MongoClientSettings.Equals(otherInfo.Extension.MongoClientSettings))
+               && (Extension.ClientSettings == otherInfo.Extension.ClientSettings ||
+                   Extension.ClientSettings != null && Extension.ClientSettings.Equals(otherInfo.Extension.ClientSettings))
                && Extension.DatabaseName == otherInfo.Extension.DatabaseName;
 
         /// <inheritdoc/>
@@ -214,7 +274,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         {
             AddDebugInfo(debugInfo, nameof(ConnectionString), Extension.ConnectionString);
             AddDebugInfo(debugInfo, nameof(MongoClient), Extension.MongoClient);
-            AddDebugInfo(debugInfo, nameof(MongoClientSettings), Extension.MongoClientSettings);
+            AddDebugInfo(debugInfo, nameof(ClientSettings), Extension.ClientSettings);
             AddDebugInfo(debugInfo, nameof(DatabaseName), Extension.DatabaseName);
         }
 
@@ -242,9 +302,9 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
                 builder.Append("MongoClient=").Append(Extension.MongoClient).Append(' ');
             }
 
-            if (Extension.MongoClientSettings != null)
+            if (Extension.ClientSettings != null)
             {
-                builder.Append("MongoClientSettings=").Append(Extension.MongoClientSettings).Append(' ');
+                builder.Append("ClientSettings=").Append(Extension.ClientSettings).Append(' ');
             }
 
             builder.Append("DatabaseName=").Append(Extension.DatabaseName).Append(' ');

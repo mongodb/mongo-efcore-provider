@@ -37,4 +37,6 @@ internal class MongoLoggingDefinitions : LoggingDefinitions
     public EventDefinitionBase? LogRolledBackTransaction;
 
     public EventDefinitionBase? LogTransactionError;
+
+    public EventDefinitionBase? LogRecommendedMinMaxRangeMissing;
 }

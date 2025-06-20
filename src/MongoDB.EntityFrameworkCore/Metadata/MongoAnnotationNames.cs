@@ -55,4 +55,25 @@ public static class MongoAnnotationNames
     /// The key for create index options annotations.
     /// </summary>
     public const string CreateIndexOptions = Prefix + nameof(CreateIndexOptions);
+
+    /// <summary>
+    /// The key for the id of the data key used for encryption.
+    /// </summary>
+    public const string EncryptionDataKeyId = Prefix + nameof(EncryptionDataKeyId);
+
+    /// <summary>
+    /// The key for the kind of Queryable Encryption is used for this property/field.
+    /// </summary>
+    public const string QueryableEncryptionType = Prefix + nameof(QueryableEncryptionType);
+
+    /// <summary>
+    /// The key for the minimum allowed value for a Queryable Encrypted range property/field.
+    /// </summary>
+    public const string QueryableEncryptionRangeMin = Prefix + nameof(QueryableEncryptionRangeMin);
+
+    /// <summary>
+    /// The key for the maximum allowed value for a Queryable Encrypted range property/field.
+    /// </summary>
+    public const string QueryableEncryptionRangeMax = Prefix + nameof(QueryableEncryptionRangeMax);
+
 }

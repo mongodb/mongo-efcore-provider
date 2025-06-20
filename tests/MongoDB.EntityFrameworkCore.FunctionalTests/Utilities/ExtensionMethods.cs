@@ -13,8 +13,11 @@
  * limitations under the License.
  */
 
+using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
@@ -45,4 +48,11 @@ internal static class ExtensionMethods
         var bsonDateTime = new BsonDateTime(dateTime);
         return dateTime.Kind == DateTimeKind.Utc ? bsonDateTime.ToUniversalTime() : bsonDateTime.ToLocalTime();
     }
+
+    public static EntityTypeBuilder<TEntity> ToUniqueCollection<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        [CallerMemberName] string? callerName = null,
+        params object?[] values)
+        where TEntity : class
+        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder).ToCollection(TemporaryDatabaseFixture.CreateCollectionName(callerName, values));
 }

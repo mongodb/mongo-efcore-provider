@@ -26,7 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Extensions;
 /// </summary>
 public static class MongoEntityTypeBuilderExtensions
 {
-    const string ArgumentNameCannotBeEmptyExceptionMessage = "The string argument 'name' cannot be empty.";
+    private const string ArgumentNameCannotBeEmptyExceptionMessage = "The string argument 'name' cannot be empty.";
 
     /// <summary>
     /// Configures the collection that the entity type maps to when targeting a MongoDB database.
@@ -189,4 +189,6 @@ public static class MongoEntityTypeBuilderExtensions
 
         return entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
     }
+
+
 }

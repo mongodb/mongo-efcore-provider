@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Storage;
@@ -191,13 +192,175 @@ public static class MongoPropertyExtensions
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the <see cref="DateTimeKind"/> for the property when targeting MongoDB.
     /// </summary>
-    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the <see cref="DateTimeKind"/> for.</param>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the source of <see cref="DateTimeKind"/> for.</param>
     /// <returns>
     /// The <see cref="ConfigurationSource" /> the <see cref="DateTimeKind"/> was specified by for this property.
     /// </returns>
     public static ConfigurationSource? GetDateKindConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.DateTimeKind)?.GetConfigurationSource();
 
+
+    /// <summary>
+    /// Returns the encryption data key id used to encrypt the property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the encryption data key id for.</param>
+    /// <returns>The encryption data key id used to encrypt the property, or <see langword="null"/> if not set.</returns>
+    public static Guid? GetEncryptionDataKeyId(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.EncryptionDataKeyId] as Guid?;
+
+    /// <summary>
+    /// Sets the encryption data key id used to encrypt the property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the encryption data key id for.</param>
+    /// <param name="dataKeyId">The encryption data key id to set, or <see langword="null" /> to unset the value.</param>
+    public static void SetEncryptionDataKeyId(
+        this IMutableProperty property,
+        Guid? dataKeyId)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId));
+
+    /// <summary>
+    /// Sets the encryption data key id used to encrypt the property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the BsonType for.</param>
+    /// <param name="dataKeyId">The encryption data key id to set, or <see langword="null" /> to unset the value.</param>
+    /// <returns>The <see cref="Guid"/> encryption data key id for the property if set, or <see langref="null"/> if no value is set.</returns>
+    public static Guid? SetEncryptionDataKeyId(
+        this IConventionProperty property,
+        Guid? dataKeyId)
+        => (Guid?)property.SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId))?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the encryption data key id when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the encryption data key id for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the encryption data key id was specified by for this property.
+    /// </returns>
+    public static ConfigurationSource? GetEncryptionDataKeyIdConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId)?.GetConfigurationSource();
+
+
+    /// <summary>
+    /// Returns the <see cref="QueryableEncryptionType"/> indicating the type of Queryable Encryption for this property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the Queryable Encryption type for.</param>
+    /// <returns>The <see cref="QueryableEncryptionType"/>, or <see langword="null"/> if not set.</returns>
+    public static QueryableEncryptionType? GetQueryableEncryptionType(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.QueryableEncryptionType] as QueryableEncryptionType?;
+
+    /// <summary>
+    /// Sets the <see cref="QueryableEncryptionType"/> indicating the type of Queryable Encryption for this property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the Queryable Encryption type for.</param>
+    /// <param name="queryType">The <see cref="QueryableEncryptionType"/> specifying the type of Queryable Encryption to use, or <see langword="null" /> to unset the value.</param>
+    public static void SetQueryableEncryptionType(
+        this IMutableProperty property,
+        QueryableEncryptionType? queryType)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryType));
+
+    /// <summary>
+    /// Sets the <see cref="QueryableEncryptionType"/> indicating the type of Queryable Encryption for this property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the Queryable Encryption type for.</param>
+    /// <param name="queryType">The <see cref="QueryableEncryptionType"/> specifying the type of Queryable Encryption to use, or <see langword="null" /> to unset the value.</param>
+    /// <returns>The <see cref="QueryableEncryptionType"/>, or <see langword="null"/> if not set.</returns>
+    public static QueryableEncryptionType? SetQueryableEncryptionType(
+        this IConventionProperty property,
+        QueryableEncryptionType? queryType)
+        => (QueryableEncryptionType?)property
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryType))?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the Queryable Encryption type for the property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the Queryable Encryption type for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the Queryable Encryption type was specified for this property.
+    /// </returns>
+    public static ConfigurationSource? GetQueryableEncryptionTypeConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionType)?.GetConfigurationSource();
+
+
+    /// <summary>
+    /// Returns the specified maximum value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the maximum value for.</param>
+    /// <returns>The specified maximum value, or <see langword="null"/> if not set.</returns>
+    public static object? GetQueryableEncryptionRangeMax(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.QueryableEncryptionRangeMax];
+
+    /// <summary>
+    /// Sets the maximum value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the maximum value for.</param>
+    /// <param name="maxValue">The maximum value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    public static void SetQueryableEncryptionRangeMax(
+        this IMutableProperty property,
+        object? maxValue)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax, maxValue);
+
+    /// <summary>
+    /// Sets the maximum value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the maximum value for.</param>
+    /// <param name="maxValue">The maximum value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <returns>The maximum value for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
+    public static object? SetQueryableEncryptionRangeMax(
+        this IConventionProperty property,
+        object? maxValue)
+        => (QueryableEncryptionType?)property
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax, maxValue)?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the maximum value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the maximum value for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the maximum value that was specified for this property.
+    /// </returns>
+    public static ConfigurationSource? GetQueryableEncryptionRangeMaxConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax)?.GetConfigurationSource();
+
+
+    /// <summary>
+    /// Returns the specified minimum value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the minimum value for.</param>
+    /// <returns>The specified minimum value, or <see langword="null"/> if not set.</returns>
+    public static object? GetQueryableEncryptionRangeMin(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.QueryableEncryptionRangeMin];
+
+    /// <summary>
+    /// Sets the minimum value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the minimum value for.</param>
+    /// <param name="minValue">The minimum value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    public static void SetQueryableEncryptionRangeMin(
+        this IMutableProperty property,
+        object? minValue)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin, minValue);
+
+    /// <summary>
+    /// Sets the minimum value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the minimum value for.</param>
+    /// <param name="minValue">The minimum value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <returns>The minimum value for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
+    public static object? SetQueryableEncryptionRangeMin(
+        this IConventionProperty property,
+        object? minValue)
+        => (QueryableEncryptionType?)property
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin, minValue)?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the minimum value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the minimum value for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the minimum value that was specified for this property.
+    /// </returns>
+    public static ConfigurationSource? GetQueryableEncryptionRangeMinConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin)?.GetConfigurationSource();
 
     private static string GetDefaultElementName(IReadOnlyProperty property) =>
         property switch
@@ -238,8 +401,8 @@ public static class MongoPropertyExtensions
 
     internal static bool IsOwnedCollectionShadowKey(this IReadOnlyProperty property) =>
         property.FindContainingPrimaryKey()
-            is {Properties.Count: > 1} && !property.IsForeignKey()
-                                       && property.ClrType == typeof(int)
-                                       && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
-                                       && property.GetElementName().Length == 0;
+            is { Properties.Count: > 1 } && !property.IsForeignKey()
+                                         && property.ClrType == typeof(int)
+                                         && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
+                                         && property.GetElementName().Length == 0;
 }

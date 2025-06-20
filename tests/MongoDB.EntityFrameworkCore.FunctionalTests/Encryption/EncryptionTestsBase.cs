@@ -86,7 +86,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         using var clientEncryption = new ClientEncryption(clientEncryptionOptions);
         return clientEncryption.CreateDataKey("local", new DataKeyOptions(), CancellationToken.None);
     }
-
+    
     protected Dictionary<string, BsonDocument> CreateEncryptedFieldsMap(string collectionName)
         => new()
         {
@@ -187,6 +187,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
 
         public string BloodType { get; set; }
         public string? Doctor { get; set; }
+        public decimal? Balance { get; set; }
         public string? InsuranceCompany { get; set; }
         public string? PolicyReference { get; set; }
         public int Sequence { get; set; }

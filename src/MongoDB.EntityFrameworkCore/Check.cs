@@ -21,7 +21,17 @@ namespace MongoDB.EntityFrameworkCore;
 
 internal static class Check
 {
-    public static Guid? NotEmpty(Guid? argument, [CallerArgumentExpression(nameof(argument))] string? parameterName = null) => argument != Guid.Empty
-        ? argument
-        : throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(parameterName));
+    public static Guid? NotEmpty(Guid? argument, [CallerArgumentExpression(nameof(argument))] string? parameterName = null)
+        => argument != Guid.Empty
+            ? argument
+            : throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(parameterName));
+
+    public static T? IsDefinedOrNull<T>(T? argument,
+        [CallerArgumentExpression(nameof(argument))]
+        string? parameterName = null) where T : struct
+        => argument == null
+            ? null
+            : Enum.IsDefined(typeof(T), argument)
+                ? argument
+                : throw new ArgumentOutOfRangeException(parameterName);
 }

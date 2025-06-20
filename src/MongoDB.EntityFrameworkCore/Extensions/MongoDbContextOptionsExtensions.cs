@@ -225,11 +225,32 @@ public static class MongoDbContextOptionsExtensions
 
         var extension = (optionsBuilder.Options.FindExtension<MongoOptionsExtension>()
                          ?? new MongoOptionsExtension())
-            .WithMongoClientSettings(mongoClientSettings)
+            .WithClientSettings(mongoClientSettings)
             .WithDatabaseName(databaseName);
 
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
         optionsAction?.Invoke(new MongoDbContextOptionsBuilder(optionsBuilder));
         return optionsBuilder;
     }
+
+    /// <summary>
+    /// Configures the context to connect to a MongoDB database using the <see cref="DbContextOptionsBuilder"/>.
+    /// </summary>
+    /// <param name="optionsBuilder">The builder being used to configure the context.</param>
+    /// <param name="extension">The <see cref="MongoOptionsExtension"/> to configure.</param>
+    /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <returns>The options builder so that further configuration can be chained.</returns>
+    public static DbContextOptionsBuilder UseMongoDB(
+        this DbContextOptionsBuilder optionsBuilder,
+        MongoOptionsExtension extension,
+        Action<MongoDbContextOptionsBuilder>? optionsAction = null)
+    {
+        ArgumentNullException.ThrowIfNull(optionsBuilder);
+        ArgumentNullException.ThrowIfNull(extension);
+
+        ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
+        optionsAction?.Invoke(new MongoDbContextOptionsBuilder(optionsBuilder));
+        return optionsBuilder;
+    }
 }
+

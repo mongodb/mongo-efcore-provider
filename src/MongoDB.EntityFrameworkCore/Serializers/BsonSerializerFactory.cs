@@ -89,6 +89,41 @@ public sealed class BsonSerializerFactory
             _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'.")
         };
 
+    internal static BsonType GetBsonType(Type type)
+        => type switch
+        {
+            _ when type == typeof(bool) => BsonType.Boolean,
+            _ when type == typeof(byte) => BsonType.Int32,
+            _ when type == typeof(char) => BsonType.Int32,
+            _ when type == typeof(DateTime) => BsonType.DateTime,
+            _ when type == typeof(DateTimeOffset) => BsonType.Document,
+            _ when type == typeof(DateOnly) => BsonType.DateTime,
+            _ when type == typeof(TimeOnly) => BsonType.Int64,
+            _ when type == typeof(decimal) => BsonType.Decimal128,
+            _ when type == typeof(double) => BsonType.Double,
+            _ when type == typeof(Guid) => BsonType.Binary,
+            _ when type == typeof(short) => BsonType.Int32,
+            _ when type == typeof(int) => BsonType.Int32,
+            _ when type == typeof(long) => BsonType.Int64,
+            _ when type == typeof(ObjectId) => BsonType.ObjectId,
+            _ when type == typeof(TimeSpan) => BsonType.String,
+            _ when type == typeof(sbyte) => BsonType.Int32,
+            _ when type == typeof(float) => BsonType.Double,
+            _ when type == typeof(string) => BsonType.String,
+            _ when type == typeof(ushort) => BsonType.Int32,
+            _ when type == typeof(uint) => BsonType.Int32,
+            _ when type == typeof(ulong) => BsonType.Int64,
+            _ when type == typeof(Decimal128) => BsonType.Decimal128,
+            _ when type == typeof(byte[]) => BsonType.Binary,
+            // TODO: ENUMS!
+            {IsArray: true} => BsonType.Array,
+            {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
+                => GetBsonType(type.GetGenericArguments()[0]),
+            {IsGenericType: true} when SupportsDictionary(type) => BsonType.Document,
+            {IsGenericType: true} => BsonType.Array,
+            _ => BsonType.Document
+        };
+
 
     internal static IBsonSerializer CreateTypeSerializer(IReadOnlyProperty property)
     {
