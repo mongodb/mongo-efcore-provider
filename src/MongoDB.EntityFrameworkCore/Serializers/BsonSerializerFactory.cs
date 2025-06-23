@@ -115,7 +115,7 @@ public sealed class BsonSerializerFactory
             _ when type == typeof(ulong) => BsonType.Int64,
             _ when type == typeof(Decimal128) => BsonType.Decimal128,
             _ when type == typeof(byte[]) => BsonType.Binary,
-            // TODO: ENUMS!
+            _ when type.IsEnum => Enum.GetUnderlyingType(type) == typeof(long) ? BsonType.Int64 : BsonType.Int32,
             {IsArray: true} => BsonType.Array,
             {IsGenericType: true} when type.GetGenericTypeDefinition() == typeof(Nullable<>)
                 => GetBsonType(type.GetGenericArguments()[0]),

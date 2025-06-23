@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.Driver.Encryption;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
@@ -26,7 +27,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     : EncryptionTestsBase(database)
 {
-    private readonly Guid _unregisteredDataKey = Guid.NewGuid();
     private readonly TemporaryDatabaseFixture _database = database;
 
     [Theory]
@@ -36,6 +36,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     {
         var db = CreateContext(cryptProvider,
             mb => mb.Entity<Patient>().ToUniqueCollection(values: cryptProvider).Property(p => p.Doctor).IsEncrypted());
+
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
         Assert.Contains(nameof(Patient.Doctor), ex.Message);
         Assert.Contains("encryption data key id", ex.Message);
@@ -51,7 +52,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             mb.Entity<Patient>()
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.Balance)
-                .IsEncryptedForEquality(_unregisteredDataKey);
+                .IsEncryptedForEquality(CreateDataKey());
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -69,7 +70,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         {
             mb.Entity<Patient>()
                 .ToUniqueCollection(values: cryptProvider)
-                .Property(p => p.Doctor).IsEncryptedForRange(_unregisteredDataKey);
+                .Property(p => p.Doctor).IsEncryptedForRange(CreateDataKey());
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -89,7 +90,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.MonthlySubscription)
                 .HasBsonRepresentation(BsonType.String)
-                .IsEncryptedForRange(_unregisteredDataKey);
+                .IsEncryptedForRange(CreateDataKey());
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -105,7 +106,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     {
         var db = CreateContext(cryptProvider, mb =>
         {
-            mb.EncryptionDefaults(_unregisteredDataKey);
+            mb.EncryptionDefaults(CreateDataKey());
             mb.Entity<Patient>()
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.MonthlySubscription).IsEncryptedForRange();
@@ -137,15 +138,25 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_with_no_encryption_key_uses_one_from_model_if_needed(CryptProvider cryptProvider)
     {
-        var encryptionKeyId = Guid.NewGuid();
-        var db = CreateContext(cryptProvider, mb =>
+        var dataKeyId = CreateDataKey();
+        var samplePatients = CreateSamplePatients;
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+
         {
-            mb.EncryptionDefaults(encryptionKeyId);
-            mb.Entity<Patient>()
-                .ToUniqueCollection(values: cryptProvider)
-                .Property(p => p.Doctor).IsEncrypted();
-        });
-        var model = db.Model;
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.EncryptionDefaults(dataKeyId);
+                mb.Entity<Patient>()
+                    .ToCollection(collectionName)
+                    .Property(p => p.Doctor).IsEncrypted();
+            });
+            db.Patients.AddRange(samplePatients);
+            db.SaveChanges();
+        }
+
+        {
+            AssertCantReadEncrypted<Patient>(collectionName, "Doctor");
+        }
     }
 
     [Theory]
@@ -153,7 +164,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_string(CryptProvider cryptProvider)
     {
-        var dataKey = CreateDataKey();
+        var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
 
@@ -173,12 +184,12 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
 
         {
-            AssertIsActuallyEncrypted<Patient>(collectionName, "SSN");
+            AssertCantReadEncrypted<Patient>(collectionName, "SSN");
         }
 
         void ModelConfig(ModelBuilder mb)
         {
-            mb.EncryptionDefaults(dataKey);
+            mb.EncryptionDefaults(dataKeyId);
             mb.Entity<Patient>(p =>
             {
                 p.ToCollection(collectionName);
@@ -190,9 +201,50 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [Theory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void IsEncrypted_can_use_one_data_key_for_multiple_properties(CryptProvider cryptProvider)
+    {
+        var dataKeyId = CreateDataKey();
+        var samplePatients = CreateSamplePatients;
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+
+        {
+            using var db = CreateContext(cryptProvider, ModelConfig);
+            db.Patients.AddRange(samplePatients);
+            db.SaveChanges();
+        }
+
+        {
+            using var db = CreateContext(cryptProvider, ModelConfig);
+            foreach (var actual in db.Patients)
+            {
+                var expected = samplePatients.FirstOrDefault(p => p.Id == actual.Id);
+                Assert.Equal(expected.SSN, actual.SSN);
+            }
+        }
+
+        {
+            AssertCantReadEncrypted<Patient>(collectionName, "SSN");
+        }
+
+        void ModelConfig(ModelBuilder mb)
+        {
+            mb.EncryptionDefaults(dataKeyId);
+            mb.Entity<Patient>(p =>
+            {
+                p.ToCollection(collectionName);
+                p.Property(x => x.SSN).IsEncrypted();
+                p.Property(x => x.Doctor).IsEncrypted();
+                p.Property(x => x.DateOfBirth).IsEncrypted();
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForEquality_query_equality_on_string(CryptProvider cryptProvider)
     {
-        var dataKey = CreateDataKey();
+        var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
 
@@ -212,12 +264,12 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
 
         {
-            AssertIsActuallyEncrypted<Patient>(collectionName, "SSN");
+            AssertCantReadEncrypted<Patient>(collectionName, "SSN");
         }
 
         void ModelConfig(ModelBuilder mb)
         {
-            mb.EncryptionDefaults(dataKey);
+            mb.EncryptionDefaults(dataKeyId);
             mb.Entity<Patient>(p =>
             {
                 p.ToCollection(collectionName);
@@ -231,7 +283,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_query_ranges_on_int(CryptProvider cryptProvider)
     {
-        var dataKey = CreateDataKey();
+        var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
 
@@ -251,12 +303,12 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
 
         {
-            AssertIsActuallyEncrypted<Patient>(collectionName, "Sequence");
+            AssertCantReadEncrypted<Patient>(collectionName, "Sequence");
         }
 
         void ModelConfig(ModelBuilder mb)
         {
-            mb.EncryptionDefaults(dataKey);
+            mb.EncryptionDefaults(dataKeyId);
             mb.Entity<Patient>(p =>
             {
                 p.ToCollection(collectionName);
@@ -265,7 +317,75 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private void AssertIsActuallyEncrypted<T>(string? collectionName, string propertyName)
+    [Theory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void IsEncryptedForRange_query_ranges_on_long(CryptProvider cryptProvider)
+    {
+        var dataKeyId = CreateDataKey();
+        var samplePatients = CreateSamplePatients;
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+
+        {
+            using var db = CreateContext(cryptProvider, ModelConfig);
+            db.Patients.AddRange(samplePatients);
+            db.SaveChanges();
+        }
+
+        {
+            using var db = CreateContext(cryptProvider, ModelConfig);
+            foreach (var actual in db.Patients)
+            {
+                var expected = samplePatients.Single(p => p.BillingNumber > actual.BillingNumber -1 && p.BillingNumber < actual.BillingNumber + 1);
+                Assert.Equal(expected.BillingNumber, actual.BillingNumber);
+            }
+        }
+
+        {
+            AssertCantReadEncrypted<Patient>(collectionName, "BillingNumber");
+        }
+
+        void ModelConfig(ModelBuilder mb)
+        {
+            mb.EncryptionDefaults(dataKeyId);
+            mb.Entity<Patient>(p =>
+            {
+                p.ToCollection(collectionName);
+                p.Property(x => x.BillingNumber).IsEncryptedForRange(-100000, 100000);
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void IsEncryptedForRange_query_throws_when_out_of_range(CryptProvider cryptProvider)
+    {
+        var dataKeyId = CreateDataKey();
+        var samplePatients = CreateSamplePatients;
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+
+        {
+            using var db = CreateContext(cryptProvider, ModelConfig);
+            db.Patients.AddRange(samplePatients);
+            var ex = Assert.Throws<MongoEncryptionException>(() => db.SaveChanges());
+            Assert.Contains("12345", ex.Message);
+            Assert.Contains("-10000", ex.Message);
+            Assert.Contains("10000", ex.Message);
+        }
+
+        void ModelConfig(ModelBuilder mb)
+        {
+            mb.EncryptionDefaults(dataKeyId);
+            mb.Entity<Patient>(p =>
+            {
+                p.ToCollection(collectionName);
+                p.Property(x => x.BillingNumber).IsEncryptedForRange(-10000, 10000);
+            });
+        }
+    }
+
+    private void AssertCantReadEncrypted<T>(string? collectionName, string propertyName)
     {
         var collection = _database.MongoDatabase.GetCollection<T>(collectionName);
         var ex = Assert.Throws<FormatException>(() => collection.AsQueryable().ToList());

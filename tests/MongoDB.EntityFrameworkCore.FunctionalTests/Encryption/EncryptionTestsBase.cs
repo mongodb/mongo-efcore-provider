@@ -86,7 +86,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         using var clientEncryption = new ClientEncryption(clientEncryptionOptions);
         return clientEncryption.CreateDataKey("local", new DataKeyOptions(), CancellationToken.None);
     }
-    
+
     protected Dictionary<string, BsonDocument> CreateEncryptedFieldsMap(string collectionName)
         => new()
         {
@@ -159,19 +159,22 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
             SSN = "145014000",
             DateOfBirth = new DateTime(1985, 10, 26, 0, 0, 0, DateTimeKind.Utc),
             BloodType = "AB-",
-            Doctor = "Mr Smith",
+            Doctor = "Emmett Grey",
             Sequence = 10,
+            BillingNumber = 12345,
             BloodPressureReadings = [new BloodPressureReading { Diastolic = 120, Systolic = 80 }],
             WeightMeasurements =
                 [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }]
         },
         new()
         {
-            Name = "Tom Smith",
+            Name = "Red Tyler",
             SSN = "1234567",
             DateOfBirth = new DateTime(2000, 1, 26, 0, 0, 0, DateTimeKind.Utc),
+            Doctor = "John Smith",
             BloodType = "O-",
             Sequence = 20,
+            BillingNumber = -123,
             BloodPressureReadings = []
         }
     ];
@@ -191,6 +194,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         public string? InsuranceCompany { get; set; }
         public string? PolicyReference { get; set; }
         public int Sequence { get; set; }
+        public long BillingNumber { get; set; }
 
         public List<BloodPressureReading> BloodPressureReadings { get; set; }
         public List<WeightMeasurement> WeightMeasurements { get; set; }

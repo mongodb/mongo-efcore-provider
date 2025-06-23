@@ -19,22 +19,10 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
-public class MongoSchemaProvider : IMongoSchemaProvider
+/// <inheritdoc />
+public class MongoSchemaProvider(IModel model) : IMongoSchemaProvider
 {
-    private readonly IModel _model;
-
-    public MongoSchemaProvider(IModel model)
-    {
-        _model = model;
-    }
-
-    public Dictionary<string, BsonDocument> GetSchema()
-    {
-        return QueryableEncryptionSchemaGenerator.GenerateSchemas(_model);
-    }
-}
-
-public interface IMongoSchemaProvider
-{
-    Dictionary<string, BsonDocument> GetSchema();
+    /// <inheritdoc />
+    public Dictionary<string, BsonDocument> GetQueryableEncryptionSchema()
+        => QueryableEncryptionSchemaGenerator.GenerateSchemas(model);
 }
