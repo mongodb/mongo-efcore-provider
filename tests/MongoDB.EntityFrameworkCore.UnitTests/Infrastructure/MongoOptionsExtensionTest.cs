@@ -14,6 +14,7 @@
 */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Infrastructure;
@@ -23,12 +24,12 @@ public static class MongoOptionsExtensionTest
     [Fact]
     public static void Can_set_connection_string_and_database_name()
     {
-        var dbOptions = new MongoOptionsExtension()
+        var options = new MongoOptionsExtension()
             .WithConnectionString("mongodb://localhost:1234")
             .WithDatabaseName("MyDatabase");
 
-        Assert.Equal("mongodb://localhost:1234", dbOptions.ConnectionString);
-        Assert.Equal("MyDatabase", dbOptions.DatabaseName);
+        Assert.Equal("mongodb://localhost:1234", options.ConnectionString);
+        Assert.Equal("MyDatabase", options.DatabaseName);
     }
 
     [Theory]
@@ -37,19 +38,26 @@ public static class MongoOptionsExtensionTest
     {
         var mongoClient = new MongoClient();
 
-        var dbOptions = new MongoOptionsExtension()
+        var options = new MongoOptionsExtension()
             .WithMongoClient(mongoClient)
             .WithDatabaseName(databaseName);
 
-        Assert.Same(mongoClient, dbOptions.MongoClient);
-        Assert.Equal(databaseName, dbOptions.DatabaseName);
+        Assert.Same(mongoClient, options.MongoClient);
+        Assert.Equal(databaseName, options.DatabaseName);
     }
 
     [Fact]
     public static void Throws_if_both_connection_string_and_mongo_client_set()
     {
-        Assert.Throws<InvalidOperationException>(() => new MongoOptionsExtension()
+        var options = new MongoOptionsExtension()
             .WithMongoClient(new MongoClient())
-            .WithConnectionString("mongodb://localhost:1234"));
+            .WithConnectionString("mongodb://localhost:1234");
+
+        var builder = new DbContextOptionsBuilder<SingleEntityDbContext<Customer>>();
+        ((IDbContextOptionsBuilderInfrastructure)builder).AddOrUpdateExtension(options);
+
+        Assert.Throws<InvalidOperationException>(() => options.Validate(builder.Options));
     }
+
+    class Customer { public Guid Id { get; set; } }
 }
