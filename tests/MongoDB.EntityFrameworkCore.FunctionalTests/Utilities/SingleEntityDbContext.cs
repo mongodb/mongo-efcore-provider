@@ -54,14 +54,6 @@ internal static class SingleEntityDbContext
         Action<ModelBuilder>? modelBuilderAction = null,
         Action<ModelConfigurationBuilder>? configBuilderAction = null) where T1 : class where T2 : class
         => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction);
-
-    private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
-    {
-        private static int Count;
-
-        public object Create(DbContext context, bool designTime)
-            => Interlocked.Increment(ref Count);
-    }
 }
 
 internal class SingleEntityDbContext<T>(

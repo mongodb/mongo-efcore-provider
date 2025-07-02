@@ -27,7 +27,7 @@ public static class MongoDbContextOptionsExtensionsTest
     [Theory]
     [InlineData("mongodb://localhost:1234", "myDatabaseName")]
     [InlineData("mongodb://localhost:1234,localhost:27017", "replicaSet")]
-    public static void Can_configure_connection_string_and_database_name(string connectionString, string databaseName)
+    public static void Can_configure_with_connection_string_and_database_name(string connectionString, string databaseName)
     {
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddMongoDB<ApplicationDbContext>(connectionString, databaseName, _ => { },
@@ -63,6 +63,25 @@ public static class MongoDbContextOptionsExtensionsTest
             .GetRequiredService<DbContextOptions<ApplicationDbContext>>().GetExtension<MongoOptionsExtension>();
 
         Assert.Equal(mongoClient, mongoOptions.MongoClient);
+        Assert.Equal(databaseName, mongoOptions.DatabaseName);
+    }
+
+    [Theory]
+    [InlineData("myDatabaseName")]
+    public static void Can_configure_with_mongo_client_settings_and_database_name(string databaseName)
+    {
+        var mongoClientSettings = new MongoClientSettings();
+
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMongoDB<ApplicationDbContext>(mongoClientSettings, databaseName, _ => { },
+            dbContextOptions => { dbContextOptions.EnableDetailedErrors(); });
+
+        var services = serviceCollection.BuildServiceProvider(validateScopes: true);
+        using var serviceScope = services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var mongoOptions = serviceScope.ServiceProvider
+            .GetRequiredService<DbContextOptions<ApplicationDbContext>>().GetExtension<MongoOptionsExtension>();
+
+        Assert.Equal(mongoClientSettings, mongoOptions.MongoClientSettings);
         Assert.Equal(databaseName, mongoOptions.DatabaseName);
     }
 

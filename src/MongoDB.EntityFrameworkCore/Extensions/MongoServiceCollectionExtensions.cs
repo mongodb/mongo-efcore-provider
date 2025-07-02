@@ -92,6 +92,31 @@ public static class MongoServiceCollectionExtensions
             });
 
     /// <summary>
+    /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
+    /// and configures it to connect to an MongoDB database.
+    /// </summary>
+    /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
+    /// <param name="mongoClientSettings">The <see cref="MongoClientSettings"/> to use to connect to the MongoDB server.</param>
+    /// <param name="databaseName">The database name on the server.</param>
+    /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
+    /// <typeparam name="TContext">The type of context to be registered.</typeparam>
+    /// <returns>The same service collection so that multiple calls can be chained.</returns>
+    public static IServiceCollection AddMongoDB<TContext>(
+        this IServiceCollection serviceCollection,
+        MongoClientSettings mongoClientSettings,
+        string databaseName,
+        Action<MongoDbContextOptionsBuilder>? mongoOptionsAction = null,
+        Action<DbContextOptionsBuilder>? optionsAction = null)
+        where TContext : DbContext
+        => serviceCollection.AddDbContext<TContext>(
+            (_, options) =>
+            {
+                optionsAction?.Invoke(options);
+                options.UseMongoDB(mongoClientSettings, databaseName, mongoOptionsAction);
+            });
+
+    /// <summary>
     /// Adds the services required by the MongoDB provider for Entity Framework to an <see cref="IServiceCollection" />.
     /// </summary>
     /// <remarks>You probably meant to use <see cref="AddMongoDB{TContext}(Microsoft.Extensions.DependencyInjection.IServiceCollection,string,string,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder}?,System.Action{Microsoft.EntityFrameworkCore.DbContextOptionsBuilder}?)" /> instead.</remarks>
