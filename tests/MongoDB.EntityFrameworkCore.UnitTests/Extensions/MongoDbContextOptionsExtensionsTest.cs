@@ -48,6 +48,28 @@ public static class MongoDbContextOptionsExtensionsTest
     }
 
     [Theory]
+    [InlineData("mongodb://localhost:1234/myDatabaseName")]
+    [InlineData("mongodb://localhost:1234,localhost:27017/replicaSet")]
+    public static void Can_configure_with_connection_string_including_a_database_name(string connectionString)
+    {
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMongoDB<ApplicationDbContext>(connectionString, _ => { },
+            dbContextOptions => { dbContextOptions.EnableDetailedErrors(); });
+
+        var services = serviceCollection.BuildServiceProvider(validateScopes: true);
+        using var serviceScope = services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var coreOptions = serviceScope.ServiceProvider
+            .GetRequiredService<DbContextOptions<ApplicationDbContext>>().GetExtension<CoreOptionsExtension>();
+
+        Assert.True(coreOptions.DetailedErrorsEnabled);
+
+        var mongoOptions = serviceScope.ServiceProvider
+            .GetRequiredService<DbContextOptions<ApplicationDbContext>>().GetExtension<MongoOptionsExtension>();
+
+        Assert.Equal(connectionString, mongoOptions.ConnectionString);
+    }
+
+    [Theory]
     [InlineData("myDatabaseName")]
     public static void Can_configure_with_mongo_client_and_database_name(string databaseName)
     {

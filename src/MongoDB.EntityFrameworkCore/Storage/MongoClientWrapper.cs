@@ -60,7 +60,21 @@ public class MongoClientWrapper : IMongoClientWrapper
         _commandLogger = commandLogger;
 
         _client = GetOrCreateMongoClient(options, serviceProvider);
-        _database = _client.GetDatabase(options!.DatabaseName);
+
+        var databaseName = options?.DatabaseName;
+        if (databaseName == null && options?.ConnectionString != null)
+        {
+            try
+            {
+                var connectionString = new MongoUrl(options.ConnectionString);
+                databaseName = connectionString.DatabaseName;
+            }
+            catch (FormatException)
+            {
+            }
+        }
+
+        _database = _client.GetDatabase(databaseName);
     }
 
     /// <inheritdoc />

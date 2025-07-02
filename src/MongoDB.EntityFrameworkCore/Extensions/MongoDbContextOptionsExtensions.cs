@@ -79,15 +79,57 @@ public static class MongoDbContextOptionsExtensions
     /// Configures the context to connect to a MongoDB database.
     /// </summary>
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>
+    /// <param name="connectionString">The connection string used to connect to MongoDB which must include a database name.</param>
+    /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <typeparam name="TContext">The type of context to be configured.</typeparam>
+    /// <returns>The options builder so that further configuration can be chained.</returns>
+    public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
+        this DbContextOptionsBuilder<TContext> optionsBuilder,
+        string connectionString,
+        Action<MongoDbContextOptionsBuilder>? optionsAction = null)
+        where TContext : DbContext
+        => (DbContextOptionsBuilder<TContext>)UseMongoDB(
+            (DbContextOptionsBuilder)optionsBuilder,
+            connectionString,
+            optionsAction);
+
+    /// <summary>
+    /// Configures the context to connect to a MongoDB database.
+    /// </summary>
+    /// <param name="optionsBuilder">The builder being used to configure the context.</param>
+    /// <param name="connectionString">The connection string used to connect to MongoDB which must include a database name.</param>
+    /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <returns>The options builder so that further configuration can be chained.</returns>
+    public static DbContextOptionsBuilder UseMongoDB(
+        this DbContextOptionsBuilder optionsBuilder,
+        string connectionString,
+        Action<MongoDbContextOptionsBuilder>? optionsAction = null)
+    {
+        ArgumentNullException.ThrowIfNull(optionsBuilder);
+        ArgumentNullException.ThrowIfNull(connectionString);
+
+        var extension = (optionsBuilder.Options.FindExtension<MongoOptionsExtension>()
+                         ?? new MongoOptionsExtension())
+            .WithConnectionString(connectionString);
+
+        ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
+        optionsAction?.Invoke(new MongoDbContextOptionsBuilder(optionsBuilder));
+        return optionsBuilder;
+    }
+
+    /// <summary>
+    /// Configures the context to connect to a MongoDB database.
+    /// </summary>
+    /// <param name="optionsBuilder">The builder being used to configure the context.</param>
     /// <param name="mongoClient">The pre-configured <see cref="IMongoClient"/> for connecting to the server.</param>
     /// <param name="databaseName">The name of the database to use.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <typeparam name="TContext">The type of context to be configured.</typeparam>
     /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
-    /// It is recommended that you use alternative UseMongoDB overloads that take either a connection
-    /// string or <see cref="MongoClientSettings"/> to ensure the EF Provider can correctly configure and dispose
-    /// of its own <see cref="MongoClient"/> instances.
+    /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
+    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
+    /// dispose of its own <see cref="MongoClient"/> instances.
     /// </remarks>
     public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
         this DbContextOptionsBuilder<TContext> optionsBuilder,
@@ -110,9 +152,9 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
-    /// It is recommended that you use alternative UseMongoDB overloads that take either a connection
-    /// string or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
-    /// dispose  of its own <see cref="MongoClient"/> instances.
+    /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
+    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
+    /// dispose of its own <see cref="MongoClient"/> instances.
     /// </remarks>
     public static DbContextOptionsBuilder UseMongoDB(
         this DbContextOptionsBuilder optionsBuilder,

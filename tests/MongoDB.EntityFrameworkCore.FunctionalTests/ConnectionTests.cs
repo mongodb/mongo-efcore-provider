@@ -24,14 +24,34 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests;
 public class ConnectionTests
 {
     [Fact]
-    public void Can_connect_using_connection_string()
+    public void Can_connect_using_connection_string_with_database_name()
     {
         var optionsBuilder = StartOptions()
             .UseMongoDB(TestServer.ConnectionString, TemporaryDatabaseFixture.GetUniqueDatabaseName);
 
-        using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_connection_string));
+        using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_connection_string_with_database_name));
 
         context.Database.EnsureCreated();
+    }
+
+    [Fact]
+    public void Can_connect_using_connection_string_without_database_name()
+    {
+        var databaseName = TemporaryDatabaseFixture.GetUniqueDatabaseName;
+        var collectionName = nameof(Can_connect_using_connection_string_without_database_name);
+        var mongoUrl = new MongoUrlBuilder(TestServer.ConnectionString) { DatabaseName = databaseName };
+
+        var optionsBuilder = StartOptions()
+            .UseMongoDB(mongoUrl.ToString());
+
+        using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, collectionName);
+
+        context.Database.EnsureCreated();
+
+        var client = new MongoClient(TestServer.ConnectionString);
+        var database = client.GetDatabase(databaseName);
+        var collections = database.ListCollectionNames().ToList();
+        Assert.Contains(collectionName, collections);
     }
 
     [Fact]
