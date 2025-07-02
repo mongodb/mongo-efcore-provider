@@ -1184,6 +1184,50 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Converter_on_key_and_secondary_property_does_not_cause_key_errors()
+    {
+        var expectedId = new AId(Guid.NewGuid());
+        var expectedCustom1 = new ACustom("my-custom-1");
+
+        var docs = database.CreateCollection<AEntityStorage>();
+        docs.InsertOne(new AEntityStorage
+        {
+            Id = expectedId.Value,
+            Custom1 = expectedCustom1.Value,
+        });
+
+        var collection = database.GetCollection<AEntity>(docs.CollectionNamespace);
+        using var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<AEntity>(e =>
+            {
+                e.Property(f => f.Id).HasConversion(a => a.Value, s => new AId(s)).HasElementName("_id");
+                e.Property(f => f.Custom1).HasConversion(a => a.Value, s => new ACustom(s));
+            });
+        });
+
+        var found = db.Entities.First(e => e.Id.Equals(expectedId));
+        Assert.Equal(expectedId, found.Id);
+    }
+
+    class AEntity
+    {
+        public AId Id { get; set; }
+        public ACustom Custom1 { get; set; }
+    }
+
+    public record ACustom(string Value);
+
+    public record AId(Guid Value);
+
+    class AEntityStorage
+    {
+        [BsonGuidRepresentation(GuidRepresentation.Standard)]
+        public Guid Id { get; set; }
+        public string Custom1 { get; set; }
+    }
+
+    [Fact]
     public void Unsupported_nullable_value_conversion_throws()
     {
         var collection = database.GetCollection<DaysIsNullableInt>();

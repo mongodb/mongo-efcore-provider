@@ -29,11 +29,7 @@ namespace Microsoft.EntityFrameworkCore;
 /// </summary>
 public class MongoOptionsExtension : IDbContextOptionsExtension
 {
-    private string? _connectionString;
-    private string? _databaseName;
     private string? _loggableConnectionString;
-    private IMongoClient? _mongoClient;
-    private MongoClientSettings? _mongoClientSettings;
     private DbContextOptionsExtensionInfo? _info;
 
     /// <summary>
@@ -46,13 +42,13 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// <summary>
     /// Creates a <see cref="MongoOptionsExtension"/> by copying from an existing instance.
     /// </summary>
-    protected MongoOptionsExtension(MongoOptionsExtension copyFrom)
+    public MongoOptionsExtension(MongoOptionsExtension copyFrom)
     {
-        _connectionString = copyFrom._connectionString;
-        _databaseName = copyFrom._databaseName;
-        _mongoClient = copyFrom._mongoClient;
-        _mongoClientSettings = copyFrom._mongoClientSettings;
-        _loggableConnectionString = SanitizeConnectionStringForLogging(_connectionString);
+        ConnectionString = copyFrom.ConnectionString;
+        DatabaseName = copyFrom.DatabaseName;
+        MongoClient = copyFrom.MongoClient;
+        MongoClientSettings = copyFrom.MongoClientSettings;
+        _loggableConnectionString = SanitizeConnectionStringForLogging(ConnectionString);
     }
 
     /// <summary>
@@ -63,7 +59,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// <summary>
     /// Obtains the current connection string.
     /// </summary>
-    public string? ConnectionString => _connectionString;
+    public string? ConnectionString { get; private set; }
 
     /// <summary>
     /// Specifies a connection string to use to connect to a MongoDB server.
@@ -76,7 +72,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         EnsureConnectionNotAlreadyConfigured(nameof(ConnectionString));
 
         var clone = Clone();
-        clone._connectionString = connectionString;
+        clone.ConnectionString = connectionString;
         clone._loggableConnectionString = SanitizeConnectionStringForLogging(connectionString);
         return clone;
     }
@@ -84,7 +80,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// <summary>
     /// Obtains the current database name if one is specified, otherwise null.
     /// </summary>
-    public string? DatabaseName => _databaseName;
+    public string? DatabaseName { get; private set; }
 
     /// <summary>
     /// Specifies a database name to use on the MongoDB server.
@@ -96,14 +92,15 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         ArgumentException.ThrowIfNullOrEmpty(databaseName);
 
         var clone = Clone();
-        clone._databaseName = databaseName;
+        clone.DatabaseName = databaseName;
         return clone;
     }
+
 
     /// <summary>
     /// Obtains the current <see cref="IMongoClient"/> if one is specified, otherwise null.
     /// </summary>
-    public IMongoClient? MongoClient => _mongoClient;
+    public IMongoClient? MongoClient { get; private set; }
 
     /// <summary>
     /// Specify a <see cref="IMongoClient"/> to use for connecting to the MongoDB server.
@@ -116,14 +113,14 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         EnsureConnectionNotAlreadyConfigured(nameof(MongoClient));
 
         var clone = Clone();
-        clone._mongoClient = mongoClient;
+        clone.MongoClient = mongoClient;
         return clone;
     }
 
     /// <summary>
     /// Obtains the current <see cref="MongoClientSettings"/> if one is specified, otherwise null.
     /// </summary>
-    public MongoClientSettings? MongoClientSettings => _mongoClientSettings;
+    public MongoClientSettings? MongoClientSettings { get; private set; }
 
     /// <summary>
     /// Specify a <see cref="MongoClientSettings"/> to use for connecting to the MongoDB server,
@@ -137,7 +134,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         EnsureConnectionNotAlreadyConfigured(nameof(MongoClientSettings));
 
         var clone = Clone();
-        clone._mongoClientSettings = mongoClientSettings;
+        clone.MongoClientSettings = mongoClientSettings;
         return clone;
     }
 
@@ -158,19 +155,19 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
 
     private void EnsureConnectionNotAlreadyConfigured(string setting)
     {
-        if (setting != nameof(ConnectionString) && _connectionString != null)
+        if (setting != nameof(ConnectionString) && ConnectionString != null)
         {
             throw new InvalidOperationException(
                 $"Can not set {setting} as {nameof(ConnectionString)} is already set. Specify only one connection configuration.");
         }
 
-        if (setting != nameof(MongoClient) && _mongoClient != null)
+        if (setting != nameof(MongoClient) && MongoClient != null)
         {
             throw new InvalidOperationException(
                 $"Can not set {setting} as {nameof(MongoClient)} is already set. Specify only one connection configuration.");
         }
 
-        if (setting != nameof(MongoClientSettings) && _mongoClientSettings != null)
+        if (setting != nameof(MongoClientSettings) && MongoClientSettings != null)
         {
             throw new InvalidOperationException(
                 $"Can not set {setting} as {nameof(MongoClientSettings)} is already set. Specify only one connection configuration.");
@@ -199,26 +196,26 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         /// <inheritdoc/>
         public override int GetServiceProviderHashCode()
         {
-            _serviceProviderHash ??= HashCode.Combine(Extension._connectionString, Extension._databaseName);
+            _serviceProviderHash ??= HashCode.Combine(Extension.ConnectionString, Extension.DatabaseName);
             return _serviceProviderHash.Value;
         }
 
         /// <inheritdoc/>
         public override bool ShouldUseSameServiceProvider(DbContextOptionsExtensionInfo other)
             => other is ExtensionInfo otherInfo
-               && Extension._connectionString == otherInfo.Extension._connectionString
-               && Extension._mongoClient == otherInfo.Extension._mongoClient
-               && (Extension._mongoClientSettings == otherInfo.Extension._mongoClientSettings ||
-                   Extension._mongoClientSettings != null && Extension._mongoClientSettings.Equals(otherInfo.Extension._mongoClientSettings))
-               && Extension._databaseName == otherInfo.Extension._databaseName;
+               && Extension.ConnectionString == otherInfo.Extension.ConnectionString
+               && Extension.MongoClient == otherInfo.Extension.MongoClient
+               && (Extension.MongoClientSettings == otherInfo.Extension.MongoClientSettings ||
+                   Extension.MongoClientSettings != null && Extension.MongoClientSettings.Equals(otherInfo.Extension.MongoClientSettings))
+               && Extension.DatabaseName == otherInfo.Extension.DatabaseName;
 
         /// <inheritdoc/>
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
         {
-            AddDebugInfo(debugInfo, nameof(ConnectionString), Extension._connectionString);
-            AddDebugInfo(debugInfo, nameof(MongoClient), Extension._mongoClient);
-            AddDebugInfo(debugInfo, nameof(MongoClientSettings), Extension._mongoClientSettings);
-            AddDebugInfo(debugInfo, nameof(DatabaseName), Extension._databaseName);
+            AddDebugInfo(debugInfo, nameof(ConnectionString), Extension.ConnectionString);
+            AddDebugInfo(debugInfo, nameof(MongoClient), Extension.MongoClient);
+            AddDebugInfo(debugInfo, nameof(MongoClientSettings), Extension.MongoClientSettings);
+            AddDebugInfo(debugInfo, nameof(DatabaseName), Extension.DatabaseName);
         }
 
         /// <inheritdoc/>
@@ -240,17 +237,17 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
                 builder.Append("ConnectionString=").Append(Extension._loggableConnectionString).Append(' ');
             }
 
-            if (Extension._mongoClient != null)
+            if (Extension.MongoClient != null)
             {
-                builder.Append("MongoClient=").Append(Extension._mongoClient).Append(' ');
+                builder.Append("MongoClient=").Append(Extension.MongoClient).Append(' ');
             }
 
-            if (Extension._mongoClientSettings != null)
+            if (Extension.MongoClientSettings != null)
             {
-                builder.Append("MongoClientSettings=").Append(Extension._mongoClientSettings).Append(' ');
+                builder.Append("MongoClientSettings=").Append(Extension.MongoClientSettings).Append(' ');
             }
 
-            builder.Append("DatabaseName=").Append(Extension._databaseName).Append(' ');
+            builder.Append("DatabaseName=").Append(Extension.DatabaseName).Append(' ');
             return builder.ToString();
         }
     }
