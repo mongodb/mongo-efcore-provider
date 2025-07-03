@@ -14,7 +14,6 @@
  */
 
 using System;
-using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -123,43 +122,4 @@ public static class MongoEntityTypeExtensions
     public static ConfigurationSource? GetContainingElementNameConfigurationSource(this IConventionEntityType entityType)
         => entityType.FindAnnotation(MongoAnnotationNames.ElementName)
             ?.GetConfigurationSource();
-
-
-    /// <summary>
-    /// Returns the encryption data key id used as the default for encrypted properties on the entity.
-    /// </summary>
-    /// <param name="entityType">The entity type to get the default encryption data key id for.</param>
-    /// <returns>The encryption data key id used as the default for encrypted properties in the entity, or <see langword="null"/> if not set.</returns>
-    public static Guid? GetEncryptionDataKeyId(this IReadOnlyEntityType entityType)
-        => entityType[MongoAnnotationNames.EncryptionDataKeyId] as Guid?;
-
-    /// <summary>
-    /// Sets the encryption data key id to be used as the default for encrypted properties on the entity.
-    /// </summary>
-    /// <param name="entityType">The entity type to set the default encryption data key id on.</param>
-    /// <param name="dataKeyId">The default encryption data key id to set, or <see langword="null" /> to unset the value.</param>
-    public static void SetEncryptionDataKeyId(this IMutableEntityType entityType, Guid? dataKeyId)
-        => entityType.SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId));
-
-    /// <summary>
-    /// Sets the encryption data key id used as the default for encrypted properties on the entity.
-    /// </summary>
-    /// <param name="entityType">The entity type to set the default encryption data key id for.</param>
-    /// <param name="dataKeyId">The encryption data key id to set.</param>
-    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
-    /// <returns>The default <see cref="Guid"/> encryption data key id for the entity if set, otherwise <see langref="null"/> if one has not been set.</returns>
-    public static Guid? SetEncryptionDataKeyId(
-        this IConventionEntityType entityType,
-        Guid? dataKeyId,
-        bool fromDataAnnotation = false)
-        => (Guid?)entityType
-            .SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId), fromDataAnnotation)?.Value;
-
-    /// <summary>
-    /// Returns the <see cref="ConfigurationSource" /> for the encryption data key id used as the default for encrypted properties on the entity.
-    /// </summary>
-    /// <param name="entityType">The entity type to find configuration source for.</param>
-    /// <returns>The <see cref="ConfigurationSource" /> for the encryption data key id used as the default for encrypted properties on the entity.</returns>
-    public static ConfigurationSource? GetEncryptionDataKeyIdConfigurationSource(this IConventionEntityType entityType)
-        => entityType.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId)?.GetConfigurationSource();
 }

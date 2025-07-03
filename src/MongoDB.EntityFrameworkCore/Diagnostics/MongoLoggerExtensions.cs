@@ -144,7 +144,7 @@ internal static class MongoLoggerExtensions
                     logger.Options,
                     MongoEventId.RecommendedMinMaxRangeMissing,
                     LogLevel.Warning,
-                    "MongoEventId.NoRecommendedMinMaxRangeDefined",
+                    "MongoEventId.RecommendedMinMaxRangeMissing",
                     level => LoggerMessage.Define<string, string>(
                         level,
                         MongoEventId.RecommendedMinMaxRangeMissing,

@@ -213,13 +213,13 @@ public class MongoModelValidator : ModelValidator
     /// <param name="model">The <see cref="IModel"/> to validate Queryable Encryption correctness.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="InvalidOperationException">Thrown when the model uses Queryable Encryption but the encryption configuration is not valid.</exception>
-    private static void ValidateQueryableEncryption(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    private static void ValidateQueryableEncryption(
+        IModel model,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
-        var modelHasEncryptionKeyId = model.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId) != null;
-
         foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            ValidateEntityQueryableEncryption(entityType, modelHasEncryptionKeyId, logger);
+            ValidateEntityQueryableEncryption(entityType, false, logger);
         }
     }
 
@@ -227,46 +227,65 @@ public class MongoModelValidator : ModelValidator
     /// Validate that MongoDB Queryable Encryption is correctly configured for an entity if being used.
     /// </summary>
     /// <param name="entityType">The <see cref="IEntityType"/> being validated.</param>
-    /// <param name="modelHasEncryptionDataKeyId">Whether the model has an encryption data key id specified or not.</param>
+    /// <param name="insideCollectionNavigation">Whether this entity is within a collection navigation in its hierarchy.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="InvalidOperationException">Thrown when the entity uses Queryable Encryption but the encryption configuration is not valid.</exception>
-    private static void ValidateEntityQueryableEncryption(IEntityType entityType, bool modelHasEncryptionDataKeyId,
+    private static void ValidateEntityQueryableEncryption(
+        IEntityType entityType,
+        bool insideCollectionNavigation,
         IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
-        var entityHasEncryptionDataKeyId = entityType.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId) != null;
-
         foreach (var property in entityType.GetProperties())
         {
-            if (property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionType) != null)
+            var queryableEncryptionType = property.GetQueryableEncryptionType();
+            if (queryableEncryptionType == null) continue;
+
+            if (insideCollectionNavigation)
             {
-                ValidatePropertyQueryableEncryption(property, entityHasEncryptionDataKeyId || modelHasEncryptionDataKeyId, logger);
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) +
+                    " is to be stored inside an array as it is an owned entity in a collection navigation." +
+                    " Queryable Encryption does not support encryption of elements within a BSON array.");
+            }
+
+            ValidatePropertyQueryableEncryptionType(property, queryableEncryptionType.Value, logger);
+        }
+
+        foreach (var navigation in entityType.GetNavigations())
+        {
+            if (navigation.IsEmbedded())
+            {
+                ValidateEntityQueryableEncryption(navigation.TargetEntityType,
+                    insideCollectionNavigation || navigation.IsCollection, logger);
             }
         }
     }
 
     /// <summary>
-    /// Validate that MongoDB Queryable Encryption is correctly configured for a property if being used.
+    /// Validate that MongoDB Queryable Encryption type is correctly configured for a property if being used.
     /// </summary>
     /// <param name="property">The <see cref="IProperty"/> being validated.</param>
-    /// <param name="hasParentEncryptionDataKeyId">Whether the parent entity or model has an encryption data key id available, or not.</param>
+    /// <param name="queryableEncryptionType">The <see cref="QueryableEncryptionType"/> configuration of the property.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="InvalidOperationException">Thrown when the property uses Queryable Encryption but the encryption configuration is not valid.</exception>
-    private static void ValidatePropertyQueryableEncryption(IProperty property, bool hasParentEncryptionDataKeyId,
+    private static void ValidatePropertyQueryableEncryptionType(
+        IProperty property,
+        QueryableEncryptionType queryableEncryptionType,
         IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
-        if (!hasParentEncryptionDataKeyId && property.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId) == null)
+        var storageType = BsonTypeHelper.GetBsonType(property);
+        if (storageType == BsonType.Array)
         {
-            throw new InvalidOperationException(PropertyOnEntity(property) +
-                                                " can not be encrypted without an encryption data key id.");
+            throw new InvalidOperationException(
+                PropertyOnEntity(property)
+                + " is to be stored as an array."
+                + " Queryable Encryption does not support encryption of elements within a BSON array.");
         }
 
-        var queryType = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionType);
-        if (queryType == null || queryType.Value == null) return;
-
-        switch ((QueryableEncryptionType)queryType.Value)
+        switch (queryableEncryptionType)
         {
             case QueryableEncryptionType.Equality:
-                ValidatePropertyForEqualityQueryableEncryption(property, logger);
+                ValidatePropertyForEqualityQueryableEncryption(property);
                 break;
 
             case QueryableEncryptionType.Range:
@@ -278,7 +297,7 @@ public class MongoModelValidator : ModelValidator
 
             default:
                 throw new InvalidOperationException(
-                    PropertyOnEntity(property) + $" has unsupported query type '{queryType.Value}'.");
+                    PropertyOnEntity(property) + $" has unsupported query type '{queryableEncryptionType}'.");
         }
     }
 
@@ -286,10 +305,8 @@ public class MongoModelValidator : ModelValidator
     /// Validate that MongoDB Queryable Encryption is correctly configured for a property being used for equality queries.
     /// </summary>
     /// <param name="property">The <see cref="IProperty"/> being validated.</param>
-    /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="InvalidOperationException">Thrown when the equality-query property uses Queryable Encryption but the configuration is not valid.</exception>
-    private static void ValidatePropertyForEqualityQueryableEncryption(IProperty property,
-        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    private static void ValidatePropertyForEqualityQueryableEncryption(IProperty property)
     {
         var bsonType = BsonTypeHelper.GetBsonType(property);
         switch (bsonType)
@@ -318,7 +335,8 @@ public class MongoModelValidator : ModelValidator
     /// <param name="property">The <see cref="IProperty"/> being validated.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="InvalidOperationException">Thrown when the range-query property uses Queryable Encryption but the configuration is not valid.</exception>
-    private static void ValidatePropertyForRangeQueryableEncryption(IProperty property,
+    private static void ValidatePropertyForRangeQueryableEncryption(
+        IProperty property,
         IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
         var bsonType = BsonTypeHelper.GetBsonType(property);
@@ -353,7 +371,8 @@ public class MongoModelValidator : ModelValidator
                 }
 
             default:
-                throw CannotBeEncryptedForRangeException("it is not BsonType.Int32, BsonType.Int64 or BsonType.DateTime.");
+                throw CannotBeEncryptedForRangeException(
+                    "only Int32, Int64, DateTime, Decimal128 and Double BsonTypes are supported.");
         }
 
         Exception CannotBeEncryptedForRangeException(string reason)

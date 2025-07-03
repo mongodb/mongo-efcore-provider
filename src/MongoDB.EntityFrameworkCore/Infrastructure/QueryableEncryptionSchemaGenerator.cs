@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -25,72 +26,87 @@ using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
-using BsonSerializationArgs = MongoDB.Bson.Serialization.BsonSerializationArgs;
-using BsonSerializationContext = MongoDB.Bson.Serialization.BsonSerializationContext;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
-internal static class QueryableEncryptionSchemaGenerator
+/// <summary>
+/// Generates MongoDB Queryable Encryption schemas for the EF Core models.
+/// </summary>
+public static class QueryableEncryptionSchemaGenerator
 {
+    /// <summary>
+    /// Generate a dictionary of Queryable Encryption schemas for a given EF Core model.
+    /// </summary>
+    /// <param name="model">The EF Core <see cref="IModel"/>.</param>
+    /// <returns>A <see cref="Dictionary{TKey,TValue}"/> containing Queryable Encryption schemas keyed by collection name.</returns>
+    /// <exception cref="ArgumentNullException">If the <paramref name="model"/> is null.</exception>
     public static Dictionary<string, BsonDocument> GenerateSchemas(IReadOnlyModel model)
     {
-        var modelEncryptionDataKeyId = GetEncryptionDataKeyId(model.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId));
+        ArgumentNullException.ThrowIfNull(model);
 
         var schemas = new Dictionary<string, BsonDocument>();
 
-        foreach (var entityType in model.GetEntityTypes())
+        foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            var fields = GenerateSchemaFields(entityType, modelEncryptionDataKeyId);
-            if (fields.Count > 0)
+            var schema = GenerateSchema(entityType);
+            if (schema["fields"].AsBsonArray.Count > 0)
             {
-                schemas.Add(entityType.GetCollectionName(), new BsonDocument { { "fields", fields } });
+                schemas.Add(entityType.GetCollectionName(), schema);
             }
         }
 
         return schemas;
     }
 
-    private static BsonArray GenerateSchemaFields(IReadOnlyEntityType entityType, Guid? modelEncryptionDataKeyId)
+    /// <summary>
+    /// Generate an individual Queryable Encryption schema for the given entity type.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> to generate the schema for.</param>
+    /// <returns>The <see cref="BsonDocument"/> containing the Queryable Encryption schema.</returns>
+    /// <exception cref="ArgumentNullException">If the <paramref name="entityType"/> is null.</exception>
+    public static BsonDocument GenerateSchema(IReadOnlyEntityType entityType)
     {
-        var entityEncryptionDataKeyId = GetEncryptionDataKeyId(entityType.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId));
+        ArgumentNullException.ThrowIfNull(entityType);
 
         var fields = new BsonArray();
+        GenerateSchemaFields(entityType, fields, "");
+        return new BsonDocument { { "fields", fields } };
+    }
 
+    private static void GenerateSchemaFields(IReadOnlyEntityType entityType, BsonArray fields, string prefix)
+    {
         foreach (var property in entityType.GetProperties())
         {
-            var encryptionQueryType = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionType);
+            var encryptionQueryType = property.GetQueryableEncryptionType();
             if (encryptionQueryType != null)
             {
-                var fieldSchema = GenerateSchemaField(property, entityEncryptionDataKeyId ?? modelEncryptionDataKeyId);
+                var fieldSchema = GenerateSchemaField(property, prefix);
                 fields.Add(BsonDocument.Create(fieldSchema));
             }
         }
 
-        return fields;
+        foreach (var targetEntityType in entityType.GetNavigations().Select(n => n.TargetEntityType))
+        {
+            if (targetEntityType.IsOwned())
+            {
+                var collectionName = targetEntityType.GetContainingElementName();
+                GenerateSchemaFields(targetEntityType, fields, prefix + collectionName + ".");
+            }
+        }
     }
 
-    private static BsonDocument GenerateSchemaField(IReadOnlyProperty property, Guid? encryptionDataKeyId)
+    private static BsonDocument GenerateSchemaField(IReadOnlyProperty property, string prefix)
     {
-        var propertyEncryptionKeyId =
-            GetEncryptionDataKeyId(property.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId)) ?? encryptionDataKeyId;
-        if (propertyEncryptionKeyId is null)
-        {
-            throw new InvalidOperationException(
-                $"Property '{property.Name}' has no encryption data key id available directly, on the entity or at model level.");
-        }
-
-        var bsonType = BsonTypeHelper.BsonTypeToString(BsonTypeHelper.GetBsonType(property));
-
+        var dataKeyId = GetEncryptionDataKeyId(property.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId));
         var fieldSchema = new BsonDocument
         {
-            { "path", property.GetElementName() },
-            { "keyId", new BsonBinaryData(propertyEncryptionKeyId.Value, GuidRepresentation.Standard) },
-            { "bsonType", bsonType }
+            { "path", prefix + property.GetElementName() },
+            { "keyId", dataKeyId != null ? new BsonBinaryData(dataKeyId.Value, GuidRepresentation.Standard) : BsonNull.Value },
+            { "bsonType", BsonTypeHelper.BsonTypeToString(BsonTypeHelper.GetBsonType(property)) }
         };
 
-        var queryTypeAnnotation = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionType);
-
-        switch (queryTypeAnnotation?.Value)
+        var queryTypeAnnotation = property.GetQueryableEncryptionType();
+        switch (queryTypeAnnotation)
         {
             case null:
             case QueryableEncryptionType.NotQueryable:
@@ -141,16 +157,13 @@ internal static class QueryableEncryptionSchemaGenerator
         return rangeQuerySchema;
     }
 
-    private static Guid? GetEncryptionDataKeyId(IAnnotation? annotation)
-    {
-        if (annotation?.Value is null) return null;
-
-        return annotation.Value switch
+    private static Guid? GetEncryptionDataKeyId(IAnnotation? annotation) =>
+        annotation?.Value switch
         {
+            null => null,
             Guid guid => guid,
             string str => Guid.Parse(str),
             _ => throw new InvalidOperationException(
-                $"Unsupported EncryptionKeyId type '{annotation.Value.GetType().ShortDisplayName()}'.")
+                $"Unsupported EncryptionDataKeyId type '{annotation.Value.GetType().ShortDisplayName()}'.")
         };
-    }
 }

@@ -252,23 +252,23 @@ public static class MongoPropertyExtensions
     /// Sets the <see cref="QueryableEncryptionType"/> indicating the type of Queryable Encryption for this property when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IMutableProperty"/> to set the Queryable Encryption type for.</param>
-    /// <param name="queryType">The <see cref="QueryableEncryptionType"/> specifying the type of Queryable Encryption to use, or <see langword="null" /> to unset the value.</param>
+    /// <param name="queryableEncryptionType">The <see cref="QueryableEncryptionType"/> specifying the type of Queryable Encryption to use, or <see langword="null" /> to unset the value.</param>
     public static void SetQueryableEncryptionType(
         this IMutableProperty property,
-        QueryableEncryptionType? queryType)
-        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryType));
+        QueryableEncryptionType? queryableEncryptionType)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType));
 
     /// <summary>
     /// Sets the <see cref="QueryableEncryptionType"/> indicating the type of Queryable Encryption for this property when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the Queryable Encryption type for.</param>
-    /// <param name="queryType">The <see cref="QueryableEncryptionType"/> specifying the type of Queryable Encryption to use, or <see langword="null" /> to unset the value.</param>
+    /// <param name="queryableEncryptionType">The <see cref="QueryableEncryptionType"/> specifying the type of Queryable Encryption to use, or <see langword="null" /> to unset the value.</param>
     /// <returns>The <see cref="QueryableEncryptionType"/>, or <see langword="null"/> if not set.</returns>
     public static QueryableEncryptionType? SetQueryableEncryptionType(
         this IConventionProperty property,
-        QueryableEncryptionType? queryType)
+        QueryableEncryptionType? queryableEncryptionType)
         => (QueryableEncryptionType?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryType))?.Value;
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType))?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the Queryable Encryption type for the property when targeting MongoDB.

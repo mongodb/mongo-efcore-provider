@@ -15,6 +15,7 @@
 
 using System.Security.Cryptography;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
 
@@ -103,7 +104,8 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         => new()
         {
             {
-                "fields", new BsonArray
+                "fields",
+                new BsonArray
                 {
                     new BsonDocument
                     {
@@ -124,12 +126,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
                         { "keyId", AsBsonBinary(CreateDataKey()) },
                         { "path", "DateOfBirth" },
                         { "bsonType", "date" },
-                        {
-                            "queries", new BsonDocument
-                            {
-                                { "queryType", "range" },
-                            }
-                        }
+                        { "queries", new BsonDocument { { "queryType", "range" }, } }
                     }
                 }
             }
@@ -164,7 +161,9 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
             BillingNumber = 12345,
             BloodPressureReadings = [new BloodPressureReading { Diastolic = 120, Systolic = 80 }],
             WeightMeasurements =
-                [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }]
+                [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }],
+            LongTermCarePlan = new LongTermCarePlan { Instructions = "Take it easy and enjoy life." },
+            Tags = ["tired", "happy"]
         },
         new()
         {
@@ -175,7 +174,9 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
             BloodType = "O-",
             Sequence = 20,
             BillingNumber = -123,
-            BloodPressureReadings = []
+            BloodPressureReadings = [],
+            LongTermCarePlan = new LongTermCarePlan { Instructions = "Live long and prosper." },
+            Tags = ["new"]
         }
     ];
 
@@ -184,21 +185,29 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         public ObjectId Id { get; set; }
 
         public string Name { get; set; }
-        public string SSN { get; set; }
-        public DateTime DateOfBirth { get; set; }
-        public Decimal MonthlySubscription { get; set; }
 
-        public string BloodType { get; set; }
+        [BsonElement("ssn")]
+        public string SSN { get; set; }
+
+        [BsonElement("dateOfBirth")]
+        public DateTime DateOfBirth { get; set; }
+
+        [BsonElement("doctor")]
         public string? Doctor { get; set; }
+
+        public Decimal MonthlySubscription { get; set; }
+        public string BloodType { get; set; }
         public decimal? Balance { get; set; }
         public string? InsuranceCompany { get; set; }
         public string? PolicyReference { get; set; }
         public int Sequence { get; set; }
         public long BillingNumber { get; set; }
+        public string[] Tags { get; set; }
 
         public List<BloodPressureReading> BloodPressureReadings { get; set; }
         public List<WeightMeasurement> WeightMeasurements { get; set; }
 
+        [BsonElement("longTermCarePlan")]
         public LongTermCarePlan? LongTermCarePlan { get; set; }
     }
 
@@ -217,6 +226,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
 
     public class LongTermCarePlan
     {
+        [BsonElement("instructions")]
         public string Instructions { get; set; }
     }
 }
