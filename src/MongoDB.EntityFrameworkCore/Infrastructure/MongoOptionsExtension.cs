@@ -20,7 +20,6 @@ using System.Text;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
-using MongoDB.EntityFrameworkCore;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
 namespace Microsoft.EntityFrameworkCore;
@@ -30,9 +29,6 @@ namespace Microsoft.EntityFrameworkCore;
 /// </summary>
 public class MongoOptionsExtension : IDbContextOptionsExtension
 {
-    private const string MultipleConnectionConfigSpecifiedException =
-        "Both ConnectionString and MongoClient were specified. Specify only one set of connection details.";
-
     private string? _loggableConnectionString;
     private DbContextOptionsExtensionInfo? _info;
 
@@ -51,6 +47,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         ConnectionString = copyFrom.ConnectionString;
         DatabaseName = copyFrom.DatabaseName;
         MongoClient = copyFrom.MongoClient;
+        MongoClientSettings = copyFrom.MongoClientSettings;
         _loggableConnectionString = SanitizeConnectionStringForLogging(ConnectionString);
     }
 
@@ -72,6 +69,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     public virtual MongoOptionsExtension WithConnectionString(string connectionString)
     {
         ArgumentNullException.ThrowIfNull(connectionString);
+        EnsureConnectionNotAlreadyConfigured(nameof(ConnectionString));
 
         var clone = Clone();
         clone.ConnectionString = connectionString;
@@ -91,7 +89,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
     public virtual MongoOptionsExtension WithDatabaseName(string databaseName)
     {
-        databaseName.ThrowArgumentExceptionIfNullOrEmpty();
+        ArgumentException.ThrowIfNullOrEmpty(databaseName);
 
         var clone = Clone();
         clone.DatabaseName = databaseName;
@@ -105,16 +103,38 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     public IMongoClient? MongoClient { get; private set; }
 
     /// <summary>
-    /// Specify a <see cref="IMongoClient"/> to use when communicating with the MongoDB server.
+    /// Specify a <see cref="IMongoClient"/> to use for connecting to the MongoDB server.
     /// </summary>
     /// <param name="mongoClient">The <see cref="IMongoClient"/> to use when communicating with the MongoDB server.</param>
     /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
     public virtual MongoOptionsExtension WithMongoClient(IMongoClient mongoClient)
     {
         ArgumentNullException.ThrowIfNull(mongoClient);
+        EnsureConnectionNotAlreadyConfigured(nameof(MongoClient));
 
         var clone = Clone();
         clone.MongoClient = mongoClient;
+        return clone;
+    }
+
+    /// <summary>
+    /// Obtains the current <see cref="MongoClientSettings"/> if one is specified, otherwise null.
+    /// </summary>
+    public MongoClientSettings? MongoClientSettings { get; private set; }
+
+    /// <summary>
+    /// Specify a <see cref="MongoClientSettings"/> to use for connecting to the MongoDB server,
+    /// </summary>
+    /// <param name="mongoClientSettings"></param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    public virtual MongoOptionsExtension WithMongoClientSettings(MongoClientSettings mongoClientSettings)
+    {
+        ArgumentNullException.ThrowIfNull(mongoClientSettings);
+        EnsureConnectionNotAlreadyConfigured(nameof(MongoClientSettings));
+
+        var clone = Clone();
+        clone.MongoClientSettings = mongoClientSettings;
         return clone;
     }
 
@@ -125,16 +145,32 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     protected virtual MongoOptionsExtension Clone() => new(this);
 
     /// <inheritdoc />
-    public virtual void ApplyServices(IServiceCollection services) => services.AddEntityFrameworkMongoDB();
+    public virtual void ApplyServices(IServiceCollection services)
+        => services.AddEntityFrameworkMongoDB();
 
     /// <inheritdoc />
     public virtual void Validate(IDbContextOptions options)
     {
-        var dbOptions = options.FindExtension<MongoOptionsExtension>();
+    }
 
-        if (dbOptions is { ConnectionString: not null, MongoClient: not null })
+    private void EnsureConnectionNotAlreadyConfigured(string setting)
+    {
+        if (setting != nameof(ConnectionString) && ConnectionString != null)
         {
-            throw new InvalidOperationException(MultipleConnectionConfigSpecifiedException);
+            throw new InvalidOperationException(
+                $"Can not set {setting} as {nameof(ConnectionString)} is already set. Specify only one connection configuration.");
+        }
+
+        if (setting != nameof(MongoClient) && MongoClient != null)
+        {
+            throw new InvalidOperationException(
+                $"Can not set {setting} as {nameof(MongoClient)} is already set. Specify only one connection configuration.");
+        }
+
+        if (setting != nameof(MongoClientSettings) && MongoClientSettings != null)
+        {
+            throw new InvalidOperationException(
+                $"Can not set {setting} as {nameof(MongoClientSettings)} is already set. Specify only one connection configuration.");
         }
     }
 
@@ -169,13 +205,16 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
             => other is ExtensionInfo otherInfo
                && Extension.ConnectionString == otherInfo.Extension.ConnectionString
                && Extension.MongoClient == otherInfo.Extension.MongoClient
+               && (Extension.MongoClientSettings == otherInfo.Extension.MongoClientSettings ||
+                   Extension.MongoClientSettings != null && Extension.MongoClientSettings.Equals(otherInfo.Extension.MongoClientSettings))
                && Extension.DatabaseName == otherInfo.Extension.DatabaseName;
 
         /// <inheritdoc/>
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
         {
             AddDebugInfo(debugInfo, nameof(ConnectionString), Extension.ConnectionString);
-            AddDebugInfo(debugInfo, nameof(MongoClientSettings), Extension.MongoClient);
+            AddDebugInfo(debugInfo, nameof(MongoClient), Extension.MongoClient);
+            AddDebugInfo(debugInfo, nameof(MongoClientSettings), Extension.MongoClientSettings);
             AddDebugInfo(debugInfo, nameof(DatabaseName), Extension.DatabaseName);
         }
 
@@ -201,6 +240,11 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
             if (Extension.MongoClient != null)
             {
                 builder.Append("MongoClient=").Append(Extension.MongoClient).Append(' ');
+            }
+
+            if (Extension.MongoClientSettings != null)
+            {
+                builder.Append("MongoClientSettings=").Append(Extension.MongoClientSettings).Append(' ');
             }
 
             builder.Append("DatabaseName=").Append(Extension.DatabaseName).Append(' ');

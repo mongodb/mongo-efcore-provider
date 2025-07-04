@@ -33,8 +33,11 @@ public class TemporaryDatabaseFixture
     public TemporaryDatabaseFixture()
     {
         Client = TestServer.GetClient();
-        MongoDatabase = Client.GetDatabase($"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref DbCount)}");
+        MongoDatabase = Client.GetDatabase(GetUniqueDatabaseName);
     }
+
+    public static string GetUniqueDatabaseName
+        => $"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref DbCount)}";
 
     public IMongoDatabase MongoDatabase { get; }
 
