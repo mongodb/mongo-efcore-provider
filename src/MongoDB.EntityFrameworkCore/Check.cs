@@ -34,4 +34,10 @@ internal static class Check
             : Enum.IsDefined(typeof(T), argument)
                 ? argument
                 : throw new ArgumentOutOfRangeException(parameterName);
+
+    public static int? InRange(int? argument, int min, int max,
+        [CallerArgumentExpression(nameof(argument))] string? parameterName = null)
+        => argument >= min && argument <= max
+            ? argument
+            : throw new ArgumentOutOfRangeException(parameterName, argument, "Value must be between {min} and {max} inclusive.");
 }

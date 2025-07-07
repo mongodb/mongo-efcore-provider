@@ -256,7 +256,8 @@ public static class MongoPropertyExtensions
     public static void SetQueryableEncryptionType(
         this IMutableProperty property,
         QueryableEncryptionType? queryableEncryptionType)
-        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType));
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType,
+            Check.IsDefinedOrNull(queryableEncryptionType));
 
     /// <summary>
     /// Sets the <see cref="QueryableEncryptionType"/> indicating the type of Queryable Encryption for this property when targeting MongoDB.
@@ -268,7 +269,8 @@ public static class MongoPropertyExtensions
         this IConventionProperty property,
         QueryableEncryptionType? queryableEncryptionType)
         => (QueryableEncryptionType?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType))?.Value;
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType))
+            ?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the Queryable Encryption type for the property when targeting MongoDB.
@@ -361,6 +363,172 @@ public static class MongoPropertyExtensions
     /// </returns>
     public static ConfigurationSource? GetQueryableEncryptionRangeMinConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin)?.GetConfigurationSource();
+
+
+    /// <summary>
+    /// Returns the specified sparsity value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the sparsity value for.</param>
+    /// <returns>The specified sparsity value, or <see langword="null"/> if not set.</returns>
+    public static int? GetQueryableEncryptionSparsity(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.QueryableEncryptionSparsity] as int?;
+
+    /// <summary>
+    /// Sets the sparsity of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the sparsity value for.</param>
+    /// <param name="sparsity">The sparsity value for the Queryable Encryption range property between 1 and 4,
+    /// or <see langword="null" /> to unset the value.</param>
+    public static void SetQueryableEncryptionSparsity(
+        this IMutableProperty property,
+        int? sparsity)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionSparsity, Check.InRange(sparsity, 1, 4));
+
+    /// <summary>
+    /// Sets the sparsity of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the sparsity value for.</param>
+    /// <param name="sparsity">The sparsity value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <returns>The sparsity value for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
+    public static int? SetQueryableEncryptionSparsity(
+        this IConventionProperty property,
+        int? sparsity)
+        => (int?)property
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionSparsity, sparsity)?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the sparsity of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the sparsity for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the sparsity that was specified for this property.
+    /// </returns>
+    public static ConfigurationSource? GetQueryableEncryptionSparsityConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionSparsity)?.GetConfigurationSource();
+
+
+    /// <summary>
+    /// Returns the specified precision value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the precision value for.</param>
+    /// <returns>The specified precision value, or <see langword="null"/> if not set.</returns>
+    public static int? GetQueryableEncryptionPrecision(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.QueryableEncryptionPrecision] as int?;
+
+    /// <summary>
+    /// Sets the precision of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the precision value for.</param>
+    /// <param name="precision">The precision value for the Queryable Encryption range property or <see langword="null" /> to unset the value.</param>
+    public static void SetQueryableEncryptionPrecision(
+        this IMutableProperty property,
+        int? precision)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionPrecision, precision);
+
+    /// <summary>
+    /// Sets the precision of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the precision value for.</param>
+    /// <param name="precision">The precision value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <returns>The precision value for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
+    public static int? SetQueryableEncryptionPrecision(
+        this IConventionProperty property,
+        int? precision)
+        => (int?)property
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionPrecision, precision)?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the precision value of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the precision value for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the precision value that was specified for this property.
+    /// </returns>
+    public static ConfigurationSource? GetQueryableEncryptionPrecisionConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionPrecision)?.GetConfigurationSource();
+
+
+    /// <summary>
+    /// Returns the specified trim factor of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the trim factor for.</param>
+    /// <returns>The specified trim factor, or <see langword="null"/> if not set.</returns>
+    public static int? GetQueryableEncryptionTrimFactor(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.QueryableEncryptionTrimFactor] as int?;
+
+    /// <summary>
+    /// Sets the trim factor of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the trim factor for.</param>
+    /// <param name="trimFactor">The trim factor for the Queryable Encryption range property or <see langword="null" /> to unset the value.</param>
+    public static void SetQueryableEncryptionTrimFactor(
+        this IMutableProperty property,
+        int? trimFactor)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionTrimFactor, trimFactor);
+
+    /// <summary>
+    /// Sets the trim factor of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the trim factor for.</param>
+    /// <param name="trimFactor">The trim factor for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <returns>The trim factor for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
+    public static int? SetQueryableEncryptionTrimFactor(
+        this IConventionProperty property,
+        int? trimFactor)
+        => (int?)property
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionTrimFactor, trimFactor)?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the trim factor of a Queryable Encryption range property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the trim factor for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the trim factor that was specified for this property.
+    /// </returns>
+    public static ConfigurationSource? GetQueryableEncryptionTrimFactorConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionTrimFactor)?.GetConfigurationSource();
+
+
+    /// <summary>
+    /// Returns the specified contention of a Queryable Encryption property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the contention for.</param>
+    /// <returns>The specified contention, or <see langword="null"/> if not set.</returns>
+    public static int? GetQueryableEncryptionContention(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.QueryableEncryptionContention] as int?;
+
+    /// <summary>
+    /// Sets the contention of a Queryable Encryption property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the contention for.</param>
+    /// <param name="contention">The contention for the Queryable Encryption property or <see langword="null" /> to unset the value.</param>
+    public static void SetQueryableEncryptionContention(
+        this IMutableProperty property,
+        int? contention)
+        => property.SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionContention, contention);
+
+    /// <summary>
+    /// Sets the contention of a Queryable Encryption property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the contention for.</param>
+    /// <param name="contention">The contention for the Queryable Encryption property, or <see langword="null" /> to unset the value.</param>
+    /// <returns>The contention for the Queryable Encryption property, or <see langword="null"/> if not set.</returns>
+    public static int? SetQueryableEncryptionContention(
+        this IConventionProperty property,
+        int? contention)
+        => (int?)property
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionContention, contention)?.Value;
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the contention of a Queryable Encryption property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the contention for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the contention that was specified for this property.
+    /// </returns>
+    public static ConfigurationSource? GetQueryableEncryptionContentionConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionContention)?.GetConfigurationSource();
+
 
     private static string GetDefaultElementName(IReadOnlyProperty property) =>
         property switch

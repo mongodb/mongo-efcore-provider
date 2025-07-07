@@ -282,17 +282,22 @@ public class MongoModelValidator : ModelValidator
                 + " Queryable Encryption does not support encryption of elements within a BSON array.");
         }
 
+        if (property.IsNullable)
+        {
+            logger.EncryptedNullablePropertyEncountered(property);
+        }
+
         switch (queryableEncryptionType)
         {
+            case QueryableEncryptionType.NotQueryable:
+                break;
+
             case QueryableEncryptionType.Equality:
                 ValidatePropertyForEqualityQueryableEncryption(property);
                 break;
 
             case QueryableEncryptionType.Range:
                 ValidatePropertyForRangeQueryableEncryption(property, logger);
-                break;
-
-            case QueryableEncryptionType.NotQueryable:
                 break;
 
             default:
@@ -314,11 +319,9 @@ public class MongoModelValidator : ModelValidator
             case BsonType.Decimal128:
             case BsonType.Double:
             case BsonType.Document:
-            case BsonType.Array:
                 {
                     throw CannotBeEncryptedForEqualityException($"BsonType.{bsonType} is not a supported type.");
                 }
-
 
             default:
                 return;
@@ -346,10 +349,10 @@ public class MongoModelValidator : ModelValidator
             case BsonType.Double:
                 {
                     // Just test required values are present, leave validation to QE schema checker
-                    _ = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin) ??
+                    _ = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin)?.Value ??
                         throw CannotBeEncryptedForRangeException("no min value has been specified.");
 
-                    _ = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax) ??
+                    _ = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax)?.Value ??
                         throw CannotBeEncryptedForRangeException("no max value has been specified.");
 
                     break;
@@ -362,7 +365,7 @@ public class MongoModelValidator : ModelValidator
                     var min = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin);
                     var max = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax);
 
-                    if (min == null || max == null)
+                    if (min?.Value == null  || max?.Value == null)
                     {
                         logger.RecommendedMinMaxRangeMissing(property);
                     }
@@ -468,7 +471,7 @@ public class MongoModelValidator : ModelValidator
             var elementName = navigation.TargetEntityType.GetContainingElementName();
             if (elementName != null)
             {
-                if (elementName.StartsWith("$"))
+                if (elementName.StartsWith('$'))
                 {
                     throw new InvalidOperationException(PropertyOnEntity(navigation) + $" may not map to element '{
                         elementName}' as it starts with the reserved character '$'.");

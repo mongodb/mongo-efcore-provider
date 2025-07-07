@@ -76,4 +76,23 @@ public static class MongoAnnotationNames
     /// </summary>
     public const string QueryableEncryptionRangeMax = Prefix + nameof(QueryableEncryptionRangeMax);
 
+    /// <summary>
+    /// The key for the contention factor specified for a Queryable Encrypted property/field.
+    /// </summary>
+    public const string QueryableEncryptionContention = Prefix + nameof(QueryableEncryptionContention);
+
+    /// <summary>
+    /// The key for the trim factor specified for a Queryable Encrypted range property/field.
+    /// </summary>
+    public const string QueryableEncryptionTrimFactor = Prefix + nameof(QueryableEncryptionTrimFactor);
+
+    /// <summary>
+    /// The key for the precision specified for a Queryable Encrypted range property/field.
+    /// </summary>
+    public const string QueryableEncryptionPrecision = Prefix + nameof(QueryableEncryptionPrecision);
+
+    /// <summary>
+    /// The key for the sparsity specified for a Queryable Encrypted range property/field.
+    /// </summary>
+    public const string QueryableEncryptionSparsity = Prefix + nameof(QueryableEncryptionSparsity);
 }

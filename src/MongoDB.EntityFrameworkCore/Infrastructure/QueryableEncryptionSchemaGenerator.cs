@@ -69,11 +69,11 @@ public static class QueryableEncryptionSchemaGenerator
         ArgumentNullException.ThrowIfNull(entityType);
 
         var fields = new BsonArray();
-        GenerateSchemaFields(entityType, fields, "");
+        AddSchemaFields(entityType, fields, "");
         return new BsonDocument { { "fields", fields } };
     }
 
-    private static void GenerateSchemaFields(IReadOnlyEntityType entityType, BsonArray fields, string prefix)
+    private static void AddSchemaFields(IReadOnlyEntityType entityType, BsonArray fields, string prefix)
     {
         foreach (var property in entityType.GetProperties())
         {
@@ -85,19 +85,48 @@ public static class QueryableEncryptionSchemaGenerator
             }
         }
 
-        foreach (var targetEntityType in entityType.GetNavigations().Select(n => n.TargetEntityType))
+        foreach (var navigation in entityType.GetNavigations())
         {
+            var targetEntityType = navigation.TargetEntityType;
             if (targetEntityType.IsOwned())
             {
-                var collectionName = targetEntityType.GetContainingElementName();
-                GenerateSchemaFields(targetEntityType, fields, prefix + collectionName + ".");
+                var navigationName = targetEntityType.GetContainingElementName();
+
+                switch (navigation.ForeignKey.GetQueryableEncryptionType())
+                {
+                    case QueryableEncryptionType.Equality:
+                    case QueryableEncryptionType.Range:
+                        throw new NotSupportedException("Equality and Range queries are not supported for owned entities.");
+
+                    case QueryableEncryptionType.NotQueryable:
+                        var dataKeyId = navigation.ForeignKey.GetDataEncryptionKeyId();
+                        var fieldSchema = new BsonDocument
+                        {
+                            { "path", prefix + navigationName },
+                            {
+                                "keyId",
+                                dataKeyId != null
+                                    ? new BsonBinaryData(dataKeyId.Value, GuidRepresentation.Standard)
+                                    : BsonNull.Value
+                            },
+                            { "bsonType", "object" }
+                        };
+                        AddSchemaFields(targetEntityType, fields, prefix + navigationName + ".");
+
+                        fields.Add(BsonDocument.Create(fieldSchema));
+                        break;
+
+                    default:
+                        AddSchemaFields(targetEntityType, fields, prefix + navigationName + ".");
+                        break;
+                }
             }
         }
     }
 
     private static BsonDocument GenerateSchemaField(IReadOnlyProperty property, string prefix)
     {
-        var dataKeyId = GetEncryptionDataKeyId(property.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId));
+        var dataKeyId = property.GetEncryptionDataKeyId();
         var fieldSchema = new BsonDocument
         {
             { "path", prefix + property.GetElementName() },
@@ -108,9 +137,8 @@ public static class QueryableEncryptionSchemaGenerator
         var queryTypeAnnotation = property.GetQueryableEncryptionType();
         switch (queryTypeAnnotation)
         {
-            case null:
             case QueryableEncryptionType.NotQueryable:
-                break;
+                return fieldSchema;
 
             case QueryableEncryptionType.Equality:
                 fieldSchema["queries"] = new BsonDocument { { "queryType", "equality" } };
@@ -119,6 +147,11 @@ public static class QueryableEncryptionSchemaGenerator
             case QueryableEncryptionType.Range:
                 fieldSchema["queries"] = GenerateRangeQuerySchema(property);
                 break;
+        }
+
+        if (property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionContention)?.Value is { } contention)
+        {
+            fieldSchema["queries"]["contention"] = BsonValue.Create(contention);
         }
 
         return fieldSchema;
@@ -131,39 +164,41 @@ public static class QueryableEncryptionSchemaGenerator
         using var writer = new BsonDocumentWriter(rangeQuerySchema);
         var context = BsonSerializationContext.CreateRoot(writer);
         var args = new BsonSerializationArgs();
+        var propertyTypeSerializer = BsonSerializerFactory.CreateTypeSerializer(property);
 
         writer.WriteStartDocument();
         writer.WriteName("queryType");
         writer.WriteString("range");
 
-        IBsonSerializer? serializer = null;
-
         if (property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin)?.Value is { } rangeMin)
         {
             writer.WriteName("min");
-            serializer ??= BsonSerializerFactory.CreateTypeSerializer(property);
-            serializer.Serialize(context, args, rangeMin);
+            propertyTypeSerializer.Serialize(context, args, rangeMin);
         }
 
         if (property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax)?.Value is { } rangeMax)
         {
             writer.WriteName("max");
-            serializer ??= BsonSerializerFactory.CreateTypeSerializer(property);
-            serializer.Serialize(context, args, rangeMax);
+            propertyTypeSerializer.Serialize(context, args, rangeMax);
+        }
+
+        if (property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionTrimFactor)?.Value is int trimFactor)
+        {
+            writer.WriteInt32("trimFactor", trimFactor);
+        }
+
+        if (property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionSparsity)?.Value is int sparsity)
+        {
+            writer.WriteInt32("sparsity", sparsity);
+        }
+
+        if (property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionPrecision)?.Value is int precision)
+        {
+            writer.WriteInt32("precision", precision);
         }
 
         writer.WriteEndDocument();
 
         return rangeQuerySchema;
     }
-
-    private static Guid? GetEncryptionDataKeyId(IAnnotation? annotation) =>
-        annotation?.Value switch
-        {
-            null => null,
-            Guid guid => guid,
-            string str => Guid.Parse(str),
-            _ => throw new InvalidOperationException(
-                $"Unsupported EncryptionDataKeyId type '{annotation.Value.GetType().ShortDisplayName()}'.")
-        };
 }

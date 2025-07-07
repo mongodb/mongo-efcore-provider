@@ -27,9 +27,9 @@ public static class MongoNavigationExtensions
     /// <summary>
     /// Returns the encryption data key id used to encrypt the owned entity when targeting MongoDB.
     /// </summary>
-    /// <param name="navigation">The <see cref="IMutableForeignKey"/> to obtain the encryption data key id for.</param>
+    /// <param name="navigation">The <see cref="IForeignKey"/> to obtain the encryption data key id for.</param>
     /// <returns>The encryption data key id used to encrypt the property, or <see langword="null"/> if not set.</returns>
-    public static Guid? GetDataEncryptionKeyId(this IMutableForeignKey navigation)
+    public static Guid? GetDataEncryptionKeyId(this IReadOnlyForeignKey navigation)
         => (Guid?)navigation.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId)?.Value;
 
     /// <summary>
@@ -64,9 +64,9 @@ public static class MongoNavigationExtensions
     /// <summary>
     /// Returns the <see cref="QueryableEncryptionType"/> indicating the type of Queryable Encryption for this owned entity when targeting MongoDB.
     /// </summary>
-    /// <param name="navigation">The <see cref="IMutableForeignKey"/> to obtain the encryption data key id for.</param>
+    /// <param name="navigation">The <see cref="IForeignKey"/> to obtain the encryption data key id for.</param>
     /// <returns>The <see cref="QueryableEncryptionType"/>, or <see langword="null"/> if not set.</returns>
-    public static QueryableEncryptionType? GetQueryableEncryptionType(this IMutableForeignKey navigation)
+    public static QueryableEncryptionType? GetQueryableEncryptionType(this IReadOnlyForeignKey navigation)
         => (QueryableEncryptionType?)navigation.FindAnnotation(MongoAnnotationNames.QueryableEncryptionType)?.Value;
 
     /// <summary>

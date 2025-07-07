@@ -21,15 +21,15 @@ namespace MongoDB.EntityFrameworkCore;
 public enum QueryableEncryptionType
 {
     /// <summary>
-    /// The field is encrypted and can not be directly queried against.
+    /// The field is encrypted and can not be directly queried against. (IsEncrypted)
     /// </summary>
     NotQueryable,
     /// <summary>
-    /// The field is encrypted and can be queried for equality.
+    /// The field is encrypted and can be queried for equality. (IsEncryptedForEquality)
     /// </summary>
     Equality,
     /// <summary>
-    /// The field is encrypted and can be queried for range queries.
+    /// The field is encrypted and can be queried for range queries. (IsEncryptedForRange)
     /// </summary>
     Range,
 }

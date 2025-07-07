@@ -158,8 +158,11 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
             BloodType = "AB-",
             Doctor = "Emmett Grey",
             Sequence = 10,
+            Balance = 456.78m,
             BillingNumber = 12345,
             BloodPressureReadings = [new BloodPressureReading { Diastolic = 120, Systolic = 80 }],
+            ExternalRef = Guid.NewGuid(),
+            ExternalObjectId = ObjectId.GenerateNewId(),
             WeightMeasurements =
                 [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }],
             LongTermCarePlan = new LongTermCarePlan { Instructions = "Take it easy and enjoy life." },
@@ -173,8 +176,11 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
             Doctor = "John Smith",
             BloodType = "O-",
             Sequence = 20,
+            Balance = 789.00m,
             BillingNumber = -123,
             BloodPressureReadings = [],
+            ExternalRef = Guid.NewGuid(),
+            ExternalObjectId = ObjectId.GenerateNewId(),
             LongTermCarePlan = new LongTermCarePlan { Instructions = "Live long and prosper." },
             Tags = ["new"]
         }
@@ -195,14 +201,17 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         [BsonElement("doctor")]
         public string? Doctor { get; set; }
 
-        public Decimal MonthlySubscription { get; set; }
+        public decimal MonthlySubscription { get; set; }
         public string BloodType { get; set; }
-        public decimal? Balance { get; set; }
+        public decimal Balance { get; set; }
         public string? InsuranceCompany { get; set; }
         public string? PolicyReference { get; set; }
         public int Sequence { get; set; }
         public long BillingNumber { get; set; }
         public string[] Tags { get; set; }
+
+        public Guid ExternalRef { get; set; }
+        public ObjectId ExternalObjectId { get; set; }
 
         public List<BloodPressureReading> BloodPressureReadings { get; set; }
         public List<WeightMeasurement> WeightMeasurements { get; set; }
@@ -228,5 +237,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     {
         [BsonElement("instructions")]
         public string Instructions { get; set; }
+
+        public int Room { get; set; }
     }
 }
