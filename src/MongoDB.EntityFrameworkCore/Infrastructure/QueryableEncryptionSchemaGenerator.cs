@@ -17,7 +17,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
@@ -59,7 +58,7 @@ public static class QueryableEncryptionSchemaGenerator
     }
 
     /// <summary>
-    /// Generate an individual Queryable Encryption schema for the given entity type.
+    /// Generate a Queryable Encryption schema for the given entity type.
     /// </summary>
     /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> to generate the schema for.</param>
     /// <returns>The <see cref="BsonDocument"/> containing the Queryable Encryption schema.</returns>
@@ -99,13 +98,12 @@ public static class QueryableEncryptionSchemaGenerator
                         throw new NotSupportedException("Equality and Range queries are not supported for owned entities.");
 
                     case QueryableEncryptionType.NotQueryable:
-                        var dataKeyId = navigation.ForeignKey.GetDataEncryptionKeyId();
+                        var dataKeyId = navigation.ForeignKey.GetEncryptionDataKeyId();
                         var fieldSchema = new BsonDocument
                         {
                             { "path", prefix + navigationName },
                             {
-                                "keyId",
-                                dataKeyId != null
+                                "keyId", dataKeyId != null
                                     ? new BsonBinaryData(dataKeyId.Value, GuidRepresentation.Standard)
                                     : BsonNull.Value
                             },

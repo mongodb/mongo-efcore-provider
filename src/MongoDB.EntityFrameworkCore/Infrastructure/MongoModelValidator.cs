@@ -219,7 +219,7 @@ public class MongoModelValidator : ModelValidator
     {
         foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            ValidateEntityQueryableEncryption(entityType, false, logger);
+            ValidateEntityQueryableEncryption(entityType, false, false, [], logger);
         }
     }
 
@@ -227,12 +227,15 @@ public class MongoModelValidator : ModelValidator
     /// Validate that MongoDB Queryable Encryption is correctly configured for an entity if being used.
     /// </summary>
     /// <param name="entityType">The <see cref="IEntityType"/> being validated.</param>
-    /// <param name="insideCollectionNavigation">Whether this entity is within a collection navigation in its hierarchy.</param>
+    /// <param name="insideCollectionNavigation">Whether this entity is contained within a collection navigation somewhere in its hierarchy.</param>
+    /// <param name="insideEncryptedOwnedEntity">Whether this entity is contained within an owned entity somewhere in its hierarchy.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="InvalidOperationException">Thrown when the entity uses Queryable Encryption but the encryption configuration is not valid.</exception>
     private static void ValidateEntityQueryableEncryption(
         IEntityType entityType,
         bool insideCollectionNavigation,
+        bool insideEncryptedOwnedEntity,
+        HashSet<Guid> usedDataKeys,
         IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
         foreach (var property in entityType.GetProperties())
@@ -248,6 +251,28 @@ public class MongoModelValidator : ModelValidator
                     " Queryable Encryption does not support encryption of elements within a BSON array.");
             }
 
+            if (insideEncryptedOwnedEntity && queryableEncryptionType != QueryableEncryptionType.NotQueryable)
+            {
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) +
+                    " is to be stored inside an encrypted object as it is a property on an owned entity." +
+                    " Queryable Encryption does not support alternative encryption of elements within an encrypted object.");
+            }
+
+            var dataKeyId = property.GetEncryptionDataKeyId();
+            if (dataKeyId == null)
+            {
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) + " is to be encrypted but no data key id has been specified.");
+            }
+
+            if (!usedDataKeys.Add(dataKeyId.Value))
+            {
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) +
+                    " specifies a data key id that has already been used on a different property or navigation.");
+            }
+
             ValidatePropertyQueryableEncryptionType(property, queryableEncryptionType.Value, logger);
         }
 
@@ -255,8 +280,31 @@ public class MongoModelValidator : ModelValidator
         {
             if (navigation.IsEmbedded())
             {
+                var isEncryptedOwnedEntity =
+                    navigation.ForeignKey.GetQueryableEncryptionType() == QueryableEncryptionType.NotQueryable;
+
+                if (isEncryptedOwnedEntity)
+                {
+                    var dataKeyId = navigation.ForeignKey.GetEncryptionDataKeyId();
+                    if (dataKeyId == null)
+                    {
+                        throw new InvalidOperationException(
+                            NavigationOnEntity(navigation) + " is to be encrypted but no data key id has been specified.");
+                    }
+
+                    if (!usedDataKeys.Add(dataKeyId.Value))
+                    {
+                        throw new InvalidOperationException(
+                            NavigationOnEntity(navigation) +
+                            " specifies a data key id that has already been used on a different property or navigation.");
+                    }
+                }
+
                 ValidateEntityQueryableEncryption(navigation.TargetEntityType,
-                    insideCollectionNavigation || navigation.IsCollection, logger);
+                    insideCollectionNavigation || navigation.IsCollection,
+                    insideEncryptedOwnedEntity || isEncryptedOwnedEntity,
+                    usedDataKeys,
+                    logger);
             }
         }
     }
@@ -365,7 +413,7 @@ public class MongoModelValidator : ModelValidator
                     var min = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin);
                     var max = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax);
 
-                    if (min?.Value == null  || max?.Value == null)
+                    if (min?.Value == null || max?.Value == null)
                     {
                         logger.RecommendedMinMaxRangeMissing(property);
                     }
@@ -473,13 +521,13 @@ public class MongoModelValidator : ModelValidator
             {
                 if (elementName.StartsWith('$'))
                 {
-                    throw new InvalidOperationException(PropertyOnEntity(navigation) + $" may not map to element '{
+                    throw new InvalidOperationException(NavigationOnEntity(navigation) + $" may not map to element '{
                         elementName}' as it starts with the reserved character '$'.");
                 }
 
                 if (elementName.Contains('.'))
                 {
-                    throw new InvalidOperationException(PropertyOnEntity(navigation) + $" may not map to element '{
+                    throw new InvalidOperationException(NavigationOnEntity(navigation) + $" may not map to element '{
                         elementName}' as it contains the reserved character '.'.");
                 }
 
@@ -548,6 +596,6 @@ public class MongoModelValidator : ModelValidator
     private static string PropertyOnEntity(IProperty property)
         => $"Property '{property.Name}' on entity type '{property.DeclaringType.DisplayName()}'";
 
-    private static string PropertyOnEntity(INavigation navigation)
-        => $"Property '{navigation.Name}' on entity type '{navigation.DeclaringType.DisplayName()}'";
+    private static string NavigationOnEntity(INavigation navigation)
+        => $"Navigation '{navigation.Name}' on entity type '{navigation.DeclaringType.DisplayName()}'";
 }

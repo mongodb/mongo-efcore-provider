@@ -29,7 +29,7 @@ public static class MongoNavigationExtensions
     /// </summary>
     /// <param name="navigation">The <see cref="IForeignKey"/> to obtain the encryption data key id for.</param>
     /// <returns>The encryption data key id used to encrypt the property, or <see langword="null"/> if not set.</returns>
-    public static Guid? GetDataEncryptionKeyId(this IReadOnlyForeignKey navigation)
+    public static Guid? GetEncryptionDataKeyId(this IReadOnlyForeignKey navigation)
         => (Guid?)navigation.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId)?.Value;
 
     /// <summary>
@@ -37,7 +37,7 @@ public static class MongoNavigationExtensions
     /// </summary>
     /// <param name="navigation">The <see cref="IMutableForeignKey"/> to set the encryption data key id for.</param>
     /// <param name="dataKeyId">The encryption data key id to set, or <see langword="null" /> to unset the value.</param>
-    public static void SetDataEncryptionKeyId(this IMutableForeignKey navigation, Guid? dataKeyId)
+    public static void SetEncryptionDataKeyId(this IMutableForeignKey navigation, Guid? dataKeyId)
         => navigation.SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId));
 
     /// <summary>
@@ -47,7 +47,7 @@ public static class MongoNavigationExtensions
     /// <param name="dataKeyId">The encryption data key id to set, or <see langword="null" /> to unset the value.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The configured encryption data key id, or <see langword="null"/> if it is not set.</returns>
-    public static Guid? SetDataEncryptionKeyId(this IConventionForeignKey navigation, Guid? dataKeyId,
+    public static Guid? SetEncryptionDataKeyId(this IConventionForeignKey navigation, Guid? dataKeyId,
         bool fromDataAnnotation = false)
         => (Guid?)navigation
             .SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId), fromDataAnnotation)?.Value;
@@ -57,7 +57,7 @@ public static class MongoNavigationExtensions
     /// </summary>
     /// <param name="navigation">The <see cref="IConventionForeignKey"/> to set the encryption data key id configuration source for.</param>
     /// <returns>The <see cref="ConfigurationSource"/> for the encryption data key id, or <see langword="null"/> if it is not set.</returns>
-    public static ConfigurationSource? GetDataEncryptionKeyIdConfigurationSource(this IConventionForeignKey navigation)
+    public static ConfigurationSource? GetEncryptionDataKeyIdConfigurationSource(this IConventionForeignKey navigation)
         => navigation.FindAnnotation(MongoAnnotationNames.EncryptionDataKeyId)?.GetConfigurationSource();
 
 

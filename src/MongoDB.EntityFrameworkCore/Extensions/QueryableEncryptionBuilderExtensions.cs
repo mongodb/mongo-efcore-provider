@@ -57,7 +57,7 @@ public static class QueryableEncryptionBuilderExtensions
         Guid dataKeyId) where TOwnerEntity : class where TDependentEntity : class
     {
         builder.Metadata.SetQueryableEncryptionType(QueryableEncryptionType.NotQueryable);
-        builder.Metadata.SetDataEncryptionKeyId(dataKeyId);
+        builder.Metadata.SetEncryptionDataKeyId(dataKeyId);
         return builder;
     }
 
@@ -74,7 +74,7 @@ public static class QueryableEncryptionBuilderExtensions
         Guid dataKeyId) where TOwnerEntity : class where TDependentEntity : class
     {
         builder.Metadata.SetQueryableEncryptionType(QueryableEncryptionType.NotQueryable);
-        builder.Metadata.SetDataEncryptionKeyId(dataKeyId);
+        builder.Metadata.SetEncryptionDataKeyId(dataKeyId);
         return builder;
     }
 

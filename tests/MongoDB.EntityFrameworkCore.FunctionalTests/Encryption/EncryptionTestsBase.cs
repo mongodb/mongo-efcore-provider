@@ -15,7 +15,9 @@
 
 using System.Security.Cryptography;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
 
@@ -33,6 +35,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     static EncryptionTestsBase()
     {
         MongoClientSettings.Extensions.AddAutoEncryption();
+        BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
     }
 
     protected MongoClient CreateEncryptedClient(
@@ -153,6 +156,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         new()
         {
             Name = "Calvin McFly",
+            IsActive = true,
             SSN = "145014000",
             DateOfBirth = new DateTime(1985, 10, 26, 0, 0, 0, DateTimeKind.Utc),
             BloodType = "AB-",
@@ -166,11 +170,13 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
             WeightMeasurements =
                 [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }],
             LongTermCarePlan = new LongTermCarePlan { Instructions = "Take it easy and enjoy life." },
-            Tags = ["tired", "happy"]
+            Tags = ["tired", "happy"],
+            BillingAddress = new Address { Street = "123 Anywhere", City = "New New York", State = "NY" }
         },
         new()
         {
             Name = "Red Tyler",
+            IsActive = false,
             SSN = "1234567",
             DateOfBirth = new DateTime(2000, 1, 26, 0, 0, 0, DateTimeKind.Utc),
             Doctor = "John Smith",
@@ -182,7 +188,8 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
             ExternalRef = Guid.NewGuid(),
             ExternalObjectId = ObjectId.GenerateNewId(),
             LongTermCarePlan = new LongTermCarePlan { Instructions = "Live long and prosper." },
-            Tags = ["new"]
+            Tags = ["new"],
+            BillingAddress = new Address { Street = "321 Nowhere", City = "Old York", State = "UK" }
         }
     ];
 
@@ -191,6 +198,8 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         public ObjectId Id { get; set; }
 
         public string Name { get; set; }
+
+        public bool IsActive { get; set; }
 
         [BsonElement("ssn")]
         public string SSN { get; set; }
@@ -218,6 +227,8 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
 
         [BsonElement("longTermCarePlan")]
         public LongTermCarePlan? LongTermCarePlan { get; set; }
+
+        public Address BillingAddress { get; set; }
     }
 
     public class WeightMeasurement
@@ -239,5 +250,12 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         public string Instructions { get; set; }
 
         public int Room { get; set; }
+    }
+
+    public class Address
+    {
+        public string Street { get; set; }
+        public string City { get; set; }
+        public string State { get; set; }
     }
 }
