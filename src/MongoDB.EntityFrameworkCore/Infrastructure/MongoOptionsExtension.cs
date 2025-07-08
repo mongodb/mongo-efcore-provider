@@ -95,6 +95,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     public virtual MongoOptionsExtension WithClientSettings(MongoClientSettings? clientSettings)
     {
         ArgumentNullException.ThrowIfNull(clientSettings);
+        EnsureConnectionNotAlreadyConfigured(nameof(MongoClientSettings));
 
         var clone = Clone();
         clone.ClientSettings = clientSettings;
