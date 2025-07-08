@@ -18,8 +18,6 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
-using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
 using MongoDB.EntityFrameworkCore.Diagnostics;
@@ -41,14 +39,13 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.NotQueryable)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.Equality)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.Range)]
-    public void IsEncryptedForAnything_on_unsupported_array_throws(CryptProvider cryptProvider,
-        QueryableEncryptionType encryptionType)
+    public void IsEncryptedForAnything_on_unsupported_array_throws(CryptProvider cryptProvider, QueryableEncryptionType encryptionType)
     {
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
             var p = mb.Entity<Patient>()
-                .ToUniqueCollection(values: cryptProvider)
+                .ToUniqueCollection(values: [cryptProvider, encryptionType])
                 .Property(p => p.Tags);
             SetPropertyEncryption(p, encryptionType, dataKeyId);
         });
@@ -725,7 +722,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         using var db = CreateContext(cryptProvider, mb =>
         {
             mb.Entity<Patient>()
-                .ToUniqueCollection(values: cryptProvider)
+                .ToUniqueCollection(values: [cryptProvider, storageType])
                 .Property(p => p.Name)
                 .HasBsonRepresentation(storageType)
                 .IsEncryptedForEquality(dataKeyId);
@@ -1234,7 +1231,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         using var db = CreateContext(cryptProvider, mb =>
         {
             mb.Entity<Patient>()
-                .ToUniqueCollection(values: cryptProvider)
+                .ToUniqueCollection(values: [cryptProvider, storageType])
                 .Property(p => p.MonthlySubscription)
                 .HasBsonRepresentation(storageType)
                 .IsEncryptedForRange(dataKeyId, 0, 10000m)
