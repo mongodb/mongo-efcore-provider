@@ -103,7 +103,7 @@ public static class MongoDbContextOptionsExtensionsTest
         var mongoOptions = serviceScope.ServiceProvider
             .GetRequiredService<DbContextOptions<ApplicationDbContext>>().GetExtension<MongoOptionsExtension>();
 
-        Assert.Equal(mongoClientSettings, mongoOptions.MongoClientSettings);
+        Assert.Equal(mongoClientSettings, mongoOptions.ClientSettings);
         Assert.Equal(databaseName, mongoOptions.DatabaseName);
     }
 

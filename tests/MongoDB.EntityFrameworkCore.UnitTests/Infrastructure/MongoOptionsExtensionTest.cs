@@ -52,10 +52,10 @@ public static class MongoOptionsExtensionTest
         var mongoClientSettings = new MongoClientSettings();
 
         var dbOptions = new MongoOptionsExtension()
-            .WithMongoClientSettings(mongoClientSettings)
+            .WithClientSettings(mongoClientSettings)
             .WithDatabaseName(databaseName);
 
-        Assert.Same(mongoClientSettings, dbOptions.MongoClientSettings);
+        Assert.Same(mongoClientSettings, dbOptions.ClientSettings);
         Assert.Equal(databaseName, dbOptions.DatabaseName);
     }
 
@@ -73,7 +73,7 @@ public static class MongoOptionsExtensionTest
     public static void Throws_if_both_connection_string_and_mongo_client_settings_set()
     {
         var ex = Assert.Throws<InvalidOperationException>(() => new MongoOptionsExtension()
-            .WithMongoClientSettings(new MongoClientSettings())
+            .WithClientSettings(new MongoClientSettings())
             .WithConnectionString("mongodb://localhost:1234"));
         Assert.Contains(nameof(MongoClientSettings), ex.Message);
         Assert.Contains(nameof(MongoOptionsExtension.ConnectionString), ex.Message);
@@ -84,7 +84,7 @@ public static class MongoOptionsExtensionTest
     {
         var ex = Assert.Throws<InvalidOperationException>(() => new MongoOptionsExtension()
             .WithMongoClient(new MongoClient())
-            .WithMongoClientSettings(new MongoClientSettings()));
+            .WithClientSettings(new MongoClientSettings()));
         Assert.Contains(nameof(MongoClientSettings), ex.Message);
         Assert.Contains(nameof(MongoClient), ex.Message);
     }

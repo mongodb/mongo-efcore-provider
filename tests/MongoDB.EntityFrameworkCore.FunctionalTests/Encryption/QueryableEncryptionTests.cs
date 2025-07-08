@@ -1307,7 +1307,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private static void SetPropertyEncryption(PropertyBuilder<string[]> p, QueryableEncryptionType encryptionType, Guid dataKeyId)
+    private static void SetPropertyEncryption<T>(PropertyBuilder<T> p, QueryableEncryptionType encryptionType, Guid dataKeyId)
     {
         switch (encryptionType)
         {
@@ -1318,7 +1318,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 p.IsEncryptedForEquality(dataKeyId);
                 break;
             case QueryableEncryptionType.Range:
-                p.IsEncryptedForRange(dataKeyId, null, null);
+                p!.IsEncryptedForRange(dataKeyId, default, default);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(encryptionType), encryptionType, null);
