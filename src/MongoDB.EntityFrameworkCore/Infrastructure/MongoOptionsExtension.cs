@@ -166,16 +166,23 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     public string? CryptProviderPath { get; private set; }
 
     /// <summary>
+    /// Obtain the current encryption extra options dictionary.
+    /// </summary>
+    public Dictionary<string, object>? CryptExtraOptions { get; private set; }
+
+    /// <summary>
     /// Specifies the encryption provider to use.
     /// </summary>
     /// <param name="cryptProvider">The <see cref="CryptProvider"/> to use.</param>
-    /// <param name="cryptPath">The path where the library that supports this <paramref name="cryptProvider"/> can be found.</param>
+    /// <param name="cryptProviderPath">The path where the library that supports this <paramref name="cryptProvider"/> can be found.</param>
+    /// <param name="cryptExtraOptions">The additional extra options dictionary.</param>
     /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
-    public virtual MongoOptionsExtension WithCryptProvider(CryptProvider? cryptProvider, string? cryptPath)
+    public virtual MongoOptionsExtension WithCryptProvider(CryptProvider? cryptProvider, string? cryptProviderPath, Dictionary<string, object>? cryptExtraOptions = null)
     {
         var clone = Clone();
         clone.CryptProvider = cryptProvider;
-        clone.CryptProviderPath = cryptPath;
+        clone.CryptProviderPath = cryptProviderPath;
+        clone.CryptExtraOptions = cryptExtraOptions;
         return clone;
     }
 

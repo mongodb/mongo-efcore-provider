@@ -46,7 +46,7 @@ public class MongoClientWrapper : IMongoClientWrapper
 
     private IMongoClient? _client;
     private IMongoDatabase? _database;
-    private string _databaseName;
+    private string? _databaseName;
     private bool _useDatabaseNameFilter = true;
 
     private IMongoClient Client => _client ??= GetOrCreateMongoClient(_options, _serviceProvider);
@@ -169,6 +169,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             await Database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
         var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
 
+
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
             var collectionName = entityType.GetCollectionName();
@@ -177,6 +178,7 @@ public class MongoClientWrapper : IMongoClientWrapper
                 try
                 {
                     await Database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+                    existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
@@ -441,13 +443,8 @@ public class MongoClientWrapper : IMongoClientWrapper
             _ => new Dictionary<string, object>()
         };
 
-        if (clientSettings.AutoEncryptionOptions?.ExtraOptions != null)
-        {
-            foreach (var kvp in clientSettings.AutoEncryptionOptions.ExtraOptions)
-            {
-                extraOptions[kvp.Key] = kvp.Value;
-            }
-        }
+        CombineExtraOptions(extraOptions, clientSettings.AutoEncryptionOptions?.ExtraOptions);
+        CombineExtraOptions(extraOptions, options?.CryptExtraOptions);
 
         var keyVaultNamespace = clientSettings.AutoEncryptionOptions?.KeyVaultNamespace ?? options?.KeyVaultNamespace ??
             throw new InvalidOperationException(
@@ -462,6 +459,15 @@ public class MongoClientWrapper : IMongoClientWrapper
             kmsProviders,
             encryptedFieldsMap: queryableEncryptionSchema.ToDictionary(d => _options!.DatabaseName + "." + d.Key, d => d.Value),
             extraOptions: extraOptions);
+    }
+
+    private static void CombineExtraOptions(Dictionary<string, object> combinedOptions, IReadOnlyDictionary<string, object>? extraOptions)
+    {
+        if (extraOptions == null) return;
+        foreach (var kvp in extraOptions)
+        {
+            combinedOptions[kvp.Key] = kvp.Value;
+        }
     }
 
     private static Dictionary<string, object> ExtraOptionsForCryptShared(string cryptSharedLibPath) =>

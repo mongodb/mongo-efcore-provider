@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using Microsoft.CodeAnalysis.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -32,14 +33,15 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
 {
     private readonly TemporaryDatabaseFixture _database = database;
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.NotQueryable)]
     [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.Equality)]
     [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.Range)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.NotQueryable)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.Equality)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.Range)]
-    public void IsEncryptedForAnything_on_unsupported_array_throws(CryptProvider cryptProvider, QueryableEncryptionType encryptionType)
+    public void IsEncryptedForAnything_on_unsupported_array_throws(CryptProvider cryptProvider,
+        QueryableEncryptionType encryptionType)
     {
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
@@ -56,7 +58,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("encryption", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_on_unsupported_owned_entity_collection_property_throws(CryptProvider cryptProvider)
@@ -78,7 +80,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("not support", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_on_unsupported_owned_entity_single_inside_collection_property_throws(CryptProvider cryptProvider)
@@ -100,7 +102,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("not support", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_on_non_nullable_property_does_not_log_warning(CryptProvider cryptProvider)
@@ -121,7 +123,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.DoesNotContain(logs, s => s.Contains(nameof(MongoEventId.EncryptedNullablePropertyEncountered)));
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_on_nullable_property_logs_warning(CryptProvider cryptProvider)
@@ -143,7 +145,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains(nameof(Patient) + "." + nameof(Patient.InsuranceCompany), logEntry);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_string(CryptProvider cryptProvider)
@@ -182,7 +184,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int32)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
@@ -224,7 +226,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Decimal128)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
@@ -266,7 +268,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.DateTime)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.String)]
@@ -310,7 +312,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_guid(CryptProvider cryptProvider)
@@ -349,7 +351,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_objectid(CryptProvider cryptProvider)
@@ -388,7 +390,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_boolean(CryptProvider cryptProvider)
@@ -428,7 +430,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_owned_entity_doc(CryptProvider cryptProvider)
@@ -468,7 +470,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_owned_entity_doc_with_equality_sub_property(CryptProvider cryptProvider)
@@ -493,7 +495,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("alternative", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_owned_entity_string(CryptProvider cryptProvider)
@@ -533,7 +535,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int32)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
@@ -576,7 +578,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_can_encrypt_multiple_properties(CryptProvider cryptProvider)
@@ -619,7 +621,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_sharing_data_keys_between_properties_throws(CryptProvider cryptProvider)
@@ -641,7 +643,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.DoesNotContain(ex.Message, dataKeyId.ToString());
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_sharing_data_keys_between_navigations_throws(CryptProvider cryptProvider)
@@ -664,7 +666,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.DoesNotContain(ex.Message, dataKeyId.ToString());
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_sharing_data_keys_between_navigation_and_property_throws(CryptProvider cryptProvider)
@@ -687,7 +689,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.DoesNotContain(ex.Message, dataKeyId.ToString());
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_sharing_data_keys_between_different_entities_is_permitted(CryptProvider cryptProvider)
@@ -711,7 +713,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         db.SaveChanges();
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Decimal128)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
@@ -734,7 +736,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("equality", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForEquality_queries_equality_on_string(CryptProvider cryptProvider)
@@ -772,7 +774,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForEquality_queries_equality_on_guid(CryptProvider cryptProvider)
@@ -810,7 +812,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForEquality_queries_equality_on_objectid(CryptProvider cryptProvider)
@@ -848,7 +850,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int32)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
@@ -890,7 +892,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int32)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
@@ -933,7 +935,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_on_unsupported_string_throws(CryptProvider cryptProvider)
@@ -954,7 +956,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("range", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_on_unsupported_guid_throws(CryptProvider cryptProvider)
@@ -974,7 +976,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("range", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_on_unsupported_objectid_throws(CryptProvider cryptProvider)
@@ -994,7 +996,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("range", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int32)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
@@ -1026,7 +1028,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int32)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
@@ -1068,7 +1070,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_queries_ranges_on_datetime(CryptProvider cryptProvider)
@@ -1107,7 +1109,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_without_recommended_min_max_datetime_logs_warning(CryptProvider cryptProvider)
@@ -1133,7 +1135,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("missing the recommended min/max", logEntry);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Decimal128)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
@@ -1176,7 +1178,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Decimal128)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
@@ -1220,7 +1222,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Decimal128)]
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
@@ -1244,7 +1246,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("range", ex.Message);
     }
 
-    [Theory]
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_and_equality_queries_mixed(CryptProvider cryptProvider)
@@ -1322,7 +1324,11 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private MedicalContext CreateContext(CryptProvider cryptProvider, Action<ModelBuilder> modelBuilderAction,
+    private static readonly string[] SpecifyLogPath = ["logpath", "mongocryptd.log"];
+
+    private MedicalContext CreateContext(
+        CryptProvider cryptProvider,
+        Action<ModelBuilder> modelBuilderAction,
         Action<string>? logger = null)
     {
         var mongoOptions = new MongoOptionsExtension()
@@ -1336,7 +1342,8 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             CryptProvider.AutoEncryptSharedLibrary => mongoOptions.WithCryptProvider(CryptProvider.AutoEncryptSharedLibrary,
                 Environment.GetEnvironmentVariable("CRYPT_SHARED_LIB_PATH")),
             CryptProvider.Mongocryptd => mongoOptions.WithCryptProvider(CryptProvider.Mongocryptd,
-                Environment.GetEnvironmentVariable("MONGODB_BINARIES")),
+                Environment.GetEnvironmentVariable("MONGODB_BINARIES"),
+                new Dictionary<string, object> { { "mongocryptdSpawnArgs", SpecifyLogPath } }),
             _ => mongoOptions
         };
 
