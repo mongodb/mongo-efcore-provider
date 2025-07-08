@@ -384,6 +384,19 @@ public class MongoClientWrapper : IMongoClientWrapper
 
     private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
     {
+        _databaseName = _options?.DatabaseName;
+        if (_databaseName == null && options?.ConnectionString != null)
+        {
+            try
+            {
+                var connectionString = new MongoUrl(options.ConnectionString);
+                _databaseName = connectionString.DatabaseName;
+            }
+            catch (FormatException)
+            {
+            }
+        }
+
         var queryableEncryptionSchema = _schemaProvider.GetQueryableEncryptionSchema();
         var usesQueryableEncryption = queryableEncryptionSchema.Count > 0;
 
@@ -408,19 +421,6 @@ public class MongoClientWrapper : IMongoClientWrapper
             throw new InvalidOperationException(
                 "Unable to create or obtain a MongoClient. Either provide ClientSettings, a ConnectionString, or a " +
                 "MongoClient via the DbContextOptions, or register an implementation of IMongoClient with the ServiceProvider.");
-        }
-
-        _databaseName = _options?.DatabaseName;
-        if (_databaseName == null && options?.ConnectionString != null)
-        {
-            try
-            {
-                var connectionString = new MongoUrl(options.ConnectionString);
-                _databaseName = connectionString.DatabaseName;
-            }
-            catch (FormatException)
-            {
-            }
         }
 
         if (usesQueryableEncryption)
