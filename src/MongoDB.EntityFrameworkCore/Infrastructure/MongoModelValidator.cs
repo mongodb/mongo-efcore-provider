@@ -229,6 +229,7 @@ public class MongoModelValidator : ModelValidator
     /// <param name="entityType">The <see cref="IEntityType"/> being validated.</param>
     /// <param name="insideCollectionNavigation">Whether this entity is contained within a collection navigation somewhere in its hierarchy.</param>
     /// <param name="insideEncryptedOwnedEntity">Whether this entity is contained within an owned entity somewhere in its hierarchy.</param>
+    /// <param name="usedDataKeys">The encryption data key ids already used to proactively validate re-use.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="InvalidOperationException">Thrown when the entity uses Queryable Encryption but the encryption configuration is not valid.</exception>
     private static void ValidateEntityQueryableEncryption(
