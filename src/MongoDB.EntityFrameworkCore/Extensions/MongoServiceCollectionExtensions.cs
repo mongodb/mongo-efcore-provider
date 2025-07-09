@@ -43,7 +43,7 @@ public static class MongoServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
-    /// and configures it to connect to an MongoDB database.
+    /// and configures it to connect to a MongoDB database.
     /// </summary>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
     /// <param name="connectionString">The connection string of the MongoDB server to connect to.</param>
@@ -68,7 +68,30 @@ public static class MongoServiceCollectionExtensions
 
     /// <summary>
     /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
-    /// and configures it to connect to an MongoDB database.
+    /// and configures it to connect to a MongoDB database.
+    /// </summary>
+    /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
+    /// <param name="connectionString">The connection string of the MongoDB server to connect to including a default database name.</param>
+    /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
+    /// <typeparam name="TContext">The type of context to be registered.</typeparam>
+    /// <returns>The same service collection so that multiple calls can be chained.</returns>
+    public static IServiceCollection AddMongoDB<TContext>(
+        this IServiceCollection serviceCollection,
+        string connectionString,
+        Action<MongoDbContextOptionsBuilder>? mongoOptionsAction = null,
+        Action<DbContextOptionsBuilder>? optionsAction = null)
+        where TContext : DbContext
+        => serviceCollection.AddDbContext<TContext>(
+            (_, options) =>
+            {
+                optionsAction?.Invoke(options);
+                options.UseMongoDB(connectionString, mongoOptionsAction);
+            });
+
+    /// <summary>
+    /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
+    /// and configures it to connect to a MongoDB database.
     /// </summary>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
     /// <param name="mongoClient">The <see cref="IMongoClient"/> to use to connect to the MongoDB server.</param>
@@ -77,6 +100,11 @@ public static class MongoServiceCollectionExtensions
     /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
     /// <typeparam name="TContext">The type of context to be registered.</typeparam>
     /// <returns>The same service collection so that multiple calls can be chained.</returns>
+    /// <remarks>
+    /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
+    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
+    /// dispose of its own <see cref="MongoClient"/> instances.
+    /// </remarks>
     public static IServiceCollection AddMongoDB<TContext>(
         this IServiceCollection serviceCollection,
         IMongoClient mongoClient,
@@ -89,6 +117,31 @@ public static class MongoServiceCollectionExtensions
             {
                 optionsAction?.Invoke(options);
                 options.UseMongoDB(mongoClient, databaseName, mongoOptionsAction);
+            });
+
+    /// <summary>
+    /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
+    /// and configures it to connect to a MongoDB database.
+    /// </summary>
+    /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
+    /// <param name="mongoClientSettings">The <see cref="MongoClientSettings"/> to use to connect to the MongoDB server.</param>
+    /// <param name="databaseName">The database name on the server.</param>
+    /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
+    /// <typeparam name="TContext">The type of context to be registered.</typeparam>
+    /// <returns>The same service collection so that multiple calls can be chained.</returns>
+    public static IServiceCollection AddMongoDB<TContext>(
+        this IServiceCollection serviceCollection,
+        MongoClientSettings mongoClientSettings,
+        string databaseName,
+        Action<MongoDbContextOptionsBuilder>? mongoOptionsAction = null,
+        Action<DbContextOptionsBuilder>? optionsAction = null)
+        where TContext : DbContext
+        => serviceCollection.AddDbContext<TContext>(
+            (_, options) =>
+            {
+                optionsAction?.Invoke(options);
+                options.UseMongoDB(mongoClientSettings, databaseName, mongoOptionsAction);
             });
 
     /// <summary>

@@ -14,7 +14,6 @@
 */
 
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Infrastructure;
@@ -46,18 +45,47 @@ public static class MongoOptionsExtensionTest
         Assert.Equal(databaseName, options.DatabaseName);
     }
 
+    [Theory]
+    [InlineData("SomeDatabase")]
+    public static void Can_set_mongo_client_settings_and_database_name(string databaseName)
+    {
+        var mongoClientSettings = new MongoClientSettings();
+
+        var dbOptions = new MongoOptionsExtension()
+            .WithMongoClientSettings(mongoClientSettings)
+            .WithDatabaseName(databaseName);
+
+        Assert.Same(mongoClientSettings, dbOptions.MongoClientSettings);
+        Assert.Equal(databaseName, dbOptions.DatabaseName);
+    }
+
     [Fact]
     public static void Throws_if_both_connection_string_and_mongo_client_set()
     {
-        var options = new MongoOptionsExtension()
+        var ex = Assert.Throws<InvalidOperationException>(() => new MongoOptionsExtension()
             .WithMongoClient(new MongoClient())
-            .WithConnectionString("mongodb://localhost:1234");
-
-        var builder = new DbContextOptionsBuilder<SingleEntityDbContext<Customer>>();
-        ((IDbContextOptionsBuilderInfrastructure)builder).AddOrUpdateExtension(options);
-
-        Assert.Throws<InvalidOperationException>(() => options.Validate(builder.Options));
+            .WithConnectionString("mongodb://localhost:1234"));
+        Assert.Contains(nameof(MongoClient), ex.Message);
+        Assert.Contains(nameof(MongoOptionsExtension.ConnectionString), ex.Message);
     }
 
-    class Customer { public Guid Id { get; set; } }
+    [Fact]
+    public static void Throws_if_both_connection_string_and_mongo_client_settings_set()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => new MongoOptionsExtension()
+            .WithMongoClientSettings(new MongoClientSettings())
+            .WithConnectionString("mongodb://localhost:1234"));
+        Assert.Contains(nameof(MongoClientSettings), ex.Message);
+        Assert.Contains(nameof(MongoOptionsExtension.ConnectionString), ex.Message);
+    }
+
+    [Fact]
+    public static void Throws_if_both_mongo_client_and_mongo_client_settings_set()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => new MongoOptionsExtension()
+            .WithMongoClient(new MongoClient())
+            .WithMongoClientSettings(new MongoClientSettings()));
+        Assert.Contains(nameof(MongoClientSettings), ex.Message);
+        Assert.Contains(nameof(MongoClient), ex.Message);
+    }
 }

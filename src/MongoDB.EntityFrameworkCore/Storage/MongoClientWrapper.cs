@@ -60,7 +60,21 @@ public class MongoClientWrapper : IMongoClientWrapper
         _commandLogger = commandLogger;
 
         _client = GetOrCreateMongoClient(options, serviceProvider);
-        _database = _client.GetDatabase(options!.DatabaseName);
+
+        var databaseName = options?.DatabaseName;
+        if (databaseName == null && options?.ConnectionString != null)
+        {
+            try
+            {
+                var connectionString = new MongoUrl(options.ConnectionString);
+                databaseName = connectionString.DatabaseName;
+            }
+            catch (FormatException)
+            {
+            }
+        }
+
+        _database = _client.GetDatabase(databaseName);
     }
 
     /// <inheritdoc />
@@ -316,7 +330,7 @@ public class MongoClientWrapper : IMongoClientWrapper
     }
 
     private ListDatabaseNamesOptions BuildListDbNameFilterOptions()
-        => new() {Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName)};
+        => new() { Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName) };
 
     private static CreateIndexModel<BsonDocument> CreateIndexDocument(IIndex index, string indexName, string[] path)
     {
@@ -352,7 +366,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         => index.IsDescending switch
         {
             null => false,
-            {Count: 0} => true,
+            { Count: 0 } => true,
             { } i when i.Count < propertyIndex => false,
             { } i => i.ElementAtOrDefault(propertyIndex)
         };
@@ -383,10 +397,17 @@ public class MongoClientWrapper : IMongoClientWrapper
         if (options?.ConnectionString != null)
             return new MongoClient(options.ConnectionString);
 
+        if (options?.MongoClientSettings != null)
+            return new MongoClient(options.MongoClientSettings);
+
         if (options?.MongoClient != null)
             return options.MongoClient;
 
         throw new InvalidOperationException(
-            "An implementation of IMongoClient must be registered with the ServiceProvider or a ConnectionString set via DbOptions to connect to MongoDB.");
+            $"Unable to obtain or create a {nameof(MongoClient)} instance. " +
+            $"Either provide {nameof(MongoOptionsExtension.MongoClientSettings)}, " +
+            $"a {nameof(MongoOptionsExtension.ConnectionString)}" +
+            $"or a {nameof(MongoOptionsExtension.MongoClient)} " +
+            $"via {nameof(DbContextOptions)}, or register an implementation of {nameof(IMongoClient)} via {nameof(IServiceProvider)}.");
     }
 }
