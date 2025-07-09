@@ -1,4 +1,4 @@
-# Contributing to the MongoDB database provider for EF Core
+# Contributing to the MongoDB EF Core Provider
 
 ## Overview
 
@@ -6,7 +6,7 @@ This repo contains the code and tests for the official MongoDB database provider
 
 ## Find or create a tracking issue
 
-Any bug fix should have an issue tracking it in the [Jira issue tracker for the MongoDB provider](https://jira.mongodb.org/browse/EF#selectedTab=com.atlassian.jira.plugin.system.project%3Asummary-panel). First, check for any existing issue, and if found, make sure to read any discussion and look at any existing pull requests. If there is no existing issue covering your case, then create one and wait for feedback from the team for any guidance. This avoids you doing work that might not be accepted.
+Any bug fix should have an issue tracking it in the [Jira issue tracker for the MongoDB provider](https://jira.mongodb.org/projects/EF/issues/). First, check for any existing issue, and if found, make sure to read any discussion and look at any existing pull requests. If there is no existing issue covering your case, then create one and wait for feedback from the team for any guidance. This avoids you doing work that might not be accepted.
 
 > Note: An issue is not required for a simple typo PR.
 
@@ -34,7 +34,7 @@ Download the following for your platform from [MongoDB Enterprise Downloads](htt
 
 Also, download the MongoDB shell (`mongosh`) archive from [MongoDB Shell Download](https://www.mongodb.com/try/download/compass).
 
-> Tip: you may want to use the Compass GUI in addition to or instead of the shell. This is fine, but these instructions don't cover it.
+> Tip: You may want to use the Compass GUI in addition to or instead of the shell. This is fine, but these instructions don't cover it.
 
 Extract these archives to a location of your choice. For example:
 
@@ -65,6 +65,8 @@ export CRYPT_SHARED_LIB_PATH=/Users/arthur.vickers/mongodb/mongo_crypt_shared_v1
 export MONGODB_BINARIES=/Users/arthur.vickers/mongodb/mongodb-macos-aarch64-enterprise-8.0.11/bin
 ```
 
+> Tip: Running tests in an IDE may require setting the environment variables in the IDE test runner.
+
 #### Increase file limits on MacOS
 
 The MongoDB server opens many files, which means the default file limits on MacOS can easily be exceeded when running the tests. To protect from this, either change the file limits globally if you have permissions, as explained in [this Stack Overflow question](https://stackoverflow.com/questions/35110651/warning-soft-rlimits-too-low-number-of-files-is-256-should-be-at-least-100), or locally in the terminal window before running each instance. For example:
@@ -76,7 +78,7 @@ ulimit -u 2048
 
 #### Running MongoDB
 
-The EF code provider functional tests require two instances of `mongod` ro be running, both using the same replica set. These can be run in the background, but it is sometimes useful to see the diagnostic output, so open two terminal windows and run one instance in each.
+The EF code provider functional tests require two instances of `mongod` to be running, both using the same replica set. These can be run in the background, but it is sometimes useful to see the diagnostic output, so open two terminal windows and run one instance in each.
 
 Each instance will have its own data folder, so create `data1` and `data2` in some chosen location on your machine. Now start the two instances, using a different port for each. For example, on MacOS:
 
