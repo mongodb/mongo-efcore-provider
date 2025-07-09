@@ -1324,7 +1324,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private static readonly string[] SpecifyLogPath = ["logpath", "mongocryptd.log"];
+    private static readonly string[] MongoCryptdSpawnLogSettings = ["--logpath", "mongocryptd.log", "--logappend"];
 
     private MedicalContext CreateContext(
         CryptProvider cryptProvider,
@@ -1343,7 +1343,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 Environment.GetEnvironmentVariable("CRYPT_SHARED_LIB_PATH")),
             CryptProvider.Mongocryptd => mongoOptions.WithCryptProvider(CryptProvider.Mongocryptd,
                 Environment.GetEnvironmentVariable("MONGODB_BINARIES"),
-                new Dictionary<string, object> { { "mongocryptdSpawnArgs", SpecifyLogPath } }),
+                new Dictionary<string, object> { { "mongocryptdSpawnArgs", MongoCryptdSpawnLogSettings } }),
             _ => mongoOptions
         };
 
