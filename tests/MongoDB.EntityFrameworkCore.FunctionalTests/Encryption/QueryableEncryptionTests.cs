@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using Microsoft.CodeAnalysis.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -116,7 +115,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.DateOfBirth)
                 .IsEncrypted(dataKeyId);
-        }, logs.Add);
+        }, logger: logs.Add);
 
         _ = db.Model;
 
@@ -137,7 +136,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.InsuranceCompany)
                 .IsEncrypted(dataKeyId);
-        }, logs.Add);
+        }, logger: logs.Add);
 
         _ = db.Model;
 
@@ -182,6 +181,49 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                     .IsEncrypted(dataKeyId);
             });
         }
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void IsEncrypted_round_trips_string_with_server_side_encryption(CryptProvider cryptProvider)
+    {
+        var dataKeyId = CreateDataKey();
+        var samplePatients = CreateSamplePatients;
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+
+        {
+            using var db = CreateContext(cryptProvider, ModelConfig, OptionsConfig);
+            db.Database.EnsureCreated();
+            db.Patients.AddRange(samplePatients);
+            db.SaveChanges();
+        }
+
+        {
+            using var db = CreateContext(cryptProvider, ModelConfig, OptionsConfig);
+            foreach (var actual in db.Patients)
+            {
+                var expected = samplePatients.FirstOrDefault(p => p.Id == actual.Id);
+                Assert.Equal(expected.SSN, actual.SSN);
+            }
+        }
+
+        {
+            AssertCantReadEncrypted<Patient>(collectionName, nameof(Patient.SSN));
+        }
+
+        void ModelConfig(ModelBuilder mb)
+        {
+            mb.Entity<Patient>(p =>
+            {
+                p.ToCollection(collectionName);
+                p.Property(x => x.SSN)
+                    .IsEncrypted(dataKeyId);
+            });
+        }
+
+        MongoOptionsExtension OptionsConfig(MongoOptionsExtension options)
+            => options.WithEncryptionSchemaMode(EncryptionSchemaMode.ClientAndServer);
     }
 
     [QueryableEncryptionTheory]
@@ -1125,7 +1167,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 .HasBsonRepresentation(BsonType.DateTime)
                 .IsEncryptedForRange(dataKeyId, DateTime.MinValue, DateTime.MaxValue)
                 .HasAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin, null);
-        }, logs.Add);
+        }, logger: logs.Add);
 
         _ = db.Model;
 
@@ -1329,6 +1371,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     private MedicalContext CreateContext(
         CryptProvider cryptProvider,
         Action<ModelBuilder> modelBuilderAction,
+        Func<MongoOptionsExtension, MongoOptionsExtension>? mongoOptionsConfigurator = null,
         Action<string>? logger = null)
     {
         var mongoOptions = new MongoOptionsExtension()
@@ -1346,6 +1389,11 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 new Dictionary<string, object> { { "mongocryptdSpawnArgs", MongoCryptdSpawnLogSettings } }),
             _ => mongoOptions
         };
+
+        if (mongoOptionsConfigurator != null)
+        {
+            mongoOptions = mongoOptionsConfigurator.Invoke(mongoOptions);
+        }
 
         var optionsBuilder = new DbContextOptionsBuilder<MedicalContext>()
             .UseMongoDB(mongoOptions)

@@ -109,7 +109,15 @@ public class MongoClientWrapper : IMongoClientWrapper
             {
                 try
                 {
-                    Database.CreateCollection(collectionName);
+                    var createCollectionOptions =
+                        _options?.EncryptionSchemaMode == EncryptionSchemaMode.ClientAndServer
+                            ? new CreateCollectionOptions
+                            {
+                                EncryptedFields = QueryableEncryptionSchemaGenerator.GenerateSchema(entityType)
+                            }
+                            : null;
+
+                    Database.CreateCollection(collectionName, createCollectionOptions);
                     existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
@@ -177,7 +185,15 @@ public class MongoClientWrapper : IMongoClientWrapper
             {
                 try
                 {
-                    await Database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+                    var createCollectionOptions =
+                        _options?.EncryptionSchemaMode == EncryptionSchemaMode.ClientAndServer
+                            ? new CreateCollectionOptions
+                            {
+                                EncryptedFields = QueryableEncryptionSchemaGenerator.GenerateSchema(entityType)
+                            }
+                            : null;
+
+                    await Database.CreateCollectionAsync(collectionName, createCollectionOptions, cancellationToken).ConfigureAwait(false);
                     existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
@@ -461,7 +477,8 @@ public class MongoClientWrapper : IMongoClientWrapper
             extraOptions: extraOptions);
     }
 
-    private static void CombineExtraOptions(Dictionary<string, object> combinedOptions, IReadOnlyDictionary<string, object>? extraOptions)
+    private static void CombineExtraOptions(Dictionary<string, object> combinedOptions,
+        IReadOnlyDictionary<string, object>? extraOptions)
     {
         if (extraOptions == null) return;
         foreach (var kvp in extraOptions)

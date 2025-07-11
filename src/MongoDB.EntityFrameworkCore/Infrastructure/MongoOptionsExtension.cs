@@ -207,6 +207,26 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     }
 
     /// <summary>
+    /// How any encryption schema for Queryable Encryption is enforced.
+    /// </summary>
+    public EncryptionSchemaMode EncryptionSchemaMode { get; private set; }
+
+    /// <summary>
+    /// Specify a <see cref="EncryptionSchemaMode"/> to use. By setting to <see cref="EncryptionSchemaMode.ClientAndServer"/>
+    /// </summary>
+    /// <param name="encryptionSchemaMode">The <see cref="EncryptionSchemaMode"/> to determine how encryption is enforced. </param>
+    /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
+    public virtual MongoOptionsExtension WithEncryptionSchemaMode(EncryptionSchemaMode encryptionSchemaMode)
+    {
+        ArgumentNullException.ThrowIfNull(encryptionSchemaMode);
+        Check.IsDefinedOrNull<EncryptionSchemaMode>(encryptionSchemaMode);
+
+        var clone = Clone();
+        clone.EncryptionSchemaMode = encryptionSchemaMode;
+        return clone;
+    }
+
+    /// <summary>
     /// Clones the current <see cref="MongoOptionsExtension"/>.
     /// </summary>
     /// <returns>A new clone.</returns>
