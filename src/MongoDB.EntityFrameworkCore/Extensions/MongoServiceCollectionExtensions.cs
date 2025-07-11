@@ -174,6 +174,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IModelRuntimeInitializer, MongoModelRuntimeInitializer>()
             .TryAddProviderSpecificServices(
                 b => b
+                    .TryAddScoped<IMongoSchemaProvider, MongoSchemaProvider>()
                     .TryAddScoped<IMongoClientWrapper, MongoClientWrapper>()
                     .TryAddSingleton<MongoShapedQueryCompilingExpressionVisitorDependencies,
                         MongoShapedQueryCompilingExpressionVisitorDependencies>()

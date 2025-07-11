@@ -21,8 +21,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Storage;
@@ -74,6 +76,7 @@ public class MongoModelValidator : ModelValidator
         ValidateElementNames(model);
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
+        ValidateQueryableEncryption(model, logger);
     }
 
     /// <summary>
@@ -179,7 +182,7 @@ public class MongoModelValidator : ModelValidator
         // mappings and configuration.
         foreach (var property in entityType.GetProperties().Where(p => !p.IsShadowProperty()))
         {
-            if (property.FindAnnotation(MongoAnnotationNames.NotSupportedAttributes) is {Value: Attribute unsupported})
+            if (property.FindAnnotation(MongoAnnotationNames.NotSupportedAttributes) is { Value: Attribute unsupported })
             {
                 var attributeTypeName = unsupported.GetType().ShortDisplayName();
                 throw new NotSupportedException(
@@ -195,7 +198,7 @@ public class MongoModelValidator : ModelValidator
     /// </summary>
     /// <param name="model">The <see cref="IModel"/> to validate primary key correctness.</param>
     /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported yet.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
+    /// <exception cref="InvalidOperationException">Thrown when an entity requiring a key does not have one, or it is not mapped to "_id".</exception>
     private static void ValidatePrimaryKeys(IModel model)
     {
         foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
@@ -205,12 +208,237 @@ public class MongoModelValidator : ModelValidator
     }
 
     /// <summary>
+    /// Validate that MongoDB Queryable Encryption is correctly configured for a model if being used.
+    /// </summary>
+    /// <param name="model">The <see cref="IModel"/> to validate Queryable Encryption correctness.</param>
+    /// <param name="logger">A logger to receive validation diagnostic information.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the model uses Queryable Encryption but the encryption configuration is not valid.</exception>
+    private static void ValidateQueryableEncryption(
+        IModel model,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
+        {
+            ValidateEntityQueryableEncryption(entityType, false, false, [], logger);
+        }
+    }
+
+    /// <summary>
+    /// Validate that MongoDB Queryable Encryption is correctly configured for an entity if being used.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IEntityType"/> being validated.</param>
+    /// <param name="insideCollectionNavigation">Whether this entity is contained within a collection navigation somewhere in its hierarchy.</param>
+    /// <param name="insideEncryptedOwnedEntity">Whether this entity is contained within an owned entity somewhere in its hierarchy.</param>
+    /// <param name="usedDataKeys">The encryption data key ids already used to proactively validate re-use.</param>
+    /// <param name="logger">A logger to receive validation diagnostic information.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the entity uses Queryable Encryption but the encryption configuration is not valid.</exception>
+    private static void ValidateEntityQueryableEncryption(
+        IEntityType entityType,
+        bool insideCollectionNavigation,
+        bool insideEncryptedOwnedEntity,
+        HashSet<Guid> usedDataKeys,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        foreach (var property in entityType.GetProperties())
+        {
+            var queryableEncryptionType = property.GetQueryableEncryptionType();
+            if (queryableEncryptionType == null) continue;
+
+            if (insideCollectionNavigation)
+            {
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) +
+                    " is to be stored inside an array as it is an owned entity in a collection navigation." +
+                    " Queryable Encryption does not support encryption of elements within a BSON array.");
+            }
+
+            if (insideEncryptedOwnedEntity && queryableEncryptionType != QueryableEncryptionType.NotQueryable)
+            {
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) +
+                    " is to be stored inside an encrypted object as it is a property on an owned entity." +
+                    " Queryable Encryption does not support alternative encryption of elements within an encrypted object.");
+            }
+
+            var dataKeyId = property.GetEncryptionDataKeyId();
+            if (dataKeyId == null)
+            {
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) + " is to be encrypted but no data key id has been specified.");
+            }
+
+            if (!usedDataKeys.Add(dataKeyId.Value))
+            {
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) +
+                    " specifies a data key id that has already been used on a different property or navigation.");
+            }
+
+            ValidatePropertyQueryableEncryptionType(property, queryableEncryptionType.Value, logger);
+        }
+
+        foreach (var navigation in entityType.GetNavigations())
+        {
+            if (navigation.IsEmbedded())
+            {
+                var isEncryptedOwnedEntity =
+                    navigation.ForeignKey.GetQueryableEncryptionType() == QueryableEncryptionType.NotQueryable;
+
+                if (isEncryptedOwnedEntity)
+                {
+                    var dataKeyId = navigation.ForeignKey.GetEncryptionDataKeyId();
+                    if (dataKeyId == null)
+                    {
+                        throw new InvalidOperationException(
+                            NavigationOnEntity(navigation) + " is to be encrypted but no data key id has been specified.");
+                    }
+
+                    if (!usedDataKeys.Add(dataKeyId.Value))
+                    {
+                        throw new InvalidOperationException(
+                            NavigationOnEntity(navigation) +
+                            " specifies a data key id that has already been used on a different property or navigation.");
+                    }
+                }
+
+                ValidateEntityQueryableEncryption(navigation.TargetEntityType,
+                    insideCollectionNavigation || navigation.IsCollection,
+                    insideEncryptedOwnedEntity || isEncryptedOwnedEntity,
+                    usedDataKeys,
+                    logger);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validate that MongoDB Queryable Encryption type is correctly configured for a property if being used.
+    /// </summary>
+    /// <param name="property">The <see cref="IProperty"/> being validated.</param>
+    /// <param name="queryableEncryptionType">The <see cref="QueryableEncryptionType"/> configuration of the property.</param>
+    /// <param name="logger">A logger to receive validation diagnostic information.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the property uses Queryable Encryption but the encryption configuration is not valid.</exception>
+    private static void ValidatePropertyQueryableEncryptionType(
+        IProperty property,
+        QueryableEncryptionType queryableEncryptionType,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        var storageType = BsonTypeHelper.GetBsonType(property);
+        if (storageType == BsonType.Array)
+        {
+            throw new InvalidOperationException(
+                PropertyOnEntity(property)
+                + " is to be stored as an array."
+                + " Queryable Encryption does not support encryption of elements within a BSON array.");
+        }
+
+        if (property.IsNullable)
+        {
+            logger.EncryptedNullablePropertyEncountered(property);
+        }
+
+        switch (queryableEncryptionType)
+        {
+            case QueryableEncryptionType.NotQueryable:
+                break;
+
+            case QueryableEncryptionType.Equality:
+                ValidatePropertyForEqualityQueryableEncryption(property);
+                break;
+
+            case QueryableEncryptionType.Range:
+                ValidatePropertyForRangeQueryableEncryption(property, logger);
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    PropertyOnEntity(property) + $" has unsupported query type '{queryableEncryptionType}'.");
+        }
+    }
+
+    /// <summary>
+    /// Validate that MongoDB Queryable Encryption is correctly configured for a property being used for equality queries.
+    /// </summary>
+    /// <param name="property">The <see cref="IProperty"/> being validated.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the equality-query property uses Queryable Encryption but the configuration is not valid.</exception>
+    private static void ValidatePropertyForEqualityQueryableEncryption(IProperty property)
+    {
+        var bsonType = BsonTypeHelper.GetBsonType(property);
+        switch (bsonType)
+        {
+            case BsonType.Decimal128:
+            case BsonType.Double:
+            case BsonType.Document:
+                {
+                    throw CannotBeEncryptedForEqualityException($"BsonType.{bsonType} is not a supported type.");
+                }
+
+            default:
+                return;
+        }
+
+        Exception CannotBeEncryptedForEqualityException(string reason)
+            => new InvalidOperationException(PropertyOnEntity(property)
+                                             + $" cannot be encrypted for equality as {reason}.");
+    }
+
+    /// <summary>
+    /// Validate that MongoDB Queryable Encryption is correctly configured for a property being used for range queries.
+    /// </summary>
+    /// <param name="property">The <see cref="IProperty"/> being validated.</param>
+    /// <param name="logger">A logger to receive validation diagnostic information.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the range-query property uses Queryable Encryption but the configuration is not valid.</exception>
+    private static void ValidatePropertyForRangeQueryableEncryption(
+        IProperty property,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        var bsonType = BsonTypeHelper.GetBsonType(property);
+        switch (bsonType)
+        {
+            case BsonType.Decimal128:
+            case BsonType.Double:
+                {
+                    // Just test required values are present, leave validation to QE schema checker
+                    _ = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin)?.Value ??
+                        throw CannotBeEncryptedForRangeException("no min value has been specified.");
+
+                    _ = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax)?.Value ??
+                        throw CannotBeEncryptedForRangeException("no max value has been specified.");
+
+                    break;
+                }
+
+            case BsonType.Int32:
+            case BsonType.Int64:
+            case BsonType.DateTime:
+                {
+                    var min = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin);
+                    var max = property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax);
+
+                    if (min?.Value == null || max?.Value == null)
+                    {
+                        logger.RecommendedMinMaxRangeMissing(property);
+                    }
+
+                    break;
+                }
+
+            default:
+                throw CannotBeEncryptedForRangeException(
+                    "only Int32, Int64, DateTime, Decimal128 and Double BsonTypes are supported.");
+        }
+
+        Exception CannotBeEncryptedForRangeException(string reason)
+            => new InvalidOperationException(PropertyOnEntity(property)
+                                             + $" (BsonType.{bsonType}) cannot be used for Queryable Encryption range queries as {reason}.");
+    }
+
+    /// <summary>
     /// Validate that element names meet the requirements of MongoDB and that there
     /// are no element names duplicated for an entity.
     /// </summary>
     /// <param name="model">The <see cref="IModel"/> to validate primary key correctness.</param>
     /// <exception cref="NotSupportedException">Thrown when composite keys are encountered which are not supported.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when an entity requiring a key does not have one or it is not mapped to "_id".</exception>
+    /// <exception cref="InvalidOperationException">Thrown when an entity requiring a key does not have one, or it is not mapped to "_id".</exception>
     private static void ValidateElementNames(IModel model)
     {
         foreach (var entityType in model.GetEntityTypes())
@@ -223,7 +451,7 @@ public class MongoModelValidator : ModelValidator
     /// Validate that an entity has a valid primary key.
     /// </summary>
     /// <param name="entityType">The <see cref="IEntityType"/> to validate the primary key of.</param>
-    /// <exception cref="InvalidOperationException">Thrown when a required primary key is not found or it is invalid.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when a required primary key is not found, or it is invalid.</exception>
     private static void ValidateEntityPrimaryKey(IEntityType entityType)
     {
         // We must have a primary key on root documents
@@ -264,16 +492,14 @@ public class MongoModelValidator : ModelValidator
 
             if (elementName.StartsWith("$"))
             {
-                throw new InvalidOperationException(
-                    $"Property '{property.Name}' on entity type '{entityType.DisplayName()}' may not map to element '{elementName
-                    }' as it starts with the reserved character '$'.");
+                throw new InvalidOperationException(PropertyOnEntity(property) + $" may not map to element '{elementName
+                }' as it starts with the reserved character '$'.");
             }
 
             if (elementName.Contains('.'))
             {
-                throw new InvalidOperationException(
-                    $"Property '{property.Name}' on entity type '{entityType.DisplayName()}' may not map to element '{elementName
-                    }' as it contains the reserved character '.'.");
+                throw new InvalidOperationException(PropertyOnEntity(property) + $" may not map to element '{elementName
+                }' as it contains the reserved character '.'.");
             }
 
             if (elementPropertyMap.TryGetValue(elementName, out var otherProperty))
@@ -294,18 +520,16 @@ public class MongoModelValidator : ModelValidator
             var elementName = navigation.TargetEntityType.GetContainingElementName();
             if (elementName != null)
             {
-                if (elementName.StartsWith("$"))
+                if (elementName.StartsWith('$'))
                 {
-                    throw new InvalidOperationException(
-                        $"Property '{navigation.Name}' on entity type '{entityType.DisplayName()}' may not map to element '{
-                            elementName}' as it starts with the reserved character '$'.");
+                    throw new InvalidOperationException(NavigationOnEntity(navigation) + $" may not map to element '{
+                        elementName}' as it starts with the reserved character '$'.");
                 }
 
                 if (elementName.Contains('.'))
                 {
-                    throw new InvalidOperationException(
-                        $"Property '{navigation.Name}' on entity type '{entityType.DisplayName()}' may not map to element '{
-                            elementName}' as it contains the reserved character '.'.");
+                    throw new InvalidOperationException(NavigationOnEntity(navigation) + $" may not map to element '{
+                        elementName}' as it contains the reserved character '.'.");
                 }
 
                 if (elementPropertyMap.TryGetValue(elementName, out var otherProperty))
@@ -369,4 +593,10 @@ public class MongoModelValidator : ModelValidator
             }
         }
     }
+
+    private static string PropertyOnEntity(IProperty property)
+        => $"Property '{property.Name}' on entity type '{property.DeclaringType.DisplayName()}'";
+
+    private static string NavigationOnEntity(INavigation navigation)
+        => $"Navigation '{navigation.Name}' on entity type '{navigation.DeclaringType.DisplayName()}'";
 }

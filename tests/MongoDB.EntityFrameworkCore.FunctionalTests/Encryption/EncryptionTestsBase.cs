@@ -15,6 +15,9 @@
 
 using System.Security.Cryptography;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
 
@@ -32,6 +35,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     static EncryptionTestsBase()
     {
         MongoClientSettings.Extensions.AddAutoEncryption();
+        BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
     }
 
     protected MongoClient CreateEncryptedClient(
@@ -103,7 +107,8 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         => new()
         {
             {
-                "fields", new BsonArray
+                "fields",
+                new BsonArray
                 {
                     new BsonDocument
                     {
@@ -124,12 +129,7 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
                         { "keyId", AsBsonBinary(CreateDataKey()) },
                         { "path", "DateOfBirth" },
                         { "bsonType", "date" },
-                        {
-                            "queries", new BsonDocument
-                            {
-                                { "queryType", "range" },
-                            }
-                        }
+                        { "queries", new BsonDocument { { "queryType", "range" }, } }
                     }
                 }
             }
@@ -156,23 +156,40 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         new()
         {
             Name = "Calvin McFly",
+            IsActive = true,
             SSN = "145014000",
             DateOfBirth = new DateTime(1985, 10, 26, 0, 0, 0, DateTimeKind.Utc),
             BloodType = "AB-",
-            Doctor = "Mr Smith",
+            Doctor = "Emmett Grey",
             Sequence = 10,
+            Balance = 456.78m,
+            BillingNumber = 12345,
             BloodPressureReadings = [new BloodPressureReading { Diastolic = 120, Systolic = 80 }],
+            ExternalRef = Guid.NewGuid(),
+            ExternalObjectId = ObjectId.GenerateNewId(),
             WeightMeasurements =
-                [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }]
+                [new WeightMeasurement { WeightKilograms = 75, When = new DateTime(2024, 10, 26, 0, 0, 0, DateTimeKind.Utc) }],
+            LongTermCarePlan = new LongTermCarePlan { Instructions = "Take it easy and enjoy life." },
+            Tags = ["tired", "happy"],
+            BillingAddress = new Address { Street = "123 Anywhere", City = "New New York", State = "NY" }
         },
         new()
         {
-            Name = "Tom Smith",
+            Name = "Red Tyler",
+            IsActive = false,
             SSN = "1234567",
             DateOfBirth = new DateTime(2000, 1, 26, 0, 0, 0, DateTimeKind.Utc),
+            Doctor = "John Smith",
             BloodType = "O-",
             Sequence = 20,
-            BloodPressureReadings = []
+            Balance = 789.00m,
+            BillingNumber = -123,
+            BloodPressureReadings = [],
+            ExternalRef = Guid.NewGuid(),
+            ExternalObjectId = ObjectId.GenerateNewId(),
+            LongTermCarePlan = new LongTermCarePlan { Instructions = "Live long and prosper." },
+            Tags = ["new"],
+            BillingAddress = new Address { Street = "321 Nowhere", City = "Old York", State = "UK" }
         }
     ];
 
@@ -181,20 +198,37 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         public ObjectId Id { get; set; }
 
         public string Name { get; set; }
-        public string SSN { get; set; }
-        public DateTime DateOfBirth { get; set; }
-        public Decimal MonthlySubscription { get; set; }
 
-        public string BloodType { get; set; }
+        public bool IsActive { get; set; }
+
+        [BsonElement("ssn")]
+        public string SSN { get; set; }
+
+        [BsonElement("dateOfBirth")]
+        public DateTime DateOfBirth { get; set; }
+
+        [BsonElement("doctor")]
         public string? Doctor { get; set; }
+
+        public decimal MonthlySubscription { get; set; }
+        public string BloodType { get; set; }
+        public decimal Balance { get; set; }
         public string? InsuranceCompany { get; set; }
         public string? PolicyReference { get; set; }
         public int Sequence { get; set; }
+        public long BillingNumber { get; set; }
+        public string[] Tags { get; set; }
+
+        public Guid ExternalRef { get; set; }
+        public ObjectId ExternalObjectId { get; set; }
 
         public List<BloodPressureReading> BloodPressureReadings { get; set; }
         public List<WeightMeasurement> WeightMeasurements { get; set; }
 
+        [BsonElement("longTermCarePlan")]
         public LongTermCarePlan? LongTermCarePlan { get; set; }
+
+        public Address BillingAddress { get; set; }
     }
 
     public class WeightMeasurement
@@ -212,6 +246,16 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
 
     public class LongTermCarePlan
     {
+        [BsonElement("instructions")]
         public string Instructions { get; set; }
+
+        public int Room { get; set; }
+    }
+
+    public class Address
+    {
+        public string Street { get; set; }
+        public string City { get; set; }
+        public string State { get; set; }
     }
 }

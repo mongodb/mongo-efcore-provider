@@ -42,7 +42,9 @@ public static class MongoEventId
         TransactionCommitted,
         TransactionRollingBack,
         TransactionRolledBack,
-        TransactionError
+        TransactionError,
+        RecommendedMinMaxRangeMissing,
+        EncryptedNullablePropertyEncountered
     }
 
     private static EventId MakeDatabaseCommandId(Id id)
@@ -149,4 +151,25 @@ public static class MongoEventId
     ///     <para>This event uses the <see cref="MongoTransactionErrorEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
     /// </remarks>
     public static readonly EventId TransactionError = MakeTransactionId(Id.TransactionError);
+
+    private static EventId MakeValidationId(Id id)
+        => new((int)id, DbLoggerCategory.Model.Validation.Name + "." + id);
+
+    /// <summary>
+    /// A min or max value for a MongoDB Queryable Encryption range-query property has not been declared but is recommended.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Model.Validation" /> category.</para>
+    ///     <para>This event uses the <see cref="PropertyEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId RecommendedMinMaxRangeMissing = MakeValidationId(Id.RecommendedMinMaxRangeMissing);
+
+    /// <summary>
+    /// A property setup for MongoDB Queryable Encryption is nullable but null is not supported by queryable encryption.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Model.Validation" /> category.</para>
+    ///     <para>This event uses the <see cref="PropertyEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId EncryptedNullablePropertyEncountered = MakeValidationId(Id.EncryptedNullablePropertyEncountered);
 }

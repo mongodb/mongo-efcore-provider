@@ -22,6 +22,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
@@ -109,4 +110,105 @@ internal static class MongoLoggerExtensions
     }
 
     private const string LogExecutedMqlQueryString = "Executed MQL query{newLine}{collectionNamespace}.aggregate([{queryMql}])";
+
+
+    public static void RecommendedMinMaxRangeMissing(
+        this IDiagnosticsLogger<DbLoggerCategory.Model.Validation> diagnostics,
+        IProperty property)
+    {
+        var definition = LogRecommendedMinMaxRangeMissing(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(diagnostics, property.DeclaringType.DisplayName(), property.Name,
+                BsonTypeHelper.GetBsonType(property).ToString());
+            ;
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new PropertyEventData(
+                definition,
+                (d, p) => ((EventDefinition<string, string, string>)d).GenerateMessage(
+                    ((PropertyEventData)p).Property.DeclaringType.DisplayName(),
+                    ((PropertyEventData)p).Property.Name,
+                    BsonTypeHelper.GetBsonType(((PropertyEventData)p).Property).ToString()),
+                property);
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static EventDefinition<string, string, string> LogRecommendedMinMaxRangeMissing(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogRecommendedMinMaxRangeMissing;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogRecommendedMinMaxRangeMissing,
+                logger,
+                static logger => new EventDefinition<string, string, string>(
+                    logger.Options,
+                    MongoEventId.RecommendedMinMaxRangeMissing,
+                    LogLevel.Warning,
+                    "MongoEventId.RecommendedMinMaxRangeMissing",
+                    level => LoggerMessage.Define<string, string, string>(
+                        level,
+                        MongoEventId.RecommendedMinMaxRangeMissing,
+                        LogRecommendedMinMaxRangeMissingString)));
+        }
+
+        return (EventDefinition<string, string, string>)definition;
+    }
+
+    private const string LogRecommendedMinMaxRangeMissingString =
+        "The property '{entityType}.{propertyType}' is configured for Queryable Encryption range queries but is missing the recommended min/max values required for {bsonType} storage.";
+
+
+    public static void EncryptedNullablePropertyEncountered(
+        this IDiagnosticsLogger<DbLoggerCategory.Model.Validation> diagnostics,
+        IProperty property)
+    {
+        var definition = LogEncryptedNullablePropertyEncountered(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(diagnostics, property.DeclaringType.DisplayName(), property.Name);
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new PropertyEventData(
+                definition,
+                (d, p) => ((EventDefinition<string, string>)d).GenerateMessage(
+                    ((PropertyEventData)p).Property.DeclaringType.DisplayName(),
+                    ((PropertyEventData)p).Property.Name),
+                property);
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static EventDefinition<string, string> LogEncryptedNullablePropertyEncountered(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogEncryptedNullablePropertyEncountered;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogEncryptedNullablePropertyEncountered,
+                logger,
+                static logger => new EventDefinition<string, string>(
+                    logger.Options,
+                    MongoEventId.EncryptedNullablePropertyEncountered,
+                    LogLevel.Warning,
+                    "MongoEventId.EncryptedNullablePropertyEncountered",
+                    level => LoggerMessage.Define<string, string>(
+                        level,
+                        MongoEventId.EncryptedNullablePropertyEncountered,
+                        EncryptedNullablePropertyEncounteredString)));
+        }
+
+        return (EventDefinition<string, string>)definition;
+    }
+
+    private const string EncryptedNullablePropertyEncounteredString =
+        "The property '{entityType}.{property}' is configured for Queryable Encryption but is also nullable. Null is not supported by Queryable Encryption and will throw when attempting to save.";
 }

@@ -33,7 +33,7 @@ public static class MongoEntityTypeExtensions
     /// <param name="name">The name to set.</param>
     public static void SetCollectionName(this IMutableEntityType entityType, string? name)
     {
-        if (name is {Length: 0})
+        if (name is { Length: 0 })
             throw new ArgumentException("The string argument 'name' cannot be empty.");
 
         entityType.SetAnnotation(MongoAnnotationNames.CollectionName, name);

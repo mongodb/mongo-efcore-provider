@@ -28,7 +28,7 @@ public class TemporaryDatabaseFixture
     private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
     private static int DbCount;
 
-    private int collectionIdFallback;
+    private static int CollectionIdFallback;
 
     public TemporaryDatabaseFixture()
     {
@@ -41,7 +41,7 @@ public class TemporaryDatabaseFixture
 
     public IMongoDatabase MongoDatabase { get; }
 
-    public IMongoCollection<T> CreateCollection<T>([CallerMemberName] string? prefix = null, params object?[] values)
+    public static string CreateCollectionName([CallerMemberName] string? prefix = null, params object?[] values)
     {
         var valuesSuffix = string.Join('+', values.Select(v =>
         {
@@ -73,11 +73,14 @@ public class TemporaryDatabaseFixture
         if (string.IsNullOrEmpty(prefix))
         {
             // Sometimes on CI this is empty despite being CallerMemberName attributed so fallback to sequential number
-            prefix = Interlocked.Increment(ref collectionIdFallback).ToString();
+            prefix = Interlocked.Increment(ref CollectionIdFallback).ToString();
         }
 
-        return CreateCollection<T>($"{prefix}_{valuesSuffix}");
+        return $"{prefix}_{valuesSuffix}";
     }
+
+    public IMongoCollection<T> CreateCollection<T>([CallerMemberName] string? prefix = null, params object?[] values) =>
+        CreateCollection<T>(CreateCollectionName(prefix, values));
 
     public IMongoCollection<T> CreateCollection<T>([CallerMemberName] string? name = null)
     {

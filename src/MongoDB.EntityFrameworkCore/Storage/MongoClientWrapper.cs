@@ -28,53 +28,47 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Provides the implementation of the <see cref="IMongoClientWrapper"/> between the MongoDB Entity Framework provider
-/// and the underlying <see cref="IMongoClient"/>.
+/// Provides the implementation of the <see cref="IMongoClientWrapper"/> between the MongoDB Entity Framework Core
+/// provider and the underlying <see cref="IMongoClient"/>.
 /// </summary>
 public class MongoClientWrapper : IMongoClientWrapper
 {
+    private readonly MongoOptionsExtension? _options;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IMongoSchemaProvider _schemaProvider;
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
-    private readonly IMongoClient _client;
-    private readonly IMongoDatabase _database;
+
+    private IMongoClient? _client;
+    private IMongoDatabase? _database;
+    private string? _databaseName;
     private bool _useDatabaseNameFilter = true;
 
-    private string DatabaseName => _database.DatabaseNamespace.DatabaseName;
+    private IMongoClient Client => _client ??= GetOrCreateMongoClient(_options, _serviceProvider);
+    private IMongoDatabase Database => _database ??= Client.GetDatabase(_databaseName);
 
     /// <summary>
     /// Create a new instance of <see cref="MongoClientWrapper"/> with the supplied parameters.
     /// </summary>
     /// <param name="dbContextOptions">The <see cref="IDbContextOptions"/> that specify how this provider is configured.</param>
     /// <param name="serviceProvider">The <see cref="IServiceProvider"/> used to resolve dependencies.</param>
+    /// <param name="schemaProvider">The <see cref="IMongoSchemaProvider"/> used to obtain the Queryable Encryption schema.</param>
     /// <param name="commandLogger">The <see cref="IDiagnosticsLogger"/> used to log diagnostics events.</param>
     public MongoClientWrapper(
         IDbContextOptions dbContextOptions,
         IServiceProvider serviceProvider,
+        IMongoSchemaProvider schemaProvider,
         IDiagnosticsLogger<DbLoggerCategory.Database.Command> commandLogger)
     {
-        var options = dbContextOptions.FindExtension<MongoOptionsExtension>();
+        _options = dbContextOptions.FindExtension<MongoOptionsExtension>();
+        _serviceProvider = serviceProvider;
+        _schemaProvider = schemaProvider;
         _commandLogger = commandLogger;
-
-        _client = GetOrCreateMongoClient(options, serviceProvider);
-
-        var databaseName = options?.DatabaseName;
-        if (databaseName == null && options?.ConnectionString != null)
-        {
-            try
-            {
-                var connectionString = new MongoUrl(options.ConnectionString);
-                databaseName = connectionString.DatabaseName;
-            }
-            catch (FormatException)
-            {
-            }
-        }
-
-        _database = _client.GetDatabase(databaseName);
     }
 
     /// <inheritdoc />
@@ -92,21 +86,21 @@ public class MongoClientWrapper : IMongoClientWrapper
 
     /// <inheritdoc />
     public IMongoCollection<T> GetCollection<T>(string collectionName)
-        => _database.GetCollection<T>(collectionName);
+        => Database.GetCollection<T>(collectionName);
 
     /// <inheritdoc />
     public IClientSessionHandle StartSession()
-        => _client.StartSession();
+        => Client.StartSession();
 
     /// <inheritdoc />
     public async Task<IClientSessionHandle> StartSessionAsync(CancellationToken cancellationToken = default)
-        => await _client.StartSessionAsync(null, cancellationToken).ConfigureAwait(false);
+        => await Client.StartSessionAsync(null, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
     public bool CreateDatabase(IDesignTimeModel model)
     {
         var didCreateNewDatabase = !DatabaseExists();
-        var existingCollectionNames = _database.ListCollectionNames().ToList();
+        var existingCollectionNames = Database.ListCollectionNames().ToList();
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
@@ -115,7 +109,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             {
                 try
                 {
-                    _database.CreateCollection(collectionName);
+                    Database.CreateCollection(collectionName);
                     existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
@@ -124,7 +118,7 @@ public class MongoClientWrapper : IMongoClientWrapper
                 }
             }
 
-            var indexManager = _database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
+            var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
             var existingIndexNames = indexManager.List().ToList().Select(i => i["name"].AsString).ToList();
             CreateIndexes(entityType, indexManager, existingIndexNames, []);
         }
@@ -172,8 +166,9 @@ public class MongoClientWrapper : IMongoClientWrapper
     {
         var existed = await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
         using var collectionNamesCursor =
-            await _database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
+            await Database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
         var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
+
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
@@ -182,7 +177,8 @@ public class MongoClientWrapper : IMongoClientWrapper
             {
                 try
                 {
-                    await _database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+                    await Database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+                    existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
@@ -190,7 +186,7 @@ public class MongoClientWrapper : IMongoClientWrapper
                 }
             }
 
-            var indexManager = _database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
+            var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
             var indexCursor = await indexManager.ListAsync(cancellationToken).ConfigureAwait(false);
             var existingIndexNames = indexCursor.ToList(cancellationToken).Select(i => i["name"].AsString).ToList();
             await CreateIndexesAsync(entityType, indexManager, existingIndexNames, [], cancellationToken).ConfigureAwait(false);
@@ -273,7 +269,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         if (!DatabaseExists())
             return false;
 
-        _client.DropDatabase(DatabaseName);
+        Client.DropDatabase(_databaseName);
         return true;
     }
 
@@ -283,7 +279,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         if (!await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false))
             return false;
 
-        await _client.DropDatabaseAsync(DatabaseName, cancellationToken).ConfigureAwait(false);
+        await Client.DropDatabaseAsync(_databaseName, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -294,7 +290,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         {
             try
             {
-                return _client.ListDatabaseNames(BuildListDbNameFilterOptions()).Any();
+                return Client.ListDatabaseNames(BuildListDbNameFilterOptions()).Any();
             }
             catch (MongoCommandException ex) when (ex.ErrorMessage.Contains("filter"))
             {
@@ -303,7 +299,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             }
         }
 
-        return _client.ListDatabaseNames().ToList().Any(d => d == DatabaseName);
+        return Client.ListDatabaseNames().ToList().Any(d => d == _databaseName);
     }
 
     /// <inheritdoc/>
@@ -313,7 +309,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         {
             try
             {
-                using var cursor = await _client
+                using var cursor = await Client
                     .ListDatabaseNamesAsync(BuildListDbNameFilterOptions(), cancellationToken).ConfigureAwait(false);
                 return await cursor.AnyAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -324,13 +320,13 @@ public class MongoClientWrapper : IMongoClientWrapper
             }
         }
 
-        using var allCursor = await _client.ListDatabaseNamesAsync(cancellationToken).ConfigureAwait(false);
+        using var allCursor = await Client.ListDatabaseNamesAsync(cancellationToken).ConfigureAwait(false);
         var listOfDatabases = await allCursor.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return listOfDatabases.Any(d => d == DatabaseName);
+        return listOfDatabases.Any(d => d == _databaseName);
     }
 
     private ListDatabaseNamesOptions BuildListDbNameFilterOptions()
-        => new() { Filter = Builders<BsonDocument>.Filter.Eq("name", DatabaseName) };
+        => new() { Filter = Builders<BsonDocument>.Filter.Eq("name", _databaseName) };
 
     private static CreateIndexModel<BsonDocument> CreateIndexDocument(IIndex index, string indexName, string[] path)
     {
@@ -358,7 +354,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             doc.Add(string.Join('.', path.Append(property.GetElementName())), 1);
         }
 
-        var options = new CreateIndexOptions<BsonDocument> {Name = indexName, Unique = true};
+        var options = new CreateIndexOptions<BsonDocument> { Name = indexName, Unique = true };
         return new CreateIndexModel<BsonDocument>(doc, options);
     }
 
@@ -388,26 +384,95 @@ public class MongoClientWrapper : IMongoClientWrapper
         return [result];
     }
 
-    private static IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
+    private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
     {
-        var injectedClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient));
-        if (injectedClient != null)
-            return injectedClient;
+        _databaseName = _options?.DatabaseName;
+        if (_databaseName == null && options?.ConnectionString != null)
+        {
+            try
+            {
+                var connectionString = new MongoUrl(options.ConnectionString);
+                _databaseName = connectionString.DatabaseName;
+            }
+            catch (FormatException)
+            {
+            }
+        }
 
-        if (options?.ConnectionString != null)
-            return new MongoClient(options.ConnectionString);
+        var queryableEncryptionSchema = _schemaProvider.GetQueryableEncryptionSchema();
+        var usesQueryableEncryption = queryableEncryptionSchema.Count > 0;
 
-        if (options?.MongoClientSettings != null)
-            return new MongoClient(options.MongoClientSettings);
+        var preconfiguredMongoClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient)) ?? options?.MongoClient;
+        if (preconfiguredMongoClient != null)
+        {
+            if (usesQueryableEncryption)
+            {
+                throw new InvalidOperationException(
+                    "Cannot activate Queryable Encryption with a pre-configured MongoClient. Either use ConnectionString or ClientSettings options instead.");
+            }
 
-        if (options?.MongoClient != null)
-            return options.MongoClient;
+            return preconfiguredMongoClient;
+        }
 
-        throw new InvalidOperationException(
-            $"Unable to obtain or create a {nameof(MongoClient)} instance. " +
-            $"Either provide {nameof(MongoOptionsExtension.MongoClientSettings)}, " +
-            $"a {nameof(MongoOptionsExtension.ConnectionString)}" +
-            $"or a {nameof(MongoOptionsExtension.MongoClient)} " +
-            $"via {nameof(DbContextOptions)}, or register an implementation of {nameof(IMongoClient)} via {nameof(IServiceProvider)}.");
+        var clientSettings = options?.ConnectionString != null
+            ? MongoClientSettings.FromConnectionString(options.ConnectionString)
+            : options?.ClientSettings?.Clone();
+
+        if (clientSettings == null)
+        {
+            throw new InvalidOperationException(
+                "Unable to create or obtain a MongoClient. Either provide ClientSettings, a ConnectionString, or a " +
+                "MongoClient via the DbContextOptions, or register an implementation of IMongoClient with the ServiceProvider.");
+        }
+
+        if (usesQueryableEncryption)
+        {
+            ApplyQueryableEncryptionSettings(options, clientSettings, queryableEncryptionSchema);
+        }
+
+        return new MongoClient(clientSettings);
     }
+
+    private void ApplyQueryableEncryptionSettings(MongoOptionsExtension? options, MongoClientSettings clientSettings,
+        Dictionary<string, BsonDocument> queryableEncryptionSchema)
+    {
+        var extraOptions = options?.CryptProvider switch
+        {
+            CryptProvider.AutoEncryptSharedLibrary => ExtraOptionsForCryptShared(options.CryptProviderPath!),
+            CryptProvider.Mongocryptd => ExtraOptionsForMongocryptd(options.CryptProviderPath!),
+            _ => new Dictionary<string, object>()
+        };
+
+        CombineExtraOptions(extraOptions, clientSettings.AutoEncryptionOptions?.ExtraOptions);
+        CombineExtraOptions(extraOptions, options?.CryptExtraOptions);
+
+        var keyVaultNamespace = clientSettings.AutoEncryptionOptions?.KeyVaultNamespace ?? options?.KeyVaultNamespace ??
+            throw new InvalidOperationException(
+                "No KeyVaultNamespace specified for Queryable Encryption. Either specify it via DbContextOptions or MongoClientSettings.");
+
+        var kmsProviders = clientSettings.AutoEncryptionOptions?.KmsProviders ?? options?.KmsProviders ??
+            throw new InvalidOperationException(
+                "No KmsProviders specified for Queryable Encryption. Either specify it via DbContextOptions or MongoClientSettings.");
+
+        clientSettings.AutoEncryptionOptions = new AutoEncryptionOptions(
+            keyVaultNamespace,
+            kmsProviders,
+            encryptedFieldsMap: queryableEncryptionSchema.ToDictionary(d => _options!.DatabaseName + "." + d.Key, d => d.Value),
+            extraOptions: extraOptions);
+    }
+
+    private static void CombineExtraOptions(Dictionary<string, object> combinedOptions, IReadOnlyDictionary<string, object>? extraOptions)
+    {
+        if (extraOptions == null) return;
+        foreach (var kvp in extraOptions)
+        {
+            combinedOptions[kvp.Key] = kvp.Value;
+        }
+    }
+
+    private static Dictionary<string, object> ExtraOptionsForCryptShared(string cryptSharedLibPath) =>
+        new() { { "cryptSharedLibPath", cryptSharedLibPath }, { "cryptSharedLibRequired", true } };
+
+    private static Dictionary<string, object> ExtraOptionsForMongocryptd(string mongocryptdSpawnPath) =>
+        new() { { "mongocryptdSpawnPath", mongocryptdSpawnPath } };
 }
