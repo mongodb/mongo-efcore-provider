@@ -78,7 +78,7 @@ ulimit -u 2048
 
 #### Running MongoDB
 
-The EF code provider functional tests require two instances of `mongod` to be running, both using the same replica set. These can be run in the background, but it is sometimes useful to see the diagnostic output, so open two terminal windows and run one instance in each.
+The EF Core provider functional tests require two instances of `mongod` to be running, both using the same replica set. These can be run in the background, but it is sometimes useful to see the diagnostic output, so open two terminal windows and run one instance in each.
 
 Each instance will have its own data folder, so create `data1` and `data2` in some chosen location on your machine. Now start the two instances, using a different port for each. For example, on MacOS:
 
