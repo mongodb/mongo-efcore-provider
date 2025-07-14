@@ -84,33 +84,34 @@ public class TemporaryDatabaseFixture
 
     public IMongoCollection<T> CreateCollection<T>([CallerMemberName] string? name = null)
     {
-        if (name == ".ctor")
-            name = GetLastConstructorTypeNameFromStack()
-                   ?? throw new InvalidOperationException(
-                       "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
-
+        name = TransformNameIfNeeded(name);
         MongoDatabase.CreateCollection(name);
         return MongoDatabase.GetCollection<T>(name);
     }
 
+    public void DropCollection([CallerMemberName] string? name = null)
+        => MongoDatabase.DropCollection(TransformNameIfNeeded(name));
+
     public IMongoCollection<T> GetCollection<T>([CallerMemberName] string? name = null)
-    {
-        if (name == ".ctor")
-            name = GetLastConstructorTypeNameFromStack()
-                   ?? throw new InvalidOperationException(
-                       "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
-        return MongoDatabase.GetCollection<T>(name);
-    }
+        => MongoDatabase.GetCollection<T>(TransformNameIfNeeded(name));
 
     public IMongoCollection<T> GetCollection<T>(CollectionNamespace collectionNamespace)
         => MongoDatabase.GetCollection<T>(collectionNamespace.CollectionName);
 
     public IMongoClient Client { get; }
 
-    private static string? GetLastConstructorTypeNameFromStack()
-        => new StackTrace()
-            .GetFrames()
-            .Select(f => f.GetMethod())
-            .FirstOrDefault(f => f?.Name == ".ctor")
-            ?.DeclaringType?.Name;
+    private static string TransformNameIfNeeded(string? name)
+    {
+        if (name == ".ctor")
+        {
+            name = new StackTrace()
+                .GetFrames()
+                .Select(f => f.GetMethod())
+                .FirstOrDefault(f => f?.Name == ".ctor")
+                ?.DeclaringType?.Name;
+        }
+
+        return name ?? throw new InvalidOperationException(
+            "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
+    }
 }
