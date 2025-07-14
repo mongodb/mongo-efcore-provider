@@ -85,7 +85,10 @@ public sealed class BsonSerializerFactory
                 => GetDictionarySerializer(type),
             {IsGenericType: true}
                 => GetCollectionSerializer(type, CreateTypeSerializer(type.GetGenericArguments()[0])),
-
+            {IsValueType: true, IsPrimitive: false}
+                // Adapted from BsonClassMapSerializationProvider in the C# driver
+                => (IBsonSerializer)Activator.CreateInstance(
+                    typeof(BsonClassMapSerializer<>).MakeGenericType(type), BsonClassMap.LookupClassMap(type))!,
             _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'.")
         };
 
