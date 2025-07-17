@@ -15,16 +15,23 @@
     <Compile Remove="Design\Generated\**" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Northwind.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.15" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.15" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="8.0.15" />
     <Compile Include="Design\Generated\EF8\**" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.4" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="9.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="9.0.4" />
     <Compile Include="Design\Generated\EF9\**" />
   </ItemGroup>
 
@@ -33,5 +40,9 @@
       <_Parameter1>XUnit.Startup.Dispose.Hooks.TestFramework</_Parameter1>
       <_Parameter2>XUnit.Startup.Dispose.Hooks</_Parameter2>
     </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="TestModels\" />
   </ItemGroup>
 </Project>
