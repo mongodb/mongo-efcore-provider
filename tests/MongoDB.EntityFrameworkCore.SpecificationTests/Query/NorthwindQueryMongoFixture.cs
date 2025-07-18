@@ -64,4 +64,8 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
         modelBuilder.Ignore<CustomerQueryWithQueryFilter>();
         modelBuilder.Ignore<CustomerQuery>();
     }
+
+    public override DbContextOptionsBuilder AddOptions(DbContextOptionsBuilder builder)
+        => base.AddOptions(builder).ConfigureWarnings(
+            c => c.Log(CoreEventId.MappedEntityTypeIgnoredWarning)); // Needed because we ignore keyless types above
 }

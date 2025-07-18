@@ -15,6 +15,6 @@
 
 global using Xunit;
 global using XUnitCollection = Xunit.CollectionAttribute;
-global using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+global using MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 [assembly:CollectionBehavior(DisableTestParallelization = true)]
