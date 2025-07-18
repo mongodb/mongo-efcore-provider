@@ -22,7 +22,6 @@ using Microsoft.EntityFrameworkCore.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MongoDB.EntityFrameworkCore.Extensions;
-using MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
@@ -57,15 +56,13 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
         modelBuilder.Entity<OrderDetail>().ToCollection("OrderDetails");
         modelBuilder.Entity<Product>().ToCollection("Products");
 
-        // TODO: File an issue to not throw for keyless entity types
-        modelBuilder.Ignore<OrderQuery>();
-        modelBuilder.Ignore<ProductQuery>();
-        modelBuilder.Ignore<ProductView>();
-        modelBuilder.Ignore<CustomerQueryWithQueryFilter>();
-        modelBuilder.Ignore<CustomerQuery>();
+        modelBuilder.Entity<CustomerQuery>().ToCollection("Customers");
+        modelBuilder.Entity<OrderQuery>().ToCollection("Orders");
+        modelBuilder.Entity<ProductQuery>().ToCollection("Products");
+        modelBuilder.Entity<ProductView>(b =>
+        {
+            b.Property(e => e.ProductID).HasElementName("_id");
+            b.ToCollection("Products");
+        });
     }
-
-    public override DbContextOptionsBuilder AddOptions(DbContextOptionsBuilder builder)
-        => base.AddOptions(builder).ConfigureWarnings(
-            c => c.Log(CoreEventId.MappedEntityTypeIgnoredWarning)); // Needed because we ignore keyless types above
 }
