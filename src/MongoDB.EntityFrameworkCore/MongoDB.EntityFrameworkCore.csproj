@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Description>Official MongoDB supported provider for Entity Framework Core. See https://www.mongodb.com/docs/entity-framework/ for more details.</Description>
     <IsPackable>true</IsPackable>
     <PackageId>MongoDB.EntityFrameworkCore</PackageId>

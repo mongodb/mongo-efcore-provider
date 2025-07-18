@@ -17,7 +17,7 @@ using Microsoft.EntityFrameworkCore.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 public class MongoTestStoreFactory : ITestStoreFactory
 {

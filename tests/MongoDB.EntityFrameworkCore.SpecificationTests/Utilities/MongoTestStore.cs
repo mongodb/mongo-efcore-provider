@@ -25,7 +25,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using JsonToken = Newtonsoft.Json.JsonToken;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 public class MongoTestStore : TestStore
 {

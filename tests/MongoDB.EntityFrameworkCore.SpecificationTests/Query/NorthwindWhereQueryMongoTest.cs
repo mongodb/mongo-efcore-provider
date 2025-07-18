@@ -16,11 +16,12 @@
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
+using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
 public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<NorthwindQueryMongoFixture<NoopModelCustomizer>>
 {
@@ -1001,7 +1002,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
     {
         await base.Where_bool_closure(async);
 
-        #if EF9
+#if EF9
         AssertMql(
             """
             Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
@@ -1018,7 +1019,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
             """
             Customers.
             """);
-        #else
+#else
         AssertMql(
             """
             Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
@@ -1027,7 +1028,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
             """
             Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
-        #endif
+#endif
     }
 
     public override async Task Where_default(bool async)
@@ -1122,7 +1123,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
             """);
     }
 
-    #if EF9
+#if EF9
     public override async Task Where_ternary_boolean_condition_negated(bool async)
     {
         await base.Where_ternary_boolean_condition_negated(async);
@@ -1132,7 +1133,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
             Products.{ "$match" : { "$nor" : [{ "$expr" : { "$cond" : { "if" : { "$gte" : [{ "$toInt" : "$UnitsInStock" }, 20] }, "then" : false, "else" : true } } }] } }
             """);
     }
-    #endif
+#endif
 
     public override async Task Where_compare_constructed_equal(bool async)
     {
@@ -1258,7 +1259,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-            Products.{ "$match" : { "CustomerID" : "QUICK" } }, { "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T00:00:00Z" } } } }
+            Orders.{ "$match" : { "CustomerID" : "QUICK" } }, { "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T00:00:00Z" } } } }
             """);
     }
 
@@ -1345,7 +1346,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$type" : -1 } } }
+            Orders.{ "$match" : { "_id" : { "$type" : -1 } } }
             """);
     }
 
@@ -1536,7 +1537,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
+            Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
             """);
     }
 
@@ -1550,7 +1551,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
+            Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
             """);
     }
 
@@ -1867,7 +1868,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : 10274 } }
+            Orders.{ "$match" : { "_id" : 10274 } }
             """);
     }
 
@@ -1881,7 +1882,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : 10275 } }
+            Orders.{ "$match" : { "_id" : 10275 } }
             """);
     }
 
@@ -1895,7 +1896,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : 10274 } }
+            Orders.{ "$match" : { "_id" : 10274 } }
             """);
     }
 
@@ -2111,7 +2112,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
             """);
     }
 
-    #if EF9
+#if EF9
     public override async Task EF_Constant(bool async)
     {
         // Fails: AV000 (EF.Constant not supported on Mongo)
@@ -2137,7 +2138,8 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
         // Fails: AV000 (EF.Constant not supported on Mongo)
         Assert.Equal(
             CoreStrings.EFConstantNotSupported,
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.EF_Constant_does_not_parameterized_as_part_of_bigger_subtree(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.EF_Constant_does_not_parameterized_as_part_of_bigger_subtree(async))).Message);
 
         AssertMql();
     }
@@ -2148,7 +2150,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql();
     }
-    #else
+#else
     public override async Task EF_Constant(bool async)
     {
         await base.EF_Constant(async);
@@ -2185,9 +2187,9 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql();
     }
-    #endif
+#endif
 
-    #if EF9
+#if EF9
 
     public override async Task EF_Parameter(bool async)
     {
@@ -2231,23 +2233,23 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "CustomerID" : "1337" } }
+            Orders.{ "$match" : { "CustomerID" : "1337" } }
             """,
             //
             """
-            Products.{ "$match" : { "CustomerID" : "1337" } }
+            Orders.{ "$match" : { "CustomerID" : "1337" } }
             """,
             //
             """
-            Products.{ "$match" : { "CustomerID" : "1337" } }
+            Orders.{ "$match" : { "CustomerID" : "1337" } }
             """,
             //
             """
-            Products.{ "$match" : { "CustomerID" : "1337" } }
+            Orders.{ "$match" : { "CustomerID" : "1337" } }
             """,
             //
             """
-            Products.{ "$match" : { "CustomerID" : "1337" } }
+            Orders.{ "$match" : { "CustomerID" : "1337" } }
             """);
     }
 
@@ -2261,7 +2263,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
             """);
     }
 
@@ -2275,7 +2277,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : 10248 } }
+            Orders.{ "$match" : { "_id" : 10248 } }
             """);
     }
 
@@ -2316,7 +2318,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 3 }, { "$project" : { "_v" : "$ContactTitle", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
-    #endif
+#endif
 
     public override async Task Where_bitwise_or(bool async)
     {
@@ -2462,141 +2464,141 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_date_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ", // (Expected 3, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_date_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, { "$date" : "1998-05-03T23:00:00Z" }] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, { "$date" : "1998-05-03T23:00:00Z" }] } } }
             """);
     }
 
     public override async Task Where_date_add_year_constant_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ", // (Expected 270, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_date_add_year_constant_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$year" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "year", "amount" : -1 } } }, 1997] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$year" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "year", "amount" : -1 } } }, 1997] } } }
             """);
     }
 
     public override async Task Where_datetime_year_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ", // (Expected 270, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_year_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1998] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1998] } } }
             """);
     }
 
     public override async Task Where_datetime_month_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ",
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_month_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 4] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 4] } } }
             """);
     }
 
     public override async Task Where_datetime_dayOfYear_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ",
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_dayOfYear_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$dayOfYear" : "$OrderDate" }, 68] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$dayOfYear" : "$OrderDate" }, 68] } } }
             """);
     }
 
     public override async Task Where_datetime_day_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ",
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_day_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$dayOfMonth" : "$OrderDate" }, 4] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$dayOfMonth" : "$OrderDate" }, 4] } } }
             """);
     }
 
     public override async Task Where_datetime_hour_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ",
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_hour_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$hour" : "$OrderDate" }, 0] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$hour" : "$OrderDate" }, 0] } } }
             """);
     }
 
     public override async Task Where_datetime_minute_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ",
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_minute_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$minute" : "$OrderDate" }, 0] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$minute" : "$OrderDate" }, 0] } } }
             """);
     }
 
     public override async Task Where_datetime_second_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ",
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_second_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$second" : "$OrderDate" }, 0] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$second" : "$OrderDate" }, 0] } } }
             """);
     }
 
     public override async Task Where_datetime_millisecond_component(bool async)
     {
-        // Fails: AV000
+        // Fails: AV015
         Assert.Contains(
-            "Values differ",
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Where_datetime_millisecond_component(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$millisecond" : "$OrderDate" }, 0] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$millisecond" : "$OrderDate" }, 0] } } }
             """);
     }
 
@@ -2610,7 +2612,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.
+            Orders.
             """);
     }
 
@@ -2624,7 +2626,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.
+            Orders.
             """);
     }
 
@@ -2664,7 +2666,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : "$_id" }, "$CustomerID"] }, "$CustomerID"] } } }, { "$project" : { "_v" : "$CustomerID", "_id" : 0 } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : "$_id" }, "$CustomerID"] }, "$CustomerID"] } } }, { "$project" : { "_v" : "$CustomerID", "_id" : 0 } }
             """);
     }
 
@@ -2710,15 +2712,15 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Time_of_day_datetime(bool async)
     {
-        // Fails: AV013
+        // Fails: AV015
         Assert.Contains(
-            "Cannot deserialize a 'TimeSpan' from BsonType 'Null'.",
-            (await Assert.ThrowsAsync<FormatException>(async () =>
+            "PlanExecutor error during aggregation",
+            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
                 await base.Time_of_day_datetime(async))).Message);
 
         AssertMql(
             """
-            Products.{ "$project" : { "_v" : { "$dateDiff" : { "startDate" : { "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, "endDate" : "$OrderDate", "unit" : "millisecond" } }, "_id" : 0 } }
+            Orders.{ "$project" : { "_v" : { "$dateDiff" : { "startDate" : { "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, "endDate" : "$OrderDate", "unit" : "millisecond" } }, "_id" : 0 } }
             """);
     }
 
@@ -2732,7 +2734,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.
+            Orders.
             """);
     }
 
@@ -2746,7 +2748,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.
+            Orders.
             """);
     }
 

@@ -22,8 +22,9 @@ using Microsoft.EntityFrameworkCore.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
 public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtureBase<TModelCustomizer>
     where TModelCustomizer :
@@ -52,7 +53,7 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
 
         modelBuilder.Entity<Customer>().ToCollection("Customers");
         modelBuilder.Entity<Employee>().ToCollection("Employees");
-        modelBuilder.Entity<Order>().ToCollection("Products");
+        modelBuilder.Entity<Order>().ToCollection("Orders");
         modelBuilder.Entity<OrderDetail>().ToCollection("OrderDetails");
         modelBuilder.Entity<Product>().ToCollection("Products");
 
@@ -63,8 +64,4 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
         modelBuilder.Ignore<CustomerQueryWithQueryFilter>();
         modelBuilder.Ignore<CustomerQuery>();
     }
-
-    public override DbContextOptionsBuilder AddOptions(DbContextOptionsBuilder builder)
-        => base.AddOptions(builder).ConfigureWarnings(
-            c => c.Log(CoreEventId.MappedEntityTypeIgnoredWarning)); // Needed because we ignore keyless types above
 }

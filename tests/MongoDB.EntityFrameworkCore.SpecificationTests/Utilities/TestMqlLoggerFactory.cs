@@ -17,7 +17,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 #nullable disable
 

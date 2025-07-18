@@ -17,8 +17,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 
 #nullable disable
 
@@ -105,6 +107,9 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
 
     public class BuiltInDataTypesMongoFixture : BuiltInDataTypesFixtureBase
     {
+        public override DbContextOptionsBuilder AddOptions(DbContextOptionsBuilder builder)
+            => base.AddOptions(builder.ConfigureWarnings(w => w.Ignore(MongoEventId.ColumnAttributeWithTypeUsed)));
+
         protected override ITestStoreFactory TestStoreFactory
             => MongoTestStoreFactory.Instance;
 

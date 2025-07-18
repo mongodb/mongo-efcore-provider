@@ -13,20 +13,8 @@
  * limitations under the License.
  */
 
-using Microsoft.EntityFrameworkCore.TestUtilities;
+global using Xunit;
+global using XUnitCollection = Xunit.CollectionAttribute;
+global using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
-
-public class MongoNorthwindTestStoreFactory : MongoTestStoreFactory
-{
-    private const string Name = "Northwind";
-
-    public static new MongoNorthwindTestStoreFactory Instance { get; } = new();
-
-    private MongoNorthwindTestStoreFactory()
-    {
-    }
-
-    public override TestStore GetOrCreate(string storeName)
-        => MongoTestStore.GetOrCreate(Name, "Northwind.json");
-}
+[assembly:CollectionBehavior(DisableTestParallelization = true)]
