@@ -1,0 +1,457 @@
+AV001:
+
+System.Exception: Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[MongoDB.EntityFrameworkCore.Fu...
+
+System.Exception
+Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[MongoDB.EntityFrameworkCore.FunctionalTests.Mapping.BuiltInDataTypesMongoTest+BuiltInDataTypesMongoFixture].
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ToFilterFieldTranslators.ConvertExpressionToFilterFieldTranslator.TranslateNumericConversion(TranslatedFilterField fieldTranslation, Type targetType)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ToFilterFieldTranslators.ConvertExpressionToFilterFieldTranslator.Translate(TranslationContext context, UnaryExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ToFilterFieldTranslators.ExpressionToFilterFieldTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ToFilterFieldTranslators.ConvertExpressionToFilterFieldTranslator.Translate(TranslationContext context, UnaryExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ToFilterFieldTranslators.ExpressionToFilterFieldTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionTranslators.ComparisonExpressionToFilterTranslator.Translate(TranslationContext context, BinaryExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateUsingQueryOperators(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.Translate(TranslationContext context, Expression expression, Boolean exprOk)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateLambda(TranslationContext context, LambdaExpression lambdaExpression, IBsonSerializer parameterSerializer, Boolean asRoot)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.WhereMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.SelectMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExpressionToExecutableQueryTranslator.Translate[TDocument,TOutput](MongoQueryProvider`1 provider, Expression expression, ExpressionTranslationOptions translationOptions)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNext() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 103
+   at System.Collections.Generic.List`1..ctor(IEnumerable`1 collection)
+   at System.Linq.Enumerable.ToList[TSource](IEnumerable`1 source)
+   at Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1.Can_filter_projection_with_captured_enum_variable(Boolean async)
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Mapping.BuiltInDataTypesMongoTest.Can_filter_projection_with_captured_enum_variable(Boolean async) in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Mapping/BuiltInDataTypesMongoTest.cs:line 31
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+AV002:
+
+System.InvalidOperationException: Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.
+
+System.InvalidOperationException
+Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoProjectionBindingExpressionVisitor.VisitExtension(Expression extensionExpression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoProjectionBindingExpressionVisitor.cs:line 143
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoProjectionBindingExpressionVisitor.Visit(Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoProjectionBindingExpressionVisitor.cs:line 111
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoProjectionBindingExpressionVisitor.Translate(MongoQueryExpression queryExpression, Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoProjectionBindingExpressionVisitor.cs:line 59
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect(ShapedQueryExpression source, LambdaExpression selector) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoQueryableMethodTranslatingExpressionVisitor.cs:line 132
+   at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.VisitMethodCall(MethodCallExpression methodCallExpression)
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall(MethodCallExpression methodCallExpression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoQueryableMethodTranslatingExpressionVisitor.cs:line 100
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoQueryableMethodTranslatingExpressionVisitor.Visit(Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoQueryableMethodTranslatingExpressionVisitor.cs:line 52
+   at MongoDB.EntityFrameworkCore.Query.MongoQueryCompilationContext.CreateQueryExecutor[TResult](Expression originalQuery) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/MongoQueryCompilationContext.cs:line 63
+   at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+   at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.ExecuteAsync[TResult](Expression expression, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1.Can_insert_and_read_back_with_string_key()
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Mapping.BuiltInDataTypesMongoTest.Can_insert_and_read_back_with_string_key() in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Mapping/BuiltInDataTypesMongoTest.cs:line 43
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+AV003:
+
+MongoDB.Driver.MongoCommandException: Command aggregate failed: PlanExecutor error during aggregation :: caused by :: Unsupported conversion from obje...
+
+MongoDB.Driver.MongoCommandException
+Command aggregate failed: PlanExecutor error during aggregation :: caused by :: Unsupported conversion from object to string in $convert with no onError value.
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.ProcessResponse(ConnectionId connectionId, CommandMessage responseMessage)
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.SendMessageAndProcessResponse(CommandRequestMessage message, Int32 responseTo, IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.Execute(IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.WireProtocol.CommandWireProtocol`1.Execute(IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Servers.Server.ServerChannel.ExecuteProtocol[TResult](IWireProtocol`1 protocol, ICoreSession session, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Servers.Server.ServerChannel.Command[TResult](ICoreSession session, ReadPreference readPreference, DatabaseNamespace databaseNamespace, BsonDocument command, IEnumerable`1 commandPayloads, IElementNameValidator commandValidator, BsonDocument additionalOptions, Action`1 postWriteAction, CommandResponseHandling responseHandling, IBsonSerializer`1 resultSerializer, MessageEncoderSettings messageEncoderSettings, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.CommandOperationBase`1.ExecuteProtocol(IChannelHandle channel, ICoreSessionHandle session, ReadPreference readPreference, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.ReadCommandOperation`1.ExecuteAttempt(RetryableReadContext context, Int32 attempt, Nullable`1 transactionNumber, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.RetryableReadOperationExecutor.Execute[TResult](IRetryableReadOperation`1 operation, RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.ReadCommandOperation`1.Execute(RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.Execute(RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.Execute(IReadBinding binding, CancellationToken cancellationToken)
+   at MongoDB.Driver.OperationExecutor.ExecuteReadOperation[TResult](IReadBinding binding, IReadOperation`1 operation, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.ExecuteReadOperation[TResult](IClientSessionHandle session, IReadOperation`1 operation, ReadPreference readPreference, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.ExecuteReadOperation[TResult](IClientSessionHandle session, IReadOperation`1 operation, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.Aggregate[TResult](IClientSessionHandle session, PipelineDefinition`2 pipeline, AggregateOptions options, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.<>c__DisplayClass23_0`1.<Aggregate>b__0(IClientSessionHandle session)
+   at MongoDB.Driver.MongoCollectionImpl`1.UsingImplicitSession[TResult](Func`2 func, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.Aggregate[TResult](PipelineDefinition`2 pipeline, AggregateOptions options, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExecutableQuery`3.Execute(IClientSessionHandle session, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQueryProvider`1.Execute[TResult](ExecutableQuery`2 executableQuery, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextAsync() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 128
+   at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.Enumerator.MoveNextAsync()
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1.Object_to_string_conversion()
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Mapping.BuiltInDataTypesMongoTest.Object_to_string_conversion() in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Mapping/BuiltInDataTypesMongoTest.cs:line 58
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+AV004:
+
+System.NotSupportedException: Serializer for System.DateTimeOffset does not represent members as fields.
+
+System.NotSupportedException
+Serializer for System.DateTimeOffset does not represent members as fields.
+   at MongoDB.Driver.Linq.Linq3Implementation.Misc.DocumentSerializerHelper.GetMemberSerializationInfo(IBsonSerializer serializer, String memberName)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.MemberExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, MemberExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.MemberExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, MemberExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ConvertExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, UnaryExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.MemberInitExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression, NewExpression newExpression, IReadOnlyList`1 bindings)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.NewExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, NewExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.TranslateLambdaBody(TranslationContext context, LambdaExpression lambdaExpression, Symbol parameterSymbol)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.TranslateLambdaBody(TranslationContext context, LambdaExpression lambdaExpression, IBsonSerializer parameterSerializer, Boolean asRoot)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.SelectMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExpressionToExecutableQueryTranslator.Translate[TDocument,TOutput](MongoQueryProvider`1 provider, Expression expression, ExpressionTranslationOptions translationOptions)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextAsync() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 128
+   at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.Enumerator.MoveNextAsync()
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1.Optional_datetime_reading_null_from_database()
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Mapping.BuiltInDataTypesMongoTest.Optional_datetime_reading_null_from_database() in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Mapping/BuiltInDataTypesMongoTest.cs:line 64
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+AV007:
+
+System.ArgumentException: Expression of type 'System.Linq.IQueryable`1[Microsoft.EntityFrameworkCore.TestModels.Northwind.Customer]' cannot be used fo...
+
+System.ArgumentException
+Expression of type 'System.Linq.IQueryable`1[Microsoft.EntityFrameworkCore.TestModels.Northwind.Customer]' cannot be used for parameter of type 'System.Linq.IQueryable`1[Microsoft.EntityFrameworkCore.TestModels.Northwind.Order]' of method 'System.Linq.IQueryable`1[Microsoft.EntityFrameworkCore.TestModels.Northwind.Order] Where[Order](System.Linq.IQueryable`1[Microsoft.EntityFrameworkCore.TestModels.Northwind.Order], System.Linq.Expressions.Expression`1[System.Func`2[Microsoft.EntityFrameworkCore.TestModels.Northwind.Order,System.Boolean]])' (Parameter 'arg0')
+   at System.Dynamic.Utils.ExpressionUtils.ValidateOneArgument(MethodBase method, ExpressionType nodeKind, Expression arguments, ParameterInfo pi, String methodParamName, String argumentParamName, Int32 index)
+   at System.Linq.Expressions.Expression.Call(MethodInfo method, Expression arg0, Expression arg1)
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoEFToLinqTranslatingExpressionVisitor.Visit(Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoEFToLinqTranslatingExpressionVisitor.cs:line 207
+   at System.Dynamic.Utils.ExpressionVisitorUtils.VisitArguments(ExpressionVisitor visitor, IArgumentProvider nodes)
+   at System.Linq.Expressions.ExpressionVisitor.VisitMethodCall(MethodCallExpression node)
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoEFToLinqTranslatingExpressionVisitor.Visit(Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoEFToLinqTranslatingExpressionVisitor.cs:line 218
+   at System.Linq.Expressions.ExpressionVisitor.VisitLambda[T](Expression`1 node)
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoEFToLinqTranslatingExpressionVisitor.Visit(Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoEFToLinqTranslatingExpressionVisitor.cs:line 218
+   at System.Linq.Expressions.ExpressionVisitor.VisitUnary(UnaryExpression node)
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoEFToLinqTranslatingExpressionVisitor.Visit(Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoEFToLinqTranslatingExpressionVisitor.cs:line 218
+   at System.Dynamic.Utils.ExpressionVisitorUtils.VisitArguments(ExpressionVisitor visitor, IArgumentProvider nodes)
+   at System.Linq.Expressions.ExpressionVisitor.VisitMethodCall(MethodCallExpression node)
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoEFToLinqTranslatingExpressionVisitor.Visit(Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoEFToLinqTranslatingExpressionVisitor.cs:line 207
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoEFToLinqTranslatingExpressionVisitor.Translate(Expression efQueryExpression, ResultCardinality resultCardinality) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoEFToLinqTranslatingExpressionVisitor.cs:line 64
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoShapedQueryCompilingExpressionVisitor.TranslateAndExecuteQuery[TSource,TResult](QueryContext queryContext, IReadOnlyEntityType entityType, BsonSerializerFactory bsonSerializerFactory, MongoQueryExpression queryExpression, Func`3 shaper, Type contextType, Boolean standAloneStateManager, Boolean threadSafetyChecksEnabled, ResultCardinality resultCardinality) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoShapedQueryCompilingExpressionVisitor.cs:line 165
+   at lambda_method424(Closure, QueryContext)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.Execute[TResult](Expression query)
+   at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.Execute[TResult](Expression expression)
+   at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetEnumerator()
+   at System.Collections.Generic.List`1..ctor(IEnumerable`1 collection)
+   at System.Linq.Enumerable.ToList[TSource](IEnumerable`1 source)
+   at Microsoft.EntityFrameworkCore.TestUtilities.QueryAsserter.AssertQuery[TResult](Func`2 actualQuery, Func`2 expectedQuery, Func`2 elementSorter, Action`2 elementAsserter, Boolean assertOrder, Boolean assertEmpty, Boolean async, String testMethodName, Boolean filteredQuery)
+   at Microsoft.EntityFrameworkCore.Query.QueryTestBase`1.TestOutputWrapper(Func`1 testAction)
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Query.NorthwindWhereQueryMongoTest.Where_as_queryable_expression(Boolean async) in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Query/NorthwindWhereQueryMongoTest.cs:line 54
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+
+
+Generated query execution expression:
+'queryContext => MongoShapedQueryCompilingExpressionVisitor.TranslateAndExecuteQuery<Customer, Customer>(
+    queryContext: queryContext,
+    entityType: EntityType: Customer,
+    bsonSerializerFactory: BsonSerializerFactory,
+    queryExpression: [MongoDB.EntityFrameworkCore.Query.Expressions.MongoQueryExpression],
+    shaper: Func<QueryContext, BsonDocument, Customer>,
+    contextType: TestModels.Northwind.NorthwindContext,
+    standAloneStateManager: False,
+    threadSafetyChecksEnabled: True,
+    resultCardinality: Enumerable)'
+
+AV011:
+
+MongoDB.Driver.Linq.ExpressionNotSupportedException
+Expression not supported: ClientFunc(p.ProductID).
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.MethodCallExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.NotExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, UnaryExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.BinaryExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, BinaryExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateUsingAggregationOperators(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.Translate(TranslationContext context, Expression expression, Boolean exprOk)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateLambda(TranslationContext context, LambdaExpression lambdaExpression, IBsonSerializer parameterSerializer, Boolean asRoot)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.WhereMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.AsMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExpressionToExecutableQueryTranslator.Translate[TDocument,TOutput](MongoQueryProvider`1 provider, Expression expression, ExpressionTranslationOptions translationOptions)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNext() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 103
+   at System.Collections.Generic.List`1..ctor(IEnumerable`1 collection)
+   at System.Linq.Enumerable.ToList[TSource](IEnumerable`1 source)
+   at Microsoft.EntityFrameworkCore.TestUtilities.QueryAsserter.AssertQuery[TResult](Func`2 actualQuery, Func`2 expectedQuery, Func`2 elementSorter, Action`2 elementAsserter, Boolean assertOrder, Boolean assertEmpty, Boolean async, String testMethodName, Boolean filteredQuery)
+   at Microsoft.EntityFrameworkCore.Query.QueryTestBase`1.TestOutputWrapper(Func`1 testAction)
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Query.NorthwindWhereQueryMongoTest.Where_bool_client_side_negated(Boolean async) in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Query/NorthwindWhereQueryMongoTest.cs:line 771
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+
+
+Generated query execution expression:
+'queryContext => MongoShapedQueryCompilingExpressionVisitor.TranslateAndExecuteQuery<Product, Product>(
+    queryContext: queryContext,
+    entityType: EntityType: Product,
+    bsonSerializerFactory: BsonSerializerFactory,
+    queryExpression: [MongoDB.EntityFrameworkCore.Query.Expressions.MongoQueryExpression],
+    shaper: Func<QueryContext, BsonDocument, Product>,
+    contextType: TestModels.Northwind.NorthwindContext,
+    standAloneStateManager: False,
+    threadSafetyChecksEnabled: True,
+    resultCardinality: Enumerable)'
+
+Executed MQL query
+Northwind.Products.aggregate([])
+
+An exception occurred while iterating over the results of a query for context type 'Microsoft.EntityFrameworkCore.TestModels.Northwind.NorthwindContext'.
+MongoDB.Driver.Linq.ExpressionNotSupportedException: Expression not supported: ClientFunc(p.ProductID).
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.MethodCallExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.NotExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, UnaryExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.BinaryExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, BinaryExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateUsingAggregationOperators(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.Translate(TranslationContext context, Expression expression, Boolean exprOk)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateLambda(TranslationContext context, LambdaExpression lambdaExpression, IBsonSerializer parameterSerializer, Boolean asRoot)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.WhereMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.AsMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExpressionToExecutableQueryTranslator.Translate[TDocument,TOutput](MongoQueryProvider`1 provider, Expression expression, ExpressionTranslationOptions translationOptions)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNext() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 103
+
+AV012:
+
+System.NullReferenceException: Object reference not set to an instance of an object.
+
+System.NullReferenceException
+Object reference not set to an instance of an object.
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoProjectionBindingExpressionVisitor.MatchTypes(Expression expression, Type targetType) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoProjectionBindingExpressionVisitor.cs:line 517
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoProjectionBindingExpressionVisitor.Translate(MongoQueryExpression queryExpression, Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoProjectionBindingExpressionVisitor.cs:line 67
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect(ShapedQueryExpression source, LambdaExpression selector) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoQueryableMethodTranslatingExpressionVisitor.cs:line 132
+   at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.VisitMethodCall(MethodCallExpression methodCallExpression)
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall(MethodCallExpression methodCallExpression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoQueryableMethodTranslatingExpressionVisitor.cs:line 100
+   at MongoDB.EntityFrameworkCore.Query.Visitors.MongoQueryableMethodTranslatingExpressionVisitor.Visit(Expression expression) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoQueryableMethodTranslatingExpressionVisitor.cs:line 52
+   at MongoDB.EntityFrameworkCore.Query.MongoQueryCompilationContext.CreateQueryExecutor[TResult](Expression originalQuery) in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/MongoQueryCompilationContext.cs:line 63
+   at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+   at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.Execute[TResult](Expression query)
+   at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.Execute[TResult](Expression expression)
+   at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetEnumerator()
+   at System.Collections.Generic.List`1..ctor(IEnumerable`1 collection)
+   at System.Linq.Enumerable.ToList[TSource](IEnumerable`1 source)
+   at Microsoft.EntityFrameworkCore.TestUtilities.QueryAsserter.AssertQuery[TResult](Func`2 actualQuery, Func`2 expectedQuery, Func`2 elementSorter, Action`2 elementAsserter, Boolean assertOrder, Boolean assertEmpty, Boolean async, String testMethodName, Boolean filteredQuery)
+   at Microsoft.EntityFrameworkCore.Query.QueryTestBase`1.TestOutputWrapper(Func`1 testAction)
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Query.NorthwindWhereQueryMongoTest.Where_simple_shadow_projection_mixed(Boolean async) in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Query/NorthwindWhereQueryMongoTest.cs:line 2054
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+AV013:
+System.FormatException
+Cannot deserialize a 'TimeSpan' from BsonType 'Null'.
+   at MongoDB.Bson.Serialization.Serializers.TimeSpanSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Driver.Linq.Linq3Implementation.Serializers.WrappedValueSerializer`1.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Bson.Serialization.Serializers.EnumerableSerializerBase`2.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.CursorDeserializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.AggregateResultDeserializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.ProcessResponse(ConnectionId connectionId, CommandMessage responseMessage)
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.SendMessageAndProcessResponse(CommandRequestMessage message, Int32 responseTo, IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.Execute(IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.WireProtocol.CommandWireProtocol`1.Execute(IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Servers.Server.ServerChannel.ExecuteProtocol[TResult](IWireProtocol`1 protocol, ICoreSession session, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Servers.Server.ServerChannel.Command[TResult](ICoreSession session, ReadPreference readPreference, DatabaseNamespace databaseNamespace, BsonDocument command, IEnumerable`1 commandPayloads, IElementNameValidator commandValidator, BsonDocument additionalOptions, Action`1 postWriteAction, CommandResponseHandling responseHandling, IBsonSerializer`1 resultSerializer, MessageEncoderSettings messageEncoderSettings, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.CommandOperationBase`1.ExecuteProtocol(IChannelHandle channel, ICoreSessionHandle session, ReadPreference readPreference, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.ReadCommandOperation`1.ExecuteAttempt(RetryableReadContext context, Int32 attempt, Nullable`1 transactionNumber, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.RetryableReadOperationExecutor.Execute[TResult](IRetryableReadOperation`1 operation, RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.ReadCommandOperation`1.Execute(RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.Execute(RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.Execute(IReadBinding binding, CancellationToken cancellationToken)
+   at MongoDB.Driver.OperationExecutor.ExecuteReadOperation[TResult](IReadBinding binding, IReadOperation`1 operation, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.ExecuteReadOperation[TResult](IClientSessionHandle session, IReadOperation`1 operation, ReadPreference readPreference, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.ExecuteReadOperation[TResult](IClientSessionHandle session, IReadOperation`1 operation, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.Aggregate[TResult](IClientSessionHandle session, PipelineDefinition`2 pipeline, AggregateOptions options, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.<>c__DisplayClass23_0`1.<Aggregate>b__0(IClientSessionHandle session)
+   at MongoDB.Driver.MongoCollectionImpl`1.UsingImplicitSession[TResult](Func`2 func, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.Aggregate[TResult](PipelineDefinition`2 pipeline, AggregateOptions options, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExecutableQuery`3.Execute(IClientSessionHandle session, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQueryProvider`1.Execute[TResult](ExecutableQuery`2 executableQuery, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNext() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 103
+   at System.Collections.Generic.List`1..ctor(IEnumerable`1 collection)
+   at System.Linq.Enumerable.ToList[TSource](IEnumerable`1 source)
+   at Microsoft.EntityFrameworkCore.TestUtilities.QueryAsserter.AssertQueryScalar[TResult](Func`2 actualQuery, Func`2 expectedQuery, Action`2 asserter, Boolean assertOrder, Boolean assertEmpty, Boolean async, String testMethodName, Boolean filteredQuery)
+   at Microsoft.EntityFrameworkCore.Query.QueryTestBase`1.TestOutputWrapper(Func`1 testAction)
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Query.NorthwindWhereQueryMongoTest.Time_of_day_datetime(Boolean async) in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Query/NorthwindWhereQueryMongoTest.cs:line 2659
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+
+
+Generated query execution expression:
+'queryContext => MongoShapedQueryCompilingExpressionVisitor.TranslateAndExecuteUnshapedQuery<Order, TimeSpan>(
+    queryContext: queryContext,
+    entityType: EntityType: Order,
+    bsonSerializerFactory: BsonSerializerFactory,
+    queryExpression: [MongoDB.EntityFrameworkCore.Query.Expressions.MongoQueryExpression],
+    contextType: TestModels.Northwind.NorthwindContext,
+    threadSafetyChecksEnabled: True,
+    resultCardinality: Enumerable)'
+
+Executed MQL query
+Northwind.Products.aggregate([{ "$project" : { "_v" : { "$dateDiff" : { "startDate" : { "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, "endDate" : "$OrderDate", "unit" : "millisecond" } }, "_id" : 0 } }])
+
+An exception occurred while iterating over the results of a query for context type 'Microsoft.EntityFrameworkCore.TestModels.Northwind.NorthwindContext'.
+System.FormatException: Cannot deserialize a 'TimeSpan' from BsonType 'Null'.
+   at MongoDB.Bson.Serialization.Serializers.TimeSpanSerializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Driver.Linq.Linq3Implementation.Serializers.WrappedValueSerializer`1.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Bson.Serialization.Serializers.EnumerableSerializerBase`2.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.CursorDeserializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.AggregateResultDeserializer.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+   at MongoDB.Bson.Serialization.IBsonSerializerExtensions.Deserialize[TValue](IBsonSerializer`1 serializer, BsonDeserializationContext context)
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.ProcessResponse(ConnectionId connectionId, CommandMessage responseMessage)
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.SendMessageAndProcessResponse(CommandRequestMessage message, Int32 responseTo, IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.WireProtocol.CommandUsingCommandMessageWireProtocol`1.Execute(IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.WireProtocol.CommandWireProtocol`1.Execute(IConnection connection, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Servers.Server.ServerChannel.ExecuteProtocol[TResult](IWireProtocol`1 protocol, ICoreSession session, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Servers.Server.ServerChannel.Command[TResult](ICoreSession session, ReadPreference readPreference, DatabaseNamespace databaseNamespace, BsonDocument command, IEnumerable`1 commandPayloads, IElementNameValidator commandValidator, BsonDocument additionalOptions, Action`1 postWriteAction, CommandResponseHandling responseHandling, IBsonSerializer`1 resultSerializer, MessageEncoderSettings messageEncoderSettings, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.CommandOperationBase`1.ExecuteProtocol(IChannelHandle channel, ICoreSessionHandle session, ReadPreference readPreference, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.ReadCommandOperation`1.ExecuteAttempt(RetryableReadContext context, Int32 attempt, Nullable`1 transactionNumber, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.RetryableReadOperationExecutor.Execute[TResult](IRetryableReadOperation`1 operation, RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.ReadCommandOperation`1.Execute(RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.Execute(RetryableReadContext context, CancellationToken cancellationToken)
+   at MongoDB.Driver.Core.Operations.AggregateOperation`1.Execute(IReadBinding binding, CancellationToken cancellationToken)
+   at MongoDB.Driver.OperationExecutor.ExecuteReadOperation[TResult](IReadBinding binding, IReadOperation`1 operation, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.ExecuteReadOperation[TResult](IClientSessionHandle session, IReadOperation`1 operation, ReadPreference readPreference, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.ExecuteReadOperation[TResult](IClientSessionHandle session, IReadOperation`1 operation, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.Aggregate[TResult](IClientSessionHandle session, PipelineDefinition`2 pipeline, AggregateOptions options, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.<>c__DisplayClass23_0`1.<Aggregate>b__0(IClientSessionHandle session)
+   at MongoDB.Driver.MongoCollectionImpl`1.UsingImplicitSession[TResult](Func`2 func, CancellationToken cancellationToken)
+   at MongoDB.Driver.MongoCollectionImpl`1.Aggregate[TResult](PipelineDefinition`2 pipeline, AggregateOptions options, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExecutableQuery`3.Execute(IClientSessionHandle session, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQueryProvider`1.Execute[TResult](ExecutableQuery`2 executableQuery, CancellationToken cancellationToken)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNext() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 103
+
+
+AV014:
+
+MongoDB.Driver.Linq.ExpressionNotSupportedException: Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like(Convert(Convert(o...
+
+MongoDB.Driver.Linq.ExpressionNotSupportedException
+Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like(Convert(Convert(o.OrderID, Object), String), "%20%").
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.MethodCallExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateUsingAggregationOperators(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.Translate(TranslationContext context, Expression expression, Boolean exprOk)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateLambda(TranslationContext context, LambdaExpression lambdaExpression, IBsonSerializer parameterSerializer, Boolean asRoot)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.WhereMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.AsMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExpressionToExecutableQueryTranslator.Translate[TDocument,TOutput](MongoQueryProvider`1 provider, Expression expression, ExpressionTranslationOptions translationOptions)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNext() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 103
+   at System.Collections.Generic.List`1..ctor(IEnumerable`1 collection)
+   at System.Linq.Enumerable.ToList[TSource](IEnumerable`1 source)
+   at Microsoft.EntityFrameworkCore.TestUtilities.QueryAsserter.AssertQuery[TResult](Func`2 actualQuery, Func`2 expectedQuery, Func`2 elementSorter, Action`2 elementAsserter, Boolean assertOrder, Boolean assertEmpty, Boolean async, String testMethodName, Boolean filteredQuery)
+   at Microsoft.EntityFrameworkCore.Query.QueryTestBase`1.TestOutputWrapper(Func`1 testAction)
+   at MongoDB.EntityFrameworkCore.FunctionalTests.Query.NorthwindWhereQueryMongoTest.Like_with_non_string_column_using_double_cast(Boolean async) in /Users/arthur.vickers/code/mongo-efcore-provider/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Query/NorthwindWhereQueryMongoTest.cs:line 2687
+   at Xunit.Sdk.TestInvoker`1.<>c__DisplayClass47_0.<<InvokeTestMethodAsync>b__1>d.MoveNext() in /_/src/xunit.execution/Sdk/Frameworks/Runners/TestInvoker.cs:line 259
+--- End of stack trace from previous location ---
+   at Xunit.Sdk.ExecutionTimer.AggregateAsync(Func`1 asyncAction) in /_/src/xunit.execution/Sdk/Frameworks/ExecutionTimer.cs:line 48
+   at Xunit.Sdk.ExceptionAggregator.RunAsync(Func`1 code) in /_/src/xunit.core/Sdk/ExceptionAggregator.cs:line 90
+
+
+
+Generated query execution expression:
+'queryContext => MongoShapedQueryCompilingExpressionVisitor.TranslateAndExecuteQuery<Order, Order>(
+    queryContext: queryContext,
+    entityType: EntityType: Order,
+    bsonSerializerFactory: BsonSerializerFactory,
+    queryExpression: [MongoDB.EntityFrameworkCore.Query.Expressions.MongoQueryExpression],
+    shaper: Func<QueryContext, BsonDocument, Order>,
+    contextType: TestModels.Northwind.NorthwindContext,
+    standAloneStateManager: False,
+    threadSafetyChecksEnabled: True,
+    resultCardinality: Enumerable)'
+
+Executed MQL query
+Northwind.Products.aggregate([])
+
+An exception occurred while iterating over the results of a query for context type 'Microsoft.EntityFrameworkCore.TestModels.Northwind.NorthwindContext'.
+MongoDB.Driver.Linq.ExpressionNotSupportedException: Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like(Convert(Convert(o.OrderID, Object), String), "%20%").
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.MethodCallExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToAggregationExpressionTranslators.ExpressionToAggregationExpressionTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateUsingAggregationOperators(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.Translate(TranslationContext context, Expression expression, Boolean exprOk)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToFilterTranslators.ExpressionToFilterTranslator.TranslateLambda(TranslationContext context, LambdaExpression lambdaExpression, IBsonSerializer parameterSerializer, Boolean asRoot)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.WhereMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.AsMethodToPipelineTranslator.Translate(TranslationContext context, MethodCallExpression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToPipelineTranslators.ExpressionToPipelineTranslator.Translate(TranslationContext context, Expression expression)
+   at MongoDB.Driver.Linq.Linq3Implementation.Translators.ExpressionToExecutableQueryTranslators.ExpressionToExecutableQueryTranslator.Translate[TDocument,TOutput](MongoQueryProvider`1 provider, Expression expression, ExpressionTranslationOptions translationOptions)
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.Execute()
+   at MongoDB.Driver.Linq.Linq3Implementation.MongoQuery`2.GetEnumerator()
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNextHelper() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 161
+   at MongoDB.EntityFrameworkCore.Query.QueryingEnumerable`2.Enumerator.MoveNext() in /Users/arthur.vickers/code/mongo-efcore-provider/src/MongoDB.EntityFrameworkCore/Query/QueryingEnumerable.cs:line 103
+

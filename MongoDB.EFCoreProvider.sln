@@ -20,6 +20,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		tests\Directory.Build.props = tests\Directory.Build.props
 	EndProjectSection
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.SpecificationTests", "tests\MongoDB.EntityFrameworkCore.SpecificationTests\MongoDB.EntityFrameworkCore.SpecificationTests.csproj", "{1BFBE183-6125-402E-826B-1F7A7F86AF00}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -52,6 +54,14 @@ Global
 		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Debug EF9|Any CPU.Build.0 = Debug EF9|Any CPU
 		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Release EF9|Any CPU.ActiveCfg = Release EF9|Any CPU
 		{CDBD7CC4-0F4D-4B03-859E-71FE5A3DE363}.Release EF9|Any CPU.Build.0 = Release EF9|Any CPU
+		{1BFBE183-6125-402E-826B-1F7A7F86AF00}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1BFBE183-6125-402E-826B-1F7A7F86AF00}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1BFBE183-6125-402E-826B-1F7A7F86AF00}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1BFBE183-6125-402E-826B-1F7A7F86AF00}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1BFBE183-6125-402E-826B-1F7A7F86AF00}.Debug EF9|Any CPU.ActiveCfg = Debug EF9|Any CPU
+		{1BFBE183-6125-402E-826B-1F7A7F86AF00}.Debug EF9|Any CPU.Build.0 = Debug EF9|Any CPU
+		{1BFBE183-6125-402E-826B-1F7A7F86AF00}.Release EF9|Any CPU.ActiveCfg = Release EF9|Any CPU
+		{1BFBE183-6125-402E-826B-1F7A7F86AF00}.Release EF9|Any CPU.Build.0 = Release EF9|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
