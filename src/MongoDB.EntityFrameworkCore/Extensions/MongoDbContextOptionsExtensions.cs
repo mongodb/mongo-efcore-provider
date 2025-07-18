@@ -16,6 +16,7 @@
 using System;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
@@ -65,6 +66,8 @@ public static class MongoDbContextOptionsExtensions
         ArgumentNullException.ThrowIfNull(connectionString);
         ArgumentException.ThrowIfNullOrEmpty(databaseName);
 
+        ConfigureWarnings(optionsBuilder);
+
         var extension = (optionsBuilder.Options.FindExtension<MongoOptionsExtension>()
                          ?? new MongoOptionsExtension())
             .WithConnectionString(connectionString)
@@ -107,6 +110,8 @@ public static class MongoDbContextOptionsExtensions
     {
         ArgumentNullException.ThrowIfNull(optionsBuilder);
         ArgumentNullException.ThrowIfNull(connectionString);
+
+        ConfigureWarnings(optionsBuilder);
 
         var extension = (optionsBuilder.Options.FindExtension<MongoOptionsExtension>()
                          ?? new MongoOptionsExtension())
@@ -166,6 +171,8 @@ public static class MongoDbContextOptionsExtensions
         ArgumentNullException.ThrowIfNull(mongoClient);
         ArgumentException.ThrowIfNullOrEmpty(databaseName);
 
+        ConfigureWarnings(optionsBuilder);
+
         var extension = (optionsBuilder.Options.FindExtension<MongoOptionsExtension>()
                          ?? new MongoOptionsExtension())
             .WithMongoClient(mongoClient)
@@ -223,6 +230,8 @@ public static class MongoDbContextOptionsExtensions
         ArgumentNullException.ThrowIfNull(mongoClientSettings);
         ArgumentException.ThrowIfNullOrEmpty(databaseName);
 
+        ConfigureWarnings(optionsBuilder);
+
         var extension = (optionsBuilder.Options.FindExtension<MongoOptionsExtension>()
                          ?? new MongoOptionsExtension())
             .WithClientSettings(mongoClientSettings)
@@ -248,9 +257,23 @@ public static class MongoDbContextOptionsExtensions
         ArgumentNullException.ThrowIfNull(optionsBuilder);
         ArgumentNullException.ThrowIfNull(extension);
 
+        ConfigureWarnings(optionsBuilder);
+
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
         optionsAction?.Invoke(new MongoDbContextOptionsBuilder(optionsBuilder));
         return optionsBuilder;
     }
-}
 
+    private static void ConfigureWarnings(DbContextOptionsBuilder optionsBuilder)
+    {
+        var coreOptionsExtension
+            = optionsBuilder.Options.FindExtension<CoreOptionsExtension>()
+              ?? new CoreOptionsExtension();
+
+        coreOptionsExtension = coreOptionsExtension.WithWarningsConfiguration(
+            coreOptionsExtension.WarningsConfiguration.TryWithExplicit(
+                MongoEventId.ColumnAttributeWithTypeUsed, WarningBehavior.Throw));
+
+        ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(coreOptionsExtension);
+    }
+}

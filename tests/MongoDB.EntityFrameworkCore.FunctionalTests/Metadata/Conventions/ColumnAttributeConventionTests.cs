@@ -14,8 +14,11 @@
  */
 
 using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
@@ -163,9 +166,39 @@ public class ColumnAttributeConventionTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection);
 
-        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.FirstOrDefault());
-        Assert.Contains(nameof(ColumnAttribute.TypeName), ex.Message);
-        Assert.Contains(nameof(TypeNameSpecifyingEntity), ex.Message);
-        Assert.Contains(nameof(TypeNameSpecifyingEntity.TypeNameNotPermitted), ex.Message);
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
+
+        Assert.Equal(
+            "An error was generated for warning 'Microsoft.EntityFrameworkCore.Model.ColumnAttributeWithTypeUsed': " +
+            "Property 'TypeNameSpecifyingEntity.TypeNameNotPermitted' specifies a 'ColumnAttribute.TypeName' which is not supported by MongoDB. " +
+            "Use MongoDB-specific attributes or the model building API to configure your model for MongoDB. " +
+            "The 'TypeName' will be ignored if this event is suppressed. " +
+            "This exception can be suppressed or logged by passing event ID 'MongoEventId.ColumnAttributeWithTypeUsed' to the 'ConfigureWarnings' method in 'DbContext.OnConfiguring' or 'AddDbContext'.",
+            ex.Message);
+    }
+
+    [Fact]
+    public void ColumnAttribute_warning_can_be_suppressed()
+    {
+        using var db = new NoThrowDbContext();
+
+        var model = db.Model;
+        Assert.NotNull(model
+            .FindEntityType(typeof(TypeNameSpecifyingEntity))!
+            .FindProperty(nameof(TypeNameSpecifyingEntity.TypeNameNotPermitted)));
+    }
+
+    private class NoThrowDbContext : DbContext
+    {
+        public DbSet<TypeNameSpecifyingEntity> Entities { get; set; }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            => optionsBuilder
+                .UseMongoDB("mongodb://localhost:27017", nameof(TypeNameSpecifyingEntity))
+                .ConfigureWarnings(x =>
+                {
+                    x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning);
+                    x.Ignore(MongoEventId.ColumnAttributeWithTypeUsed);
+                });
     }
 }
