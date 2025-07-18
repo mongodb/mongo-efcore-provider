@@ -15,6 +15,7 @@
 
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
@@ -194,6 +195,10 @@ public class ColumnAttributeConventionTests(TemporaryDatabaseFixture database)
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => optionsBuilder
                 .UseMongoDB("mongodb://localhost:27017", nameof(TypeNameSpecifyingEntity))
-                .ConfigureWarnings(x => x.Ignore(MongoEventId.ColumnAttributeWithTypeUsed));
+                .ConfigureWarnings(x =>
+                {
+                    x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning);
+                    x.Ignore(MongoEventId.ColumnAttributeWithTypeUsed);
+                });
     }
 }
