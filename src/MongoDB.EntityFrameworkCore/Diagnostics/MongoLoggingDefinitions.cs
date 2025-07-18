@@ -40,4 +40,6 @@ internal class MongoLoggingDefinitions : LoggingDefinitions
 
     public EventDefinitionBase? LogRecommendedMinMaxRangeMissing;
     public EventDefinitionBase? LogEncryptedNullablePropertyEncountered;
+
+    public EventDefinitionBase? LogColumnAttributeWithTypeUsed;
 }
