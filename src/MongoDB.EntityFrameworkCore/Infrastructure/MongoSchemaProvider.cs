@@ -25,4 +25,8 @@ public class MongoSchemaProvider(IModel model) : IMongoSchemaProvider
     /// <inheritdoc />
     public Dictionary<string, BsonDocument> GetQueryableEncryptionSchema()
         => QueryableEncryptionSchemaGenerator.GenerateSchemas(model);
+
+    /// <inheritdoc />
+    public bool HasQueryableEncryptionSchema
+        => QueryableEncryptionSchemaGenerator.HasSchema(model);
 }

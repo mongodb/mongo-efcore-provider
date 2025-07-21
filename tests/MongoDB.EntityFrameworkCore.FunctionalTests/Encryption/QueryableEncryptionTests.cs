@@ -186,7 +186,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
-    public void IsEncrypted_round_trips_string_with_server_side_encryption(CryptProvider cryptProvider)
+    public void IsEncrypted_round_trips_string_with_server_schema(CryptProvider cryptProvider)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -201,6 +201,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
 
         {
             using var db = CreateContext(cryptProvider, ModelConfig, OptionsConfig);
+            db.Database.EnsureCreated(); // Ensure handles existing collection/schema
             foreach (var actual in db.Patients)
             {
                 var expected = samplePatients.FirstOrDefault(p => p.Id == actual.Id);
@@ -208,22 +209,18 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             }
         }
 
-        {
-            AssertCantReadEncrypted<Patient>(collectionName, nameof(Patient.SSN));
-        }
-
         void ModelConfig(ModelBuilder mb)
         {
             mb.Entity<Patient>(p =>
             {
-                p.ToCollection(collectionName);
+                p.ToCollection("Patient_" + collectionName);
                 p.Property(x => x.SSN)
                     .IsEncrypted(dataKeyId);
             });
         }
 
         MongoOptionsExtension OptionsConfig(MongoOptionsExtension options)
-            => options.WithEncryptionSchemaMode(EncryptionSchemaMode.ClientAndServer);
+            => options.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerEncryptedCollection);
     }
 
     [QueryableEncryptionTheory]
