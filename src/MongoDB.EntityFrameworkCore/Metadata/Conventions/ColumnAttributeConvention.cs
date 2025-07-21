@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using System;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Linq;
 using System.Reflection;
@@ -21,6 +20,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
@@ -63,11 +63,7 @@ public class ColumnAttributeConvention :
 
         if (!string.IsNullOrWhiteSpace(attribute.TypeName))
         {
-            var meta = propertyBuilder.Metadata;
-            throw new NotSupportedException($"Property '{meta.DeclaringType.ShortName()}.{meta.PropertyInfo?.Name}' specifies a "
-                                            + $"{nameof(ColumnAttribute)}.{nameof(ColumnAttribute.TypeName)
-                                            } which is not supported by "
-                                            + $"MongoDB. Consider using EF ValueConverters to handle the conversion instead.");
+            Dependencies.Logger.ColumnAttributeWithTypeUsed(propertyBuilder.Metadata); // Will throw by default
         }
     }
 

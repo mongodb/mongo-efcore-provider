@@ -211,4 +211,55 @@ internal static class MongoLoggerExtensions
 
     private const string EncryptedNullablePropertyEncounteredString =
         "The property '{entityType}.{property}' is configured for Queryable Encryption but is also nullable. Null is not supported by Queryable Encryption and will throw when attempting to save.";
+
+
+    public static void ColumnAttributeWithTypeUsed(
+        this IDiagnosticsLogger<DbLoggerCategory.Model> diagnostics,
+        IReadOnlyProperty property)
+    {
+        var definition = LogColumnAttributeWithTypeUsed(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(diagnostics, property.DeclaringType.DisplayName(), property.Name);
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new PropertyEventData(
+                definition,
+                (d, p) => ((EventDefinition<string, string>)d).GenerateMessage(
+                    ((PropertyEventData)p).Property.DeclaringType.DisplayName(),
+                    ((PropertyEventData)p).Property.Name),
+                property);
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static EventDefinition<string, string> LogColumnAttributeWithTypeUsed(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogColumnAttributeWithTypeUsed;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogColumnAttributeWithTypeUsed,
+                logger,
+                static logger => new EventDefinition<string, string>(
+                    logger.Options,
+                    MongoEventId.ColumnAttributeWithTypeUsed,
+                    LogLevel.Warning,
+                    "MongoEventId.ColumnAttributeWithTypeUsed",
+                    level => LoggerMessage.Define<string, string>(
+                        level,
+                        MongoEventId.ColumnAttributeWithTypeUsed,
+                        ColumnAttributeWithTypeUsedString)));
+        }
+
+        return (EventDefinition<string, string>)definition;
+    }
+
+    private const string ColumnAttributeWithTypeUsedString =
+        "Property '{entityType}.{propertyType}' specifies a 'ColumnAttribute.TypeName' which is not supported by MongoDB. " +
+        "Use MongoDB-specific attributes or the model building API to configure your model for MongoDB. " +
+        "The 'TypeName' will be ignored if this event is suppressed.";
 }

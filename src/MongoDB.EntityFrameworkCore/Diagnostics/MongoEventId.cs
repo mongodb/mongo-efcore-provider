@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -44,7 +45,8 @@ public static class MongoEventId
         TransactionRolledBack,
         TransactionError,
         RecommendedMinMaxRangeMissing,
-        EncryptedNullablePropertyEncountered
+        EncryptedNullablePropertyEncountered,
+        ColumnAttributeWithTypeUsed
     }
 
     private static EventId MakeDatabaseCommandId(Id id)
@@ -172,4 +174,16 @@ public static class MongoEventId
     ///     <para>This event uses the <see cref="PropertyEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
     /// </remarks>
     public static readonly EventId EncryptedNullablePropertyEncountered = MakeValidationId(Id.EncryptedNullablePropertyEncountered);
+
+    private static EventId MakeModelId(Id id)
+        => new((int)id, DbLoggerCategory.Model.Name + "." + id);
+
+    /// <summary>
+    /// A <see cref="ColumnAttribute"/> with a type name was found on the property of a type mapped to MongoDB.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Model" /> category.</para>
+    ///     <para>This event uses the <see cref="PropertyEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId ColumnAttributeWithTypeUsed = MakeModelId(Id.ColumnAttributeWithTypeUsed);
 }
