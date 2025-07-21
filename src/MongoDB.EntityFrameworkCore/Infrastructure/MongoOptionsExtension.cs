@@ -209,20 +209,20 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// <summary>
     /// How any encryption schema for Queryable Encryption is enforced.
     /// </summary>
-    public EncryptionSchemaMode EncryptionSchemaMode { get; private set; }
+    public QueryableEncryptionSchemaMode QueryableEncryptionSchemaMode { get; private set; }
 
     /// <summary>
-    /// Specify a <see cref="EncryptionSchemaMode"/> to use. By setting to <see cref="EncryptionSchemaMode.ClientAndServer"/>
+    /// Specify a <see cref="QueryableEncryptionSchemaMode"/> to use.
     /// </summary>
-    /// <param name="encryptionSchemaMode">The <see cref="EncryptionSchemaMode"/> to determine how encryption is enforced. </param>
+    /// <param name="queryableEncryptionSchemaMode">The <see cref="QueryableEncryptionSchemaMode"/> to determine how Queryable Encryption schemas are handled. </param>
     /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
-    public virtual MongoOptionsExtension WithEncryptionSchemaMode(EncryptionSchemaMode encryptionSchemaMode)
+    public virtual MongoOptionsExtension WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode queryableEncryptionSchemaMode)
     {
-        ArgumentNullException.ThrowIfNull(encryptionSchemaMode);
-        Check.IsDefinedOrNull<EncryptionSchemaMode>(encryptionSchemaMode);
+        ArgumentNullException.ThrowIfNull(queryableEncryptionSchemaMode);
+        Check.IsDefinedOrNull<QueryableEncryptionSchemaMode>(queryableEncryptionSchemaMode);
 
         var clone = Clone();
-        clone.EncryptionSchemaMode = encryptionSchemaMode;
+        clone.QueryableEncryptionSchemaMode = queryableEncryptionSchemaMode;
         return clone;
     }
 

@@ -26,6 +26,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Misc;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Infrastructure;
@@ -99,31 +100,36 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <inheritdoc />
     public bool CreateDatabase(IDesignTimeModel model)
     {
-        var didCreateNewDatabase = !DatabaseExists();
+        var existed = DatabaseExists();
         var existingCollectionNames = Database.ListCollectionNames().ToList();
+        var queryableEncryptionSchemas = _schemaProvider.GetQueryableEncryptionSchema();
+
+        if (queryableEncryptionSchemas.Any())
+            Feature.Csfle2QEv2.ThrowIfNotSupported(Database.Client);
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
             var collectionName = entityType.GetCollectionName();
+            var createCollectionOptions = CreateCollectionOptions(queryableEncryptionSchemas, collectionName);
+
             if (!existingCollectionNames.Contains(collectionName))
             {
                 try
                 {
-                    var createCollectionOptions =
-                        _options?.EncryptionSchemaMode == EncryptionSchemaMode.ClientAndServer
-                            ? new CreateCollectionOptions
-                            {
-                                EncryptedFields = QueryableEncryptionSchemaGenerator.GenerateSchema(entityType)
-                            }
-                            : null;
-
                     Database.CreateCollection(collectionName, createCollectionOptions);
                     existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
-                    // Ignore collection already exists in cases of concurrent creation
+                    // Collection has been created by another instance? Still need to check the encryption schema.
+                    if (createCollectionOptions != null)
+                        EnsureExistingServerEncryptionSchemaMatches(collectionName, createCollectionOptions.EncryptedFields);
                 }
+            }
+            else
+            {
+                if (createCollectionOptions != null)
+                    EnsureExistingServerEncryptionSchemaMatches(collectionName, createCollectionOptions.EncryptedFields);
             }
 
             var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
@@ -131,7 +137,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             CreateIndexes(entityType, indexManager, existingIndexNames, []);
         }
 
-        return didCreateNewDatabase;
+        return !existed;
     }
 
     private static void CreateIndexes(
@@ -176,30 +182,35 @@ public class MongoClientWrapper : IMongoClientWrapper
         using var collectionNamesCursor =
             await Database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
         var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
+        var queryableEncryptionSchemas = _schemaProvider.GetQueryableEncryptionSchema();
 
+        if (queryableEncryptionSchemas.Any())
+            await Feature.Csfle2QEv2.ThrowIfNotSupportedAsync(Database.Client, cancellationToken);
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
             var collectionName = entityType.GetCollectionName();
+            var createCollectionOptions = CreateCollectionOptions(queryableEncryptionSchemas, collectionName);
+
             if (!existingCollectionNames.Contains(collectionName))
             {
                 try
                 {
-                    var createCollectionOptions =
-                        _options?.EncryptionSchemaMode == EncryptionSchemaMode.ClientAndServer
-                            ? new CreateCollectionOptions
-                            {
-                                EncryptedFields = QueryableEncryptionSchemaGenerator.GenerateSchema(entityType)
-                            }
-                            : null;
-
-                    await Database.CreateCollectionAsync(collectionName, createCollectionOptions, cancellationToken).ConfigureAwait(false);
+                    await Database.CreateCollectionAsync(collectionName, createCollectionOptions, cancellationToken)
+                        .ConfigureAwait(false);
                     existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
-                    // Ignore collection already exists in cases of concurrent creation
+                    // Collection has been created by another instance? Still need to check the encryption schema.
+                    if (createCollectionOptions != null)
+                        EnsureExistingServerEncryptionSchemaMatches(collectionName, createCollectionOptions.EncryptedFields);
                 }
+            }
+            else
+            {
+                if (createCollectionOptions != null)
+                    EnsureExistingServerEncryptionSchemaMatches(collectionName, createCollectionOptions.EncryptedFields);
             }
 
             var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
@@ -398,6 +409,92 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         _commandLogger.ExecutedMqlQuery(executableQuery);
         return [result];
+    }
+
+
+    private CreateCollectionOptions? CreateCollectionOptions(
+        Dictionary<string, BsonDocument> queryableEncryptionSchemas,
+        string collectionName)
+    {
+        var isEncrypted = queryableEncryptionSchemas.ContainsKey(collectionName);
+
+        if (!isEncrypted || _options?.QueryableEncryptionSchemaMode != QueryableEncryptionSchemaMode.ServerEncryptedCollection)
+            return null;
+
+        return new CreateCollectionOptions { EncryptedFields = queryableEncryptionSchemas[collectionName] };
+    }
+
+    private void EnsureExistingServerEncryptionSchemaMatches(
+        string collectionName,
+        BsonDocument clientEncryptedFields)
+    {
+        var collection = Database
+            .ListCollections(new ListCollectionsOptions { Filter = Builders<BsonDocument>.Filter.Eq("name", collectionName) })
+            .FirstOrDefault();
+
+        if (collection == null)
+            throw new InvalidOperationException($"Collection '{collectionName}' can not be checked as it does not exist.");
+
+        if (!collection.TryGetValue("options", out var options))
+            throw new InvalidOperationException($"Collection '{collectionName}' can not be checked as it does not have options.");
+
+        if ((options as BsonDocument)?.TryGetValue("encryptedFields", out var serverEncrypted) != true)
+            throw new InvalidOperationException(
+                $"Collection '{collectionName}' can not be checked as it does not have encryptedFields.");
+
+        EnsureExistingServerEncryptionSchemaMatches(collectionName, serverEncrypted as BsonDocument, clientEncryptedFields);
+    }
+
+    private class BsonSchemaComparer : IEqualityComparer<BsonValue>
+    {
+        public bool Equals(BsonValue? x, BsonValue? y)
+            => x["path"].Equals(y["path"]) && x["bsonType"].Equals(y["bsonType"]) && x["keyId"].Equals(y["keyId"]);
+
+        public int GetHashCode(BsonValue obj)
+            => obj["path"].AsString.GetHashCode() ^ obj["bsonType"].AsString.GetHashCode() ^ obj["keyId"].GetHashCode();
+
+        public static readonly BsonSchemaComparer Instance = new();
+    }
+
+    private static void EnsureExistingServerEncryptionSchemaMatches(
+        string collectionName,
+        BsonDocument? serverEncryptedFields,
+        BsonDocument? clientEncryptedFields)
+    {
+        var serverFields = serverEncryptedFields?.TryGetValue("fields", out var serverFieldsElement) == true
+            ? serverFieldsElement.AsBsonArray
+            : [];
+        var clientFields = clientEncryptedFields?.TryGetValue("fields", out var clientFieldsElement) == true
+            ? clientFieldsElement.AsBsonArray
+            : [];
+
+        var missingOnServer = clientFields.Except(serverFields, BsonSchemaComparer.Instance).ToArray();
+        if (missingOnServer.Any())
+            throw new InvalidOperationException(
+                $"Collection '{collectionName}' is missing the following encrypted schema paths on the server: {ListPaths(missingOnServer)}.");
+
+        var missingOnClient = serverFields.Except(clientFields, BsonSchemaComparer.Instance).ToArray();
+        if (missingOnClient.Any())
+            throw new InvalidOperationException(
+                $"Collection '{collectionName}' is missing the following encrypted schema paths on the client: {ListPaths(missingOnClient)}.");
+
+        var matched = serverFields
+            .Join(clientFields, c => c["path"].AsString, s => s["path"].AsString, (c, s) => new[] { c, s }).ToArray();
+        var mismatchedKeys = matched.Where(m => m[0]["keyId"] != m[1]["keyId"]).ToArray();
+        if (mismatchedKeys.Any())
+            throw new InvalidOperationException(
+                $"Collection '{collectionName}' has mismatched keys for the following encrypted schema paths: {ListClientPaths(mismatchedKeys)}.");
+
+        var mismatchedTypes = matched.Where(m => m[0]["bsonType"] != m[1]["bsonType"]).ToArray();
+        if (mismatchedTypes.Any())
+            throw new InvalidOperationException(
+                $"Collection '{collectionName}' has mismatched types for the following encrypted schema paths: {ListClientPaths(mismatchedTypes)}.");
+
+        string ListClientPaths(BsonValue[][] fields)
+            => string.Join(", ", fields.Select(f => f[0]["path"].AsString));
+
+        string ListPaths(BsonValue[] fields)
+            => string.Join(", ", fields.Select(f => f["path"].AsString));
     }
 
     private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
