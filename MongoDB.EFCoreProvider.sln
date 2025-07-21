@@ -18,6 +18,16 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		THIRD-PARTY-NOTICES = THIRD-PARTY-NOTICES
 		src\Directory.Build.props = src\Directory.Build.props
 		tests\Directory.Build.props = tests\Directory.Build.props
+		.gitattributes = .gitattributes
+		.gitignore = .gitignore
+		.editorconfig = .editorconfig
+		CODEOWNERS = CODEOWNERS
+		createpr.png = createpr.png
+		packageIcon.png = packageIcon.png
+		global.json = global.json
+		nuget.config = nuget.config
+		sbom.json = sbom.json
+		syncfork.png = syncfork.png
 	EndProjectSection
 EndProject
 Global
