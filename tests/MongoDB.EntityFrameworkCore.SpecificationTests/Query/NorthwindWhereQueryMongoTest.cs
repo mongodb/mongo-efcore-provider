@@ -1109,7 +1109,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_compare_constructed_multi_value_not_equal(bool async)
     {
-        // Fails: TODO: File an issue on EF for this--91 includes "UK" "London" entries.
+        // Fails: EF upstream issue--see https://github.com/dotnet/efcore/issues/36412
         Assert.Contains(
             "Values differ", // (Expected 91, got 85)
             (await Assert.ThrowsAsync<EqualException>(async () =>

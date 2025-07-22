@@ -3,7 +3,7 @@
 
 // Originally EF Core TestSqlLoggerFactory.cs
 
-// TODO: Submit PR to EF core so we can use their copy of this.
+// https://github.com/dotnet/efcore/issues/36413 submitted to consolidate this upstream
 
 using System.Collections.Concurrent;
 using System.Text;
