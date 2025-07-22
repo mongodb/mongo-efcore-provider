@@ -15,8 +15,8 @@
 
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Query;
+using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
-using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using Xunit.Abstractions;
 using Xunit.Sdk;
@@ -50,7 +50,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_as_queryable_expression(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -151,15 +151,15 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_method_call_nullable_type_reverse_closure_via_query_cache(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 8, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_method_call_nullable_type_reverse_closure_via_query_cache(async))).Message);
+        await base.Where_method_call_nullable_type_reverse_closure_via_query_cache(async);
 
         AssertMql(
             """
             Employees.{ "$match" : { "_id" : { "$gt" : 1 } } }
+            """,
+            //
+            """
+            Employees.{ "$match" : { "_id" : { "$gt" : 5 } } }
             """);
     }
 
@@ -327,7 +327,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_subquery_closure_via_query_cache(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -348,7 +348,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_simple_shadow_projection(bool async)
     {
-        // Fails: AV000
+        // Fails: Using EF.Property issue EF-219
         await Assert.ThrowsAsync<NullReferenceException>(async () => await base.Where_simple_shadow_projection(async));
 
         AssertMql(
@@ -367,7 +367,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_shadow_subquery_FirstOrDefault(bool async)
     {
-        // Fails: AV000
+        // Fails: Sub-query with ordering issue EF-220
         Assert.Contains(
             "Expression not supported: Northwind.Employees.Aggregate(",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -381,7 +381,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_client(bool async)
     {
-        // Fails: AV013 (Not throwing expected translation failed exception)
+        // Fails: Not throwing expected translation failed exception from EF, but existing exception ios okay.
         Assert.Contains(
             "Serializer for Microsoft.",
             (await Assert.ThrowsAsync<ContainsException>(async () => await base.Where_client(async))).Message);
@@ -394,7 +394,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_subquery_correlated(bool async)
     {
-        // Fails: AV013 (Not throwing expected translation failed exception)
+        // Fails: Not throwing expected translation failed exception from EF, but existing exception ios okay.
         Assert.Contains(
             "Expression not supported: Northwind.Custo",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () => await base.Where_subquery_correlated(async)))
@@ -408,7 +408,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_subquery_correlated_client_eval(bool async)
     {
-        // Fails: AV013 (Not throwing expected translation failed exception)
+        // Fails: Not throwing expected translation failed exception from EF, but existing exception ios okay.
         await Assert.ThrowsAsync<ThrowsException>(async () => await base.Where_subquery_correlated_client_eval(async));
 
         AssertMql(
@@ -419,7 +419,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_client_and_server_top_level(bool async)
     {
-        // Fails: AV013 (Not throwing expected translation failed exception)
+        // Fails: Not throwing expected translation failed exception from EF, but existing exception ios okay.
         Assert.Contains(
             "Serializer for Microsoft.",
             (await Assert.ThrowsAsync<ContainsException>(async () => await base.Where_client_and_server_top_level(async))).Message);
@@ -432,7 +432,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_client_or_server_top_level(bool async)
     {
-        // Fails: AV013 (Not throwing expected translation failed exception)
+        // Fails: Not throwing expected translation failed exception from EF, but existing exception ios okay.
         Assert.Contains(
             "Serializer for Microsoft.",
             (await Assert.ThrowsAsync<ContainsException>(async () => await base.Where_client_or_server_top_level(async))).Message);
@@ -445,7 +445,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_client_and_server_non_top_level(bool async)
     {
-        // Fails: AV013 (Not throwing expected translation failed exception)
+        // Fails: Not throwing expected translation failed exception from EF, but existing exception ios okay.
         Assert.Contains(
             "Serializer for Microsoft.",
             (await Assert.ThrowsAsync<ContainsException>(async () => await base.Where_client_and_server_non_top_level(async)))
@@ -459,7 +459,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_client_deep_inside_predicate_and_server_top_level(bool async)
     {
-        // Fails: AV013 (Not throwing expected translation failed exception)
+        // Fails: Not throwing expected translation failed exception from EF, but existing exception ios okay.
         Assert.Contains(
             "Serializer for Microsoft.",
             (await Assert.ThrowsAsync<ContainsException>(async () =>
@@ -473,11 +473,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_equals_method_int(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_equals_method_int(async))).Message);
+        await base.Where_equals_method_int(async);
 
         AssertMql(
             """
@@ -487,7 +483,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_equals_using_object_overload_on_mismatched_types(bool async)
     {
-        // Fails: AV000
+        // Fails: Equals with different types issue EF-221
         Assert.Contains(
             "Unable to cast object of type 'System.UInt64' to type 'System.UInt32'.",
             (await Assert.ThrowsAsync<InvalidCastException>(async () =>
@@ -501,11 +497,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_equals_using_int_overload_on_mismatched_types(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ",
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_equals_using_int_overload_on_mismatched_types(async))).Message);
+        await base.Where_equals_using_int_overload_on_mismatched_types(async);
 
         AssertMql(
             """
@@ -515,7 +507,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_equals_on_mismatched_types_nullable_int_long(bool async)
     {
-        // Fails: AV000
+        // Fails: Equals with different types issue EF-221
         Assert.Contains(
             "Unable to cast object of type 'System.UInt64' to type 'System.Nullable`1[System.UInt32]'.",
             (await Assert.ThrowsAsync<InvalidCastException>(async () =>
@@ -529,7 +521,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_equals_on_mismatched_types_nullable_long_nullable_int(bool async)
     {
-        // Fails: AV000
+        // Fails: Equals with different types issue EF-221
         Assert.Contains(
             "Unable to cast object of type 'System.UInt64' to type 'System.Nullable`1[System.UInt32]'.",
             (await Assert.ThrowsAsync<InvalidCastException>(async () =>
@@ -685,7 +677,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_in_optimization_multiple(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_in_optimization_multiple(async));
 
         AssertMql();
@@ -693,7 +685,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_not_in_optimization1(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_not_in_optimization1(async));
 
         AssertMql();
@@ -701,7 +693,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_not_in_optimization2(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_not_in_optimization2(async));
 
         AssertMql();
@@ -709,7 +701,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_not_in_optimization3(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_not_in_optimization3(async));
 
         AssertMql();
@@ -717,7 +709,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_not_in_optimization4(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_not_in_optimization4(async));
 
         AssertMql();
@@ -725,7 +717,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_select_many_and(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_select_many_and(async));
 
         AssertMql();
@@ -733,11 +725,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_primitive(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_primitive(async))).Message);
+        await base.Where_primitive(async);
 
         AssertMql(
             """
@@ -767,7 +755,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_bool_client_side_negated(bool async)
     {
-        // Fails: AV011
+        // Fails: Not throwing expected translation failed exception from EF, but existing exception ios okay.
         Assert.Contains(
             "Expression not supported: ClientFunc(p.ProductID)",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -830,11 +818,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_bool_member_compared_to_binary_expression(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 44, got 8)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_bool_member_compared_to_binary_expression(async))).Message);
+        await base.Where_bool_member_compared_to_binary_expression(async);
 
         AssertMql(
             """
@@ -854,11 +838,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_negated_boolean_expression_compared_to_another_negated_boolean_expression(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 47, got 77)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_negated_boolean_expression_compared_to_another_negated_boolean_expression(async))).Message);
+        await base.Where_negated_boolean_expression_compared_to_another_negated_boolean_expression(async);
 
         AssertMql(
             """
@@ -868,11 +848,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_not_bool_member_compared_to_binary_expression(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 33, got 69)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_not_bool_member_compared_to_binary_expression(async))).Message);
+        await base.Where_not_bool_member_compared_to_binary_expression(async);
 
         AssertMql(
             """
@@ -892,11 +868,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_bool_parameter_compared_to_binary_expression(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 50, got 77)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_bool_parameter_compared_to_binary_expression(async))).Message);
+        await base.Where_bool_parameter_compared_to_binary_expression(async);
 
         AssertMql(
             """
@@ -906,11 +878,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_bool_member_and_parameter_compared_to_binary_expression_nested(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 33, got 69)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_bool_member_and_parameter_compared_to_binary_expression_nested(async))).Message);
+        await base.Where_bool_member_and_parameter_compared_to_binary_expression_nested(async);
 
         AssertMql(
             """
@@ -920,11 +888,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_de_morgan_or_optimized(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 53, got 69)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_de_morgan_or_optimized(async))).Message);
+        await base.Where_de_morgan_or_optimized(async);
 
         AssertMql(
             """
@@ -934,11 +898,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_de_morgan_and_optimized(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 74, got 77)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_de_morgan_and_optimized(async))).Message);
+        await base.Where_de_morgan_and_optimized(async);
 
         AssertMql(
             """
@@ -948,11 +908,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_complex_negated_expression_optimized(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 27, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_complex_negated_expression_optimized(async))).Message);
+        await base.Where_complex_negated_expression_optimized(async);
 
         AssertMql(
             """
@@ -1053,7 +1009,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_expression_invoke_2(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_expression_invoke_2(async));
 
         AssertMql();
@@ -1091,11 +1047,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_ternary_boolean_condition_with_another_condition(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 9, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_ternary_boolean_condition_with_another_condition(async))).Message);
+        await base.Where_ternary_boolean_condition_with_another_condition(async);
 
         AssertMql(
             """
@@ -1157,7 +1109,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_compare_constructed_multi_value_not_equal(bool async)
     {
-        // Fails: AV000
+        // Fails: TODO: File an issue on EF for this--91 includes "UK" "London" entries.
         Assert.Contains(
             "Values differ", // (Expected 91, got 85)
             (await Assert.ThrowsAsync<EqualException>(async () =>
@@ -1251,11 +1203,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_chain(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 8, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_chain(async))).Message);
+        await base.Where_chain(async);
 
         AssertMql(
             """
@@ -1265,7 +1213,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_navigation_contains(bool async)
     {
-        // Fails: AV000
+        // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
             (await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -1286,7 +1234,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_multiple_contains_in_subquery_with_or(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1298,7 +1246,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_multiple_contains_in_subquery_with_and(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1309,7 +1257,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_contains_on_navigation(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1320,7 +1268,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_subquery_FirstOrDefault_is_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1331,7 +1279,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_subquery_FirstOrDefault_compared_to_entity(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1372,7 +1320,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1393,7 +1341,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_ToList_Count(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_ToList_Count(async));
 
         AssertMql();
@@ -1401,7 +1349,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_ToList_Contains(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_ToList_Contains(async));
 
         AssertMql();
@@ -1409,7 +1357,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_ToArray_Count(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_ToArray_Count(async));
 
         AssertMql();
@@ -1417,7 +1365,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_ToArray_Contains(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_ToArray_Contains(async));
 
         AssertMql();
@@ -1425,7 +1373,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_AsEnumerable_Count(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_AsEnumerable_Count(async));
 
         AssertMql();
@@ -1433,7 +1381,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_AsEnumerable_Contains(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_AsEnumerable_Contains(async));
 
         AssertMql();
@@ -1441,7 +1389,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_ToList_Count_member(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_ToList_Count_member(async));
 
         AssertMql();
@@ -1449,7 +1397,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_ToArray_Length_member(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_ToArray_Length_member(async));
 
         AssertMql();
@@ -1457,7 +1405,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_collection_navigation_ToList_Count(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_collection_navigation_ToList_Count(async));
 
         AssertMql();
@@ -1465,7 +1413,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_collection_navigation_ToList_Contains(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_collection_navigation_ToList_Contains(async));
 
         AssertMql();
@@ -1473,7 +1421,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_collection_navigation_ToArray_Count(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_collection_navigation_ToArray_Count(async));
 
         AssertMql();
@@ -1481,7 +1429,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_collection_navigation_ToArray_Contains(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_collection_navigation_ToArray_Contains(async));
 
         AssertMql();
@@ -1489,7 +1437,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_collection_navigation_AsEnumerable_Count(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_collection_navigation_AsEnumerable_Count(async));
 
         AssertMql();
@@ -1497,7 +1445,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_collection_navigation_AsEnumerable_Contains(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_collection_navigation_AsEnumerable_Contains(async));
 
         AssertMql();
@@ -1505,7 +1453,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_collection_navigation_ToList_Count_member(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_collection_navigation_ToList_Count_member(async));
 
         AssertMql();
@@ -1513,7 +1461,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_collection_navigation_ToArray_Length_member(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_collection_navigation_ToArray_Length_member(async));
 
         AssertMql();
@@ -1521,7 +1469,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_Queryable_AsEnumerable_Contains_negated(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_Queryable_AsEnumerable_Contains_negated(async));
 
         AssertMql();
@@ -1529,11 +1477,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_list_object_contains_over_value_type(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 2, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_list_object_contains_over_value_type(async))).Message);
+        await base.Where_list_object_contains_over_value_type(async);
 
         AssertMql(
             """
@@ -1543,11 +1487,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_array_of_object_contains_over_value_type(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 2, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_array_of_object_contains_over_value_type(async))).Message);
+        await base.Where_array_of_object_contains_over_value_type(async);
 
         AssertMql(
             """
@@ -1577,7 +1517,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task FirstOrDefault_over_scalar_projection_compared_to_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1588,7 +1528,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task FirstOrDefault_over_scalar_projection_compared_to_not_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1599,7 +1539,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task FirstOrDefault_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1610,7 +1550,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task FirstOrDefault_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1621,7 +1561,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task SingleOrDefault_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1632,7 +1572,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task SingleOrDefault_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1643,7 +1583,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task LastOrDefault_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1654,7 +1594,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task LastOrDefault_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1665,7 +1605,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task First_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1676,7 +1616,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task First_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1687,7 +1627,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task ElementAt_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1698,7 +1638,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task ElementAtOrDefault_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1709,7 +1649,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Single_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1720,7 +1660,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Single_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1731,7 +1671,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Last_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1742,7 +1682,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Last_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -1793,7 +1733,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task GetType_on_non_hierarchy3(bool async)
     {
-        // Fails: AV000
+        // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Values differ", // (Expected 0 got 91)
             (await Assert.ThrowsAsync<EqualException>(async () =>
@@ -1807,7 +1747,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task GetType_on_non_hierarchy4(bool async)
     {
-        // Fails: AV000
+        // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Values differ", // (Expected 0 got 91)
             (await Assert.ThrowsAsync<EqualException>(async () =>
@@ -1860,25 +1800,21 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Enclosing_class_settable_member_generates_parameter(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Enclosing_class_settable_member_generates_parameter(async))).Message);
+        await base.Enclosing_class_settable_member_generates_parameter(async);
 
         AssertMql(
             """
             Orders.{ "$match" : { "_id" : 10274 } }
+            """,
+            //
+            """
+            Orders.{ "$match" : { "_id" : 10275 } }
             """);
     }
 
     public override async Task Enclosing_class_readonly_member_generates_parameter(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Enclosing_class_readonly_member_generates_parameter(async))).Message);
+        await base.Enclosing_class_readonly_member_generates_parameter(async);
 
         AssertMql(
             """
@@ -1888,11 +1824,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Enclosing_class_const_member_does_not_generate_parameter(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Enclosing_class_const_member_does_not_generate_parameter(async))).Message);
+        await base.Enclosing_class_const_member_does_not_generate_parameter(async);
 
         AssertMql(
             """
@@ -2064,7 +1996,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_simple_shadow_projection_mixed(bool async)
     {
-        // Fails: AV012
+        // Fails: Using EF.Property issue EF-219
         await Assert.ThrowsAsync<NullReferenceException>(async () => await base.Where_simple_shadow_projection_mixed(async));
 
         AssertMql();
@@ -2072,11 +2004,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_primitive_tracked(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Where_primitive_tracked(async))).Message);
+        await base.Where_primitive_tracked(async);
 
         AssertMql(
             """
@@ -2086,10 +2014,10 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_primitive_tracked2(bool async)
     {
-        // Fails: AV000
+        // Fails: Projected entity issue EF-76
         Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
+            "An error occurred while deserializing the e property ",
+            (await Assert.ThrowsAsync<FormatException>(async () =>
                 await base.Where_primitive_tracked2(async))).Message);
 
         AssertMql(
@@ -2100,7 +2028,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_poco_closure(bool async)
     {
-        // Fails: AV000
+        // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Entity to entity comparison is not supported.",
             (await Assert.ThrowsAsync<NotSupportedException>(async () =>
@@ -2115,7 +2043,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 #if EF9
     public override async Task EF_Constant(bool async)
     {
-        // Fails: AV000 (EF.Constant not supported on Mongo)
+        // Fails: EF.Constant not supported on Mongo
         Assert.Equal(
             CoreStrings.EFConstantNotSupported,
             (await Assert.ThrowsAsync<InvalidOperationException>(() => base.EF_Constant(async))).Message);
@@ -2125,7 +2053,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task EF_Constant_with_subtree(bool async)
     {
-        // Fails: AV000 (EF.Constant not supported on Mongo)
+        // Fails: EF.Constant not supported on Mongo
         Assert.Equal(
             CoreStrings.EFConstantNotSupported,
             (await Assert.ThrowsAsync<InvalidOperationException>(() => base.EF_Constant_with_subtree(async))).Message);
@@ -2135,7 +2063,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task EF_Constant_does_not_parameterized_as_part_of_bigger_subtree(bool async)
     {
-        // Fails: AV000 (EF.Constant not supported on Mongo)
+        // Fails: EF.Constant not supported on Mongo
         Assert.Equal(
             CoreStrings.EFConstantNotSupported,
             (await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -2255,13 +2183,21 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Interface_casting_though_generic_method(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Interface_casting_though_generic_method(async))).Message);
+        await base.Interface_casting_though_generic_method(async);
 
         AssertMql(
+            """
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            """,
+            //
+            """
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            """,
+            //
+            """
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            """,
+            //
             """
             Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
             """);
@@ -2269,11 +2205,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Simplifiable_coalesce_over_nullable(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Simplifiable_coalesce_over_nullable(async))).Message);
+        await base.Simplifiable_coalesce_over_nullable(async);
 
         AssertMql(
             """
@@ -2283,11 +2215,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Take_and_Where_evaluation_order(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 3, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Take_and_Where_evaluation_order(async))).Message);
+        await base.Take_and_Where_evaluation_order(async);
 
         AssertMql(
             """
@@ -2297,11 +2225,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Skip_and_Where_evaluation_order(bool async)
     {
-        // Fails: AV000
-        Assert.Contains(
-            "Values differ", // (Expected 3, got 0)
-            (await Assert.ThrowsAsync<EqualException>(async () =>
-                await base.Skip_and_Where_evaluation_order(async))).Message);
+        await base.Skip_and_Where_evaluation_order(async);
 
         AssertMql(
             """
@@ -2342,7 +2266,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_bitwise_xor(bool async)
     {
-        // Fails: AV000
+        // Fails MongoDB does not have an xor operator
         Assert.Contains(
             "because MongoDB does not have a boolean $xor operator",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -2386,7 +2310,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_string_indexof(bool async)
     {
-        // Fails: AV000
+        // Fails: String.IndexOf issue EF-224
         Assert.Contains(
             "Values differ", // (Expected 1, got 90)
             (await Assert.ThrowsAsync<EqualException>(async () =>
@@ -2400,7 +2324,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_string_replace(bool async)
     {
-        // Fails: AV000
+        // Fails: String.Replace issue EF-223
         Assert.Contains(
             "Expression not supported: c.City.Replace(\"Sea\", \"Rea\").",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -2464,25 +2388,22 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_date_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_date_component(async))).Message);
+        // The EF test expects the dateTime to be UTC, but does not force this, and Mongo treats it as local.
+        var myDatetime = new DateTime(1998, 5, 4, 0, 0, 0, DateTimeKind.Utc);
+
+        await AssertQuery(
+            async,
+            ss => ss.Set<Order>().Where(o => o.OrderDate!.Value.Date == myDatetime));
 
         AssertMql(
             """
-            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, { "$date" : "1998-05-03T23:00:00Z" }] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, { "$date" : "1998-05-04T00:00:00Z" }] } } }
             """);
     }
 
     public override async Task Where_date_add_year_constant_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_date_add_year_constant_component(async))).Message);
+        await base.Where_date_add_year_constant_component(async);
 
         AssertMql(
             """
@@ -2492,11 +2413,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_year_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_year_component(async))).Message);
+        await base.Where_datetime_year_component(async);
 
         AssertMql(
             """
@@ -2506,11 +2423,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_month_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_month_component(async))).Message);
+        await base.Where_datetime_month_component(async);
 
         AssertMql(
             """
@@ -2520,11 +2433,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_dayOfYear_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_dayOfYear_component(async))).Message);
+        await base.Where_datetime_dayOfYear_component(async);
 
         AssertMql(
             """
@@ -2534,11 +2443,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_day_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_day_component(async))).Message);
+        await base.Where_datetime_day_component(async);
 
         AssertMql(
             """
@@ -2548,11 +2453,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_hour_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_hour_component(async))).Message);
+        await base.Where_datetime_hour_component(async);
 
         AssertMql(
             """
@@ -2562,11 +2463,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_minute_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_minute_component(async))).Message);
+        await base.Where_datetime_minute_component(async);
 
         AssertMql(
             """
@@ -2576,11 +2473,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_second_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_second_component(async))).Message);
+        await base.Where_datetime_second_component(async);
 
         AssertMql(
             """
@@ -2590,11 +2483,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetime_millisecond_component(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Where_datetime_millisecond_component(async))).Message);
+        await base.Where_datetime_millisecond_component(async);
 
         AssertMql(
             """
@@ -2604,7 +2493,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetimeoffset_now_component(bool async)
     {
-        // Fails: AV000
+        // Fails: DateTimeOffset issue CSHARP-5296
         Assert.Contains(
             "Expression not supported: Convert(",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -2618,7 +2507,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_datetimeoffset_utcnow_component(bool async)
     {
-        // Fails: AV000
+        // Fails: DateTimeOffset issue CSHARP-5296
         Assert.Contains(
             "Expression not supported: Convert(",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -2712,11 +2601,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Time_of_day_datetime(bool async)
     {
-        // Fails: AV015
-        Assert.Contains(
-            "PlanExecutor error during aggregation",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-                await base.Time_of_day_datetime(async))).Message);
+        await base.Time_of_day_datetime(async);
 
         AssertMql(
             """
@@ -2726,7 +2611,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Like_with_non_string_column_using_ToString(bool async)
     {
-        // Fails: AV014
+        // Fails: translation of Like issue EF-222
         Assert.Contains(
             "value(Microsoft.EntityFrameworkCore.DbFunctions).Like(",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -2740,7 +2625,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Like_with_non_string_column_using_double_cast(bool async)
     {
-        // Fails: AV014 (Translation of Like)
+        // Fails: translation of Like issue EF-222
         Assert.Contains(
             "value(Microsoft.EntityFrameworkCore.DbFunctions).Like(",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -2754,7 +2639,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_Like_and_comparison(bool async)
     {
-        // Fails: AV014 (Translation of Like)
+        // Fails: translation of Like issue EF-222
         Assert.Contains(
             "value(Microsoft.EntityFrameworkCore.DbFunctions).Like(",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>
@@ -2768,7 +2653,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_Like_or_comparison(bool async)
     {
-        // Fails: AV014 (Translation of Like)
+        // Fails: translation of Like issue EF-222
         Assert.Contains(
             "value(Microsoft.EntityFrameworkCore.DbFunctions).Like(",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>

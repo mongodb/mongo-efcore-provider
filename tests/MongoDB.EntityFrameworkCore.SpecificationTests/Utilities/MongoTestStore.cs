@@ -146,10 +146,38 @@ public class MongoTestStore : TestStore
                                         {
                                             if (reader.TokenType == JsonToken.StartObject)
                                             {
-                                                var document = BsonDocument.Parse(serializer.Deserialize<JObject>(reader)!.ToString());
+                                                var document = new BsonDocument();
+                                                var jObject = serializer.Deserialize<JObject>(reader)!;
+                                                foreach (var pair in jObject)
+                                                {
+                                                    switch (pair.Value.Type)
+                                                    {
+                                                        case JTokenType.Integer:
+                                                            document.Add(pair.Key, pair.Value.Value<long>());
+                                                            break;
+                                                        case JTokenType.Float:
+                                                            document.Add(pair.Key, pair.Value.Value<double>());
+                                                            break;
+                                                        case JTokenType.String:
+                                                            document.Add(pair.Key, pair.Value.Value<string>());
+                                                            break;
+                                                        case JTokenType.Boolean:
+                                                            document.Add(pair.Key, pair.Value.Value<bool>());
+                                                            break;
+                                                        case JTokenType.Null:
+                                                        case JTokenType.Undefined:
+                                                            document.Add(pair.Key, BsonValue.Create(null));
+                                                            break;
+                                                        case JTokenType.Date:
+                                                            document.Add(pair.Key, pair.Value.Value<DateTime>());
+                                                            break;
+                                                        default:
+                                                            document.Add(pair.Key, BsonValue.Create(pair.Value.Value<object>()));
+                                                            break;
+                                                    }
+                                                }
                                                 document["$type"] = entityName;
                                                 documents.Add(document);
-
                                             }
                                             else if (reader.TokenType == JsonToken.EndObject)
                                             {
