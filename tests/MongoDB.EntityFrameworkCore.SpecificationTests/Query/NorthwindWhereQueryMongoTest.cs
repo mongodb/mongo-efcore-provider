@@ -367,7 +367,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_shadow_subquery_FirstOrDefault(bool async)
     {
-        // Fails: Sub-query with ordering issue EF-220
+        // Fails: Multiple query roots issue EF-220
         Assert.Contains(
             "Expression not supported: Northwind.Employees.Aggregate(",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(async () =>

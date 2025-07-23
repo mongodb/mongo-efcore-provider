@@ -45,7 +45,7 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task KeylessEntity_by_database_view(bool async)
     {
-        // Views are not supported, so this returns all entities from mapped collection.
+        // Fails: Views are not supported, so this returns all entities from mapped collection.
         await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_by_database_view(async));
 
         AssertMql(
@@ -56,6 +56,7 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task Entity_mapped_to_view_on_right_side_of_join(bool async)
     {
+        // Fails: Include issue EF-117
         await AssertTranslationFailed(() => base.Entity_mapped_to_view_on_right_side_of_join(async));
 
         AssertMql();
@@ -63,7 +64,7 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task KeylessEntity_with_nav_defining_query(bool async)
     {
-        // Defining queries are not supported.
+        // Fails: Defining queries are not supported.
         await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_with_nav_defining_query(async));
 
         AssertMql(
@@ -74,7 +75,7 @@ CustomerQueryWithQueryFilter.{ "$match" : { "OrderCount" : { "$gt" : 0 } } }
 
     public override async Task KeylessEntity_with_mixed_tracking(bool async)
     {
-        // Fails: AV000
+        // Fails: Multiple query roots issue EF-220
         await AssertTranslationFailed(() => base.KeylessEntity_with_mixed_tracking(async));
 
         AssertMql();
@@ -82,7 +83,7 @@ CustomerQueryWithQueryFilter.{ "$match" : { "OrderCount" : { "$gt" : 0 } } }
 
     public override async Task KeylessEntity_with_included_nav(bool async)
     {
-        // Fails: AV000
+        // Fails: Include issue EF-117
         await AssertTranslationFailed(() => base.KeylessEntity_with_included_nav(async));
 
         AssertMql();
@@ -100,7 +101,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_with_defining_query_and_correlated_collection(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.KeylessEntity_with_defining_query_and_correlated_collection(async));
 
         AssertMql();
@@ -108,7 +109,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_select_where_navigation(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.KeylessEntity_select_where_navigation(async));
 
         AssertMql();
@@ -116,7 +117,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_select_where_navigation_multi_level(bool async)
     {
-        // Fails: AV000
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.KeylessEntity_select_where_navigation_multi_level(async));
 
         AssertMql();
@@ -124,7 +125,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_with_included_navs_multi_level(bool async)
     {
-        // Fails: AV000
+        // Fails: Include issue EF-117
         await AssertTranslationFailed(() => base.KeylessEntity_with_included_navs_multi_level(async));
 
         AssertMql();
@@ -132,7 +133,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_groupby(bool async)
     {
-        // Fails: AV000
+        // Fails: GroupBy issue EF-225
         await AssertTranslationFailed(() => base.KeylessEntity_groupby(async));
 
         AssertMql();
@@ -140,7 +141,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task Collection_correlated_with_keyless_entity_in_predicate_works(bool async)
     {
-        // Fails: AV007
+        // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
             (await Assert.ThrowsAsync<ArgumentException>(async () =>
