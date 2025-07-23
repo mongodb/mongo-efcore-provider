@@ -5,8 +5,6 @@ using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
-#nullable disable
-
 public class NorthwindKeylessEntitiesQueryMongoTest : NorthwindKeylessEntitiesQueryTestBase<
     NorthwindQueryMongoFixture<NoopModelCustomizer>>
 {

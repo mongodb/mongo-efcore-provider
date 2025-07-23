@@ -22,8 +22,6 @@ using MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 
-#nullable disable
-
 public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture fixture)
     : BuiltInDataTypesTestBase<BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture>(fixture)
 {
