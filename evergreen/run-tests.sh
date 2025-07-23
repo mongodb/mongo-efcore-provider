@@ -5,6 +5,7 @@ MONGODB_URI=${MONGODB_URI:=mongodb://localhost:27017/}
 BUILD_CONFIGURATION=${BUILD_CONFIGURATION:=Debug}
 
 EFCORE_PROVIDER_PROJECT_PATH="./src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj"
+EFCORE_SPECTEST_PROJECT_PATH="./src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj"
 if [ -n "$DRIVER_VERSION" ]
 then
   ## Update Driver's package reference if specified
@@ -12,11 +13,15 @@ then
   then
     echo "Installing the latest version of MongoDB.Driver..."
     dotnet remove "$EFCORE_PROVIDER_PROJECT_PATH" package MongoDB.Driver
+    dotnet remove "$EFCORE_SPECTEST_PROJECT_PATH" package MongoDB.Driver
     dotnet add "$EFCORE_PROVIDER_PROJECT_PATH" package MongoDB.Driver
+    dotnet add "$EFCORE_SPECTEST_PROJECT_PATH" package MongoDB.Driver
   else
     echo "Installing the $DRIVER_VERSION version of MongoDB.Driver..."
     dotnet remove "$EFCORE_PROVIDER_PROJECT_PATH" package MongoDB.Driver
+    dotnet remove "$EFCORE_SPECTEST_PROJECT_PATH" package MongoDB.Driver
     dotnet add "$EFCORE_PROVIDER_PROJECT_PATH" package MongoDB.Driver -v "$DRIVER_VERSION"
+    dotnet add "$EFCORE_SPECTEST_PROJECT_PATH" package MongoDB.Driver -v "$DRIVER_VERSION"
   fi
 fi
 
