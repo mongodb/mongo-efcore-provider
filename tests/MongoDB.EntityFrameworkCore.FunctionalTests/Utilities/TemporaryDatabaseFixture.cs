@@ -89,9 +89,6 @@ public class TemporaryDatabaseFixture
         return MongoDatabase.GetCollection<T>(name);
     }
 
-    public void DropCollection([CallerMemberName] string? name = null)
-        => MongoDatabase.DropCollection(TransformNameIfNeeded(name));
-
     public IMongoCollection<T> GetCollection<T>([CallerMemberName] string? name = null)
         => MongoDatabase.GetCollection<T>(TransformNameIfNeeded(name));
 

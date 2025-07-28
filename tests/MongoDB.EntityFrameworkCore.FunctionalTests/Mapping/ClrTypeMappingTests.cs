@@ -328,8 +328,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [InlineData(short.MinValue, 1)]
     public void Int16_read_update(short inserted, short updated)
     {
-        database.DropCollection();
-        var collection = database.CreateCollection<Int16Entity>();
+        var collection = database.CreateCollection<Int16Entity>(values: [inserted, updated]);
         var id = ObjectId.GenerateNewId();
         collection.InsertOne(new Int16Entity {_id = id, anInt16 = inserted});
 
@@ -359,8 +358,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [InlineData(int.MinValue, 1)]
     public void Int32_read_update(int inserted, int updated)
     {
-        database.DropCollection();
-        var collection = database.CreateCollection<Int32Entity>();
+        var collection = database.CreateCollection<Int32Entity>(values: [inserted, updated]);
         var id = ObjectId.GenerateNewId();
         collection.InsertOne(new Int32Entity {_id = id, anInt32 = inserted});
 
@@ -391,8 +389,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [InlineData(long.MinValue, 1)]
     public void Int64_read_update(long inserted, long updated)
     {
-        database.DropCollection();
-        var collection = database.CreateCollection<Int64Entity>();
+        var collection = database.CreateCollection<Int64Entity>(values: [inserted, updated]);
         var id = ObjectId.GenerateNewId();
         collection.InsertOne(new Int64Entity {_id = id, anInt64 = inserted});
 
@@ -422,8 +419,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [InlineData(byte.MinValue, 1)]
     public void Byte_read_update(byte inserted, byte updated)
     {
-        database.DropCollection();
-        var collection = database.CreateCollection<ByteEntity>();
+        var collection = database.CreateCollection<ByteEntity>(values: [inserted, updated]);
         var id = ObjectId.GenerateNewId();
         collection.InsertOne(new ByteEntity {_id = id, aByte = inserted});
 
@@ -453,8 +449,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [InlineData(char.MinValue, 1)]
     public void Char_read_update(char inserted, char updated)
     {
-        database.DropCollection();
-        var collection = database.CreateCollection<CharEntity>();
+        var collection = database.CreateCollection<CharEntity>(values: [(int)inserted, (int)updated]);
         var id = ObjectId.GenerateNewId();
         collection.InsertOne(new CharEntity {_id = id, aChar = inserted});
 
@@ -488,8 +483,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         var inserted = decimal.Parse(insertedString);
         var updated = decimal.Parse(updatedString);
 
-        database.DropCollection();
-        var collection = database.CreateCollection<DecimalEntity>();
+        var collection = database.CreateCollection<DecimalEntity>(values: [inserted, updated]);
         var id = ObjectId.GenerateNewId();
         collection.InsertOne(new DecimalEntity {_id = id, aDecimal = inserted});
 
@@ -519,8 +513,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [InlineData(float.MinValue, 1)]
     public void Single_read_update(float inserted, float updated)
     {
-        database.DropCollection();
-        var collection = database.CreateCollection<SingleFloatEntity>();
+        var collection = database.CreateCollection<SingleFloatEntity>(values: [inserted, updated]);
 
         var id = ObjectId.GenerateNewId();
         collection.InsertOne(new SingleFloatEntity {_id = id, aSingle = inserted});
@@ -551,8 +544,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [InlineData(double.MinValue, 1)]
     public void Double_read_update(double inserted, double updated)
     {
-        database.DropCollection();
-        var collection = database.CreateCollection<DoubleFloatEntity>();
+        var collection = database.CreateCollection<DoubleFloatEntity>(values: [inserted, updated]);
 
         var id = ObjectId.GenerateNewId();
         collection.InsertOne(new DoubleFloatEntity {_id = id, aDouble = inserted});
