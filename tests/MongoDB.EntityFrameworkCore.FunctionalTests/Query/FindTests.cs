@@ -65,7 +65,7 @@ public class FindTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Find_with_compound_key_found()
+    public void Find_with_composite_key_found()
     {
         var result = _db.Moons.Find(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI");
         Assert.NotNull(result);
@@ -73,14 +73,14 @@ public class FindTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Find_with_compound_key_not_found()
+    public void Find_with_composite_key_not_found()
     {
         var result = _db.Moons.Find(ObjectId.Parse("a21ff30d2a3e781873fcb663"), "VI");
         Assert.Null(result);
     }
 
     [Fact]
-    public async Task FindAsync_with_compound_key_found()
+    public async Task FindAsync_with_composite_key_found()
     {
         var result = await _db.Moons.FindAsync(ObjectId.Parse("621ff30d2a3e781873fcb663"), "VI");
         Assert.NotNull(result);
@@ -88,7 +88,7 @@ public class FindTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public async Task FindAsync_with_compound_key_not_found()
+    public async Task FindAsync_with_composite_key_not_found()
     {
         var result = await _db.Moons.FindAsync(ObjectId.Parse("a21ff30d2a3e781873fcb663"), "VI");
         Assert.Null(result);

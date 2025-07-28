@@ -170,8 +170,8 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
 
         if (!keyProperties.Any()) return;
 
-        var compoundKey = keyProperties.Length > 1;
-        if (compoundKey)
+        var compositeKey = keyProperties.Length > 1;
+        if (compositeKey)
         {
             writer.WriteName("_id");
             writer.WriteStartDocument();
@@ -182,7 +182,7 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
             WriteProperty(writer, entry.GetCurrentValue(property), property);
         }
 
-        if (compoundKey)
+        if (compositeKey)
         {
             writer.WriteEndDocument();
         }
