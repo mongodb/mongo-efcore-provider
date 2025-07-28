@@ -454,12 +454,11 @@ public class MongoModelValidator : ModelValidator
     /// <exception cref="InvalidOperationException">Thrown when a required primary key is not found, or it is invalid.</exception>
     private static void ValidateEntityPrimaryKey(IEntityType entityType)
     {
-        // We must have a primary key on root documents
         var primaryKey = entityType.FindPrimaryKey();
-        if (primaryKey == null || primaryKey.Properties.Count == 0)
+        if (primaryKey == null)
         {
-            throw new InvalidOperationException(
-                $"The entity type '{entityType.DisplayName()}' is a root document but does not have a primary key set.");
+            // This is either a keyless type, or will be validated to have a key in ValidateNonNullPrimaryKeys
+            return;
         }
 
         if (primaryKey.Properties.Count == 1)
