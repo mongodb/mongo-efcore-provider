@@ -14,7 +14,6 @@
  */
 
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
@@ -35,7 +34,7 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
     new()
 {
     protected override ITestStoreFactory TestStoreFactory
-        => MongoNorthwindTestStoreFactory.Instance;
+        => MongoTestStoreFactory.Instance;
 
     protected override bool UsePooling
         => false;
@@ -45,6 +44,43 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
 
     protected override bool ShouldLogCategory(string logCategory)
         => logCategory == DbLoggerCategory.Query.Name;
+
+    #if !EF9
+    protected override void Seed(NorthwindContext context)
+    {
+        AddEntities(context);
+
+        context.SaveChanges();
+    }
+    #endif
+
+    protected override Task SeedAsync(NorthwindContext context)
+    {
+        AddEntities(context);
+
+        return context.SaveChangesAsync();
+    }
+
+    private static void AddEntities(NorthwindContext context)
+    {
+        context.Set<Customer>().AddRange(NorthwindData.CreateCustomers());
+        context.Set<Employee>().AddRange(NorthwindData.CreateEmployees());
+
+        var orders = NorthwindData.CreateOrders();
+        foreach (var order in orders)
+        {
+            if (order.OrderDate != null)
+            {
+                // Force the DateTime to be UTC since Mongo will otherwise convert from local to UTC on insertion
+                var o = order.OrderDate.Value;
+                order.OrderDate = new DateTime(o.Year, o.Month, o.Day, o.Hour, o.Minute, o.Second, o.Millisecond, DateTimeKind.Utc);
+            }
+        }
+        context.Set<Order>().AddRange(orders);
+
+        context.Set<Product>().AddRange(NorthwindData.CreateProducts());
+        context.Set<OrderDetail>().AddRange(NorthwindData.CreateOrderDetails());
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder, DbContext context)
     {

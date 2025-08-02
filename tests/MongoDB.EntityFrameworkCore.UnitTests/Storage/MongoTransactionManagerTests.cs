@@ -25,13 +25,13 @@ public class MongoTransactionManagerTests
         var transactionManager = new MongoTransactionManager();
 
         Assert.Throws<NotSupportedException>(() => transactionManager.BeginTransaction());
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await transactionManager.BeginTransactionAsync());
+        await Assert.ThrowsAsync<NotSupportedException>(() => transactionManager.BeginTransactionAsync());
 
         Assert.Throws<NotSupportedException>(() => transactionManager.CommitTransaction());
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await transactionManager.CommitTransactionAsync());
+        await Assert.ThrowsAsync<NotSupportedException>(() => transactionManager.CommitTransactionAsync());
 
         Assert.Throws<NotSupportedException>(() => transactionManager.RollbackTransaction());
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await transactionManager.RollbackTransactionAsync());
+        await Assert.ThrowsAsync<NotSupportedException>(() => transactionManager.RollbackTransactionAsync());
 
         Assert.Null(transactionManager.CurrentTransaction);
         Assert.Null(transactionManager.EnlistedTransaction);
