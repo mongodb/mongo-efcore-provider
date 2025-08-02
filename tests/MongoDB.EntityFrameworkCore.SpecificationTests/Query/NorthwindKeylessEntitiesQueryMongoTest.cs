@@ -131,7 +131,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_groupby(bool async)
     {
-        // Fails: GroupBy issue EF-225
+        // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.KeylessEntity_groupby(async));
 
         AssertMql();
@@ -142,8 +142,8 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
         // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(async () =>
-                await base.Collection_correlated_with_keyless_entity_in_predicate_works(async))).Message);
+            (await Assert.ThrowsAsync<ArgumentException>(
+                () => base.Collection_correlated_with_keyless_entity_in_predicate_works(async))).Message);
 
         AssertMql();
     }
