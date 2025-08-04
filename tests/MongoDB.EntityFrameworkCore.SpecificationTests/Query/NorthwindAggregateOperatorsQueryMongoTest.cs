@@ -40,27 +40,21 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Last_when_no_order_by(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Last_when_no_order_by(async))).Message);
+        await base.Last_when_no_order_by(async);
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
     public override async Task LastOrDefault_when_no_order_by(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.LastOrDefault_when_no_order_by(async))).Message);
+        await base.LastOrDefault_when_no_order_by(async);
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
@@ -1419,78 +1413,62 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
     public override async Task Last(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Last(async))).Message);
+            await base.Last(async);
 
 AssertMql(
     """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
     public override async Task Last_Predicate(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Last_Predicate(async))).Message);
+        await base.Last_Predicate(async);
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
     public override async Task Where_Last(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_Last(async))).Message);
+        await base.Where_Last(async);
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
     public override async Task LastOrDefault(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.LastOrDefault(async))).Message);
-AssertMql(
-    """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+
+        await base.LastOrDefault(async);
+
+        AssertMql(
+            """
+Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
     public override async Task LastOrDefault_Predicate(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.LastOrDefault_Predicate(async))).Message);
+        await base.LastOrDefault_Predicate(async);
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
     public override async Task Where_LastOrDefault(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_LastOrDefault(async))).Message);
+        await base.Where_LastOrDefault(async);
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
@@ -1969,26 +1947,21 @@ OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2"
 
     public override async Task OrderBy_Take_Last_gives_correct_result(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.OrderBy_Take_Last_gives_correct_result(async))).Message);
+        await base.OrderBy_Take_Last_gives_correct_result(async);
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 20 }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 20 }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
     public override async Task OrderBy_Skip_Last_gives_correct_result(bool async)
     {
-        Assert.Contains(
-            "Document element is null for required non-nullable property 'CustomerID'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.OrderBy_Skip_Last_gives_correct_result(async))).Message);
+        await base.OrderBy_Skip_Last_gives_correct_result(async);
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 20 }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 20 }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 
@@ -2553,10 +2526,7 @@ Customers.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$cond" : { "if" : { 
 
     public override async Task Return_type_of_singular_operator_is_preserved(bool async)
     {
-        // Fails: Last issue EF-230
-        Assert.Contains(
-            "Element '_id' does not match any field or property of class",
-            (await Assert.ThrowsAsync<FormatException>(() => base.Return_type_of_singular_operator_is_preserved(async))).Message);
+        await base.Return_type_of_singular_operator_is_preserved(async);
 
         AssertMql(
             """
@@ -2576,7 +2546,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$
 """,
             //
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
 """);
     }
 

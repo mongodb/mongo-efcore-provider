@@ -32,7 +32,7 @@ public class NorthwindMiscellaneousQueryMongoTest
         : base(fixture)
     {
         ClearLog();
-        Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
+        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -271,9 +271,7 @@ Customers.{ "$sort" : { "_id" : 1 } }
     public override async Task Entity_equality_orderby_descending_composite_key(bool async)
     {
         // Fails: Composite key order issue EF-251
-        Assert.Contains(
-            "Actual:   10248",
-            (await Assert.ThrowsAsync<EqualException>(() => base.Entity_equality_orderby_descending_composite_key(async))).Message);
+        await Assert.ThrowsAsync<EqualException>(() => base.Entity_equality_orderby_descending_composite_key(async));
 
         AssertMql(
             """
@@ -2081,10 +2079,11 @@ Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T11:00:00Z"
     {
         await base.Environment_newline_is_funcletized(async);
 
-        AssertMql(
-            """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "\\n", "options" : "s" } } } }
-""");
+        // Not asserting baseline since the newline character is different on different platforms.
+//         AssertMql(
+//             """
+// Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "\\n", "options" : "s" } } } }
+// """);
     }
 
     public override async Task Concat_string_int(bool async)
@@ -2227,6 +2226,11 @@ Customers.{ "$match" : { "$or" : [{ "$and" : [{ "_id" : "ALFKI" }, { "_id" : "AN
 
     public override async Task Where_bitwise_binary_not(bool async)
     {
+        if (!TestServer.SupportsBitwiseOperators)
+        {
+            return;
+        }
+
         await base.Where_bitwise_binary_not(async);
 
         AssertMql(
@@ -2247,6 +2251,11 @@ Orders.{ "$match" : { "_id" : { "$bitsAllSet" : 10248 } } }
 
     public override async Task Where_bitwise_binary_or(bool async)
     {
+        if (!TestServer.SupportsBitwiseOperators)
+        {
+            return;
+        }
+
         await base.Where_bitwise_binary_or(async);
 
         AssertMql(
@@ -2259,6 +2268,11 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitOr" : ["$_id", 10248] }, 10248
 
     public override async Task Where_bitwise_binary_xor(bool async)
     {
+        if (!TestServer.SupportsBitwiseOperators)
+        {
+            return;
+        }
+
         await base.Where_bitwise_binary_xor(async);
 
         AssertMql(

@@ -29,7 +29,7 @@ public class NorthwindQueryFiltersQueryMongoTest
         : base(fixture)
     {
         fixture.TestMqlLoggerFactory.Clear();
-        fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
+        //fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]

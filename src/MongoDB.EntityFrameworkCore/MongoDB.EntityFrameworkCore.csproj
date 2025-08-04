@@ -30,7 +30,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
     <PackageReference Remove="Microsoft.SourceLink.GitHub" />
-    <PackageReference Include="MongoDB.Driver" Version="3.3.0" />
+    <PackageReference Include="MongoDB.Driver" Version="3.4.2" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">

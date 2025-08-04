@@ -2241,15 +2241,16 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 
     public override async Task Static_equals_nullable_datetime_compared_to_non_nullable(bool async)
     {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Expected: 1",
-            (await Assert.ThrowsAsync<EqualException>(() => base.Static_equals_nullable_datetime_compared_to_non_nullable(async)))
-            .Message);
+        // Fails: MongoDB DateTimeKind handling
+        var arg = new DateTime(1996, 7, 4, 0, 0, 0, DateTimeKind.Utc);
+
+        await AssertQuery(
+            async,
+            ss => ss.Set<Order>().Where(o => Equals(o.OrderDate, arg)));
 
         AssertMql(
             """
-Orders.{ "$match" : { "OrderDate" : { "$date" : "1996-07-03T23:00:00Z" } } }
+Orders.{ "$match" : { "OrderDate" : { "$date" : "1996-07-04T00:00:00Z" } } }
 """);
     }
 

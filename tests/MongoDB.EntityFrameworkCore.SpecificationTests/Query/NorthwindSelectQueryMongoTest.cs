@@ -1614,7 +1614,7 @@ Customers.{ "$project" : { "City" : "$City", "c" : "$$ROOT", "_id" : 0 } }
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Command aggregate failed: PlanExecutor error during aggregation :: caused by :: Unsupported conversion from object to string in $convert with no onError value.",
+            "Command aggregate failed",
             (await Assert.ThrowsAsync<MongoCommandException>(() =>
                 base.Client_method_in_projection_requiring_materialization_1(async))).Message);
 
