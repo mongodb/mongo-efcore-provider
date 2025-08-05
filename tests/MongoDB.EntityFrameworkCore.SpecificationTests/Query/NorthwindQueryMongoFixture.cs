@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
@@ -26,11 +27,11 @@ namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
 public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtureBase<TModelCustomizer>
     where TModelCustomizer :
-    #if EF9
+#if EF9
     ITestModelCustomizer,
-    #else
+#else
     IModelCustomizer,
-    #endif
+#endif
     new()
 {
     protected override ITestStoreFactory TestStoreFactory
@@ -45,14 +46,14 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
     protected override bool ShouldLogCategory(string logCategory)
         => logCategory == DbLoggerCategory.Query.Name;
 
-    #if !EF9
+#if !EF9
     protected override void Seed(NorthwindContext context)
     {
         AddEntities(context);
 
         context.SaveChanges();
     }
-    #endif
+#endif
 
     protected override Task SeedAsync(NorthwindContext context)
     {
@@ -76,6 +77,7 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
                 order.OrderDate = new DateTime(o.Year, o.Month, o.Day, o.Hour, o.Minute, o.Second, o.Millisecond, DateTimeKind.Utc);
             }
         }
+
         context.Set<Order>().AddRange(orders);
 
         context.Set<Product>().AddRange(NorthwindData.CreateProducts());

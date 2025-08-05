@@ -9,21 +9,24 @@
   <PropertyGroup Condition=" '$(Configuration)' == 'Release EF9' ">
     <DefineConstants>TRACE;RELEASE;EF9</DefineConstants>
   </PropertyGroup>
+
+  <Import Project="..\..\Versions.props" />
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
-    <PackageReference Include="MongoDB.Driver.Encryption" Version="3.4.2" />
+    <PackageReference Include="MongoDB.Driver.Encryption" Version="$(CSharpDriverVersion)" />
     <Compile Remove="Design\Generated\**" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.18" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.18" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF8Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF8Version)" />
     <Compile Include="Design\Generated\EF8\**" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.7" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="9.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF9Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF9Version)" />
     <Compile Include="Design\Generated\EF9\**" />
   </ItemGroup>
 
