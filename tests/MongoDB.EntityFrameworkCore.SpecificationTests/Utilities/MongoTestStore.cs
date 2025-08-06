@@ -60,39 +60,20 @@ public class MongoTestStore : TestStore
     {
         await base.InitializeAsync(createContext, seed, clean).ConfigureAwait(false);
 
-        using var context = createContext();
-        await CleanAsync(context);
-
-        if (_dataFilePath == null)
-        {
-            InsertDocumentsFromModelData(context);
-        }
-        else
-        {
-            InsertDocumentsFromJsonFile(context);
-        }
+        InsertDocumentsFromModelData(createContext);
     }
     #else
     protected override void Initialize(Func<DbContext> createContext, Action<DbContext>? seed, Action<DbContext>? clean)
     {
         base.Initialize(createContext, seed, clean);
 
-        using var context = createContext();
-        Clean(context);
-
-        if (_dataFilePath == null)
-        {
-            InsertDocumentsFromModelData(context);
-        }
-        else
-        {
-            InsertDocumentsFromJsonFile(context);
-        }
+        InsertDocumentsFromModelData(createContext);
     }
     #endif
 
-    private static void InsertDocumentsFromModelData(DbContext context)
+    private static void InsertDocumentsFromModelData(Func<DbContext> createContext)
     {
+        using var context = createContext();
         var updateAdapter = context.GetService<IUpdateAdapterFactory>().CreateStandalone();
         var model = context.GetService<IDesignTimeModel>().Model;
         foreach (var entityType in model.GetEntityTypes())
@@ -105,95 +86,6 @@ public class MongoTestStore : TestStore
         }
 
         context.GetService<IDatabase>().SaveChanges(updateAdapter.GetEntriesToSave());
-    }
-
-    private void InsertDocumentsFromJsonFile(DbContext context)
-    {
-        var mongoClient = context.GetService<IMongoClientWrapper>();
-        var serializer = JsonSerializer.Create();
-
-        using var fs = new FileStream(_dataFilePath!, FileMode.Open, FileAccess.Read);
-        using var sr = new StreamReader(fs);
-        using var reader = new JsonTextReader(sr);
-        while (reader.Read())
-        {
-            if (reader.TokenType == JsonToken.StartArray)
-            {
-                NextEntityType:
-                while (reader.Read())
-                {
-                    if (reader.TokenType == JsonToken.StartObject)
-                    {
-                        string? entityName = null;
-                        string? collectionName = null;
-                        while (reader.Read())
-                        {
-                            if (reader.TokenType == JsonToken.PropertyName)
-                            {
-                                switch (reader.Value)
-                                {
-                                    case "Name":
-                                        reader.Read();
-                                        entityName = (string)reader.Value;
-                                        break;
-                                    case "Collection":
-                                        reader.Read();
-                                        collectionName = (string)reader.Value;
-                                        break;
-                                    case "Data":
-                                        var documents = new List<BsonDocument>();
-                                        while (reader.Read())
-                                        {
-                                            if (reader.TokenType == JsonToken.StartObject)
-                                            {
-                                                var document = new BsonDocument();
-                                                var jObject = serializer.Deserialize<JObject>(reader)!;
-                                                foreach (var pair in jObject)
-                                                {
-                                                    switch (pair.Value.Type)
-                                                    {
-                                                        case JTokenType.Integer:
-                                                            document.Add(pair.Key, pair.Value.Value<long>());
-                                                            break;
-                                                        case JTokenType.Float:
-                                                            document.Add(pair.Key, pair.Value.Value<double>());
-                                                            break;
-                                                        case JTokenType.String:
-                                                            document.Add(pair.Key, pair.Value.Value<string>());
-                                                            break;
-                                                        case JTokenType.Boolean:
-                                                            document.Add(pair.Key, pair.Value.Value<bool>());
-                                                            break;
-                                                        case JTokenType.Null:
-                                                        case JTokenType.Undefined:
-                                                            document.Add(pair.Key, BsonValue.Create(null));
-                                                            break;
-                                                        case JTokenType.Date:
-                                                            document.Add(pair.Key, pair.Value.Value<DateTime>());
-                                                            break;
-                                                        default:
-                                                            document.Add(pair.Key, BsonValue.Create(pair.Value.Value<object>()));
-                                                            break;
-                                                    }
-                                                }
-                                                document["$type"] = entityName;
-                                                documents.Add(document);
-                                            }
-                                            else if (reader.TokenType == JsonToken.EndObject)
-                                            {
-                                                mongoClient.GetCollection<BsonDocument>(collectionName!).InsertMany(documents);
-                                                goto NextEntityType;
-                                            }
-                                        }
-
-                                        break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     #if !EF9

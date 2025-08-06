@@ -29,20 +29,20 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
     public override async Task Can_filter_projection_with_captured_enum_variable(bool async)
         => Assert.Contains(
             "Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[",
-            (await Assert.ThrowsAsync<Exception>(async () => await base.Can_filter_projection_with_captured_enum_variable(async))).Message);
+            (await Assert.ThrowsAsync<Exception>(() => base.Can_filter_projection_with_captured_enum_variable(async))).Message);
 
     // Fails: Enum casting issue EF-215
     public override async Task Can_filter_projection_with_inline_enum_variable(bool async)
         => Assert.Contains(
             "Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[",
-            (await Assert.ThrowsAsync<Exception>(async () => await base.Can_filter_projection_with_inline_enum_variable(async))).Message);
+            (await Assert.ThrowsAsync<Exception>(() => base.Can_filter_projection_with_inline_enum_variable(async))).Message);
 
     #if EF9
     // Fails: Include issue EF-117
     public override async Task Can_insert_and_read_back_with_string_key()
         => Assert.Contains(
             "Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(async () => await base.Can_insert_and_read_back_with_string_key()))
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Can_insert_and_read_back_with_string_key()))
             .Message);
 
     // Fails: Cross-document navigation access issue EF-216
@@ -57,13 +57,13 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
     public override async Task Object_to_string_conversion()
         => Assert.Contains(
             "Unsupported conversion from object to string in $convert with no onError value.",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () => await base.Object_to_string_conversion())).Message);
+            (await Assert.ThrowsAsync<MongoCommandException>(() => base.Object_to_string_conversion())).Message);
 
     // Fails: Projecting DateTimeOffset members EF-218
     public override async Task Optional_datetime_reading_null_from_database()
         => Assert.Contains(
             "Serializer for System.DateTimeOffset does not represent members as fields.",
-            (await Assert.ThrowsAsync<NotSupportedException>(async () => await base.Optional_datetime_reading_null_from_database()))
+            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Optional_datetime_reading_null_from_database()))
             .Message);
     #else
     // Fails: Include issue EF-117
