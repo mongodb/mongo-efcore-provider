@@ -68,18 +68,10 @@ public class MongoDatabaseCreator(
         return created;
     }
 
-    /// <summary>
-    /// Inserts any data that was added to the model using an overload of <see cref="EntityTypeBuilder{TEntity}.HasData(TEntity[])"/>
-    /// </summary>
-    public void SeedFromModel()
+    internal void SeedFromModel()
         => database.SaveChanges(AddModelData().GetEntriesToSave());
 
-    /// <summary>
-    /// Inserts any data that was added to the model using an overload of <see cref="EntityTypeBuilder{TEntity}.HasData(TEntity[])"/>
-    /// </summary>
-    /// <param name="cancellationToken">A cancellation token</param>
-    /// <returns>A task representing this async operation.</returns>
-    public async Task SeedFromModelAsync(CancellationToken cancellationToken = default)
+    internal async Task SeedFromModelAsync(CancellationToken cancellationToken = default)
         => await database.SaveChangesAsync(AddModelData().GetEntriesToSave(), cancellationToken).ConfigureAwait(false);
 
     private IUpdateAdapter AddModelData()

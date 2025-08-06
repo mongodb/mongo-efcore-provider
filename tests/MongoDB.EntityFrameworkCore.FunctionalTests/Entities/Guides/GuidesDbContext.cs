@@ -56,6 +56,16 @@ internal class GuidesDbContext(DbContextOptions options)
         {
             b.ToCollection("planets");
             b.HasData(new Planet { _id = planetId, name = "Tatooine", hasRings = false });
+            b.OwnsOne(e => e.parkingCar, b =>
+            {
+                b.HasData(new { Planet_id = planetId, Id = 1, reg = "YELLOW TAXI" });
+            });
+            b.OwnsMany(e => e.parkingCars, b =>
+            {
+                b.HasData(
+                    new { Planet_id = planetId, Id = 1, reg = "RED BUS" },
+                    new { Planet_id = planetId, Id = 2, reg = "PURPLE DINOSAUR" });
+            });
         });
     }
 }

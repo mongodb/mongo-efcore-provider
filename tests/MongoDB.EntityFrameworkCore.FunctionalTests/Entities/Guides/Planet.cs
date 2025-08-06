@@ -26,6 +26,8 @@ internal class Planet
     public int orderFromSun { get; set; }
     public bool hasRings { get; set; }
     public string[] mainAtmosphere { get; set; }
+    public ParkingCar parkingCar { get; set; }
+    public List<ParkingCar> parkingCars { get; } = new();
 }
 
 internal class Moon
@@ -34,4 +36,9 @@ internal class Moon
     public string label { get; set; }
     public string name { get; set; }
     public int? yearOfDiscovery { get; set; }
+}
+
+internal class ParkingCar
+{
+    public string reg { get; set; }
 }
