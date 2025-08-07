@@ -183,6 +183,17 @@ public static class MongoPropertyBuilderExtensions
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder<TProperty> HasDateTimeKind<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        DateTimeKind dateTimeKind)
+        => (PropertyBuilder<TProperty>)HasDateTimeKind((PropertyBuilder)propertyBuilder, dateTimeKind);
+
+    /// <summary>
+    /// Configures the <see cref="DateTimeKind"/> for the property.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static IConventionPropertyBuilder HasDateTimeKind(
         this IConventionPropertyBuilder propertyBuilder,
         DateTimeKind dateTimeKind)
@@ -190,4 +201,17 @@ public static class MongoPropertyBuilderExtensions
         propertyBuilder.Metadata.SetDateTimeKind(dateTimeKind);
         return propertyBuilder;
     }
+
+    /// <summary>
+    /// Returns a value indicating whether the given <see cref="DateTimeKind"/> can be set.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns><see langword="true" /> if the <see cref="DateTimeKind"/> can be set, <see langword="false"/> if not.</returns>
+    public static bool CanSetDateTimeKind(
+        this IConventionPropertyBuilder propertyBuilder,
+        DateTimeKind dateTimeKind,
+        bool fromDataAnnotation = false)
+        => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind, fromDataAnnotation);
 }

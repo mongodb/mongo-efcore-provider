@@ -243,6 +243,20 @@ public static class MongoDbContextOptionsExtensions
     }
 
     /// <summary>
+    /// Configures the context to connect to a MongoDB database using the <see cref="DbContextOptionsBuilder{TContext}"/>.
+    /// </summary>
+    /// <param name="optionsBuilder">The builder being used to configure the context.</param>
+    /// <param name="extension">The <see cref="MongoOptionsExtension"/> to configure.</param>
+    /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
+    /// <returns>The options builder so that further configuration can be chained.</returns>
+    public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
+        this DbContextOptionsBuilder<TContext> optionsBuilder,
+        MongoOptionsExtension extension,
+        Action<MongoDbContextOptionsBuilder>? optionsAction = null)
+        where TContext : DbContext
+        => (DbContextOptionsBuilder<TContext>)UseMongoDB((DbContextOptionsBuilder)optionsBuilder, extension, optionsAction);
+
+    /// <summary>
     /// Configures the context to connect to a MongoDB database using the <see cref="DbContextOptionsBuilder"/>.
     /// </summary>
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>

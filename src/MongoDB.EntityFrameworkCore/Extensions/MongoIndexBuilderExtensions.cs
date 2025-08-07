@@ -14,7 +14,6 @@
  */
 
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Metadata;
 
@@ -37,29 +36,6 @@ public static class MongoIndexBuilderExtensions
     {
         indexBuilder.Metadata.SetCreateIndexOptions(options);
 
-        return indexBuilder;
-    }
-
-    /// <summary>
-    /// Configures the <see cref="CreateIndexOptions"/> for the index.
-    /// </summary>
-    /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="options">The <see cref="CreateIndexOptions"/> for this index.</param>
-    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
-    /// <returns>
-    /// The same builder instance if the configuration was applied, <see langword="null" /> otherwise.
-    /// </returns>
-    public static IConventionIndexBuilder? HasCreateIndexOptions(
-        this IConventionIndexBuilder indexBuilder,
-        CreateIndexOptions<BsonDocument>? options,
-        bool fromDataAnnotation = false)
-    {
-        if (!indexBuilder.CanSetCreateIndexOptions(options, fromDataAnnotation))
-        {
-            return null;
-        }
-
-        indexBuilder.Metadata.SetCreateIndexOptions(options, fromDataAnnotation);
         return indexBuilder;
     }
 
