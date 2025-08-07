@@ -180,382 +180,392 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Guid_read()
+    public void Guid_read_and_update()
     {
-        var expected = Guid.NewGuid();
+        var inserted = Guid.NewGuid();
+        var updated = Guid.NewGuid();
 
+        database.CreateCollection<BsonGuidEntity>().InsertOne(
+            new BsonGuidEntity {_id = ObjectId.GenerateNewId(), aGuid = inserted});
+
+        var collection = database.GetCollection<GuidEntity>();
+
+        using (var db = SingleEntityDbContext.Create(collection))
         {
-            var collection = database.CreateCollection<BsonGuidEntity>();
-            collection.InsertOne(new BsonGuidEntity {_id = ObjectId.GenerateNewId(), aGuid = expected});
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.aGuid);
+            actual.aGuid = updated;
+            db.SaveChanges();
         }
 
-        var collectionEf = database.GetCollection<GuidEntity>();
-        using var db = SingleEntityDbContext.Create(collectionEf);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aGuid);
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.aGuid);
+        }
     }
 
     [Fact]
-    public void String_read()
+    public void String_read_update()
     {
         var collection = database.CreateCollection<StringEntity>();
 
-        var expected = Guid.NewGuid().ToString();
+        var expected = "What do you get when you multiply six by nine?";
         collection.InsertOne(new StringEntity {_id = ObjectId.GenerateNewId(), aString = expected});
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aString);
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aString);
+            actual.aString = "42";
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal("42", actual.aString);
+        }
     }
 
     [Fact]
-    public void DateOnly_read()
+    public void DateOnly_read_update()
     {
         var collection = database.CreateCollection<DateOnlyEntity>();
 
         var expected = new DateOnly(_random.Next(0, 9999), _random.Next(1, 12), _random.Next(1, 29));
         collection.InsertOne(new DateOnlyEntity {_id = ObjectId.GenerateNewId(), aDateOnly = expected});
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aDateOnly);
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aDateOnly);
+            actual.aDateOnly = new(2000, 12, 31);
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(new(2000, 12, 31), actual.aDateOnly);
+        }
     }
 
     [Fact]
-    public void TimeOnly_read()
+    public void TimeOnly_read_update()
     {
         var collection = database.CreateCollection<TimeOnlyEntity>();
 
         var expected = new TimeOnly(_random.Next(0, 24), _random.Next(0, 60), _random.Next(0, 60));
         collection.InsertOne(new TimeOnlyEntity {_id = ObjectId.GenerateNewId(), aTimeOnly = expected});
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aTimeOnly);
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aTimeOnly);
+            actual.aTimeOnly = new(3, 33, 33);
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(new(3, 33, 33), actual.aTimeOnly);
+        }
     }
 
     [Fact]
-    public void ByteArray_read()
+    public void ByteArray_read_update()
     {
-        var collection = database.CreateCollection<ByteArrayEntity>();
-
         var expected = new byte[4096];
         Random.Shared.NextBytes(expected);
+        var updated = new byte[4096];
+        Random.Shared.NextBytes(expected);
+
+        var collection = database.CreateCollection<ByteArrayEntity>();
         collection.InsertOne(new ByteArrayEntity { _id = ObjectId.GenerateNewId(), aByteArray = expected});
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aByteArray);
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aByteArray);
+            actual.aByteArray = updated;
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.aByteArray);
+        }
     }
 
-    [Fact]
-    public void Int16_positive_read()
+    [Theory]
+    [InlineData(short.MaxValue, short.MinValue)]
+    [InlineData((short)-1, short.MaxValue)]
+    [InlineData((short)0, (short)-1)]
+    [InlineData((short)1, (short)0)]
+    [InlineData(short.MinValue, 1)]
+    public void Int16_read_update(short inserted, short updated)
     {
-        var collection = database.CreateCollection<Int16Entity>();
+        var collection = database.CreateCollection<Int16Entity>(values: [inserted, updated]);
+        var id = ObjectId.GenerateNewId();
+        collection.InsertOne(new Int16Entity {_id = id, anInt16 = inserted});
 
-        var expected = (Int16)_random.Next(1, Int16.MaxValue);
-        collection.InsertOne(new Int16Entity {_id = ObjectId.GenerateNewId(), anInt16 = expected});
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+            Assert.Equal(inserted, actual.anInt16);
+            actual.anInt16 = updated;
+            db.SaveChanges();
+        }
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.anInt16);
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.anInt16);
+        }
     }
 
-    [Fact]
-    public void Int16_zero_read()
+    [Theory]
+    [InlineData(int.MaxValue, int.MinValue)]
+    [InlineData(-1, int.MaxValue)]
+    [InlineData(0, -1)]
+    [InlineData(1, 0)]
+    [InlineData(int.MinValue, 1)]
+    public void Int32_read_update(int inserted, int updated)
     {
-        var collection = database.CreateCollection<Int16Entity>();
+        var collection = database.CreateCollection<Int32Entity>(values: [inserted, updated]);
+        var id = ObjectId.GenerateNewId();
+        collection.InsertOne(new Int32Entity {_id = id, anInt32 = inserted});
 
-        collection.InsertOne(new Int16Entity {_id = ObjectId.GenerateNewId(), anInt16 = 0});
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.anInt32);
+            actual.anInt32 = updated;
+            db.SaveChanges();
+        }
 
-        Assert.NotNull(actual);
-        Assert.Equal(0, actual.anInt16);
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.anInt32);
+        }
     }
 
-    [Fact]
-    public void Int16_negative_read()
+    [Theory]
+    [InlineData(long.MaxValue, long.MinValue)]
+    [InlineData((long)-1, long.MaxValue)]
+    [InlineData((long)0, (long)-1)]
+    [InlineData((long)1, (long)0)]
+    [InlineData(long.MinValue, 1)]
+    public void Int64_read_update(long inserted, long updated)
     {
-        var collection = database.CreateCollection<Int16Entity>();
+        var collection = database.CreateCollection<Int64Entity>(values: [inserted, updated]);
+        var id = ObjectId.GenerateNewId();
+        collection.InsertOne(new Int64Entity {_id = id, anInt64 = inserted});
 
-        var expected = (Int16)_random.Next(Int16.MinValue, -1);
-        collection.InsertOne(new Int16Entity {_id = ObjectId.GenerateNewId(), anInt16 = expected});
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.anInt64);
+            actual.anInt64 = updated;
+            db.SaveChanges();
+        }
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.anInt16);
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.anInt64);
+        }
     }
 
-    [Fact]
-    public void Int32_positive_read()
+    [Theory]
+    [InlineData(byte.MaxValue, byte.MinValue)]
+    [InlineData((byte)0, byte.MaxValue)]
+    [InlineData((byte)1, (byte)0)]
+    [InlineData(byte.MinValue, 1)]
+    public void Byte_read_update(byte inserted, byte updated)
     {
-        var collection = database.CreateCollection<Int32Entity>();
+        var collection = database.CreateCollection<ByteEntity>(values: [inserted, updated]);
+        var id = ObjectId.GenerateNewId();
+        collection.InsertOne(new ByteEntity {_id = id, aByte = inserted});
 
-        var expected = _random.Next(1, Int32.MaxValue);
-        collection.InsertOne(new Int32Entity {_id = ObjectId.GenerateNewId(), anInt32 = expected});
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.aByte);
+            actual.aByte = updated;
+            db.SaveChanges();
+        }
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.anInt32);
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.aByte);
+        }
     }
 
-    [Fact]
-    public void Int32_zero_read()
+    [Theory]
+    [InlineData(char.MaxValue, char.MinValue)]
+    [InlineData((char)0, char.MaxValue)]
+    [InlineData((char)1, (char)0)]
+    [InlineData(char.MinValue, 1)]
+    public void Char_read_update(char inserted, char updated)
     {
-        var collection = database.CreateCollection<Int32Entity>();
+        var collection = database.CreateCollection<CharEntity>(values: [(int)inserted, (int)updated]);
+        var id = ObjectId.GenerateNewId();
+        collection.InsertOne(new CharEntity {_id = id, aChar = inserted});
 
-        collection.InsertOne(new Int32Entity {_id = ObjectId.GenerateNewId(), anInt32 = 0});
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.aChar);
+            actual.aChar = updated;
+            db.SaveChanges();
+        }
 
-        Assert.NotNull(actual);
-        Assert.Equal(0, actual.anInt32);
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.aChar);
+        }
     }
 
-    [Fact]
-    public void Int32_negative_read()
+    [Theory]
+    [InlineData("79228162514264337593543950335", "-79228162514264337593543950335")]
+    [InlineData("-1.1", "79228162514264337593543950335")]
+    [InlineData("0", "-1.1")]
+    [InlineData("1.1", "0")]
+    [InlineData("-79228162514264337593543950335", "1.1")]
+    public void Decimal_read_update(string insertedString,string updatedString)
     {
-        var collection = database.CreateCollection<Int32Entity>();
+        var inserted = decimal.Parse(insertedString);
+        var updated = decimal.Parse(updatedString);
 
-        var expected = _random.Next(Int32.MinValue, -1);
-        collection.InsertOne(new Int32Entity {_id = ObjectId.GenerateNewId(), anInt32 = expected});
+        var collection = database.CreateCollection<DecimalEntity>(values: [inserted, updated]);
+        var id = ObjectId.GenerateNewId();
+        collection.InsertOne(new DecimalEntity {_id = id, aDecimal = inserted});
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.anInt32);
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.aDecimal);
+            actual.aDecimal = updated;
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.aDecimal);
+        }
     }
 
-    [Fact]
-    public void Int64_positive_read()
+    [Theory]
+    [InlineData(float.MaxValue, float.MinValue)]
+    [InlineData((float)0, float.MaxValue)]
+    [InlineData((float)1, (float)0)]
+    [InlineData(float.MinValue, 1)]
+    public void Single_read_update(float inserted, float updated)
     {
-        var collection = database.CreateCollection<Int64Entity>();
+        var collection = database.CreateCollection<SingleFloatEntity>(values: [inserted, updated]);
 
-        var expected = _random.NextInt64(1, Int64.MaxValue);
-        collection.InsertOne(new Int64Entity {_id = ObjectId.GenerateNewId(), anInt64 = expected});
+        var id = ObjectId.GenerateNewId();
+        collection.InsertOne(new SingleFloatEntity {_id = id, aSingle = inserted});
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.anInt64);
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.aSingle);
+            actual.aSingle = updated;
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.aSingle);
+        }
     }
 
-    [Fact]
-    public void Int64_zero_read()
+    [Theory]
+    [InlineData(double.MaxValue, double.MinValue)]
+    [InlineData((double)0, double.MaxValue)]
+    [InlineData((double)1, (double)0)]
+    [InlineData(double.MinValue, 1)]
+    public void Double_read_update(double inserted, double updated)
     {
-        var collection = database.CreateCollection<Int64Entity>();
+        var collection = database.CreateCollection<DoubleFloatEntity>(values: [inserted, updated]);
 
-        collection.InsertOne(new Int64Entity {_id = ObjectId.GenerateNewId(), anInt64 = 0});
+        var id = ObjectId.GenerateNewId();
+        collection.InsertOne(new DoubleFloatEntity {_id = id, aDouble = inserted});
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        Assert.NotNull(actual);
-        Assert.Equal(0, actual.anInt64);
-    }
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.aDouble);
+            actual.aDouble = updated;
+            db.SaveChanges();
+        }
 
-    [Fact]
-    public void Int64_negative_read()
-    {
-        var collection = database.CreateCollection<Int64Entity>();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.First(e => e._id == id);
 
-        var expected = _random.NextInt64(Int64.MinValue, -1);
-        collection.InsertOne(new Int64Entity {_id = ObjectId.GenerateNewId(), anInt64 = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.anInt64);
-    }
-
-    [Fact]
-    public void Byte_read()
-    {
-        var collection = database.CreateCollection<ByteEntity>();
-
-        var expected = (Byte)_random.Next(0, Byte.MaxValue);
-        collection.InsertOne(new ByteEntity {_id = ObjectId.GenerateNewId(), aByte = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aByte);
-    }
-
-    [Fact]
-    public void Char_read()
-    {
-        var collection = database.CreateCollection<CharEntity>();
-
-        var expected = (Char)_random.Next(1, 0xD799);
-        collection.InsertOne(new CharEntity {_id = ObjectId.GenerateNewId(), aChar = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aChar);
-    }
-
-    [Fact]
-    public void Decimal_positive_read()
-    {
-        var collection = database.CreateCollection<DecimalEntity>();
-
-        var expected = 0m;
-        while (expected <= 0)
-            expected = _random.NextDecimal();
-
-        collection.InsertOne(new DecimalEntity {_id = ObjectId.GenerateNewId(), aDecimal = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aDecimal);
-    }
-
-    [Fact]
-    public void Decimal_zero_read()
-    {
-        var collection = database.CreateCollection<DecimalEntity>();
-
-        collection.InsertOne(new DecimalEntity {_id = ObjectId.GenerateNewId(), aDecimal = 0m});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(0, actual.aDecimal);
-    }
-
-    [Fact]
-    public void Decimal_negative_read()
-    {
-        var collection = database.CreateCollection<DecimalEntity>();
-
-        var expected = 0m;
-        while (expected >= 0)
-            expected = _random.NextDecimal();
-
-        collection.InsertOne(new DecimalEntity {_id = ObjectId.GenerateNewId(), aDecimal = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aDecimal);
-    }
-
-    [Fact]
-    public void Single_positive_read()
-    {
-        var collection = database.CreateCollection<SingleFloatEntity>();
-
-        var expected = _random.NextSingle() * Single.MaxValue;
-        collection.InsertOne(new SingleFloatEntity {_id = ObjectId.GenerateNewId(), aSingle = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aSingle);
-    }
-
-    [Fact]
-    public void Single_zero_read()
-    {
-        var collection = database.CreateCollection<SingleFloatEntity>();
-
-        collection.InsertOne(new SingleFloatEntity {_id = ObjectId.GenerateNewId(), aSingle = 0});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(0, actual.aSingle);
-    }
-
-    [Fact]
-    public void Single_negative_read()
-    {
-        var collection = database.CreateCollection<SingleFloatEntity>();
-
-        var expected = _random.NextSingle() * Single.MinValue;
-        collection.InsertOne(new SingleFloatEntity {_id = ObjectId.GenerateNewId(), aSingle = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aSingle);
-    }
-
-    [Fact]
-    public void Double_positive_read()
-    {
-        var collection = database.CreateCollection<DoubleFloatEntity>();
-
-        var expected = _random.NextDouble() * Double.MaxValue;
-        collection.InsertOne(new DoubleFloatEntity {_id = ObjectId.GenerateNewId(), aDouble = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aDouble);
-    }
-
-    [Fact]
-    public void Double_zero_read()
-    {
-        var collection = database.CreateCollection<DoubleFloatEntity>();
-
-        collection.InsertOne(new DoubleFloatEntity {_id = ObjectId.GenerateNewId(), aDouble = 0});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(0, actual.aDouble);
-    }
-
-    [Fact]
-    public void Double_negative_read()
-    {
-        var collection = database.CreateCollection<DoubleFloatEntity>();
-
-        var expected = _random.NextDouble() * Double.MinValue;
-        collection.InsertOne(new DoubleFloatEntity {_id = ObjectId.GenerateNewId(), aDouble = expected});
-
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
-
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.aDouble);
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.aDouble);
+        }
     }
 
     [Fact]
@@ -995,16 +1005,69 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Type_mapping_test_list_byte_array()
     {
-        var expected = new byte[8192];
-        Random.Shared.NextBytes(expected);
+        var inserted = new byte[8192];
+        Random.Shared.NextBytes(inserted);
+        var updated = new byte[8192];
+        Random.Shared.NextBytes(inserted);
+
         var collection = database.CreateCollection<Entity<byte[]>>();
-        collection.InsertOne(new Entity<byte[]> {_id = ObjectId.GenerateNewId(), Value = expected});
+        collection.InsertOne(new Entity<byte[]> {_id = ObjectId.GenerateNewId(), Value = inserted});
 
-        using var db = SingleEntityDbContext.Create(collection);
-        var actual = db.Entities.FirstOrDefault();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
 
-        Assert.NotNull(actual);
-        Assert.Equal(expected, actual.Value);
+            Assert.NotNull(actual);
+            Assert.Equal(inserted, actual.Value);
+            actual.Value = updated;
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(updated, actual.Value);
+        }
+    }
+
+    class CustomStructEntity : IdEntity
+    {
+        public MonetaryAmount money { get; set; }
+    }
+
+    record struct MonetaryAmount
+    {
+        public string Currency { get; set; }
+        public decimal Amount  { get; set; }
+    }
+
+    [Fact]
+    public void Custom_struct_read_update()
+    {
+        var collection = database.CreateCollection<CustomStructEntity>();
+
+        var expected = new MonetaryAmount { Currency = "USD", Amount = 1.99m };
+        collection.InsertOne(new CustomStructEntity {_id = ObjectId.GenerateNewId(), money = expected});
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.money);
+            actual.money = new() { Currency = "USD", Amount = 2.99m };
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(new MonetaryAmount { Currency = "USD", Amount = 2.99m }, actual.money);
+        }
     }
 
     private enum TestEnum
