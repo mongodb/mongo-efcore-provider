@@ -30,7 +30,7 @@ public class QueryableEncryptionEqualityBuilder<T>(PropertyBuilder propertyBuild
     /// to improve performance. Higher values improve performance of insert and update
     /// operations on low cardinality fields, but decrease find performance.
     /// </summary>
-    /// <param name="contention">The contention to use, or <see langref="null"/> to unset and use the default of 8.</param>
+    /// <param name="contention">The contention to use, or <see langword="null"/> to unset and use the default of 8.</param>
     /// <returns>The <see cref="QueryableEncryptionEqualityBuilder{T}"/> to continue building this property.</returns>
     /// <remarks>
     /// This is intended for advanced users only. The default value is suitable for the

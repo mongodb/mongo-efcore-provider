@@ -37,4 +37,9 @@ public interface IMongoSchemaProvider
     /// before being used with the MongoDB client.
     /// </remarks>
     Dictionary<string, BsonDocument> GetQueryableEncryptionSchema();
+
+    /// <summary>
+    /// Determines whether the current model uses Queryable Encryption.
+    /// </summary>
+    bool HasQueryableEncryptionSchema { get; }
 }

@@ -33,7 +33,7 @@ public class QueryableEncryptionRangeBuilder<T>(PropertyBuilder propertyBuilder)
     /// but stores more documents in the encrypted metadata collections for each
     /// insert or update operation, causing greater storage overhead.
     /// </summary>
-    /// <param name="sparsity">The sparsity to use from 1-4, or <see langref="null"/> to unset and use the default of 2.</param>
+    /// <param name="sparsity">The sparsity to use from 1-4, or <see langword="null"/> to unset and use the default of 2.</param>
     /// <returns>The <see cref="QueryableEncryptionRangeBuilder{T}"/> to continue building this property.</returns>
     /// <remarks>
     /// This is intended for advanced users only. The default value is suitable for the
@@ -53,7 +53,7 @@ public class QueryableEncryptionRangeBuilder<T>(PropertyBuilder propertyBuilder)
     /// as double or decimal in the BSON document and limits how many decimal places are taken into account
     /// when querying. Additional digits are dropped, not rounded.
     /// </summary>
-    /// <param name="trimFactor">The precision to use from 1-4, or <see langref="null"/> to unset and use the default.</param>
+    /// <param name="trimFactor">The precision to use from 1-4, or <see langword="null"/> to unset and use the default.</param>
     /// <returns>The <see cref="QueryableEncryptionRangeBuilder{T}"/> to continue building this property.</returns>
     /// <remarks>
     /// This is intended for advanced users only. The default value is suitable for the
@@ -69,7 +69,7 @@ public class QueryableEncryptionRangeBuilder<T>(PropertyBuilder propertyBuilder)
     /// Sets the trim factor used by Queryable Encryption for this property. A higher trim factor increases the
     /// throughput of concurrent inserts and updates at the cost of slowing down some range read operations.
     /// </summary>
-    /// <param name="trimFactor">The trim factor to use, or <see langref="null"/> to unset and use the default of 6.</param>
+    /// <param name="trimFactor">The trim factor to use, or <see langword="null"/> to unset and use the default of 6.</param>
     /// <returns>The <see cref="QueryableEncryptionRangeBuilder{T}"/> to continue building this property.</returns>
     /// <remarks>
     /// This is intended for advanced users only. The default value is suitable for the
@@ -86,7 +86,7 @@ public class QueryableEncryptionRangeBuilder<T>(PropertyBuilder propertyBuilder)
     /// to improve performance. Higher values improve performance of insert and update
     /// operations on low cardinality fields, but decrease find performance.
     /// </summary>
-    /// <param name="contention">The contention to use, or <see langref="null"/> to unset and use the default of 8.</param>
+    /// <param name="contention">The contention to use, or <see langword="null"/> to unset and use the default of 8.</param>
     /// <returns>The <see cref="QueryableEncryptionRangeBuilder{T}"/> to continue building this property.</returns>
     /// <remarks>
     /// This is intended for advanced users only. The default value is suitable for the
