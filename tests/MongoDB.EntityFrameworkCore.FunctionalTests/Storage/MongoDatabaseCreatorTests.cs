@@ -21,44 +21,41 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 [XUnitCollection("StorageTests")]
 public class MongoDatabaseCreatorTests
 {
-    [Fact]
-    public void EnsureCreated_returns_true_when_database_did_not_exist()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnsureCreated_returns_true_and_seeds_when_database_did_not_exist(bool async)
     {
         var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
-        Assert.True(db.Database.EnsureCreated());
+        Assert.True(async ? await db.Database.EnsureCreatedAsync() : db.Database.EnsureCreated());
+
+        var moons = db.Set<Moon>().ToList();
+        Assert.Single(moons);
+
+        var planets = db.Set<Planet>().ToList();
+        Assert.Single(planets);
+        Assert.Equal("YELLOW TAXI", planets[0].parkingCar.reg);
+        Assert.Equal(2, planets[0].parkingCars.Count);
+        Assert.Contains("RED BUS", planets[0].parkingCars.Select(e => e.reg));
+        Assert.Contains("PURPLE DINOSAUR", planets[0].parkingCars.Select(e => e.reg));
     }
 
-    [Fact]
-    public void EnsureCreated_returns_false_when_database_already_exists()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnsureCreated_returns_false_and_does_not_seed_when_database_already_exists(bool async)
     {
         var database = new TemporaryDatabaseFixture();
         using var db = GuidesDbContext.Create(database.MongoDatabase);
 
         database.CreateCollection<Planet>(); // Force DB to actually exist
 
-        Assert.False(db.Database.EnsureCreated());
-    }
+        Assert.False(async ? await db.Database.EnsureCreatedAsync() : db.Database.EnsureCreated());
 
-    [Fact]
-    public async Task EnsureCreatedAsync_returns_true_when_database_did_not_exist()
-    {
-        var database = new TemporaryDatabaseFixture();
-        await using var db = GuidesDbContext.Create(database.MongoDatabase);
-
-        Assert.True(await db.Database.EnsureCreatedAsync());
-    }
-
-    [Fact]
-    public async Task EnsureCreatedAsync_returns_false_when_database_already_exists()
-    {
-        var database = new TemporaryDatabaseFixture();
-        await using var db = GuidesDbContext.Create(database.MongoDatabase);
-
-        database.CreateCollection<Planet>(); // Force DB to actually exist
-
-        Assert.False(await db.Database.EnsureCreatedAsync());
+        Assert.Empty(db.Set<Planet>().ToList());
+        Assert.Empty(db.Set<Moon>().ToList());
     }
 
     [Fact]

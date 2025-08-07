@@ -16,6 +16,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
@@ -42,10 +43,29 @@ internal class GuidesDbContext(DbContextOptions options)
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        base.OnModelCreating(modelBuilder);
-        modelBuilder.Entity<Moon>()
-            .ToCollection("moons")
-            .HasKey(nameof(Moon.planetId), nameof(Moon.label));
-        modelBuilder.Entity<Planet>().ToCollection("planets");
+        var planetId = ObjectId.GenerateNewId();
+
+        modelBuilder.Entity<Moon>(b =>
+        {
+            b.ToCollection("moons");
+            b.HasKey(nameof(Moon.planetId), nameof(Moon.label));
+            b.HasData(new Moon { planetId = planetId,  name = "Endor", label = "Forest", yearOfDiscovery = 1983 });
+        });
+
+        modelBuilder.Entity<Planet>(b =>
+        {
+            b.ToCollection("planets");
+            b.HasData(new Planet { _id = planetId, name = "Tatooine", hasRings = false });
+            b.OwnsOne(e => e.parkingCar, b =>
+            {
+                b.HasData(new { Planet_id = planetId, Id = 1, reg = "YELLOW TAXI" });
+            });
+            b.OwnsMany(e => e.parkingCars, b =>
+            {
+                b.HasData(
+                    new { Planet_id = planetId, Id = 1, reg = "RED BUS" },
+                    new { Planet_id = planetId, Id = 2, reg = "PURPLE DINOSAUR" });
+            });
+        });
     }
 }

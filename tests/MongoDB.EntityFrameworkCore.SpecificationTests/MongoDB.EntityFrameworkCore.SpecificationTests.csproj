@@ -14,22 +14,18 @@
     <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Update="Northwind.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+  <Import Project="..\..\Versions.props" />
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.18" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.18" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="8.0.18" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF8Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF8Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="$(EF8Version)" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.7" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="9.0.7" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="9.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF9Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF9Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="$(EF9Version)" />
   </ItemGroup>
 
   <ItemGroup>

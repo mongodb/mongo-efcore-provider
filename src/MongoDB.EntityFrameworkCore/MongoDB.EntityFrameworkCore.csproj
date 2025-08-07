@@ -8,6 +8,8 @@
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
 
+  <Import Project="..\..\Versions.props" />
+
   <PropertyGroup>
     <NoWarn>EF1001</NoWarn>
     <Nullable>enable</Nullable>
@@ -29,15 +31,16 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
+    <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.SpecificationTests" />
     <PackageReference Remove="Microsoft.SourceLink.GitHub" />
-    <PackageReference Include="MongoDB.Driver" Version="3.4.2" />
+    <PackageReference Include="MongoDB.Driver" Version="$(CSharpDriverVersion)" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.18" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF8Version)" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF9Version)" />
   </ItemGroup>
 </Project>

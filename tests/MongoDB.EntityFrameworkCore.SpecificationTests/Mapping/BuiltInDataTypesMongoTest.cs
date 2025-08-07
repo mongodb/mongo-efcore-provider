@@ -18,7 +18,6 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
-using MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 

@@ -15,37 +15,23 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.TestUtilities;
-using Microsoft.EntityFrameworkCore.Update;
-using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Storage;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using JsonToken = Newtonsoft.Json.JsonToken;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 public class MongoTestStore : TestStore
 {
-    private readonly string? _dataFilePath;
-
     public static MongoTestStore Create(string name)
         => new(name, shared: false);
 
-    public static MongoTestStore GetOrCreate(string name, string dataFilePath)
-        => new(name, dataFilePath: dataFilePath);
+    public static MongoTestStore GetOrCreate(string name)
+        => new(name, shared: true);
 
-    private MongoTestStore(string name, bool shared = true, string? dataFilePath = null)
+    private MongoTestStore(string name, bool shared = true)
         : base(name, shared)
     {
-        if (dataFilePath != null)
-        {
-            _dataFilePath = Path.Combine(
-                Path.GetDirectoryName(typeof(MongoTestStore).Assembly.Location)!,
-                dataFilePath);
-        }
     }
 
     protected override DbContext CreateDefaultContext()
@@ -54,41 +40,26 @@ public class MongoTestStore : TestStore
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
         => builder.UseMongoDB(TestServer.GetClient(), Name);
 
-    #if EF9
+#if EF9
     protected override async Task InitializeAsync(Func<DbContext> createContext, Func<DbContext, Task>? seed,
         Func<DbContext, Task>? clean)
     {
         await base.InitializeAsync(createContext, seed, clean).ConfigureAwait(false);
 
-        InsertDocumentsFromModelData(createContext);
+        using var context = createContext();
+        await ((MongoDatabaseCreator)context.GetService<IDatabaseCreator>()).SeedFromModelAsync().ConfigureAwait(false);
     }
-    #else
+#else
     protected override void Initialize(Func<DbContext> createContext, Action<DbContext>? seed, Action<DbContext>? clean)
     {
         base.Initialize(createContext, seed, clean);
 
-        InsertDocumentsFromModelData(createContext);
-    }
-    #endif
-
-    private static void InsertDocumentsFromModelData(Func<DbContext> createContext)
-    {
         using var context = createContext();
-        var updateAdapter = context.GetService<IUpdateAdapterFactory>().CreateStandalone();
-        var model = context.GetService<IDesignTimeModel>().Model;
-        foreach (var entityType in model.GetEntityTypes())
-        {
-            foreach (var targetSeed in entityType.GetSeedData())
-            {
-                var entry = updateAdapter.CreateEntry(targetSeed, updateAdapter.Model.FindEntityType(entityType.Name)!);
-                entry.EntityState = EntityState.Added;
-            }
-        }
-
-        context.GetService<IDatabase>().SaveChanges(updateAdapter.GetEntriesToSave());
+        ((MongoDatabaseCreator)context.GetService<IDatabaseCreator>()).SeedFromModel();
     }
+#endif
 
-    #if !EF9
+#if !EF9
     public override void Clean(DbContext context)
         => TestServer.GetClient().DropDatabase(Name);
     #endif
