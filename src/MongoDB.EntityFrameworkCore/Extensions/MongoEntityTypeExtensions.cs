@@ -40,6 +40,27 @@ public static class MongoEntityTypeExtensions
     }
 
     /// <summary>
+    /// Sets the name of the collection to which the entity type is mapped.
+    /// </summary>
+    /// <param name="entityType">The entity type to set the collection name for.</param>
+    /// <param name="name">The name to set.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The configured collection name.</returns>
+    public static string? SetCollectionName(
+        this IConventionEntityType entityType,
+        string? name,
+        bool fromDataAnnotation = false)
+    {
+        if (name is {Length: 0})
+            throw new ArgumentException("The string argument 'name' cannot be empty.");
+
+        return (string?)entityType.SetAnnotation(
+            MongoAnnotationNames.CollectionName,
+            name,
+            fromDataAnnotation)?.Value;
+    }
+
+    /// <summary>
     /// Returns the name of the collection to which the entity type is mapped
     /// or <see langword="null" /> if not mapped to a collection.
     /// </summary>
@@ -50,6 +71,15 @@ public static class MongoEntityTypeExtensions
             ? entityType.GetRootType().GetCollectionName()
             : (string?)entityType[MongoAnnotationNames.CollectionName]
               ?? GetDefaultCollectionName(entityType);
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> for the name of the collection to which the entity type is mapped.
+    /// </summary>
+    /// <param name="entityType">The entity type to find configuration source for.</param>
+    /// <returns>The <see cref="ConfigurationSource" /> for the name of the collection to which the entity type is mapped</returns>
+    public static ConfigurationSource? GetCollectionNameConfigurationSource(this IConventionEntityType entityType)
+        => entityType.FindAnnotation(MongoAnnotationNames.CollectionName)
+            ?.GetConfigurationSource();
 
     /// <summary>
     /// Returns the default collection name that would be used for this entity type.

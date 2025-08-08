@@ -79,27 +79,6 @@ public static class MongoEntityTypeBuilderExtensions
     }
 
     /// <summary>
-    /// Sets the name of the collection to which the entity type is mapped.
-    /// </summary>
-    /// <param name="entityType">The entity type to set the collection name for.</param>
-    /// <param name="name">The name to set.</param>
-    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
-    /// <returns>The configured collection name.</returns>
-    public static string? SetCollectionName(
-        this IConventionEntityType entityType,
-        string? name,
-        bool fromDataAnnotation = false)
-    {
-        if (name is {Length: 0})
-            throw new ArgumentException(ArgumentNameCannotBeEmptyExceptionMessage);
-
-        return (string?)entityType.SetAnnotation(
-            MongoAnnotationNames.CollectionName,
-            name,
-            fromDataAnnotation)?.Value;
-    }
-
-    /// <summary>
     ///  Returns whether the collection name can be set for this entity type using the specified configuration source.
     /// </summary>
     /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
@@ -189,6 +168,4 @@ public static class MongoEntityTypeBuilderExtensions
 
         return entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
     }
-
-
 }

@@ -90,7 +90,8 @@ public static class MongoPropertyExtensions
     /// or <see langword="null" /> to unset the value and use the default.</param>
     /// <param name="allowOverflow">Whether to allow overflow or not.</param>
     /// <param name="allowTruncation">Whether to allow truncation or not.</param>
-    public static void SetBsonRepresentation(
+    /// <returns>Returns the <see cref="BsonRepresentationConfiguration"/> the property is stored as.</returns>
+    public static BsonRepresentationConfiguration? SetBsonRepresentation(
         this IMutableProperty property,
         BsonType? bsonType,
         bool? allowOverflow,
@@ -99,11 +100,12 @@ public static class MongoPropertyExtensions
         if (bsonType == null)
         {
             property.RemoveAnnotation(MongoAnnotationNames.BsonRepresentation);
-            return;
+            return null;
         }
 
         var representation = new BsonRepresentationConfiguration(bsonType.Value, allowOverflow, allowTruncation);
         property.SetAnnotation(MongoAnnotationNames.BsonRepresentation, representation.ToDictionary());
+        return representation;
     }
 
     /// <summary>
@@ -177,8 +179,9 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the DateTimeKind for.</param>
     /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> that should be used.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <exception cref="InvalidOperationException"></exception>
-    public static void SetDateTimeKind(this IConventionProperty property, DateTimeKind dateTimeKind)
+    public static DateTimeKind SetDateTimeKind(this IConventionProperty property, DateTimeKind dateTimeKind, bool fromDataAnnotation = false)
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
@@ -186,7 +189,9 @@ public static class MongoPropertyExtensions
                 property.DeclaringType.Name} entity.");
         }
 
-        property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind);
+        property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind, fromDataAnnotation);
+
+        return dateTimeKind;
     }
 
     /// <summary>
@@ -196,7 +201,7 @@ public static class MongoPropertyExtensions
     /// <returns>
     /// The <see cref="ConfigurationSource" /> the <see cref="DateTimeKind"/> was specified by for this property.
     /// </returns>
-    public static ConfigurationSource? GetDateKindConfigurationSource(this IConventionProperty property)
+    public static ConfigurationSource? GetDateTimeKindConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.DateTimeKind)?.GetConfigurationSource();
 
 
@@ -223,11 +228,13 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the BsonType for.</param>
     /// <param name="dataKeyId">The encryption data key id to set, or <see langword="null" /> to unset the value.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The <see cref="Guid"/> encryption data key id for the property if set, or <see langref="null"/> if no value is set.</returns>
     public static Guid? SetEncryptionDataKeyId(
         this IConventionProperty property,
-        Guid? dataKeyId)
-        => (Guid?)property.SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId))?.Value;
+        Guid? dataKeyId,
+        bool fromDataAnnotation = false)
+        => (Guid?)property.SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId), fromDataAnnotation)?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the encryption data key id when targeting MongoDB.
@@ -264,12 +271,14 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the Queryable Encryption type for.</param>
     /// <param name="queryableEncryptionType">The <see cref="QueryableEncryptionType"/> specifying the type of Queryable Encryption to use, or <see langword="null" /> to unset the value.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The <see cref="QueryableEncryptionType"/>, or <see langword="null"/> if not set.</returns>
     public static QueryableEncryptionType? SetQueryableEncryptionType(
         this IConventionProperty property,
-        QueryableEncryptionType? queryableEncryptionType)
+        QueryableEncryptionType? queryableEncryptionType,
+        bool fromDataAnnotation = false)
         => (QueryableEncryptionType?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType))
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType), fromDataAnnotation)
             ?.Value;
 
     /// <summary>
@@ -306,12 +315,14 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the maximum value for.</param>
     /// <param name="maxValue">The maximum value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The maximum value for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
     public static object? SetQueryableEncryptionRangeMax(
         this IConventionProperty property,
-        object? maxValue)
+        object? maxValue,
+        bool fromDataAnnotation = false)
         => (QueryableEncryptionType?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax, maxValue)?.Value;
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax, maxValue, fromDataAnnotation)?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the maximum value of a Queryable Encryption range property when targeting MongoDB.
@@ -347,12 +358,14 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the minimum value for.</param>
     /// <param name="minValue">The minimum value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The minimum value for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
     public static object? SetQueryableEncryptionRangeMin(
         this IConventionProperty property,
-        object? minValue)
+        object? minValue,
+        bool fromDataAnnotation = false)
         => (QueryableEncryptionType?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin, minValue)?.Value;
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin, minValue, fromDataAnnotation)?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the minimum value of a Queryable Encryption range property when targeting MongoDB.
@@ -389,12 +402,14 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the sparsity value for.</param>
     /// <param name="sparsity">The sparsity value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The sparsity value for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
     public static int? SetQueryableEncryptionSparsity(
         this IConventionProperty property,
-        int? sparsity)
+        int? sparsity,
+        bool fromDataAnnotation = false)
         => (int?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionSparsity, sparsity)?.Value;
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionSparsity, sparsity, fromDataAnnotation)?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the sparsity of a Queryable Encryption range property when targeting MongoDB.
@@ -430,12 +445,14 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the precision value for.</param>
     /// <param name="precision">The precision value for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The precision value for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
     public static int? SetQueryableEncryptionPrecision(
         this IConventionProperty property,
-        int? precision)
+        int? precision,
+        bool fromDataAnnotation = false)
         => (int?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionPrecision, precision)?.Value;
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionPrecision, precision, fromDataAnnotation)?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the precision value of a Queryable Encryption range property when targeting MongoDB.
@@ -471,12 +488,14 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the trim factor for.</param>
     /// <param name="trimFactor">The trim factor for the Queryable Encryption range property, or <see langword="null" /> to unset the value.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The trim factor for the Queryable Encryption range property, or <see langword="null"/> if not set.</returns>
     public static int? SetQueryableEncryptionTrimFactor(
         this IConventionProperty property,
-        int? trimFactor)
+        int? trimFactor,
+        bool fromDataAnnotation = false)
         => (int?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionTrimFactor, trimFactor)?.Value;
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionTrimFactor, trimFactor, fromDataAnnotation)?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the trim factor of a Queryable Encryption range property when targeting MongoDB.
@@ -512,12 +531,14 @@ public static class MongoPropertyExtensions
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the contention for.</param>
     /// <param name="contention">The contention for the Queryable Encryption property, or <see langword="null" /> to unset the value.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The contention for the Queryable Encryption property, or <see langword="null"/> if not set.</returns>
     public static int? SetQueryableEncryptionContention(
         this IConventionProperty property,
-        int? contention)
+        int? contention,
+        bool fromDataAnnotation = false)
         => (int?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionContention, contention)?.Value;
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionContention, contention, fromDataAnnotation)?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the contention of a Queryable Encryption property when targeting MongoDB.
@@ -528,7 +549,6 @@ public static class MongoPropertyExtensions
     /// </returns>
     public static ConfigurationSource? GetQueryableEncryptionContentionConfigurationSource(this IConventionProperty property)
         => property.FindAnnotation(MongoAnnotationNames.QueryableEncryptionContention)?.GetConfigurationSource();
-
 
     private static string GetDefaultElementName(IReadOnlyProperty property) =>
         property switch
