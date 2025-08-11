@@ -53,6 +53,21 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         public string aString { get; set; }
     }
 
+    class StringEntityGetOnly : IdEntity
+    {
+        public StringEntityGetOnly()
+        {
+        }
+
+        public StringEntityGetOnly(ObjectId id, string aString)
+        {
+            _id = id;
+            this.aString = aString;
+        }
+
+        public string aString { get; }
+    }
+
     class Int16Entity : IdEntity
     {
         public Int16 anInt16 { get; set; }
@@ -153,6 +168,20 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         public Byte[] aByteArray { get; set; }
     }
 
+    class ByteArrayEntityGetOnly : IdEntity
+    {
+        public ByteArrayEntityGetOnly()
+        {
+        }
+
+        public ByteArrayEntityGetOnly(Byte[] aByteArray)
+        {
+            this.aByteArray = aByteArray;
+        }
+
+        public Byte[] aByteArray { get; }
+    }
+
     class SomeOwnedEntity
     {
         public string name { get; set; }
@@ -237,6 +266,20 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void String_read_get_only()
+    {
+        var expected = "What do you get when you multiply six by nine?";
+        database.CreateCollection<StringEntity>().InsertOne(new StringEntity {_id = ObjectId.GenerateNewId(), aString = expected});
+
+        var collection = database.GetCollection<StringEntityGetOnly>();
+        using var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<StringEntityGetOnly>().Property(s => s.aString));
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected, actual.aString);
+    }
+
+    [Fact]
     public void DateOnly_read_update()
     {
         var collection = database.CreateCollection<DateOnlyEntity>();
@@ -318,6 +361,22 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
             Assert.NotNull(actual);
             Assert.Equal(updated, actual.aByteArray);
         }
+    }
+
+    [Fact]
+    public void ByteArray_read_get_only()
+    {
+        var expected = new byte[4096];
+        Random.Shared.NextBytes(expected);
+
+        database.CreateCollection<ByteArrayEntity>().InsertOne(new ByteArrayEntity {_id = ObjectId.GenerateNewId(), aByteArray = expected});
+
+        var collection = database.GetCollection<ByteArrayEntityGetOnly>();
+        using var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<ByteArrayEntityGetOnly>().Property(s => s.aByteArray));
+        var actual = db.Entities.FirstOrDefault();
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected, actual.aByteArray);
     }
 
     [Theory]

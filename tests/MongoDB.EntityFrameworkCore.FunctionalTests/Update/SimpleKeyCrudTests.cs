@@ -118,9 +118,36 @@ public class SimpleKeyCrudTests(TemporaryDatabaseFixture database)
         }
     }
 
+    [Fact]
+    public void Should_update_readonly_key_entity()
+    {
+        var collection = database.CreateCollection<ReadOnlyKeyEntity>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, b => b.Entity<ReadOnlyKeyEntity>().HasKey(f => f.Id));
+            var entity = new ReadOnlyKeyEntity { Data = "some text" };
+            db.Entities.Add(entity);
+            db.SaveChanges();
+
+            Assert.NotEqual(ObjectId.Empty, entity.Id);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, b => b.Entity<ReadOnlyKeyEntity>().HasKey(f => f.Id));
+            var entity = db.Entities.First();
+            Assert.NotEqual(ObjectId.Empty, entity.Id);
+        }
+    }
+
     private class Entity
     {
         public string Id { get; set; }
+        public string Data { get; set; }
+    }
+
+    private class ReadOnlyKeyEntity
+    {
+        public ObjectId Id { get; }
         public string Data { get; set; }
     }
 }
