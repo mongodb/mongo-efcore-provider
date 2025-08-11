@@ -32,12 +32,12 @@ public static class QueryableEncryptionBuilderExtensions
     /// Configures a property to be encrypted using MongoDB Queryable Encryption without query ability.
     /// </summary>
     /// <param name="builder">The <see cref="PropertyBuilder"/> for the property being configured.</param>
-    /// <param name="dataKeyId">The <see cref="Guid"/> with the encryption data key id to be used.</param>
+    /// <param name="dataKeyId">The optional <see cref="Guid"/> with the encryption data key id to be used.</param>
     /// <typeparam name="T">The type of property being configured.</typeparam>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder<T> IsEncrypted<T>(
         this PropertyBuilder<T> builder,
-        Guid dataKeyId)
+        Guid? dataKeyId = null)
     {
         builder.Metadata.SetQueryableEncryptionType(QueryableEncryptionType.NotQueryable);
         builder.Metadata.SetEncryptionDataKeyId(dataKeyId);
@@ -48,13 +48,13 @@ public static class QueryableEncryptionBuilderExtensions
     /// Configures an owned entity to be encrypted using MongoDB Queryable Encryption without query ability.
     /// </summary>
     /// <param name="builder">The <see cref="OwnedNavigationBuilder"/> for the owned entity being configured.</param>
-    /// <param name="dataKeyId">The <see cref="Guid"/> with the encryption data key id to be used.</param>
+    /// <param name="dataKeyId">The optional <see cref="Guid"/> with the encryption data key id to be used.</param>
     /// <typeparam name="TOwnerEntity">The type that owns this object.</typeparam>
     /// <typeparam name="TDependentEntity">The type of the object that is owned.</typeparam>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> IsEncrypted<TOwnerEntity, TDependentEntity>(
         this OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> builder,
-        Guid dataKeyId) where TOwnerEntity : class where TDependentEntity : class
+        Guid? dataKeyId = null) where TOwnerEntity : class where TDependentEntity : class
     {
         builder.Metadata.SetQueryableEncryptionType(QueryableEncryptionType.NotQueryable);
         builder.Metadata.SetEncryptionDataKeyId(dataKeyId);
@@ -65,13 +65,13 @@ public static class QueryableEncryptionBuilderExtensions
     /// Configures an owned entity to be encrypted using MongoDB Queryable Encryption without query ability.
     /// </summary>
     /// <param name="builder">The <see cref="OwnershipBuilder"/> for the owned entity being configured.</param>
-    /// <param name="dataKeyId">The <see cref="Guid"/> with the encryption data key id to be used.</param>
+    /// <param name="dataKeyId">The optional <see cref="Guid"/> with the encryption data key id to be used.</param>
     /// <typeparam name="TOwnerEntity">The type that owns this object.</typeparam>
     /// <typeparam name="TDependentEntity">The type of the object that is owned.</typeparam>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static OwnershipBuilder<TOwnerEntity, TDependentEntity> IsEncrypted<TOwnerEntity, TDependentEntity>(
         this OwnershipBuilder<TOwnerEntity, TDependentEntity> builder,
-        Guid dataKeyId) where TOwnerEntity : class where TDependentEntity : class
+        Guid? dataKeyId = null) where TOwnerEntity : class where TDependentEntity : class
     {
         builder.Metadata.SetQueryableEncryptionType(QueryableEncryptionType.NotQueryable);
         builder.Metadata.SetEncryptionDataKeyId(dataKeyId);
@@ -82,7 +82,7 @@ public static class QueryableEncryptionBuilderExtensions
     /// Configures a property to be encrypted using MongoDB Queryable Encryption with support for equality queries.
     /// </summary>
     /// <param name="builder">The <see cref="PropertyBuilder"/> for the property being configured.</param>
-    /// <param name="dataKeyId">The <see cref="Guid"/> with the encryption data key id to be used.</param>
+    /// <param name="dataKeyId">The optional <see cref="Guid"/> with the encryption data key id to be used.</param>
     /// <param name="equalityBuilder">The additional configuration for configuring equality options.</param>
     /// <typeparam name="T">The type of property being configured.</typeparam>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
@@ -92,7 +92,7 @@ public static class QueryableEncryptionBuilderExtensions
     /// </remarks>
     public static PropertyBuilder<T> IsEncryptedForEquality<T>(
         this PropertyBuilder<T> builder,
-        Guid dataKeyId,
+        Guid? dataKeyId = null,
         Action<QueryableEncryptionEqualityBuilder<T>>? equalityBuilder = null)
     {
         builder.Metadata.SetQueryableEncryptionType(QueryableEncryptionType.Equality);
@@ -105,9 +105,9 @@ public static class QueryableEncryptionBuilderExtensions
     /// Configures a property to be encrypted using MongoDB Queryable Encryption with support for range queries.
     /// </summary>
     /// <param name="builder">The <see cref="PropertyBuilder"/> for the property being configured.</param>
-    /// <param name="dataKeyId">The <see cref="Guid"/> with the encryption data key id to be used.</param>
     /// <param name="minValue">The minimum permitted value for this range.</param>
     /// <param name="maxValue">The maximum permitted value for this range.</param>
+    /// <param name="dataKeyId">The optional <see cref="Guid"/> with the encryption data key id to be used.</param>
     /// <param name="rangeBuilder">The additional configuration for configuring range options.</param>
     /// <typeparam name="T">The type of property being configured.</typeparam>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
@@ -117,9 +117,9 @@ public static class QueryableEncryptionBuilderExtensions
     /// </remarks>
     public static PropertyBuilder<T> IsEncryptedForRange<T>(
         this PropertyBuilder<T> builder,
-        Guid dataKeyId,
         T minValue,
         T maxValue,
+        Guid? dataKeyId = null,
         Action<QueryableEncryptionRangeBuilder<T>>? rangeBuilder = null)
     {
         builder.Metadata.SetQueryableEncryptionType(QueryableEncryptionType.Range);
@@ -134,11 +134,11 @@ public static class QueryableEncryptionBuilderExtensions
     /// Configures a property to be encrypted using MongoDB Queryable Encryption with support for range queries.
     /// </summary>
     /// <param name="builder">The <see cref="PropertyBuilder"/> for the property being configured.</param>
-    /// <param name="dataKeyId">The <see cref="Guid"/> with the encryption data key id to be used.</param>
     /// <param name="minValue">The minimum permitted value for this range.</param>
     /// <param name="maxValue">The maximum permitted value for this range.</param>
     /// <param name="precision">The precision for this range (required for <see cref="BsonType.Decimal128"/>
     /// and <see cref="BsonType.Double"/> storage types.</param>
+    /// <param name="dataKeyId">The optional <see cref="Guid"/> with the encryption data key id to be used.</param>
     /// <param name="rangeBuilder">The additional configuration for configuring range options.</param>
     /// <typeparam name="T">The type of property being configured.</typeparam>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
@@ -148,14 +148,14 @@ public static class QueryableEncryptionBuilderExtensions
     /// </remarks>
     public static PropertyBuilder<T> IsEncryptedForRange<T>(
         this PropertyBuilder<T> builder,
-        Guid dataKeyId,
         T minValue,
         T maxValue,
         int precision,
+        Guid? dataKeyId = null,
         Action<QueryableEncryptionRangeBuilder<T>>? rangeBuilder = null)
     {
         builder.Metadata.SetQueryableEncryptionPrecision(precision);
         rangeBuilder?.Invoke(new QueryableEncryptionRangeBuilder<T>(builder));
-        return IsEncryptedForRange(builder, dataKeyId, minValue, maxValue);
+        return IsEncryptedForRange(builder, minValue, maxValue, dataKeyId);
     }
 }
