@@ -148,87 +148,95 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
     /// <returns>A <see cref="BinaryExpression"/> with any necessary adjustments.</returns>
     protected override Expression VisitBinary(BinaryExpression binaryExpression)
     {
-        if (binaryExpression.NodeType == ExpressionType.Assign && binaryExpression.Left is ParameterExpression parameterExpression)
+        if (binaryExpression.NodeType == ExpressionType.Assign)
         {
-            if (parameterExpression.Type == typeof(BsonDocument) || parameterExpression.Type == typeof(BsonArray))
+            if (binaryExpression.Left is ParameterExpression parameterExpression)
             {
-                string fieldName = null;
-                var fieldRequired = true;
+                if (parameterExpression.Type == typeof(BsonDocument) || parameterExpression.Type == typeof(BsonArray))
+                {
+                    string fieldName = null;
+                    var fieldRequired = true;
 
-                var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
-                if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
-                {
-                    var projection = GetProjection(projectionBindingExpression);
-                    projectionExpression = projection.Expression;
-                    fieldName = projection.Alias;
-                }
-                else if (projectionExpression is UnaryExpression convertExpression &&
-                         convertExpression.NodeType == ExpressionType.Convert)
-                {
-                    projectionExpression = ((UnaryExpression)convertExpression.Operand).Operand;
-                }
-
-                Expression innerAccessExpression;
-                if (projectionExpression is ObjectArrayProjectionExpression objectArrayProjectionExpression)
-                {
-                    innerAccessExpression = objectArrayProjectionExpression.AccessExpression;
-                    ProjectionBindings[objectArrayProjectionExpression] = parameterExpression;
-                    fieldName ??= objectArrayProjectionExpression.Name;
-                }
-                else
-                {
-                    var entityProjectionExpression = (EntityProjectionExpression)projectionExpression;
-                    var accessExpression = entityProjectionExpression.ParentAccessExpression;
-                    ProjectionBindings[accessExpression] = parameterExpression;
-                    fieldName ??= entityProjectionExpression.Name;
-
-                    switch (accessExpression)
+                    var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
+                    if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
                     {
-                        case ObjectAccessExpression innerObjectAccessExpression:
-                            innerAccessExpression = innerObjectAccessExpression.AccessExpression;
-                            _ownerMappings[accessExpression] =
-                                (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
-                            fieldRequired = innerObjectAccessExpression.Required;
-                            break;
-                        case RootReferenceExpression:
-                            innerAccessExpression = DocParameter;
-                            break;
-                        default:
-                            throw new InvalidOperationException(
-                                $"Unknown access expression type {accessExpression.Type.ShortDisplayName()}.");
+                        var projection = GetProjection(projectionBindingExpression);
+                        projectionExpression = projection.Expression;
+                        fieldName = projection.Alias;
                     }
+                    else if (projectionExpression is UnaryExpression convertExpression &&
+                             convertExpression.NodeType == ExpressionType.Convert)
+                    {
+                        projectionExpression = ((UnaryExpression)convertExpression.Operand).Operand;
+                    }
+
+                    Expression innerAccessExpression;
+                    if (projectionExpression is ObjectArrayProjectionExpression objectArrayProjectionExpression)
+                    {
+                        innerAccessExpression = objectArrayProjectionExpression.AccessExpression;
+                        ProjectionBindings[objectArrayProjectionExpression] = parameterExpression;
+                        fieldName ??= objectArrayProjectionExpression.Name;
+                    }
+                    else
+                    {
+                        var entityProjectionExpression = (EntityProjectionExpression)projectionExpression;
+                        var accessExpression = entityProjectionExpression.ParentAccessExpression;
+                        ProjectionBindings[accessExpression] = parameterExpression;
+                        fieldName ??= entityProjectionExpression.Name;
+
+                        switch (accessExpression)
+                        {
+                            case ObjectAccessExpression innerObjectAccessExpression:
+                                innerAccessExpression = innerObjectAccessExpression.AccessExpression;
+                                _ownerMappings[accessExpression] =
+                                    (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
+                                fieldRequired = innerObjectAccessExpression.Required;
+                                break;
+                            case RootReferenceExpression:
+                                innerAccessExpression = DocParameter;
+                                break;
+                            default:
+                                throw new InvalidOperationException(
+                                    $"Unknown access expression type {accessExpression.Type.ShortDisplayName()}.");
+                        }
+                    }
+
+                    var valueExpression =
+                        CreateGetValueExpression(innerAccessExpression, fieldName, fieldRequired, parameterExpression.Type);
+
+                    return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
                 }
 
-                var valueExpression =
-                    CreateGetValueExpression(innerAccessExpression, fieldName, fieldRequired, parameterExpression.Type);
+                if (parameterExpression.Type == typeof(MaterializationContext))
+                {
+                    var newExpression = (NewExpression)binaryExpression.Right;
 
-                return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
+                    EntityProjectionExpression entityProjectionExpression;
+                    if (newExpression.Arguments[0] is ProjectionBindingExpression projectionBindingExpression)
+                    {
+                        var projection = GetProjection(projectionBindingExpression);
+                        entityProjectionExpression = (EntityProjectionExpression)projection.Expression;
+                    }
+                    else
+                    {
+                        var projection = ((UnaryExpression)((UnaryExpression)newExpression.Arguments[0]).Operand).Operand;
+                        entityProjectionExpression = (EntityProjectionExpression)projection;
+                    }
+
+                    _materializationContextBindings[parameterExpression] = entityProjectionExpression.ParentAccessExpression;
+
+                    var updatedExpression = Expression.New(
+                        newExpression.Constructor,
+                        Expression.Constant(ValueBuffer.Empty),
+                        newExpression.Arguments[1]);
+
+                    return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, updatedExpression);
+                }
             }
-
-            if (parameterExpression.Type == typeof(MaterializationContext))
+            
+            if (binaryExpression.Left is MemberExpression { Member: FieldInfo { IsInitOnly: true } } memberExpression)
             {
-                var newExpression = (NewExpression)binaryExpression.Right;
-
-                EntityProjectionExpression entityProjectionExpression;
-                if (newExpression.Arguments[0] is ProjectionBindingExpression projectionBindingExpression)
-                {
-                    var projection = GetProjection(projectionBindingExpression);
-                    entityProjectionExpression = (EntityProjectionExpression)projection.Expression;
-                }
-                else
-                {
-                    var projection = ((UnaryExpression)((UnaryExpression)newExpression.Arguments[0]).Operand).Operand;
-                    entityProjectionExpression = (EntityProjectionExpression)projection;
-                }
-
-                _materializationContextBindings[parameterExpression] = entityProjectionExpression.ParentAccessExpression;
-
-                var updatedExpression = Expression.New(
-                    newExpression.Constructor,
-                    Expression.Constant(ValueBuffer.Empty),
-                    newExpression.Arguments[1]);
-
-                return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, updatedExpression);
+                return memberExpression.Assign(Visit(binaryExpression.Right));
             }
         }
 

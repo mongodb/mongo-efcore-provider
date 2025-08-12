@@ -39,6 +39,22 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void OwnedEntity_nested_one_level_materializes_single_get_only()
+    {
+        database.CreateCollection<PersonWithLocation>().WriteTestDocs(PersonWithLocation1);
+        using var db = SingleEntityDbContext.Create(database.GetCollection<PersonWithGetOnlyLocation>(), mb =>
+        {
+            mb.Entity<PersonWithGetOnlyLocation>().OwnsOne(p => p.location);
+        });
+
+        var actual = db.Entities.Single();
+
+        Assert.Equal("Carmen", actual.name);
+        Assert.Equal(Location1.latitude, actual.location.latitude);
+        Assert.Equal(Location1.longitude, actual.location.longitude);
+    }
+
+    [Fact]
     public void OwnedEntity_nested_one_level_where_not_null()
     {
         var collection = database.CreateCollection<PersonWithLocation>();
@@ -1021,6 +1037,21 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     private record PersonWithLocation : Person
     {
         public Location location { get; set; }
+    }
+
+    private record PersonWithGetOnlyLocation : Person
+    {
+        public PersonWithGetOnlyLocation()
+        {
+        }
+
+        public PersonWithGetOnlyLocation(string name, Location location)
+        {
+            this.name = name;
+            this.location = location;
+        }
+
+        public Location location { get; }
     }
 
     private record PersonWithCity : Person
