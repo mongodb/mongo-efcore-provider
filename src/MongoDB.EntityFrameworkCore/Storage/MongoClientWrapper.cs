@@ -123,13 +123,13 @@ public class MongoClientWrapper : IMongoClientWrapper
                 {
                     // Collection has been created by another instance? Still need to check the encryption schema.
                     if (createCollectionOptions != null)
-                        EnsureExistingServerEncryptionSchemaMatches(collectionName, createCollectionOptions.EncryptedFields);
+                        CheckServerQueryableEncryptionCompatible(collectionName, createCollectionOptions.EncryptedFields);
                 }
             }
             else
             {
                 if (createCollectionOptions != null)
-                    EnsureExistingServerEncryptionSchemaMatches(collectionName, createCollectionOptions.EncryptedFields);
+                    CheckServerQueryableEncryptionCompatible(collectionName, createCollectionOptions.EncryptedFields);
             }
 
             var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
@@ -182,8 +182,8 @@ public class MongoClientWrapper : IMongoClientWrapper
         using var collectionNamesCursor =
             await Database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
         var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
-        var queryableEncryptionSchemas = _schemaProvider.GetQueryableEncryptionSchema();
 
+        var queryableEncryptionSchemas = _schemaProvider.GetQueryableEncryptionSchema();
         if (queryableEncryptionSchemas.Any())
             await Feature.Csfle2QEv2.ThrowIfNotSupportedAsync(Database.Client, cancellationToken);
 
@@ -204,13 +204,13 @@ public class MongoClientWrapper : IMongoClientWrapper
                 {
                     // Collection has been created by another instance? Still need to check the encryption schema.
                     if (createCollectionOptions != null)
-                        EnsureExistingServerEncryptionSchemaMatches(collectionName, createCollectionOptions.EncryptedFields);
+                        CheckServerQueryableEncryptionCompatible(collectionName, createCollectionOptions.EncryptedFields);
                 }
             }
             else
             {
                 if (createCollectionOptions != null)
-                    EnsureExistingServerEncryptionSchemaMatches(collectionName, createCollectionOptions.EncryptedFields);
+                    CheckServerQueryableEncryptionCompatible(collectionName, createCollectionOptions.EncryptedFields);
             }
 
             var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
@@ -417,14 +417,13 @@ public class MongoClientWrapper : IMongoClientWrapper
         string collectionName)
     {
         var isEncrypted = queryableEncryptionSchemas.ContainsKey(collectionName);
-
-        if (!isEncrypted || _options?.QueryableEncryptionSchemaMode != QueryableEncryptionSchemaMode.ServerEncryptedCollection)
+        if (!isEncrypted || _options?.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.ServerOnly)
             return null;
 
         return new CreateCollectionOptions { EncryptedFields = queryableEncryptionSchemas[collectionName] };
     }
 
-    private void EnsureExistingServerEncryptionSchemaMatches(
+    private void CheckServerQueryableEncryptionCompatible(
         string collectionName,
         BsonDocument clientEncryptedFields)
     {
@@ -442,59 +441,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             throw new InvalidOperationException(
                 $"Collection '{collectionName}' can not be checked as it does not have encryptedFields.");
 
-        EnsureExistingServerEncryptionSchemaMatches(collectionName, serverEncrypted as BsonDocument, clientEncryptedFields);
-    }
-
-    private class BsonSchemaComparer : IEqualityComparer<BsonValue>
-    {
-        public bool Equals(BsonValue? x, BsonValue? y)
-            => x["path"].Equals(y["path"]) && x["bsonType"].Equals(y["bsonType"]) && x["keyId"].Equals(y["keyId"]);
-
-        public int GetHashCode(BsonValue obj)
-            => obj["path"].AsString.GetHashCode() ^ obj["bsonType"].AsString.GetHashCode() ^ obj["keyId"].GetHashCode();
-
-        public static readonly BsonSchemaComparer Instance = new();
-    }
-
-    private static void EnsureExistingServerEncryptionSchemaMatches(
-        string collectionName,
-        BsonDocument? serverEncryptedFields,
-        BsonDocument? clientEncryptedFields)
-    {
-        var serverFields = serverEncryptedFields?.TryGetValue("fields", out var serverFieldsElement) == true
-            ? serverFieldsElement.AsBsonArray
-            : [];
-        var clientFields = clientEncryptedFields?.TryGetValue("fields", out var clientFieldsElement) == true
-            ? clientFieldsElement.AsBsonArray
-            : [];
-
-        var missingOnServer = clientFields.Except(serverFields, BsonSchemaComparer.Instance).ToArray();
-        if (missingOnServer.Any())
-            throw new InvalidOperationException(
-                $"Collection '{collectionName}' is missing the following encrypted schema paths on the server: {ListPaths(missingOnServer)}.");
-
-        var missingOnClient = serverFields.Except(clientFields, BsonSchemaComparer.Instance).ToArray();
-        if (missingOnClient.Any())
-            throw new InvalidOperationException(
-                $"Collection '{collectionName}' is missing the following encrypted schema paths on the client: {ListPaths(missingOnClient)}.");
-
-        var matched = serverFields
-            .Join(clientFields, c => c["path"].AsString, s => s["path"].AsString, (c, s) => new[] { c, s }).ToArray();
-        var mismatchedKeys = matched.Where(m => m[0]["keyId"] != m[1]["keyId"]).ToArray();
-        if (mismatchedKeys.Any())
-            throw new InvalidOperationException(
-                $"Collection '{collectionName}' has mismatched keys for the following encrypted schema paths: {ListClientPaths(mismatchedKeys)}.");
-
-        var mismatchedTypes = matched.Where(m => m[0]["bsonType"] != m[1]["bsonType"]).ToArray();
-        if (mismatchedTypes.Any())
-            throw new InvalidOperationException(
-                $"Collection '{collectionName}' has mismatched types for the following encrypted schema paths: {ListClientPaths(mismatchedTypes)}.");
-
-        string ListClientPaths(BsonValue[][] fields)
-            => string.Join(", ", fields.Select(f => f[0]["path"].AsString));
-
-        string ListPaths(BsonValue[] fields)
-            => string.Join(", ", fields.Select(f => f["path"].AsString));
+        QueryableEncryptionSchemaChecker.CheckCompatibleSchemas(collectionName, serverEncrypted as BsonDocument, clientEncryptedFields);
     }
 
     private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
@@ -513,7 +460,8 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
 
         var queryableEncryptionSchema = _schemaProvider.GetQueryableEncryptionSchema();
-        var usesQueryableEncryption = queryableEncryptionSchema.Count > 0;
+        var usesQueryableEncryption = queryableEncryptionSchema.Count > 0 ||
+                                      options?.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.ServerOnly;
 
         var preconfiguredMongoClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient)) ?? options?.MongoClient;
         if (preconfiguredMongoClient != null)
@@ -540,53 +488,25 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         if (usesQueryableEncryption)
         {
-            ApplyQueryableEncryptionSettings(options, clientSettings, queryableEncryptionSchema);
+            if (options == null)
+            {
+                throw new InvalidOperationException("Queryable Encryption requires MongoOptions to be set.");
+            }
+
+            if (_options == null || _options.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.ClientOnly)
+            {
+                var missingDataKeyIdFields = QueryableEncryptionSchemaChecker.GetFieldsWithMissingDataKeyIds(queryableEncryptionSchema);
+                if (missingDataKeyIdFields.Any())
+                {
+                    throw new InvalidOperationException(
+                        "Queryable Encryption requires DataKeyId to be specified when operating in ClientOnly mode. " +
+                        $"The following elements had no DataKeyId: {string.Join(", ", missingDataKeyIdFields.SelectMany(kv => kv.Value.Select(e => kv.Key + "." + e["path"])))}");
+                }
+            }
+
+            QueryableEncryptionSettingsHelper.ApplyQueryableEncryptionSettings(options, clientSettings, queryableEncryptionSchema);
         }
 
         return new MongoClient(clientSettings);
     }
-
-    private void ApplyQueryableEncryptionSettings(MongoOptionsExtension? options, MongoClientSettings clientSettings,
-        Dictionary<string, BsonDocument> queryableEncryptionSchema)
-    {
-        var extraOptions = options?.CryptProvider switch
-        {
-            CryptProvider.AutoEncryptSharedLibrary => ExtraOptionsForCryptShared(options.CryptProviderPath!),
-            CryptProvider.Mongocryptd => ExtraOptionsForMongocryptd(options.CryptProviderPath!),
-            _ => new Dictionary<string, object>()
-        };
-
-        CombineExtraOptions(extraOptions, clientSettings.AutoEncryptionOptions?.ExtraOptions);
-        CombineExtraOptions(extraOptions, options?.CryptExtraOptions);
-
-        var keyVaultNamespace = clientSettings.AutoEncryptionOptions?.KeyVaultNamespace ?? options?.KeyVaultNamespace ??
-            throw new InvalidOperationException(
-                "No KeyVaultNamespace specified for Queryable Encryption. Either specify it via DbContextOptions or MongoClientSettings.");
-
-        var kmsProviders = clientSettings.AutoEncryptionOptions?.KmsProviders ?? options?.KmsProviders ??
-            throw new InvalidOperationException(
-                "No KmsProviders specified for Queryable Encryption. Either specify it via DbContextOptions or MongoClientSettings.");
-
-        clientSettings.AutoEncryptionOptions = new AutoEncryptionOptions(
-            keyVaultNamespace,
-            kmsProviders,
-            encryptedFieldsMap: queryableEncryptionSchema.ToDictionary(d => _options!.DatabaseName + "." + d.Key, d => d.Value),
-            extraOptions: extraOptions);
-    }
-
-    private static void CombineExtraOptions(Dictionary<string, object> combinedOptions,
-        IReadOnlyDictionary<string, object>? extraOptions)
-    {
-        if (extraOptions == null) return;
-        foreach (var kvp in extraOptions)
-        {
-            combinedOptions[kvp.Key] = kvp.Value;
-        }
-    }
-
-    private static Dictionary<string, object> ExtraOptionsForCryptShared(string cryptSharedLibPath) =>
-        new() { { "cryptSharedLibPath", cryptSharedLibPath }, { "cryptSharedLibRequired", true } };
-
-    private static Dictionary<string, object> ExtraOptionsForMongocryptd(string mongocryptdSpawnPath) =>
-        new() { { "mongocryptdSpawnPath", mongocryptdSpawnPath } };
 }

@@ -33,13 +33,398 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     private readonly TemporaryDatabaseFixture _database = database;
 
     [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void Server_schema_is_used_when_in_server_only_mode(CryptProvider cryptProvider)
+    {
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+        var dataKeyId = CreateDataKey();
+        var expectedPatients = CreateSamplePatients;
+
+        // Create a server schema for this data
+        {
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(dataKeyId);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientAndServer));
+
+            db.Database.EnsureCreated();
+            db.Patients.AddRange(expectedPatients);
+            db.SaveChanges();
+        }
+
+        // Read it without a client schema (wrong encryption data key id)
+        {
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(Guid.NewGuid());
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+
+            var actualPatients = db.Patients.ToList();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public async Task Server_schema_is_used_when_in_server_only_mode_async(CryptProvider cryptProvider)
+    {
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+        var dataKeyId = CreateDataKey();
+        var expectedPatients = CreateSamplePatients;
+
+        // Create a server schema for this data
+        {
+            await using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(dataKeyId);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientAndServer));
+
+            await db.Database.EnsureCreatedAsync();
+            await db.Patients.AddRangeAsync(expectedPatients);
+            await db.SaveChangesAsync();
+        }
+
+        // Read it without a client schema (wrong encryption data key id)
+        {
+            await using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(Guid.NewGuid());
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+
+            var actualPatients = await db.Patients.ToListAsync();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void Server_schema_is_used_when_no_client_schema_available(CryptProvider cryptProvider)
+    {
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+        var expectedPatients = CreateSamplePatients;
+        var dataKeyId = CreateDataKey();
+
+        // Create a server schema for this data
+        {
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(dataKeyId);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientAndServer));
+
+            db.Database.EnsureCreated();
+            db.Patients.AddRange(expectedPatients);
+            db.SaveChanges();
+        }
+
+        // Read it without a client schema (wrong encryption data key id)
+        {
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+
+            var actualPatients = db.Patients.ToList();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public async Task Server_schema_is_used_when_no_client_schema_available_async(CryptProvider cryptProvider)
+    {
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+        var expectedPatients = CreateSamplePatients;
+        var dataKeyId = CreateDataKey();
+
+        // Create a server schema for this data
+        {
+            await using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(dataKeyId);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientAndServer));
+
+            await db.Database.EnsureCreatedAsync();
+            await db.Patients.AddRangeAsync(expectedPatients);
+            await db.SaveChangesAsync();
+        }
+
+        // Read it without a client schema (wrong encryption data key id)
+        {
+            await using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+
+            var actualPatients = await db.Patients.ToListAsync();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void ClientServerMode_allows_existing_server_schema_when_compatible(CryptProvider cryptProvider)
+    {
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+        var expectedPatients = CreateSamplePatients;
+        var dataKeyId = CreateDataKey();
+
+        // Create a server schema for this data
+        {
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(dataKeyId);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+
+            db.Database.EnsureCreated();
+            db.Patients.AddRange(expectedPatients);
+            db.SaveChanges();
+        }
+
+        // Ensure server-capable mode does not attempt to recreate the collection but validates instead
+        {
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(dataKeyId);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientAndServer));
+
+            db.Database.EnsureCreated();
+
+            var actualPatients = db.Patients.ToList();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public async Task ClientServerMode_allows_existing_server_schema_when_compatible_async(CryptProvider cryptProvider)
+    {
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+        var expectedPatients = CreateSamplePatients;
+        var dataKeyId = CreateDataKey();
+
+        // Create a server schema for this data
+        {
+            await using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(dataKeyId);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+
+            await db.Database.EnsureCreatedAsync();
+            await db.Patients.AddRangeAsync(expectedPatients);
+            await db.SaveChangesAsync();
+        }
+
+        // Ensure server-capable mode does not attempt to recreate the collection but validates instead
+        {
+            await using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted(dataKeyId);
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientAndServer));
+
+            await db.Database.EnsureCreatedAsync();
+
+            var actualPatients = await db.Patients.ToListAsync();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public void ClientOnlyMode_allows_existing_server_schema_when_compatible(CryptProvider cryptProvider)
+    {
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+        var expectedPatients = CreateSamplePatients;
+
+        // Create a server schema for this data with auto key
+        {
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted();
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+
+            db.Database.EnsureCreated();
+            db.Patients.AddRange(expectedPatients);
+            db.SaveChanges();
+        }
+
+        // Ensure client-capable mode is happy using existing key
+        {
+            using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted();
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientOnly));
+
+            db.Database.EnsureCreated();
+
+            var actualPatients = db.Patients.ToList();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
+    public async Task ClientOnlyMode_allows_existing_server_schema_when_compatible_async(CryptProvider cryptProvider)
+    {
+        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
+        var expectedPatients = CreateSamplePatients;
+
+        // Create a server schema for this data with auto key
+        {
+            await using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted();
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+
+            await db.Database.EnsureCreatedAsync();
+            await db.Patients.AddRangeAsync(expectedPatients);
+            await db.SaveChangesAsync();
+        }
+
+        // Ensure client-capable mode is happy using existing key
+        {
+            await using var db = CreateContext(cryptProvider, mb =>
+            {
+                mb.Entity<Patient>(p =>
+                {
+                    p.ToCollection(collectionName);
+                    p.Property(x => x.SSN).IsEncrypted();
+                });
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientOnly));
+
+            await db.Database.EnsureCreatedAsync();
+
+            var actualPatients = await db.Patients.ToListAsync();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+    }
+
+    [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.NotQueryable)]
     [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.Equality)]
     [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.Range)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.NotQueryable)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.Equality)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.Range)]
-    public void IsEncryptedForAnything_on_unsupported_array_throws(CryptProvider cryptProvider,
+    public void IsEncrypted_with_no_data_key_throws_in_client_mode(
+        CryptProvider cryptProvider,
+        QueryableEncryptionType encryptionType)
+    {
+        using var db = CreateContext(cryptProvider, mb =>
+        {
+            var p = mb.Entity<Patient>().ToUniqueCollection(values: [cryptProvider, encryptionType, "patient"]);
+            SetPropertyEncryption(p.Property(q => q.BillingNumber), encryptionType, null);
+
+            var r = mb.Entity<Root>().ToUniqueCollection(values: [ cryptProvider, encryptionType, "root"]);
+            SetPropertyEncryption(r.Property(s => s.Sequence), encryptionType, null);
+
+        }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientOnly));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Patients.Count());
+        Assert.Contains("requires DataKeyId", ex.Message);
+
+        Assert.Contains("patient.BillingNumber", ex.Message);
+        Assert.Contains("root.Sequence", ex.Message);
+    }
+
+    [QueryableEncryptionTheory]
+    [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.NotQueryable)]
+    [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.Equality)]
+    [InlineData(CryptProvider.Mongocryptd, QueryableEncryptionType.Range)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.NotQueryable)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.Equality)]
+    [InlineData(CryptProvider.AutoEncryptSharedLibrary, QueryableEncryptionType.Range)]
+    public void IsEncryptedForAnything_on_unsupported_array_throws(
+        CryptProvider cryptProvider,
         QueryableEncryptionType encryptionType)
     {
         var dataKeyId = CreateDataKey();
@@ -220,7 +605,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
 
         MongoOptionsExtension OptionsConfig(MongoOptionsExtension options)
-            => options.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerEncryptedCollection);
+            => options.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientOnly);
     }
 
     [QueryableEncryptionTheory]
@@ -986,7 +1371,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.MonthlySubscription)
                 .HasBsonRepresentation(BsonType.String)
-                .IsEncryptedForRange(dataKeyId, 0m, 100m);
+                .IsEncryptedForRange(0m, 100m, dataKeyId);
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -1006,7 +1391,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             mb.Entity<Patient>()
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.ExternalRef)
-                .IsEncryptedForRange(dataKeyId, Guid.Empty, Guid.Empty);
+                .IsEncryptedForRange(Guid.Empty, Guid.Empty, dataKeyId);;
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -1026,7 +1411,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             mb.Entity<Patient>()
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.ExternalObjectId)
-                .IsEncryptedForRange(dataKeyId, new ObjectId(), new ObjectId());
+                .IsEncryptedForRange(new ObjectId(), new ObjectId(), dataKeyId);
         });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
@@ -1062,7 +1447,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 p.ToCollection(collectionName);
                 p.Property(x => x.BillingNumber)
                     .HasBsonRepresentation(storageType)
-                    .IsEncryptedForRange(dataKeyId, -10000, 10000);
+                    .IsEncryptedForRange(-10000, 10000, dataKeyId);
             });
         }
     }
@@ -1104,7 +1489,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 p.ToCollection(collectionName);
                 p.Property(x => x.Sequence)
                     .HasBsonRepresentation(storageType)
-                    .IsEncryptedForRange(dataKeyId, 0, 100);
+                    .IsEncryptedForRange(0, 100, dataKeyId);
             });
         }
     }
@@ -1143,7 +1528,8 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             mb.Entity<Patient>(p =>
             {
                 p.ToCollection(collectionName);
-                p.Property(x => x.DateOfBirth).IsEncryptedForRange(dataKeyId, DateTime.MinValue, DateTime.MaxValue);
+                p.Property(x => x.DateOfBirth)
+                    .IsEncryptedForRange(DateTime.MinValue, DateTime.MaxValue, dataKeyId);
             });
         }
     }
@@ -1162,7 +1548,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 .ToUniqueCollection(values: cryptProvider)
                 .Property(p => p.DateOfBirth)
                 .HasBsonRepresentation(BsonType.DateTime)
-                .IsEncryptedForRange(dataKeyId, DateTime.MinValue, DateTime.MaxValue)
+                .IsEncryptedForRange(DateTime.MinValue, DateTime.MaxValue, dataKeyId)
                 .HasAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin, null);
         }, logger: logs.Add);
 
@@ -1212,7 +1598,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 p.ToCollection(collectionName);
                 p.Property(x => x.Balance)
                     .HasBsonRepresentation(storageType)
-                    .IsEncryptedForRange(dataKeyId, 0m, 100000m, 2);
+                    .IsEncryptedForRange(0m, 100000m, 2, dataKeyId);
             });
         }
     }
@@ -1255,7 +1641,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 p.ToCollection(collectionName);
                 p.Property(x => x.Balance)
                     .HasBsonRepresentation(storageType)
-                    .IsEncryptedForRange(dataKeyId, 0m, 100000m,
+                    .IsEncryptedForRange(0m, 100000m, dataKeyId,
                         e => e.WithPrecision(0).WithContention(4).WithSparsity(1).WithTrimFactor(2));
             });
         }
@@ -1275,7 +1661,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 .ToUniqueCollection(values: [cryptProvider, storageType])
                 .Property(p => p.MonthlySubscription)
                 .HasBsonRepresentation(storageType)
-                .IsEncryptedForRange(dataKeyId, 0, 10000m)
+                .IsEncryptedForRange(0, 10000m, dataKeyId)
                 .HasAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax, null);
         });
 
@@ -1323,7 +1709,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 p.ToCollection(collectionName);
                 p.Property(x => x.SSN).IsEncryptedForEquality(dataKeyId1);
                 p.Property(x => x.DateOfBirth)
-                    .IsEncryptedForRange(dataKeyId2, new DateTime(1900, 01, 01), new DateTime(2050, 12, 31));
+                    .IsEncryptedForRange(new DateTime(1900, 01, 01), new DateTime(2050, 12, 31), dataKeyId2);
             });
         }
     }
@@ -1345,7 +1731,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private static void SetPropertyEncryption<T>(PropertyBuilder<T> p, QueryableEncryptionType encryptionType, Guid dataKeyId)
+    private static void SetPropertyEncryption<T>(PropertyBuilder<T> p, QueryableEncryptionType encryptionType, Guid? dataKeyId)
     {
         switch (encryptionType)
         {
@@ -1356,7 +1742,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                 p.IsEncryptedForEquality(dataKeyId);
                 break;
             case QueryableEncryptionType.Range:
-                p!.IsEncryptedForRange(dataKeyId, default, default);
+                p!.IsEncryptedForRange(default, default, dataKeyId);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(encryptionType), encryptionType, null);
@@ -1416,6 +1802,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     {
         public ObjectId Id { get; set; }
         public string? Name { get; set; }
+        public long Sequence { get; set; }
         public List<Level1Multi> Level1Multi { get; set; }
     }
 
