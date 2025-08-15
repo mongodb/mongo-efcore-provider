@@ -229,7 +229,7 @@ public static class MongoPropertyExtensions
     /// <param name="property">The <see cref="IConventionProperty"/> to set the BsonType for.</param>
     /// <param name="dataKeyId">The encryption data key id to set, or <see langword="null" /> to unset the value.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
-    /// <returns>The <see cref="Guid"/> encryption data key id for the property if set, or <see langref="null"/> if no value is set.</returns>
+    /// <returns>The <see cref="Guid"/> encryption data key id for the property if set, or <see langword="null"/> if no value is set.</returns>
     public static Guid? SetEncryptionDataKeyId(
         this IConventionProperty property,
         Guid? dataKeyId,

@@ -63,7 +63,7 @@ public static class QueryableEncryptionSchemaGenerator
     /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> to generate the schema for.</param>
     /// <returns>The <see cref="BsonDocument"/> containing the Queryable Encryption schema.</returns>
     /// <exception cref="ArgumentNullException">If the <paramref name="entityType"/> is null.</exception>
-    public static BsonDocument GenerateSchema(IReadOnlyEntityType entityType)
+    private static BsonDocument GenerateSchema(IReadOnlyEntityType entityType)
     {
         ArgumentNullException.ThrowIfNull(entityType);
 
@@ -101,12 +101,12 @@ public static class QueryableEncryptionSchemaGenerator
                         var dataKeyId = navigation.ForeignKey.GetEncryptionDataKeyId();
                         var fieldSchema = new BsonDocument
                         {
-                            { "path", prefix + navigationName },
                             {
                                 "keyId", dataKeyId != null
                                     ? new BsonBinaryData(dataKeyId.Value, GuidRepresentation.Standard)
                                     : BsonNull.Value
                             },
+                            { "path", prefix + navigationName },
                             { "bsonType", "object" }
                         };
                         AddSchemaFields(targetEntityType, fields, prefix + navigationName + ".");
@@ -127,8 +127,8 @@ public static class QueryableEncryptionSchemaGenerator
         var dataKeyId = property.GetEncryptionDataKeyId();
         var fieldSchema = new BsonDocument
         {
-            { "path", prefix + property.GetElementName() },
             { "keyId", dataKeyId != null ? new BsonBinaryData(dataKeyId.Value, GuidRepresentation.Standard) : BsonNull.Value },
+            { "path", prefix + property.GetElementName() },
             { "bsonType", BsonTypeHelper.BsonTypeToString(BsonTypeHelper.GetBsonType(property)) }
         };
 

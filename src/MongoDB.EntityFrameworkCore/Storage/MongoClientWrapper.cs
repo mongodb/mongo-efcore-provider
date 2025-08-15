@@ -41,7 +41,7 @@ public class MongoClientWrapper : IMongoClientWrapper
 {
     private readonly MongoOptionsExtension? _options;
     private readonly IServiceProvider _serviceProvider;
-    private readonly IMongoSchemaProvider _schemaProvider;
+    private readonly IQueryableEncryptionSchemaProvider _schemaProvider;
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
 
     private IMongoClient? _client;
@@ -57,12 +57,12 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// </summary>
     /// <param name="dbContextOptions">The <see cref="IDbContextOptions"/> that specify how this provider is configured.</param>
     /// <param name="serviceProvider">The <see cref="IServiceProvider"/> used to resolve dependencies.</param>
-    /// <param name="schemaProvider">The <see cref="IMongoSchemaProvider"/> used to obtain the Queryable Encryption schema.</param>
+    /// <param name="schemaProvider">The <see cref="IQueryableEncryptionSchemaProvider"/> used to obtain the Queryable Encryption schema.</param>
     /// <param name="commandLogger">The <see cref="IDiagnosticsLogger"/> used to log diagnostics events.</param>
     public MongoClientWrapper(
         IDbContextOptions dbContextOptions,
         IServiceProvider serviceProvider,
-        IMongoSchemaProvider schemaProvider,
+        IQueryableEncryptionSchemaProvider schemaProvider,
         IDiagnosticsLogger<DbLoggerCategory.Database.Command> commandLogger)
     {
         _options = dbContextOptions.FindExtension<MongoOptionsExtension>();
@@ -99,12 +99,13 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <inheritdoc />
     public bool CreateDatabase(IDesignTimeModel model)
     {
-        var didCreateNewDatabase = !DatabaseExists();
+        var existed = DatabaseExists();
         var existingCollectionNames = Database.ListCollectionNames().ToList();
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
             var collectionName = entityType.GetCollectionName();
+
             if (!existingCollectionNames.Contains(collectionName))
             {
                 try
@@ -114,7 +115,6 @@ public class MongoClientWrapper : IMongoClientWrapper
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
-                    // Ignore collection already exists in cases of concurrent creation
                 }
             }
 
@@ -123,7 +123,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             CreateIndexes(entityType, indexManager, existingIndexNames, []);
         }
 
-        return didCreateNewDatabase;
+        return !existed;
     }
 
     private static void CreateIndexes(
@@ -169,20 +169,20 @@ public class MongoClientWrapper : IMongoClientWrapper
             await Database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
         var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
 
-
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
             var collectionName = entityType.GetCollectionName();
+
             if (!existingCollectionNames.Contains(collectionName))
             {
                 try
                 {
-                    await Database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+                    await Database.CreateCollectionAsync(collectionName, cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
                     existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
-                    // Ignore collection already exists in cases of concurrent creation
                 }
             }
 
@@ -400,7 +400,8 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
 
         var queryableEncryptionSchema = _schemaProvider.GetQueryableEncryptionSchema();
-        var usesQueryableEncryption = queryableEncryptionSchema.Count > 0;
+        var usesQueryableEncryption = queryableEncryptionSchema.Count > 0 ||
+                                      options?.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.ServerOnly;
 
         var preconfiguredMongoClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient)) ?? options?.MongoClient;
         if (preconfiguredMongoClient != null)
@@ -427,52 +428,14 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         if (usesQueryableEncryption)
         {
-            ApplyQueryableEncryptionSettings(options, clientSettings, queryableEncryptionSchema);
+            if (options == null)
+            {
+                throw new InvalidOperationException("Queryable Encryption requires MongoOptions to be set.");
+            }
+
+            QueryableEncryptionSettingsHelper.ApplyQueryableEncryptionSettings(options, clientSettings, queryableEncryptionSchema);
         }
 
         return new MongoClient(clientSettings);
     }
-
-    private void ApplyQueryableEncryptionSettings(MongoOptionsExtension? options, MongoClientSettings clientSettings,
-        Dictionary<string, BsonDocument> queryableEncryptionSchema)
-    {
-        var extraOptions = options?.CryptProvider switch
-        {
-            CryptProvider.AutoEncryptSharedLibrary => ExtraOptionsForCryptShared(options.CryptProviderPath!),
-            CryptProvider.Mongocryptd => ExtraOptionsForMongocryptd(options.CryptProviderPath!),
-            _ => new Dictionary<string, object>()
-        };
-
-        CombineExtraOptions(extraOptions, clientSettings.AutoEncryptionOptions?.ExtraOptions);
-        CombineExtraOptions(extraOptions, options?.CryptExtraOptions);
-
-        var keyVaultNamespace = clientSettings.AutoEncryptionOptions?.KeyVaultNamespace ?? options?.KeyVaultNamespace ??
-            throw new InvalidOperationException(
-                "No KeyVaultNamespace specified for Queryable Encryption. Either specify it via DbContextOptions or MongoClientSettings.");
-
-        var kmsProviders = clientSettings.AutoEncryptionOptions?.KmsProviders ?? options?.KmsProviders ??
-            throw new InvalidOperationException(
-                "No KmsProviders specified for Queryable Encryption. Either specify it via DbContextOptions or MongoClientSettings.");
-
-        clientSettings.AutoEncryptionOptions = new AutoEncryptionOptions(
-            keyVaultNamespace,
-            kmsProviders,
-            encryptedFieldsMap: queryableEncryptionSchema.ToDictionary(d => _options!.DatabaseName + "." + d.Key, d => d.Value),
-            extraOptions: extraOptions);
-    }
-
-    private static void CombineExtraOptions(Dictionary<string, object> combinedOptions, IReadOnlyDictionary<string, object>? extraOptions)
-    {
-        if (extraOptions == null) return;
-        foreach (var kvp in extraOptions)
-        {
-            combinedOptions[kvp.Key] = kvp.Value;
-        }
-    }
-
-    private static Dictionary<string, object> ExtraOptionsForCryptShared(string cryptSharedLibPath) =>
-        new() { { "cryptSharedLibPath", cryptSharedLibPath }, { "cryptSharedLibRequired", true } };
-
-    private static Dictionary<string, object> ExtraOptionsForMongocryptd(string mongocryptdSpawnPath) =>
-        new() { { "mongocryptdSpawnPath", mongocryptdSpawnPath } };
 }
