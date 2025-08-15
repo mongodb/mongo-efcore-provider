@@ -26,7 +26,6 @@ using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using MongoDB.Driver.Core.Misc;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Infrastructure;
@@ -42,7 +41,7 @@ public class MongoClientWrapper : IMongoClientWrapper
 {
     private readonly MongoOptionsExtension? _options;
     private readonly IServiceProvider _serviceProvider;
-    private readonly IMongoSchemaProvider _schemaProvider;
+    private readonly IQueryableEncryptionSchemaProvider _schemaProvider;
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Command> _commandLogger;
 
     private IMongoClient? _client;
@@ -58,12 +57,12 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// </summary>
     /// <param name="dbContextOptions">The <see cref="IDbContextOptions"/> that specify how this provider is configured.</param>
     /// <param name="serviceProvider">The <see cref="IServiceProvider"/> used to resolve dependencies.</param>
-    /// <param name="schemaProvider">The <see cref="IMongoSchemaProvider"/> used to obtain the Queryable Encryption schema.</param>
+    /// <param name="schemaProvider">The <see cref="IQueryableEncryptionSchemaProvider"/> used to obtain the Queryable Encryption schema.</param>
     /// <param name="commandLogger">The <see cref="IDiagnosticsLogger"/> used to log diagnostics events.</param>
     public MongoClientWrapper(
         IDbContextOptions dbContextOptions,
         IServiceProvider serviceProvider,
-        IMongoSchemaProvider schemaProvider,
+        IQueryableEncryptionSchemaProvider schemaProvider,
         IDiagnosticsLogger<DbLoggerCategory.Database.Command> commandLogger)
     {
         _options = dbContextOptions.FindExtension<MongoOptionsExtension>();
@@ -102,34 +101,21 @@ public class MongoClientWrapper : IMongoClientWrapper
     {
         var existed = DatabaseExists();
         var existingCollectionNames = Database.ListCollectionNames().ToList();
-        var queryableEncryptionSchemas = _schemaProvider.GetQueryableEncryptionSchema();
-
-        if (queryableEncryptionSchemas.Any())
-            Feature.Csfle2QEv2.ThrowIfNotSupported(Database.Client);
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
             var collectionName = entityType.GetCollectionName();
-            var createCollectionOptions = CreateCollectionOptions(queryableEncryptionSchemas, collectionName);
 
             if (!existingCollectionNames.Contains(collectionName))
             {
                 try
                 {
-                    Database.CreateCollection(collectionName, createCollectionOptions);
+                    Database.CreateCollection(collectionName);
                     existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
-                    // Collection has been created by another instance? Still need to check the encryption schema.
-                    if (createCollectionOptions != null)
-                        CheckServerQueryableEncryptionCompatible(collectionName, createCollectionOptions.EncryptedFields);
                 }
-            }
-            else
-            {
-                if (createCollectionOptions != null)
-                    CheckServerQueryableEncryptionCompatible(collectionName, createCollectionOptions.EncryptedFields);
             }
 
             var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
@@ -183,34 +169,21 @@ public class MongoClientWrapper : IMongoClientWrapper
             await Database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
         var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
 
-        var queryableEncryptionSchemas = _schemaProvider.GetQueryableEncryptionSchema();
-        if (queryableEncryptionSchemas.Any())
-            await Feature.Csfle2QEv2.ThrowIfNotSupportedAsync(Database.Client, cancellationToken);
-
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
             var collectionName = entityType.GetCollectionName();
-            var createCollectionOptions = CreateCollectionOptions(queryableEncryptionSchemas, collectionName);
 
             if (!existingCollectionNames.Contains(collectionName))
             {
                 try
                 {
-                    await Database.CreateCollectionAsync(collectionName, createCollectionOptions, cancellationToken)
+                    await Database.CreateCollectionAsync(collectionName, cancellationToken: cancellationToken)
                         .ConfigureAwait(false);
                     existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
-                    // Collection has been created by another instance? Still need to check the encryption schema.
-                    if (createCollectionOptions != null)
-                        CheckServerQueryableEncryptionCompatible(collectionName, createCollectionOptions.EncryptedFields);
                 }
-            }
-            else
-            {
-                if (createCollectionOptions != null)
-                    CheckServerQueryableEncryptionCompatible(collectionName, createCollectionOptions.EncryptedFields);
             }
 
             var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
@@ -411,39 +384,6 @@ public class MongoClientWrapper : IMongoClientWrapper
         return [result];
     }
 
-
-    private CreateCollectionOptions? CreateCollectionOptions(
-        Dictionary<string, BsonDocument> queryableEncryptionSchemas,
-        string collectionName)
-    {
-        var isEncrypted = queryableEncryptionSchemas.ContainsKey(collectionName);
-        if (!isEncrypted || _options?.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.ServerOnly)
-            return null;
-
-        return new CreateCollectionOptions { EncryptedFields = queryableEncryptionSchemas[collectionName] };
-    }
-
-    private void CheckServerQueryableEncryptionCompatible(
-        string collectionName,
-        BsonDocument clientEncryptedFields)
-    {
-        var collection = Database
-            .ListCollections(new ListCollectionsOptions { Filter = Builders<BsonDocument>.Filter.Eq("name", collectionName) })
-            .FirstOrDefault();
-
-        if (collection == null)
-            throw new InvalidOperationException($"Collection '{collectionName}' can not be checked as it does not exist.");
-
-        if (!collection.TryGetValue("options", out var options))
-            throw new InvalidOperationException($"Collection '{collectionName}' can not be checked as it does not have options.");
-
-        if ((options as BsonDocument)?.TryGetValue("encryptedFields", out var serverEncrypted) != true)
-            throw new InvalidOperationException(
-                $"Collection '{collectionName}' can not be checked as it does not have encryptedFields.");
-
-        QueryableEncryptionSchemaChecker.CheckCompatibleSchemas(collectionName, serverEncrypted as BsonDocument, clientEncryptedFields);
-    }
-
     private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
     {
         _databaseName = _options?.DatabaseName;
@@ -491,17 +431,6 @@ public class MongoClientWrapper : IMongoClientWrapper
             if (options == null)
             {
                 throw new InvalidOperationException("Queryable Encryption requires MongoOptions to be set.");
-            }
-
-            if (_options == null || _options.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.ClientOnly)
-            {
-                var missingDataKeyIdFields = QueryableEncryptionSchemaChecker.GetFieldsWithMissingDataKeyIds(queryableEncryptionSchema);
-                if (missingDataKeyIdFields.Any())
-                {
-                    throw new InvalidOperationException(
-                        "Queryable Encryption requires DataKeyId to be specified when operating in ClientOnly mode. " +
-                        $"The following elements had no DataKeyId: {string.Join(", ", missingDataKeyIdFields.SelectMany(kv => kv.Value.Select(e => kv.Key + "." + e["path"])))}");
-                }
             }
 
             QueryableEncryptionSettingsHelper.ApplyQueryableEncryptionSettings(options, clientSettings, queryableEncryptionSchema);

@@ -20,13 +20,9 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
 /// <inheritdoc />
-public class MongoSchemaProvider(IModel model) : IMongoSchemaProvider
+public class QueryableEncryptionSchemaProvider(IModel model) : IQueryableEncryptionSchemaProvider
 {
     /// <inheritdoc />
     public Dictionary<string, BsonDocument> GetQueryableEncryptionSchema()
         => QueryableEncryptionSchemaGenerator.GenerateSchemas(model);
-
-    /// <inheritdoc />
-    public bool HasQueryableEncryptionSchema
-        => QueryableEncryptionSchemaGenerator.HasSchema(model);
 }

@@ -25,7 +25,7 @@ namespace MongoDB.EntityFrameworkCore.Infrastructure;
 /// This interface is intended for internal use by the MongoDB EF Core Provider
 /// and may change in any release without prior notice.
 /// </remarks>
-public interface IMongoSchemaProvider
+public interface IQueryableEncryptionSchemaProvider
 {
     /// <summary>
     /// Creates a Queryable Encryption schema for the current model based on the
@@ -37,9 +37,4 @@ public interface IMongoSchemaProvider
     /// before being used with the MongoDB client.
     /// </remarks>
     Dictionary<string, BsonDocument> GetQueryableEncryptionSchema();
-
-    /// <summary>
-    /// Determines whether the current model uses Queryable Encryption.
-    /// </summary>
-    bool HasQueryableEncryptionSchema { get; }
 }

@@ -32,23 +32,11 @@ public enum QueryableEncryptionSchemaMode
     ClientOnly,
 
     /// <summary>
-    /// The schema from the client is also required server-side. Other clients must use a compatible Queryable Encryption schema.
-    /// </summary>
-    /// <remarks>
-    /// This mode is intended for use in production environments and can not be automatically adjusted after initial creation.
-    /// When <see cref="DatabaseFacade.EnsureCreated"/> or <see cref="DatabaseFacade.EnsureCreatedAsync"/>
-    /// is called it will attempt to create the collection using the clients queryable encryption schema.
-    /// If the collection already exists then the server will be checked to ensure the collection schema
-    /// is compatible with the one in the client.
-    /// </remarks>
-    ClientAndServer,
-
-    /// <summary>
     /// The schema from the client is ignored and only the server-side is respected.
     /// </summary>
     /// <remarks>
     /// This mode is intended for existing applications where the Queryable Encryption schema already exists on the server
-    /// and any annotations in the client should be ignore.
+    /// and any annotations in the client should be ignored.
     /// </remarks>
     ServerOnly
 }
