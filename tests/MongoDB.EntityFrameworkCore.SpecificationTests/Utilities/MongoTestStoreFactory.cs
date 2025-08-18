@@ -23,12 +23,12 @@ public class MongoTestStoreFactory : ITestStoreFactory
 {
     public static MongoTestStoreFactory Instance { get; } = new();
 
-    protected MongoTestStoreFactory()
+    private MongoTestStoreFactory()
     {
     }
 
     public IServiceCollection AddProviderServices(IServiceCollection serviceCollection)
-        => serviceCollection.AddEntityFrameworkMongoDB().AddSingleton<ILoggerFactory>(new TestMqlLoggerFactory());
+        => serviceCollection.AddEntityFrameworkMongoDB().AddSingleton<ILoggerFactory>(CreateListLoggerFactory(_ => true));
 
     public TestStore Create(string storeName)
         => MongoTestStore.Create(storeName);

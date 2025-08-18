@@ -15,8 +15,10 @@
 
 using System.Collections.ObjectModel;
 using System.Reflection;
+using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
@@ -284,7 +286,7 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<DateOnlyEntity>();
 
-        var expected = new DateOnly(_random.Next(0, 9999), _random.Next(1, 12), _random.Next(1, 29));
+        var expected = new DateOnly(_random.Next(1, 9999), _random.Next(1, 12), _random.Next(1, 28));
         collection.InsertOne(new DateOnlyEntity {_id = ObjectId.GenerateNewId(), aDateOnly = expected});
 
         using (var db = SingleEntityDbContext.Create(collection))
@@ -1043,6 +1045,18 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
             .Invoke(this, [value]);
     }
 
+    private enum TestEnum
+    {
+        EnumValue0 = 0,
+        EnumValue1 = 1
+    }
+
+    private enum TestByteEnum : byte
+    {
+        EnumValue0 = 0,
+        EnumValue1 = 1
+    }
+
     [Fact]
     public void Type_mapping_test_list_nullable_int()
     {
@@ -1129,15 +1143,736 @@ public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private enum TestEnum
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadOnlyMemory_read_update(bool async)
     {
-        EnumValue0 = 0,
-        EnumValue1 = 1
+        var collection = database.CreateCollection<ReadOnlyMemoryEntity>(values: [async]);
+
+        collection.InsertOne(new ReadOnlyMemoryEntity
+        {
+            ReadOnlyMemoryBytes = new([1, 2, 3, 4]),
+            ReadOnlyMemorySBytes = new([-1, -2, -3, -4]),
+            ReadOnlyMemoryInts = new([1, 2, 3, 4]),
+            ReadOnlyMemoryDoubles = new([1.1, 2.2, 3.3, 4.4]),
+            ReadOnlyMemoryDecimals = new([1.1m, 2.2m, 3.3m, 4.4m]),
+            ReadOnlyMemoryFloats = new([1.1f, 2.2f, 3.3f, 4.4f])
+        });
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(new ReadOnlyMemory<byte>([1, 2, 3, 4]), actual.ReadOnlyMemoryBytes);
+            Assert.Equal(new ReadOnlyMemory<sbyte>([-1, -2, -3, -4]), actual.ReadOnlyMemorySBytes);
+            Assert.Equal(new ReadOnlyMemory<int>([1, 2, 3, 4]), actual.ReadOnlyMemoryInts);
+            Assert.Equal(new ReadOnlyMemory<double>([1.1, 2.2, 3.3, 4.4]), actual.ReadOnlyMemoryDoubles);
+            Assert.Equal(new ReadOnlyMemory<decimal>([1.1m, 2.2m, 3.3m, 4.4m]), actual.ReadOnlyMemoryDecimals);
+            Assert.Equal(new ReadOnlyMemory<float>([1.1f, 2.2f, 3.3f, 4.4f]), actual.ReadOnlyMemoryFloats);
+
+            actual.ReadOnlyMemoryBytes = new([4, 3, 2, 1]);
+            actual.ReadOnlyMemorySBytes = new([-4, -3, -2, -1]);
+            actual.ReadOnlyMemoryInts = new([4, 3, 2, 1]);
+            actual.ReadOnlyMemoryDoubles = new([4.1, 3.2, 2.3, 1.4]);
+            actual.ReadOnlyMemoryDecimals = new([4.1m, 3.2m, 2.3m, 1.4m]);
+            actual.ReadOnlyMemoryFloats = new([4.1f, 3.2f, 2.3f, 1.4f]);
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        // Validate storage as correct BSON
+        var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryBytes" : { "$binary" : { "base64" : "BAMCAQ==", "subType" : "00" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemorySBytes" : [-4, -3, -2, -1]
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryInts" : [4, 3, 2, 1]
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryDoubles" : [4.0999999999999996, 3.2000000000000002, 2.2999999999999998, 1.3999999999999999]
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryDecimals" : [{ "$numberDecimal" : "4.1" }, { "$numberDecimal" : "3.2" }, { "$numberDecimal" : "2.3" }, { "$numberDecimal" : "1.4" }]
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryFloats" : [4.0999999046325684, 3.2000000476837158, 2.2999999523162842, 1.3999999761581421] }
+            """, document);
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(new ReadOnlyMemory<byte>([4, 3, 2, 1]), actual.ReadOnlyMemoryBytes);
+            Assert.Equal(new ReadOnlyMemory<sbyte>([-4, -3, -2, -1]), actual.ReadOnlyMemorySBytes);
+            Assert.Equal(new ReadOnlyMemory<int>([4, 3, 2, 1]), actual.ReadOnlyMemoryInts);
+            Assert.Equal(new ReadOnlyMemory<double>([4.1, 3.2, 2.3, 1.4]), actual.ReadOnlyMemoryDoubles);
+            Assert.Equal(new ReadOnlyMemory<decimal>([4.1m, 3.2m, 2.3m, 1.4m]), actual.ReadOnlyMemoryDecimals);
+            Assert.Equal(new ReadOnlyMemory<float>([4.1f, 3.2f, 2.3f, 1.4f]), actual.ReadOnlyMemoryFloats);
+        }
+
+        // Verify that the driver can still read these back after they have been updated by EF Core
+        var fromDriver = collection.AsQueryable().FirstOrDefault();
+
+        Assert.NotNull(fromDriver);
+        Assert.Equal(new ReadOnlyMemory<byte>([4, 3, 2, 1]), fromDriver.ReadOnlyMemoryBytes);
+        Assert.Equal(new ReadOnlyMemory<sbyte>([-4, -3, -2, -1]), fromDriver.ReadOnlyMemorySBytes);
+        Assert.Equal(new ReadOnlyMemory<int>([4, 3, 2, 1]), fromDriver.ReadOnlyMemoryInts);
+        Assert.Equal(new ReadOnlyMemory<double>([4.1, 3.2, 2.3, 1.4]), fromDriver.ReadOnlyMemoryDoubles);
+        Assert.Equal(new ReadOnlyMemory<decimal>([4.1m, 3.2m, 2.3m, 1.4m]), fromDriver.ReadOnlyMemoryDecimals);
     }
 
-    private enum TestByteEnum : byte
+    class ReadOnlyMemoryEntity : IdEntity
     {
-        EnumValue0 = 0,
-        EnumValue1 = 1
+        public ReadOnlyMemory<byte> ReadOnlyMemoryBytes { get; set; }
+        public ReadOnlyMemory<sbyte> ReadOnlyMemorySBytes { get; set; }
+        public ReadOnlyMemory<int> ReadOnlyMemoryInts { get; set; }
+        public ReadOnlyMemory<double> ReadOnlyMemoryDoubles { get; set; }
+        public ReadOnlyMemory<decimal> ReadOnlyMemoryDecimals { get; set; }
+        public ReadOnlyMemory<float> ReadOnlyMemoryFloats { get; set; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Memory_read_update(bool async)
+    {
+        var collection = database.CreateCollection<MemoryEntity>(values: [async]);
+
+        collection.InsertOne(new MemoryEntity
+        {
+            MemoryBytes = new([1, 2, 3, 4]),
+            MemorySBytes = new([-1, -2, -3, -4]),
+            MemoryInts = new([1, 2, 3, 4]),
+            MemoryDoubles = new([1.1, 2.2, 3.3, 4.4]),
+            MemoryDecimals = new([1.1m, 2.2m, 3.3m, 4.4m]),
+            MemoryFloats = new([1.1f, 2.2f, 3.3f, 4.4f])
+        });
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(new Memory<byte>([1, 2, 3, 4]), actual.MemoryBytes);
+            Assert.Equal(new Memory<sbyte>([-1, -2, -3, -4]), actual.MemorySBytes);
+            Assert.Equal(new Memory<int>([1, 2, 3, 4]), actual.MemoryInts);
+            Assert.Equal(new Memory<double>([1.1, 2.2, 3.3, 4.4]), actual.MemoryDoubles);
+            Assert.Equal(new Memory<decimal>([1.1m, 2.2m, 3.3m, 4.4m]), actual.MemoryDecimals);
+            Assert.Equal(new Memory<float>([1.1f, 2.2f, 3.3f, 4.4f]), actual.MemoryFloats);
+
+            actual.MemoryBytes = new([4, 3, 2, 1]);
+            actual.MemorySBytes = new([-4, -3, -2, -1]);
+            actual.MemoryInts = new([4, 3, 2, 1]);
+            actual.MemoryDoubles = new([4.1, 3.2, 2.3, 1.4]);
+            actual.MemoryDecimals = new([4.1m, 3.2m, 2.3m, 1.4m]);
+            actual.MemoryFloats = new([4.1f, 3.2f, 2.3f, 1.4f]);
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        // Validate storage as correct BSON
+        var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
+
+        Assert.Contains(
+            """
+            "MemoryBytes" : { "$binary" : { "base64" : "BAMCAQ==", "subType" : "00" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemorySBytes" : [-4, -3, -2, -1]
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemoryInts" : [4, 3, 2, 1]
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemoryDoubles" : [4.0999999999999996, 3.2000000000000002, 2.2999999999999998, 1.3999999999999999]
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemoryDecimals" : [{ "$numberDecimal" : "4.1" }, { "$numberDecimal" : "3.2" }, { "$numberDecimal" : "2.3" }, { "$numberDecimal" : "1.4" }]
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemoryFloats" : [4.0999999046325684, 3.2000000476837158, 2.2999999523162842, 1.3999999761581421] }
+            """, document);
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal(new Memory<byte>([4, 3, 2, 1]), actual.MemoryBytes);
+            Assert.Equal(new Memory<sbyte>([-4, -3, -2, -1]), actual.MemorySBytes);
+            Assert.Equal(new Memory<int>([4, 3, 2, 1]), actual.MemoryInts);
+            Assert.Equal(new Memory<double>([4.1, 3.2, 2.3, 1.4]), actual.MemoryDoubles);
+            Assert.Equal(new Memory<decimal>([4.1m, 3.2m, 2.3m, 1.4m]), actual.MemoryDecimals);
+            Assert.Equal(new Memory<float>([4.1f, 3.2f, 2.3f, 1.4f]), actual.MemoryFloats);
+        }
+
+        // Verify that the driver can still read these back after they have been updated by EF Core
+        var fromDriver = collection.AsQueryable().FirstOrDefault();
+
+        Assert.NotNull(fromDriver);
+        Assert.Equal(new Memory<byte>([4, 3, 2, 1]), fromDriver.MemoryBytes);
+        Assert.Equal(new Memory<sbyte>([-4, -3, -2, -1]), fromDriver.MemorySBytes);
+        Assert.Equal(new Memory<int>([4, 3, 2, 1]), fromDriver.MemoryInts);
+        Assert.Equal(new Memory<double>([4.1, 3.2, 2.3, 1.4]), fromDriver.MemoryDoubles);
+        Assert.Equal(new Memory<decimal>([4.1m, 3.2m, 2.3m, 1.4m]), fromDriver.MemoryDecimals);
+    }
+
+    class MemoryEntity : IdEntity
+    {
+        public Memory<byte> MemoryBytes { get; set; }
+        public Memory<sbyte> MemorySBytes { get; set; }
+        public Memory<int> MemoryInts { get; set; }
+        public Memory<double> MemoryDoubles { get; set; }
+        public Memory<decimal> MemoryDecimals { get; set; }
+        public Memory<float> MemoryFloats { get; set; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BinaryVectorPackedBit_read_update(bool async)
+    {
+        var collection = database.CreateCollection<BinaryVectorPackedBitEntity>(values: [async]);
+
+        collection.InsertOne(new BinaryVectorPackedBitEntity
+        {
+            Bytes = [1, 2, 3, 4],
+            MemoryBytes = new([1, 2, 3, 4]),
+            ReadOnlyMemoryBytes = new([1, 2, 3, 4]),
+            BinaryVector = new(new([1, 2, 3, 4]), 2)
+        });
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([1, 2, 3, 4], actual.Bytes);
+            Assert.Equal(new Memory<byte>([1, 2, 3, 4]), actual.MemoryBytes);
+            Assert.Equal(new ReadOnlyMemory<byte>([1, 2, 3, 4]), actual.ReadOnlyMemoryBytes);
+            Assert.Equal(new([1, 2, 3, 4]), actual.BinaryVector.Data);
+            Assert.Equal(2, actual.BinaryVector.Padding);
+
+            actual.Bytes = [4, 3, 2, 1];
+            actual.MemoryBytes = new([4, 3, 2, 1]);
+            actual.ReadOnlyMemoryBytes = new([4, 3, 2, 1]);
+            actual.BinaryVector = new(new([4, 3, 2, 1]), 0);
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        // Validate storage as correct BSON
+        var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
+
+        Assert.Contains(
+            """
+            "Bytes" : { "$binary" : { "base64" : "EAAEAwIB", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemoryBytes" : { "$binary" : { "base64" : "EAAEAwIB", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryBytes" : { "$binary" : { "base64" : "EAAEAwIB", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "BinaryVector" : { "$binary" : { "base64" : "EAAEAwIB", "subType" : "09" } }
+            """, document);
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([4, 3, 2, 1], actual.Bytes);
+            Assert.Equal(new Memory<byte>([4, 3, 2, 1]), actual.MemoryBytes);
+            Assert.Equal(new ReadOnlyMemory<byte>([4, 3, 2, 1]), actual.ReadOnlyMemoryBytes);
+            Assert.Equal(new([4, 3, 2, 1]), actual.BinaryVector.Data);
+            Assert.Equal(0, actual.BinaryVector.Padding);
+        }
+
+        // Verify that the driver can still read these back after they have been updated by EF Core
+        var fromDriver = collection.AsQueryable().FirstOrDefault();
+
+        Assert.NotNull(fromDriver);
+        Assert.Equal([4, 3, 2, 1], fromDriver.Bytes);
+        Assert.Equal(new Memory<byte>([4, 3, 2, 1]), fromDriver.MemoryBytes);
+        Assert.Equal(new ReadOnlyMemory<byte>([4, 3, 2, 1]), fromDriver.ReadOnlyMemoryBytes);
+        Assert.Equal(new([4, 3, 2, 1]), fromDriver.BinaryVector.Data);
+        Assert.Equal(0, fromDriver.BinaryVector.Padding);
+    }
+
+    class BinaryVectorPackedBitEntity : IdEntity
+    {
+        [BinaryVector(BinaryVectorDataType.PackedBit)]
+        public byte[] Bytes { get; set; }
+
+        [BinaryVector(BinaryVectorDataType.PackedBit)]
+        public Memory<byte> MemoryBytes { get; set; }
+
+        [BinaryVector(BinaryVectorDataType.PackedBit)]
+        public ReadOnlyMemory<byte> ReadOnlyMemoryBytes { get; set; }
+
+        public BinaryVectorPackedBit BinaryVector { get; set; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BinaryVectorFloat32_read_update(bool async)
+    {
+        var collection = database.CreateCollection<BinaryVectorFloat32Entity>(values: [async]);
+
+        collection.InsertOne(new BinaryVectorFloat32Entity
+        {
+            Floats = [1.1f, 2.2f, 3.3f, 4.4f],
+            MemoryFloats = new([1.1f, 2.2f, 3.3f, 4.4f]),
+            ReadOnlyMemoryFloats = new([1.1f, 2.2f, 3.3f, 4.4f]),
+            BinaryVector = new(new([1.1f, 2.2f, 3.3f, 4.4f]))
+        });
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([1.1f, 2.2f, 3.3f, 4.4f], actual.Floats);
+            Assert.Equal(new Memory<float>([1.1f, 2.2f, 3.3f, 4.4f]), actual.MemoryFloats);
+            Assert.Equal(new ReadOnlyMemory<float>([1.1f, 2.2f, 3.3f, 4.4f]), actual.ReadOnlyMemoryFloats);
+            Assert.Equal(new([1.1f, 2.2f, 3.3f, 4.4f]), actual.BinaryVector.Data);
+
+            actual.Floats = [4.1f, 3.2f, 2.3f, 1.4f];
+            actual.MemoryFloats = new([4.1f, 3.2f, 2.3f, 1.4f]);
+            actual.ReadOnlyMemoryFloats = new([4.1f, 3.2f, 2.3f, 1.4f]);
+            actual.BinaryVector = new(new([4.1f, 3.2f, 2.3f, 1.4f]));
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        // Validate storage as correct BSON
+        var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
+
+        Assert.Contains(
+            """
+            "Floats" : { "$binary" : { "base64" : "JwAzM4NAzcxMQDMzE0AzM7M/", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemoryFloats" : { "$binary" : { "base64" : "JwAzM4NAzcxMQDMzE0AzM7M/", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryFloats" : { "$binary" : { "base64" : "JwAzM4NAzcxMQDMzE0AzM7M/", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "BinaryVector" : { "$binary" : { "base64" : "JwAzM4NAzcxMQDMzE0AzM7M/", "subType" : "09" } }
+            """, document);
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([4.1f, 3.2f, 2.3f, 1.4f], actual.Floats);
+            Assert.Equal(new Memory<float>([4.1f, 3.2f, 2.3f, 1.4f]), actual.MemoryFloats);
+            Assert.Equal(new ReadOnlyMemory<float>([4.1f, 3.2f, 2.3f, 1.4f]), actual.ReadOnlyMemoryFloats);
+            Assert.Equal(new([4.1f, 3.2f, 2.3f, 1.4f]), actual.BinaryVector.Data);
+        }
+
+        // Verify that the driver can still read these back after they have been updated by EF Core
+        var fromDriver = collection.AsQueryable().FirstOrDefault();
+
+        Assert.NotNull(fromDriver);
+        Assert.Equal([4.1f, 3.2f, 2.3f, 1.4f], fromDriver.Floats);
+        Assert.Equal(new Memory<float>([4.1f, 3.2f, 2.3f, 1.4f]), fromDriver.MemoryFloats);
+        Assert.Equal(new ReadOnlyMemory<float>([4.1f, 3.2f, 2.3f, 1.4f]), fromDriver.ReadOnlyMemoryFloats);
+        Assert.Equal(new([4.1f, 3.2f, 2.3f, 1.4f]), fromDriver.BinaryVector.Data);
+    }
+
+    class BinaryVectorFloat32Entity : IdEntity
+    {
+        [BinaryVector(BinaryVectorDataType.Float32)]
+        public float[] Floats { get; set; }
+
+        [BinaryVector(BinaryVectorDataType.Float32)]
+        public Memory<float> MemoryFloats { get; set; }
+
+        [BinaryVector(BinaryVectorDataType.Float32)]
+        public ReadOnlyMemory<float> ReadOnlyMemoryFloats { get; set; }
+
+        public BinaryVectorFloat32 BinaryVector { get; set; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BinaryVectorDataType_Int8_read_update(bool async)
+    {
+        var collection = database.CreateCollection<BinaryVectorInt8Entity>(values: [async]);
+
+        collection.InsertOne(new BinaryVectorInt8Entity
+        {
+            SBytes = [1, -2, 3, -4],
+            MemorySBytes = new([1, -2, 3, -4]),
+            ReadOnlyMemorySBytes = new([1, -2, 3, -4]),
+            BinaryVector = new(new([1, -2, 3, -4]))
+        });
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([1, -2, 3, -4], actual.SBytes);
+            Assert.Equal(new Memory<sbyte>([1, -2, 3, -4]), actual.MemorySBytes);
+            Assert.Equal(new ReadOnlyMemory<sbyte>([1, -2, 3, -4]), actual.ReadOnlyMemorySBytes);
+            Assert.Equal(new([1, -2, 3, -4]), actual.BinaryVector.Data);
+
+            actual.SBytes = [-4, 3, -2, 1];
+            actual.MemorySBytes = new([-4, 3, -2, 1]);
+            actual.ReadOnlyMemorySBytes = new([-4, 3, -2, 1]);
+            actual.BinaryVector = new(new([-4, 3, -2, 1]));
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        // Validate storage as correct BSON
+        var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
+
+        Assert.Contains(
+            """
+            "SBytes" : { "$binary" : { "base64" : "AwD8A/4B", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemorySBytes" : { "$binary" : { "base64" : "AwD8A/4B", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemorySBytes" : { "$binary" : { "base64" : "AwD8A/4B", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "BinaryVector" : { "$binary" : { "base64" : "AwD8A/4B", "subType" : "09" } }
+            """, document);
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([-4, 3, -2, 1], actual.SBytes);
+            Assert.Equal(new Memory<sbyte>([-4, 3, -2, 1]), actual.MemorySBytes);
+            Assert.Equal(new ReadOnlyMemory<sbyte>([-4, 3, -2, 1]), actual.ReadOnlyMemorySBytes);
+            Assert.Equal(new([-4, 3, -2, 1]), actual.BinaryVector.Data);
+        }
+
+        // Verify that the driver can still read these back after they have been updated by EF Core
+        var fromDriver = collection.AsQueryable().FirstOrDefault();
+
+        Assert.Equal([-4, 3, -2, 1], fromDriver.SBytes);
+        Assert.Equal(new Memory<sbyte>([-4, 3, -2, 1]), fromDriver.MemorySBytes);
+        Assert.Equal(new ReadOnlyMemory<sbyte>([-4, 3, -2, 1]), fromDriver.ReadOnlyMemorySBytes);
+        Assert.Equal(new([-4, 3, -2, 1]), fromDriver.BinaryVector.Data);
+    }
+
+    class BinaryVectorInt8Entity : IdEntity
+    {
+        [BinaryVector(BinaryVectorDataType.Int8)]
+        public sbyte[] SBytes { get; set; }
+
+        [BinaryVector(BinaryVectorDataType.Int8)]
+        public Memory<sbyte> MemorySBytes { get; set; }
+
+        [BinaryVector(BinaryVectorDataType.Int8)]
+        public ReadOnlyMemory<sbyte> ReadOnlyMemorySBytes { get; set; }
+
+        public BinaryVectorInt8 BinaryVector { get; set; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BinaryVectorPackedBit_via_model_builder_read_update(bool async)
+    {
+        var collection = database.CreateCollection<BinaryVectorPackedBitEntityNoAttributes>(values: [async]);
+
+        using (var db = CreateContext())
+        {
+            db.Add(new BinaryVectorPackedBitEntityNoAttributes
+                {
+                    Bytes = [1, 2, 3, 4],
+                    MemoryBytes = new([1, 2, 3, 4]),
+                    ReadOnlyMemoryBytes = new([1, 2, 3, 4]),
+                });
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        using (var db = CreateContext())
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([1, 2, 3, 4], actual.Bytes);
+            Assert.Equal(new Memory<byte>([1, 2, 3, 4]), actual.MemoryBytes);
+            Assert.Equal(new ReadOnlyMemory<byte>([1, 2, 3, 4]), actual.ReadOnlyMemoryBytes);
+
+            actual.Bytes = [4, 3, 2, 1];
+            actual.MemoryBytes = new([4, 3, 2, 1]);
+            actual.ReadOnlyMemoryBytes = new([4, 3, 2, 1]);
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        // Validate storage as correct BSON
+        var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
+
+        Assert.Contains(
+            """
+            "Bytes" : { "$binary" : { "base64" : "EAAEAwIB", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemoryBytes" : { "$binary" : { "base64" : "EAAEAwIB", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryBytes" : { "$binary" : { "base64" : "EAAEAwIB", "subType" : "09" } }
+            """, document);
+
+        using (var db = CreateContext())
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([4, 3, 2, 1], actual.Bytes);
+            Assert.Equal(new Memory<byte>([4, 3, 2, 1]), actual.MemoryBytes);
+            Assert.Equal(new ReadOnlyMemory<byte>([4, 3, 2, 1]), actual.ReadOnlyMemoryBytes);
+        }
+
+        SingleEntityDbContext<BinaryVectorPackedBitEntityNoAttributes> CreateContext()
+            => SingleEntityDbContext.Create(collection, b =>
+            {
+                b.Entity<BinaryVectorPackedBitEntityNoAttributes>(b =>
+                {
+                    b.Property(e => e.Bytes).HasBinaryVectorDataType(BinaryVectorDataType.PackedBit);
+                    b.Property(e => e.MemoryBytes).HasBinaryVectorDataType(BinaryVectorDataType.PackedBit);
+                    b.Property(e => e.ReadOnlyMemoryBytes).HasBinaryVectorDataType(BinaryVectorDataType.PackedBit);
+                });
+            });
+    }
+
+    class BinaryVectorPackedBitEntityNoAttributes : IdEntity
+    {
+        public byte[] Bytes { get; set; }
+        public Memory<byte> MemoryBytes { get; set; }
+        public ReadOnlyMemory<byte> ReadOnlyMemoryBytes { get; set; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BinaryVectorFloat32_via_model_builder_read_update(bool async)
+    {
+        var collection = database.CreateCollection<BinaryVectorFloat32EntityNoAttributes>(values: [async]);
+
+        using (var db = CreateContext())
+        {
+            db.Add(new BinaryVectorFloat32EntityNoAttributes
+            {
+                Floats = [1.1f, 2.2f, 3.3f, 4.4f],
+                MemoryFloats = new([1.1f, 2.2f, 3.3f, 4.4f]),
+                ReadOnlyMemoryFloats = new([1.1f, 2.2f, 3.3f, 4.4f]),
+            });
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        using (var db = CreateContext())
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([1.1f, 2.2f, 3.3f, 4.4f], actual.Floats);
+            Assert.Equal(new Memory<float>([1.1f, 2.2f, 3.3f, 4.4f]), actual.MemoryFloats);
+            Assert.Equal(new ReadOnlyMemory<float>([1.1f, 2.2f, 3.3f, 4.4f]), actual.ReadOnlyMemoryFloats);
+
+            actual.Floats = [4.1f, 3.2f, 2.3f, 1.4f];
+            actual.MemoryFloats = new([4.1f, 3.2f, 2.3f, 1.4f]);
+            actual.ReadOnlyMemoryFloats = new([4.1f, 3.2f, 2.3f, 1.4f]);
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        // Validate storage as correct BSON
+        var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
+
+        Assert.Contains(
+            """
+            "Floats" : { "$binary" : { "base64" : "JwAzM4NAzcxMQDMzE0AzM7M/", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemoryFloats" : { "$binary" : { "base64" : "JwAzM4NAzcxMQDMzE0AzM7M/", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemoryFloats" : { "$binary" : { "base64" : "JwAzM4NAzcxMQDMzE0AzM7M/", "subType" : "09" } }
+            """, document);
+
+        using (var db = CreateContext())
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([4.1f, 3.2f, 2.3f, 1.4f], actual.Floats);
+            Assert.Equal(new Memory<float>([4.1f, 3.2f, 2.3f, 1.4f]), actual.MemoryFloats);
+            Assert.Equal(new ReadOnlyMemory<float>([4.1f, 3.2f, 2.3f, 1.4f]), actual.ReadOnlyMemoryFloats);
+        }
+
+        SingleEntityDbContext<BinaryVectorFloat32EntityNoAttributes> CreateContext()
+            => SingleEntityDbContext.Create(collection, b =>
+            {
+                b.Entity<BinaryVectorFloat32EntityNoAttributes>(b =>
+                {
+                    b.Property(e => e.Floats).HasBinaryVectorDataType(BinaryVectorDataType.Float32);
+                    b.Property(e => e.MemoryFloats).HasBinaryVectorDataType(BinaryVectorDataType.Float32);
+                    b.Property(e => e.ReadOnlyMemoryFloats).HasBinaryVectorDataType(BinaryVectorDataType.Float32);
+                });
+            });
+    }
+
+    class BinaryVectorFloat32EntityNoAttributes : IdEntity
+    {
+        public float[] Floats { get; set; }
+        public Memory<float> MemoryFloats { get; set; }
+        public ReadOnlyMemory<float> ReadOnlyMemoryFloats { get; set; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BinaryVectorDataType_via_model_builder_Int8_read_update(bool async)
+    {
+        var collection = database.CreateCollection<BinaryVectorInt8EntityNoAttributes>(values: [async]);
+
+        using (var db = CreateContext())
+        {
+            db.Add(new BinaryVectorInt8EntityNoAttributes
+            {
+                SBytes = [1, -2, 3, -4],
+                MemorySBytes = new([1, -2, 3, -4]),
+                ReadOnlyMemorySBytes = new([1, -2, 3, -4]),
+            });
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        using (var db = CreateContext())
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([1, -2, 3, -4], actual.SBytes);
+            Assert.Equal(new Memory<sbyte>([1, -2, 3, -4]), actual.MemorySBytes);
+            Assert.Equal(new ReadOnlyMemory<sbyte>([1, -2, 3, -4]), actual.ReadOnlyMemorySBytes);
+
+            actual.SBytes = [-4, 3, -2, 1];
+            actual.MemorySBytes = new([-4, 3, -2, 1]);
+            actual.ReadOnlyMemorySBytes = new([-4, 3, -2, 1]);
+
+            Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
+        }
+
+        // Validate storage as correct BSON
+        var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
+
+        Assert.Contains(
+            """
+            "SBytes" : { "$binary" : { "base64" : "AwD8A/4B", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "MemorySBytes" : { "$binary" : { "base64" : "AwD8A/4B", "subType" : "09" } }
+            """, document);
+
+        Assert.Contains(
+            """
+            "ReadOnlyMemorySBytes" : { "$binary" : { "base64" : "AwD8A/4B", "subType" : "09" } }
+            """, document);
+
+        using (var db = CreateContext())
+        {
+            var actual = async ? await db.Entities.FirstOrDefaultAsync() : db.Entities.FirstOrDefault();
+
+            Assert.NotNull(actual);
+            Assert.Equal([-4, 3, -2, 1], actual.SBytes);
+            Assert.Equal(new Memory<sbyte>([-4, 3, -2, 1]), actual.MemorySBytes);
+            Assert.Equal(new ReadOnlyMemory<sbyte>([-4, 3, -2, 1]), actual.ReadOnlyMemorySBytes);
+        }
+
+        SingleEntityDbContext<BinaryVectorInt8EntityNoAttributes> CreateContext()
+            => SingleEntityDbContext.Create(collection, b =>
+            {
+                b.Entity<BinaryVectorInt8EntityNoAttributes>(b =>
+                {
+                    b.Property(e => e.SBytes).HasBinaryVectorDataType(BinaryVectorDataType.Int8);
+                    b.Property(e => e.MemorySBytes).HasBinaryVectorDataType(BinaryVectorDataType.Int8);
+                    b.Property(e => e.ReadOnlyMemorySBytes).HasBinaryVectorDataType(BinaryVectorDataType.Int8);
+                });
+            });
+    }
+
+    class BinaryVectorInt8EntityNoAttributes : IdEntity
+    {
+        public sbyte[] SBytes { get; set; }
+        public Memory<sbyte> MemorySBytes { get; set; }
+        public ReadOnlyMemory<sbyte> ReadOnlyMemorySBytes { get; set; }
     }
 }

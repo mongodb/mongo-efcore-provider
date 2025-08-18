@@ -21,6 +21,18 @@ namespace MongoDB.EntityFrameworkCore;
 
 internal static class Check
 {
+    public static string? NullButNotEmpty(
+        string? value,
+        [CallerArgumentExpression(nameof(value))] string parameterName = "")
+    {
+        if (value is not null && value.Length == 0)
+        {
+            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(parameterName), parameterName);
+        }
+
+        return value;
+    }
+
     public static Guid? NotEmpty(Guid? argument, [CallerArgumentExpression(nameof(argument))] string? parameterName = null)
         => argument != Guid.Empty
             ? argument

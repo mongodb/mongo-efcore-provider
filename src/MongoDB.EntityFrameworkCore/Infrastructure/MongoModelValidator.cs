@@ -77,6 +77,31 @@ public class MongoModelValidator : ModelValidator
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
         ValidateQueryableEncryption(model, logger);
+        ValidateIndexes(model, logger);
+    }
+
+    private static void ValidateIndexes(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            foreach (var index in entityType.GetDeclaredIndexes())
+            {
+                if (index.GetVectorIndexOptions() != null)
+                {
+                    if (index.Properties.Count > 1)
+                    {
+                        throw new InvalidOperationException(
+                            $"A vector index on '{entityType.DisplayName()}' is defined over properties '{string.Join(",", index.Properties.Select(e => e.Name))}'. Vector indexes can only target a single property.");
+                    }
+
+                    if (entityType.FindOwnership()?.IsUnique == false)
+                    {
+                        throw new InvalidOperationException(
+                            $"THe entity type '{entityType.DisplayName()}' cannot have a vector index because it is part of an nested collection.");
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>

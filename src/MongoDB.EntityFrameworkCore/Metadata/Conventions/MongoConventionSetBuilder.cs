@@ -59,6 +59,7 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         conventionSet.Add(new BsonIgnoreAttributeConvention(Dependencies));
         conventionSet.Add(new BsonRepresentationAttributeConvention(Dependencies));
         conventionSet.Add(new BsonRequiredPropertyAttributeConvention(Dependencies));
+        conventionSet.Add(new BinaryVectorAttributeConvention(Dependencies));
 
         // Unsupported attributes on properties that should throw not supported
         // Note: Non-property level attributes are directly checked in MongoModelValidator.

@@ -211,8 +211,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
 
                 return VisitMethodCall(methodCallExpression);
 
-            case MethodCallExpression {Arguments.Count: > 0} methodCallExpression when methodCallExpression.Arguments[0] is EntityQueryRootExpression e:
-                return base.Visit(expression);
+            case MethodCallExpression methodCallExpression:
+                return VisitMethodCall(methodCallExpression);
 
             // Unwrap include expressions.
             case IncludeExpression includeExpression:

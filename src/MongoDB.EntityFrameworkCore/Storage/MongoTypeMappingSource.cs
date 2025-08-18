@@ -16,10 +16,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Linq;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.ChangeTracking;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -60,7 +60,14 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
     private MongoTypeMapping? FindPrimitiveMapping(in TypeMappingInfo mappingInfo)
     {
         var clrType = mappingInfo.ClrType!;
-        if (clrType is {IsValueType: true} || clrType == typeof(string))
+
+        if (clrType is {IsValueType: true}
+            || clrType == typeof(string)
+            || clrType == typeof(BinaryVectorFloat32)
+            || clrType == typeof(BinaryVectorInt8)
+            || clrType == typeof(BinaryVectorPackedBit)
+            || clrType.TryGetItemType(typeof(ReadOnlyMemory<>)) != null
+            || clrType.TryGetItemType(typeof(Memory<>)) != null)
         {
             return new MongoTypeMapping(clrType);
         }
