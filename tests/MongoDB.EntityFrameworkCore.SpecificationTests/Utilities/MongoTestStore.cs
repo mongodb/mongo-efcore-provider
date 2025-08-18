@@ -47,7 +47,12 @@ public class MongoTestStore : TestStore
         await base.InitializeAsync(createContext, seed, clean).ConfigureAwait(false);
 
         using var context = createContext();
-        await ((MongoDatabaseCreator)context.GetService<IDatabaseCreator>()).SeedFromModelAsync().ConfigureAwait(false);
+        var databaseCreator = context.GetService<IDatabaseCreator>();
+        if (!await databaseCreator.EnsureCreatedAsync().ConfigureAwait(false)) // Create or update indexes
+        {
+            // Seed for tests even if we didn't create the database.
+            await ((MongoDatabaseCreator)databaseCreator).SeedFromModelAsync().ConfigureAwait(false);
+        }
     }
 #else
     protected override void Initialize(Func<DbContext> createContext, Action<DbContext>? seed, Action<DbContext>? clean)
@@ -55,7 +60,12 @@ public class MongoTestStore : TestStore
         base.Initialize(createContext, seed, clean);
 
         using var context = createContext();
-        ((MongoDatabaseCreator)context.GetService<IDatabaseCreator>()).SeedFromModel();
+        var databaseCreator = context.GetService<IDatabaseCreator>();
+        if (!databaseCreator.EnsureCreated()) // Create or update indexes
+        {
+            // Seed for tests even if we didn't create the database.
+            ((MongoDatabaseCreator)databaseCreator).SeedFromModel();
+        }
     }
 #endif
 

@@ -89,6 +89,68 @@ public static class MongoPropertyBuilderExtensions
         => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
 
     /// <summary>
+    /// Configures the <see cref="BinaryVectorDataType"/> to use when reading and writing the property value.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="binaryVectorDataType">The format to use for packing the binary vector.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder HasBinaryVectorDataType(
+        this PropertyBuilder propertyBuilder,
+        BinaryVectorDataType? binaryVectorDataType)
+    {
+        propertyBuilder.Metadata.SetBinaryVectorDataType(binaryVectorDataType);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the BSON representation that the property is stored as when targeting MongoDB.
+    /// </summary>
+    /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="binaryVectorDataType">The format to use for packing the binary vector.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder<TProperty> HasBinaryVectorDataType<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        BinaryVectorDataType? binaryVectorDataType)
+        => (PropertyBuilder<TProperty>)HasBinaryVectorDataType((PropertyBuilder)propertyBuilder, binaryVectorDataType);
+
+    /// <summary>
+    /// Configures the BSON representation that the property is stored as when targeting MongoDB.
+    /// If a null <see cref="BsonType"/> is supplied then a default storage type based on the property type will be used.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="binaryVectorDataType">The format to use for packing the binary vector.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.</returns>
+    public static IConventionPropertyBuilder? HasBinaryVectorDataType(
+        this IConventionPropertyBuilder propertyBuilder,
+        BinaryVectorDataType? binaryVectorDataType,
+        bool fromDataAnnotation = false)
+    {
+        if (!CanSetBinaryVectorDataType(propertyBuilder, binaryVectorDataType, fromDataAnnotation))
+        {
+            return null;
+        }
+
+        propertyBuilder.Metadata.SetBinaryVectorDataType(binaryVectorDataType, fromDataAnnotation);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Returns a value indicating whether the given <see cref="BsonType"/> can be set.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="binaryVectorDataType">The format to use for packing the binary vector.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns><see langword="true" /> if the <see cref="BsonType"/> can be set, <see langword="false"/> if not.</returns>
+    public static bool CanSetBinaryVectorDataType(
+        this IConventionPropertyBuilder propertyBuilder,
+        BinaryVectorDataType? binaryVectorDataType,
+        bool fromDataAnnotation = false)
+        => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.BinaryVectorDataType, fromDataAnnotation);
+
+
+    /// <summary>
     /// Configures the BSON representation that the property is stored as when targeting MongoDB.
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>

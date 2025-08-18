@@ -25,4 +25,11 @@ internal static class TestServer
         var buildInfo = database.RunCommand<BsonDocument>(new BsonDocument("buildinfo", 1), ReadPreference.Primary);
         return SemanticVersion.Parse(buildInfo["version"].AsString);
     }
+
+    private const string TestDatabasePrefix = "EFCoreTest-";
+    private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+    private static int DbCount;
+    public static string GetUniqueDatabaseName(string staticName)
+        => $"{TestDatabasePrefix}{staticName}-{TimeStamp}-{Interlocked.Increment(ref DbCount)}";
+
 }
