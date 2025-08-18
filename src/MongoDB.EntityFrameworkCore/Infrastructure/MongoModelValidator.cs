@@ -261,13 +261,7 @@ public class MongoModelValidator : ModelValidator
             }
 
             var dataKeyId = property.GetEncryptionDataKeyId();
-            if (dataKeyId == null)
-            {
-                throw new InvalidOperationException(
-                    PropertyOnEntity(property) + " is to be encrypted but no data key id has been specified.");
-            }
-
-            if (!usedDataKeys.Add(dataKeyId.Value))
+            if (dataKeyId != null && !usedDataKeys.Add(dataKeyId.Value))
             {
                 throw new InvalidOperationException(
                     PropertyOnEntity(property) +
