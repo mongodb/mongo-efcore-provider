@@ -63,4 +63,91 @@ public static class MongoIndexBuilderExtensions
         CreateIndexOptions? options,
         bool fromDataAnnotation = false)
         => indexBuilder.CanSetAnnotation(MongoAnnotationNames.CreateIndexOptions, options, fromDataAnnotation);
+
+    /// <summary>
+    ///     Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// </summary>
+    /// <param name="indexBuilder">The builder for the index being configured.</param>
+    /// <param name="similarity">Vector similarity function to use to search for top K-nearest neighbors.</param>
+    /// <param name="dimensions">Number of vector dimensions, between 1 and 8192.</param>
+    /// <returns>A builder to further configure the index.</returns>
+    public static IndexBuilder IsVectorIndex(
+        this IndexBuilder indexBuilder,
+        VectorSimilarity similarity,
+        int dimensions)
+        => indexBuilder.IsVectorIndex(new(similarity, dimensions));
+
+    /// <summary>
+    ///     Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// </summary>
+    /// <param name="indexBuilder">The builder for the index being configured.</param>
+    /// <param name="indexOptions">The options to use for the Atlas Search Vector Index.</param>
+    /// <returns>A builder to further configure the index.</returns>
+    public static IndexBuilder IsVectorIndex(
+        this IndexBuilder indexBuilder,
+        VectorIndexOptions? indexOptions)
+    {
+        indexBuilder.Metadata.SetVectorIndexOptions(indexOptions);
+
+        return indexBuilder;
+    }
+
+    /// <summary>
+    ///     Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// </summary>
+    /// <param name="indexBuilder">The builder for the index being configured.</param>
+    /// <param name="similarity">Vector similarity function to use to search for top K-nearest neighbors.</param>
+    /// <param name="dimensions">Number of vector dimensions, between 1 and 8192.</param>
+    /// <returns>A builder to further configure the index.</returns>
+    public static IndexBuilder<TEntity> IsVectorIndex<TEntity>(
+        this IndexBuilder<TEntity> indexBuilder,
+        VectorSimilarity  similarity,
+        int dimensions)
+        => (IndexBuilder<TEntity>)IsVectorIndex((IndexBuilder)indexBuilder, similarity, dimensions);
+
+    /// <summary>
+    ///     Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// </summary>
+    /// <param name="indexBuilder">The builder for the index being configured.</param>
+    /// <param name="indexOptions">The options to use for the Atlas Search Vector Index.</param>
+    /// <returns>A builder to further configure the index.</returns>
+    public static IndexBuilder<TEntity> IsVectorIndex<TEntity>(
+        this IndexBuilder<TEntity> indexBuilder,
+        VectorIndexOptions? indexOptions)
+        => (IndexBuilder<TEntity>)IsVectorIndex((IndexBuilder)indexBuilder, indexOptions);
+
+    /// <summary>
+    ///     Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// </summary>
+    /// <param name="indexBuilder">The builder for the index being configured.</param>
+    /// <param name="indexOptions">The options to use for the Atlas Search Vector Index.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.
+    /// </returns>
+    public static IConventionIndexBuilder? IsVectorIndex(
+        this IConventionIndexBuilder indexBuilder,
+        VectorIndexOptions? indexOptions,
+        bool fromDataAnnotation = false)
+    {
+        if (indexBuilder.CanSetIsVectorIndex(indexOptions, fromDataAnnotation))
+        {
+            indexBuilder.Metadata.SetVectorIndexOptions(indexOptions, fromDataAnnotation);
+            return indexBuilder;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    ///     Returns a value indicating whether the vector index can be configured.
+    /// </summary>
+    /// <param name="indexBuilder">The builder for the index being configured.</param>
+    /// <param name="indexOptions">The options to use for the Atlas Search Vector Index.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns><see langword="true" /> if the index can be configured for vectors.</returns>
+    public static bool CanSetIsVectorIndex(
+        this IConventionIndexBuilder indexBuilder,
+        VectorIndexOptions? indexOptions,
+        bool fromDataAnnotation = false)
+        => indexBuilder.CanSetAnnotation(MongoAnnotationNames.VectorIndexOptions, indexOptions, fromDataAnnotation);
 }

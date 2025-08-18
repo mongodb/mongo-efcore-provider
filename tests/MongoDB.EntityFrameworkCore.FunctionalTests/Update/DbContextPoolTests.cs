@@ -31,7 +31,9 @@ public class DbContextPoolTests(TemporaryDatabaseFixture database)
             .AddEntityFrameworkMongoDB()
             .AddDbContextPool<CustomerContext>(
                 (p, o) =>
-                    o.UseMongoDB("mongodb://localhost:27017", database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                    o.UseMongoDB(
+                            Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017",
+                            database.MongoDatabase.DatabaseNamespace.DatabaseName)
                         .UseInternalServiceProvider(p)
             )
             .BuildServiceProvider();
