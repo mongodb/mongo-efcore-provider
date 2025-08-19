@@ -14,7 +14,10 @@
  */
 
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
@@ -26,7 +29,7 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
     public void Should_insert_composite_key_entity()
     {
         var collection = database.CreateCollection<Entity>();
-        var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
+        var entity = new Entity { Id1 = "key", Id2 = 2, Data = "some text" };
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
@@ -50,7 +53,7 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
     public void Should_read_composite_key_entity()
     {
         var collection = database.CreateCollection<Entity>();
-        var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
+        var entity = new Entity { Id1 = "key", Id2 = 2, Data = "some text" };
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
@@ -75,7 +78,7 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
     public void Should_update_composite_key_entity()
     {
         var collection = database.CreateCollection<Entity>();
-        var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
+        var entity = new Entity { Id1 = "key", Id2 = 2, Data = "some text" };
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
@@ -105,7 +108,7 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
                 builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
-            var entity = new Entity {Id1 = "key", Id2 = 2, Data = "some text"};
+            var entity = new Entity { Id1 = "key", Id2 = 2, Data = "some text" };
             db.Entities.Add(entity);
             db.SaveChanges();
 
@@ -119,12 +122,33 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
         }
     }
 
+    [Fact]
+    public void Should_order_by_composite_key_entity()
+    {
+        var collection = database.CreateCollection<Entity>();
+
+        using var db = SingleEntityDbContext.Create(collection, builder =>
+            builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
+        db.Entities.AddRange(
+            new Entity { Id1 = "key", Id2 = 2 },
+            new Entity { Id1 = "key", Id2 = 1 },
+            new Entity { Id1 = "key", Id2 = 4 },
+            new Entity { Id1 = "key", Id2 = 0 },
+            new Entity { Id1 = "key2", Id2 = 2 },
+            new Entity { Id1 = "key2", Id2 = 4 },
+            new Entity { Id1 = "key2", Id2 = 3 });
+        db.SaveChanges();
+
+        var actualOrdered = db.Entities.OrderBy(e => e).ToList();
+        var expectedOrdered = actualOrdered.OrderBy(e => e.Id1).ThenBy(e => e.Id2).ToList();
+
+        Assert.Equal(expectedOrdered, actualOrdered);
+    }
+
     private class Entity
     {
         public string Id1 { get; set; }
-
         public int Id2 { get; set; }
-
         public string Data { get; set; }
     }
 }
