@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\MongoDB.EntityFrameworkCore.FunctionalTests\MongoDB.EntityFrameworkCore.FunctionalTests.csproj" />
   </ItemGroup>
 
   <Import Project="..\..\Versions.props" />

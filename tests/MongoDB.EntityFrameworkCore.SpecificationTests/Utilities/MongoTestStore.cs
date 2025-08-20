@@ -17,28 +17,29 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.TestUtilities;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 public class MongoTestStore : TestStore
 {
-    public static MongoTestStore Create(string name)
-        => new(name, shared: false);
+    private readonly bool _requiresAtlas;
 
-    public static MongoTestStore GetOrCreate(string name)
-        => new(name, shared: true);
+    public static MongoTestStore Create(string name, bool requiresAtlas)
+        => new(name, shared: false, requiresAtlas);
 
-    private MongoTestStore(string name, bool shared = true)
+    private MongoTestStore(string name, bool shared = true, bool requiresAtlas = false)
         : base(name, shared)
     {
+        _requiresAtlas = requiresAtlas;
     }
 
     protected override DbContext CreateDefaultContext()
-        => new TestStoreContext(this);
+        => throw new NotSupportedException();
 
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
-        => builder.UseMongoDB(TestServer.GetClient(), Name);
+        => builder.UseMongoDB(_requiresAtlas ? TestServer.Atlas.Client : TestServer.Default.Client, Name);
 
 #if EF9
     protected override async Task InitializeAsync(Func<DbContext> createContext, Func<DbContext, Task>? seed,
@@ -71,15 +72,10 @@ public class MongoTestStore : TestStore
 
 #if !EF9
     public override void Clean(DbContext context)
-        => TestServer.GetClient().DropDatabase(Name);
-    #endif
-
-    public override async Task CleanAsync(DbContext context)
-        => await TestServer.GetClient().DropDatabaseAsync(Name).ConfigureAwait(false);
-
-    private class TestStoreContext(MongoTestStore testStore) : DbContext
     {
-        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-            => optionsBuilder.UseMongoDB(TestServer.GetClient(), testStore.Name);
     }
+#endif
+
+    public override Task CleanAsync(DbContext context)
+        => Task.CompletedTask;
 }

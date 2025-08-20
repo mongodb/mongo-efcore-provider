@@ -23,8 +23,8 @@ using MongoDB.EntityFrameworkCore.Metadata;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
 [XUnitCollection("StorageTests")]
-public class IndexTests(TemporaryDatabaseFixture database)
-    : IClassFixture<TemporaryDatabaseFixture>
+public class IndexTests(AtlasTemporaryDatabaseFixture database)
+    : IClassFixture<AtlasTemporaryDatabaseFixture>
 {
     class SimpleEntity
     {

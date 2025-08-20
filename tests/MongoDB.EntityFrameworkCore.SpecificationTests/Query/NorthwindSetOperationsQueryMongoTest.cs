@@ -62,7 +62,7 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect(async))).Message);
 
         AssertMql(
@@ -124,7 +124,7 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Union_Intersect(async))).Message);
 
         AssertMql(
@@ -761,7 +761,7 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }, { "$unionWith" 
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_non_entity(async))).Message);
 
         AssertMql(
@@ -774,7 +774,7 @@ Customers.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_nested(async))).Message);
 
         AssertMql(
@@ -843,7 +843,7 @@ Customers.{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_v" : "$
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_on_distinct(async))).Message);
 
         AssertMql(

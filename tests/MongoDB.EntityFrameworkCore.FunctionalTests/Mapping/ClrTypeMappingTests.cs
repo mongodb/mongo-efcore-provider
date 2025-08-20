@@ -23,8 +23,8 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
 [XUnitCollection("MappingTests")]
-public class ClrTypeMappingTests(TemporaryDatabaseFixture database)
-    : IClassFixture<TemporaryDatabaseFixture>
+public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
+    : IClassFixture<AtlasTemporaryDatabaseFixture>
 {
     private readonly Random _random = new();
 

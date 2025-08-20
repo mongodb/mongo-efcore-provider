@@ -13,18 +13,61 @@
  * limitations under the License.
  */
 
+using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Misc;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-internal static class TestServer
+public class TestServer(string connectionString)
 {
-    public static readonly string ConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
-    private static readonly MongoClient MongoClient = new(ConnectionString);
+    public static TestServer Default { get; } = new(GetDefaultConnectionString());
+    public static TestServer Atlas { get; } = new(Environment.GetEnvironmentVariable("ATLAS_SEARCH") ?? GetDefaultConnectionString());
 
-    public static IMongoClient GetClient()
-        => MongoClient;
+    private static string GetDefaultConnectionString()
+        => Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+
+    public string ConnectionString { get; } = connectionString;
+
+    public MongoClient Client { get; } = new(connectionString);
+
+    private SemanticVersion _serverVersion;
+    private SemanticVersion ServerVersion
+        => LazyInitializer.EnsureInitialized(ref _serverVersion, () => QueryServerVersion());
+
+    public bool SupportsBitwiseOperators
+        => ServerVersion >= new SemanticVersion(6, 3, 0);
+
+    private SemanticVersion QueryServerVersion()
+    {
+        var database = Client.GetDatabase("__admin");
+        var buildInfo = database.RunCommand<BsonDocument>(new BsonDocument("buildinfo", 1), ReadPreference.Primary);
+        return SemanticVersion.Parse(buildInfo["version"].AsString);
+    }
+
+    private const string TestDatabasePrefix = "EFCoreTest-";
+    private readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+    private int _dbCount;
+    public string GetUniqueDatabaseName(string staticName)
+        => $"{TestDatabasePrefix}{staticName}-{TimeStamp}-{Interlocked.Increment(ref _dbCount)}";
 
     public static readonly IMongoClient BrokenClient
-        = new MongoClient(new MongoClientSettings { Server = new MongoServerAddress("localhost", 27000), ServerSelectionTimeout = TimeSpan.Zero, ConnectTimeout = TimeSpan.FromSeconds(1)});
+        = new MongoClient(new MongoClientSettings
+        {
+            Server = new MongoServerAddress("localhost", 27000),
+            ServerSelectionTimeout = TimeSpan.Zero,
+            ConnectTimeout = TimeSpan.FromSeconds(1)
+        });
 }
+
+// internal static class TestServer
+// {
+//     public static readonly string ConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+//     private static readonly MongoClient MongoClient = new(ConnectionString);
+//
+//     public static IMongoClient GetClient()
+//         => MongoClient;
+//
+//     public static readonly IMongoClient BrokenClient
+//         = new MongoClient(new MongoClientSettings { Server = new MongoServerAddress("localhost", 27000), ServerSelectionTimeout = TimeSpan.Zero, ConnectTimeout = TimeSpan.FromSeconds(1)});
+// }

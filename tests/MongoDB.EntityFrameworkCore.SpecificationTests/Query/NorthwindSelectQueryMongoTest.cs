@@ -1136,7 +1136,7 @@ Orders.{ "$project" : { "_v" : { "$ifNull" : ["$EmployeeID", 0] }, "_id" : 0 } }
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Reverse_changes_asc_order_to_desc(async))).Message);
 
@@ -1150,7 +1150,7 @@ Employees.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Reverse_changes_desc_order_to_asc(async))).Message);
 
@@ -1164,7 +1164,7 @@ Employees.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Reverse_after_multiple_orderbys(async))).Message);
 
@@ -1178,7 +1178,7 @@ Employees.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Reverse_after_orderby_thenby(async))).Message);
 
         AssertMql(
@@ -1191,7 +1191,7 @@ Employees.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Reverse_in_subquery_via_pushdown(async))).Message);
 
@@ -1205,7 +1205,7 @@ Employees.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Reverse_after_orderBy_and_take(async))).Message);
 
@@ -1738,7 +1738,7 @@ Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : false } 
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Reverse_without_explicit_ordering(async))).Message);
 

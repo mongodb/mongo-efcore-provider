@@ -21,7 +21,23 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class TemporaryDatabaseFixture
+public class TemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+{
+    public TemporaryDatabaseFixture()
+        : base(TestServer.Default.Client)
+    {
+    }
+}
+
+public class AtlasTemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+{
+    public AtlasTemporaryDatabaseFixture()
+        : base(TestServer.Atlas.Client)
+    {
+    }
+}
+
+public abstract class TemporaryDatabaseFixtureBase
 {
     public const string TestDatabasePrefix = "EFCoreTest-";
 
@@ -30,9 +46,9 @@ public class TemporaryDatabaseFixture
 
     private static int CollectionIdFallback;
 
-    public TemporaryDatabaseFixture()
+    protected TemporaryDatabaseFixtureBase(MongoClient client)
     {
-        Client = TestServer.GetClient();
+        Client = client;
         MongoDatabase = Client.GetDatabase(GetUniqueDatabaseName);
     }
 
