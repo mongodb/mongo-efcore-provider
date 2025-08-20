@@ -22,6 +22,7 @@ using Microsoft.EntityFrameworkCore.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
@@ -34,8 +35,10 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
 #endif
     new()
 {
+    protected override string StoreName { get; } = TestServer.Default.GetUniqueDatabaseName("Northwind");
+
     protected override ITestStoreFactory TestStoreFactory
-        => MongoTestStoreFactory.Instance;
+        => MongoTestStoreFactory.Default;
 
     protected override bool UsePooling
         => false;

@@ -29,7 +29,7 @@ public class ReadOnlySampleGuidesFixture
 {
     public ReadOnlySampleGuidesFixture()
     {
-        Client = TestServer.GetClient();
+        Client = TestServer.Default.Client;
         MongoDatabase = Client.GetDatabase("EFCoreTest-SampleGuides");
         SampleGuides.Populate(MongoDatabase);
     }

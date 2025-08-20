@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -578,7 +579,7 @@ Books.{ "$match" : { "IsPublished" : true } }, { "$vectorSearch" : { "queryVecto
         var inputVector = new[] { 0.33f, -0.52f };
 
         var queryable = specifyIndex
-            ? context.Set<Book>().VectorSearch(e => e.Preface.Floats, inputVector, limit: 4, new() { IndexName = "PrefaceFloatsIndex" })
+            ? context.Set<Book>().VectorSearch(e => e.Preface.Floats, inputVector, limit: 4, new() { IndexName = "FloatsVectorIndex" })
             : context.Set<Book>().VectorSearch(e => e.Preface.Floats, inputVector, limit: 4);
 
         var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
@@ -594,7 +595,7 @@ Books.{ "$match" : { "IsPublished" : true } }, { "$vectorSearch" : { "queryVecto
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "PrefaceFloatsIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex" } }
 """);
     }
 
@@ -663,10 +664,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
     public class VectorSearchFixture : SharedStoreFixtureBase<PoolableDbContext>
     {
-        private static readonly string DatabaseName = TestServer.GetUniqueDatabaseName("VectorSearchTest");
-
-        protected override string StoreName
-            => DatabaseName;
+        protected override string StoreName { get; } = TestServer.Atlas.GetUniqueDatabaseName("VectorSearch");
 
         protected override void OnModelCreating(ModelBuilder modelBuilder, DbContext context)
             => modelBuilder.Entity<Book>(b =>
@@ -674,7 +672,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
                 b.ToCollection("Books");
                 b.OwnsOne(x => x.Preface, b =>
                 {
-                    b.HasIndex(e => e.Floats,"PrefaceFloatsIndex").IsVectorIndex(VectorSimilarity.Cosine, 2);
+                    b.HasIndex(e => e.Floats).IsVectorIndex(VectorSimilarity.Cosine, 2);
                 });
 
                 b.HasIndex(e => e.Floats, "FloatsIndex").IsVectorIndex(VectorSimilarity.Cosine, 2);
@@ -805,6 +803,6 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
             => (TestMqlLoggerFactory)ListLoggerFactory;
 
         protected override ITestStoreFactory TestStoreFactory
-            => MongoTestStoreFactory.Instance;
+            => MongoTestStoreFactory.Atlas;
     }
 }
