@@ -401,7 +401,7 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         var queryableEncryptionSchema = _schemaProvider.GetQueryableEncryptionSchema();
         var usesQueryableEncryption = queryableEncryptionSchema.Count > 0 ||
-                                      options?.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.ServerOnly;
+                                      options?.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.Ignore;
 
         var preconfiguredMongoClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient)) ?? options?.MongoClient;
         if (preconfiguredMongoClient != null)

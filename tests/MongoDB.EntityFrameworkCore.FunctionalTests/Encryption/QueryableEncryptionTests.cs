@@ -83,7 +83,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                     p.ToCollection(collectionName);
                     p.Property(x => x.SSN).IsEncrypted(Guid.NewGuid());
                 });
-            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.Ignore));
 
             var actualPatients = db.Patients.ToList();
 
@@ -129,7 +129,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                     p.ToCollection(collectionName);
                     p.Property(x => x.SSN).IsEncrypted(Guid.NewGuid());
                 });
-            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+            }, ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.Ignore));
 
             var actualPatients = await db.Patients.ToListAsync();
 
@@ -168,7 +168,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         // Read it without a client schema (wrong encryption data key id)
         {
             using var db = CreateContext(cryptProvider, mb => { mb.Entity<Patient>(p => { p.ToCollection(collectionName); }); },
-                ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+                ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.Ignore));
 
             var actualPatients = db.Patients.ToList();
 
@@ -208,7 +208,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         {
             await using var db = CreateContext(cryptProvider,
                 mb => { mb.Entity<Patient>(p => { p.ToCollection(collectionName); }); },
-                ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ServerOnly));
+                ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.Ignore));
 
             var actualPatients = await db.Patients.ToListAsync();
 
@@ -407,7 +407,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         }
 
         MongoOptionsExtension OptionsConfig(MongoOptionsExtension options)
-            => options.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ClientOnly);
+            => options.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ApplyToClient);
     }
 
     [QueryableEncryptionTheory]
