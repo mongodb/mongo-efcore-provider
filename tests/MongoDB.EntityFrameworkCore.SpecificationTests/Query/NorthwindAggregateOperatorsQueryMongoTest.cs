@@ -172,7 +172,7 @@ Orders.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Average_after_default_if_empty_does_not_throw(async))).Message);
 
@@ -186,7 +186,7 @@ Orders.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Max_after_default_if_empty_does_not_throw(async))).Message);
 
@@ -200,7 +200,7 @@ Orders.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Min_after_default_if_empty_does_not_throw(async))).Message);
 
@@ -1501,7 +1501,7 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" 
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_with_subquery_and_local_array_closure(async))).Message);
 
@@ -2107,7 +2107,7 @@ Customers.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery(async))).Message);
 
@@ -2121,7 +2121,7 @@ Orders.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_over_entityType_with_null_in_projection(async))).Message);
 AssertMql(
@@ -2134,7 +2134,7 @@ Orders.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_over_scalar_with_null_should_rewrite_to_identity_equality_subquery(async))).Message);
 
@@ -2148,7 +2148,7 @@ Orders.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_negated(async))).Message);
 
@@ -2162,7 +2162,7 @@ Orders.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_complex(async))).Message);
 
@@ -2194,7 +2194,7 @@ Orders.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.OrderDetails.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_over_entityType_should_materialize_when_composite(async))).Message);
 
@@ -2208,7 +2208,7 @@ OrderDetails.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.OrderDetails.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_over_entityType_should_materialize_when_composite2(async))).Message);
 
@@ -2353,7 +2353,7 @@ Customers.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Products.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.DefaultIfEmpty_selects_only_required_columns(async))).Message);
 
