@@ -167,13 +167,21 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                     var efProperty = entityType.FindProperty(propertyName);
                     if (efProperty != null)
                     {
-                        var elementName = efProperty.IsPrimaryKey() && entityType.FindPrimaryKey()?.Properties.Count > 1
-                            ? "_id." + efProperty.GetElementName()
-                            : efProperty.GetElementName();
-                        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(source.Type, efProperty.ClrType);
+                        var doc = source;
+
+                        // Composite keys need to go via the _id document
+                        var isCompositeKeyAccess = efProperty.IsPrimaryKey() && entityType.FindPrimaryKey()?.Properties.Count > 1;
+                        if (isCompositeKeyAccess)
+                        {
+                            var mqlFieldDoc = MqlFieldMethodInfo.MakeGenericMethod(source.Type, typeof(BsonValue));
+                            doc = Expression.Call(null, mqlFieldDoc, source, Expression.Constant("_id"),
+                                Expression.Constant(BsonValueSerializer.Instance));
+                        }
+
+                        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(doc.Type, efProperty.ClrType);
                         var serializer = BsonSerializerFactory.CreateTypeSerializer(efProperty);
-                        var callExpression = Expression.Call(null, mqlField, source,
-                            Expression.Constant(elementName),
+                        var callExpression = Expression.Call(null, mqlField, doc,
+                            Expression.Constant(efProperty.GetElementName()),
                             Expression.Constant(serializer));
                         return ConvertIfRequired(callExpression, methodCallExpression.Method.ReturnType);
                     }
