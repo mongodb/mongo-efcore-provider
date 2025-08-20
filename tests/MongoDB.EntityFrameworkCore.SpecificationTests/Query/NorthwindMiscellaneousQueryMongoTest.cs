@@ -270,12 +270,11 @@ Customers.{ "$sort" : { "_id" : 1 } }
 
     public override async Task Entity_equality_orderby_descending_composite_key(bool async)
     {
-        // Fails: Composite key order issue EF-251
-        await Assert.ThrowsAsync<EqualException>(() => base.Entity_equality_orderby_descending_composite_key(async));
+        await base.Entity_equality_orderby_descending_composite_key(async);
 
         AssertMql(
             """
-OrderDetails.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$getField" : { "field" : "_id.OrderID", "input" : "$$ROOT" } }, "_key2" : { "$getField" : { "field" : "_id.ProductID", "input" : "$$ROOT" } } } }, { "$sort" : { "_key1" : -1, "_key2" : -1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
+OrderDetails.{ "$sort" : { "_id.OrderID" : -1, "_id.ProductID" : -1 } }
 """);
     }
 
