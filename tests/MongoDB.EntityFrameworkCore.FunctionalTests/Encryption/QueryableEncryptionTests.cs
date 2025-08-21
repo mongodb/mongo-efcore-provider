@@ -50,7 +50,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
-    public void Server_schema_is_used_when_in_server_only_mode(CryptProvider cryptProvider)
+    public void Server_schema_is_used_when_mode_is_ignore(CryptProvider cryptProvider)
     {
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
         var dataKeyId = CreateDataKey();
@@ -74,7 +74,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             db.SaveChanges();
         }
 
-        // Read it without a client schema (wrong encryption data key id)
+        // Read it ignoring client schema (wrong encryption data key id would throw if used)
         {
             using var db = CreateContext(cryptProvider, mb =>
             {
@@ -96,7 +96,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [QueryableEncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
-    public async Task Server_schema_is_used_when_in_server_only_mode_async(CryptProvider cryptProvider)
+    public async Task Server_schema_is_used_when_mode_is_ignore_async(CryptProvider cryptProvider)
     {
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
         var dataKeyId = CreateDataKey();
@@ -120,7 +120,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             await db.SaveChangesAsync();
         }
 
-        // Read it without a client schema (wrong encryption data key id)
+        // Read it ignoring client schema (wrong encryption data key id would throw if used)
         {
             await using var db = CreateContext(cryptProvider, mb =>
             {
@@ -165,10 +165,21 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             db.SaveChanges();
         }
 
-        // Read it without a client schema (wrong encryption data key id)
+        // Read it with ignored client schema
         {
             using var db = CreateContext(cryptProvider, mb => { mb.Entity<Patient>(p => { p.ToCollection(collectionName); }); },
                 ob => ob.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.Ignore));
+
+            var actualPatients = db.Patients.ToList();
+
+            Assert.Contains(expectedPatients[0].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Contains(expectedPatients[1].SSN, actualPatients.Select(p => p.SSN));
+            Assert.Equal(2, actualPatients.Count);
+        }
+
+        // Read it with no client schema
+        {
+            using var db = CreateContext(cryptProvider, mb => { mb.Entity<Patient>(p => { p.ToCollection(collectionName); }); });
 
             var actualPatients = db.Patients.ToList();
 
@@ -368,46 +379,6 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
                     .IsEncrypted(dataKeyId);
             });
         }
-    }
-
-    [QueryableEncryptionTheory]
-    [InlineData(CryptProvider.Mongocryptd)]
-    [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
-    public void IsEncrypted_round_trips_string_with_server_schema(CryptProvider cryptProvider)
-    {
-        var dataKeyId = CreateDataKey();
-        var samplePatients = CreateSamplePatients;
-        var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
-
-        {
-            using var db = CreateContext(cryptProvider, ModelConfig, OptionsConfig);
-            db.Database.EnsureCreated();
-            db.Patients.AddRange(samplePatients);
-            db.SaveChanges();
-        }
-
-        {
-            using var db = CreateContext(cryptProvider, ModelConfig, OptionsConfig);
-            db.Database.EnsureCreated(); // Ensure handles existing collection/schema
-            foreach (var actual in db.Patients)
-            {
-                var expected = samplePatients.FirstOrDefault(p => p.Id == actual.Id);
-                Assert.Equal(expected.SSN, actual.SSN);
-            }
-        }
-
-        void ModelConfig(ModelBuilder mb)
-        {
-            mb.Entity<Patient>(p =>
-            {
-                p.ToCollection("Patient_" + collectionName);
-                p.Property(x => x.SSN)
-                    .IsEncrypted(dataKeyId);
-            });
-        }
-
-        MongoOptionsExtension OptionsConfig(MongoOptionsExtension options)
-            => options.WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.ApplyToClient);
     }
 
     [QueryableEncryptionTheory]
