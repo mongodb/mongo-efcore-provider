@@ -400,42 +400,24 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
 
         var queryableEncryptionSchema = _schemaProvider.GetQueryableEncryptionSchema();
-        var usesQueryableEncryption = queryableEncryptionSchema.Count > 0 ||
-                                      options?.QueryableEncryptionSchemaMode == QueryableEncryptionSchemaMode.Ignore;
+        var applyQueryableEncryptionSchema = queryableEncryptionSchema.Count > 0 &&
+                                                   options?.QueryableEncryptionSchemaMode != QueryableEncryptionSchemaMode.Ignore;
+
+        var createOwnMongoClient = applyQueryableEncryptionSchema || MongoClientSettingsHelper.HasMongoClientOptions(options);
 
         var preconfiguredMongoClient = (IMongoClient?)serviceProvider.GetService(typeof(IMongoClient)) ?? options?.MongoClient;
         if (preconfiguredMongoClient != null)
         {
-            if (usesQueryableEncryption)
+            if (createOwnMongoClient)
             {
                 throw new InvalidOperationException(
-                    "Cannot activate Queryable Encryption with a pre-configured MongoClient. Either use ConnectionString or ClientSettings options instead.");
+                    "Cannot activate encryption with a pre-configured MongoClient. Either use ConnectionString or ClientSettings options instead.");
             }
 
             return preconfiguredMongoClient;
         }
 
-        var clientSettings = options?.ConnectionString != null
-            ? MongoClientSettings.FromConnectionString(options.ConnectionString)
-            : options?.ClientSettings?.Clone();
-
-        if (clientSettings == null)
-        {
-            throw new InvalidOperationException(
-                "Unable to create or obtain a MongoClient. Either provide ClientSettings, a ConnectionString, or a " +
-                "MongoClient via the DbContextOptions, or register an implementation of IMongoClient with the ServiceProvider.");
-        }
-
-        if (usesQueryableEncryption)
-        {
-            if (options == null)
-            {
-                throw new InvalidOperationException("Queryable Encryption requires MongoOptions to be set.");
-            }
-
-            QueryableEncryptionSettingsHelper.ApplyQueryableEncryptionSettings(options, clientSettings, queryableEncryptionSchema);
-        }
-
-        return new MongoClient(clientSettings);
+        var mongoClientSettings = MongoClientSettingsHelper.CreateSettings(options, queryableEncryptionSchema);
+        return new MongoClient(mongoClientSettings);
     }
 }
