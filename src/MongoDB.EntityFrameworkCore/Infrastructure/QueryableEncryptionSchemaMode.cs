@@ -13,8 +13,6 @@
  * limitations under the License.
  */
 
-using Microsoft.EntityFrameworkCore.Infrastructure;
-
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
 namespace MongoDB.EntityFrameworkCore;
 
@@ -24,19 +22,19 @@ namespace MongoDB.EntityFrameworkCore;
 public enum QueryableEncryptionSchemaMode
 {
     /// <summary>
-    /// The schema only exists on the client. The server will not enforce any Queryable Encryption for other clients.
+    /// The IsEncrypted field configuration is only applied to the client.
     /// </summary>
     /// <remarks>
-    /// This is intended for local or pre-production environments where the schema might change before initial  production release.
+    /// This is intended for local or pre-production environments where the schema may change during development.
     /// </remarks>
-    ClientOnly,
+    ApplyToClient,
 
     /// <summary>
-    /// The schema from the client is ignored and only the server-side is respected.
+    /// The IsEncrypted field configuration is ignored so that server schema may be used exclusively.
     /// </summary>
     /// <remarks>
-    /// This mode is intended for existing applications where the Queryable Encryption schema already exists on the server
-    /// and any annotations in the client should be ignored.
+    /// This is intended for situations where the Queryable Encryption schema already exists on the server
+    /// and any field-level configuration on the client should be ignored.
     /// </remarks>
-    ServerOnly
+    Ignore
 }
