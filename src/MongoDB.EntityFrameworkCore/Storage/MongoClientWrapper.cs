@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -112,6 +113,9 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
+            // Don't try to access Atlas-specific features unless an Atlas vector index is defined.
+            var hasSearchIndexes = entityType.GetIndexes().Any(i => i.GetVectorIndexOptions().HasValue);
+
             var collectionName = entityType.GetCollectionName();
             if (!collectionNames.Contains(collectionName))
             {
@@ -132,7 +136,8 @@ public class MongoClientWrapper : IMongoClientWrapper
                 existingIndexesMap[collectionName] =  indexes;
             }
 
-            if (!existingSearchIndexesMap.TryGetValue(collectionName, out var searchIndexes))
+            if (hasSearchIndexes &&
+                !existingSearchIndexesMap.TryGetValue(collectionName, out var searchIndexes))
             {
                 using var cursor = Database.GetCollection<BsonDocument>(collectionName).SearchIndexes.List();
                 searchIndexes = cursor.ToList().Select(i => i["name"].AsString).ToList();
@@ -214,6 +219,9 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
+            // Don't try to access Atlas-specific features unless an Atlas vector index is defined.
+            var hasSearchIndexes = entityType.GetIndexes().Any(i => i.GetVectorIndexOptions().HasValue);
+
             var collectionName = entityType.GetCollectionName();
             if (!collectionNames.Contains(collectionName))
             {
@@ -237,7 +245,8 @@ public class MongoClientWrapper : IMongoClientWrapper
                 existingIndexesMap[collectionName] =  indexes;
             }
 
-            if (!existingSearchIndexesMap.TryGetValue(collectionName, out var searchIndexes))
+            if (hasSearchIndexes
+                && !existingSearchIndexesMap.TryGetValue(collectionName, out var searchIndexes))
             {
                 using var cursor = await Database.GetCollection<BsonDocument>(collectionName)
                     .SearchIndexes.ListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -321,7 +330,6 @@ public class MongoClientWrapper : IMongoClientWrapper
         Dictionary<string, List<CreateSearchIndexModel>?> searchIndexModelsMap)
     {
         var existingIndexes = existingIndexesMap[collectionName]!;
-        var existingSearchIndexes = existingSearchIndexesMap[collectionName]!;
 
         if (!indexModelsMap.TryGetValue(collectionName, out var indexModels))
         {
@@ -329,7 +337,9 @@ public class MongoClientWrapper : IMongoClientWrapper
             indexModelsMap[collectionName] = indexModels;
         }
 
-        if (!searchIndexModelsMap.TryGetValue(collectionName, out var searchIndexModels))
+        var mayHaveSearchIndexes = existingSearchIndexesMap.TryGetValue(collectionName, out var existingSearchIndexes);
+        if (!searchIndexModelsMap.TryGetValue(collectionName, out var searchIndexModels)
+            && mayHaveSearchIndexes)
         {
             searchIndexModels = [];
             searchIndexModelsMap[collectionName] = searchIndexModels;
@@ -337,31 +347,36 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         foreach (var index in entityType.GetIndexes().Where(i => !i.GetVectorIndexOptions().HasValue))
         {
-            var name = index.Name ?? MakeIndexName(index, path);
+            var name = index.Name;
+            Debug.Assert(name != null, "Index name should have been set by IndexNamingConvention.");
+
             if (!existingIndexes.Contains(name))
             {
                 existingIndexes.Add(name);
-                indexModels!.Add(CreateIndexDocument(index, name, path));
+                indexModels!.Add(index.CreateIndexDocument(name, path));
             }
         }
 
         foreach (var key in entityType.GetKeys().Where(k => !k.IsPrimaryKey()))
         {
-            var name = MakeIndexName(key, path);
+            var name = key.MakeIndexName(path);
             if (!existingIndexes.Contains(name))
             {
                 existingIndexes.Add(name);
-                indexModels!.Add(CreateKeyIndexDocument(key, name, path));
+                indexModels!.Add(key.CreateKeyIndexDocument(name, path));
             }
         }
 
         foreach (var index in entityType.GetIndexes().Where(i => i.GetVectorIndexOptions().HasValue))
         {
+            var name = index.Name;
+            Debug.Assert(name != null, "Index name should have been set by IndexNamingConvention.");
+
             var options = index.GetVectorIndexOptions()!.Value;
-            var name = index.Name ?? index.Name ?? index.Properties.Single().Name + "VectorIndex";
-            if (!existingSearchIndexes.Contains(name))
+            if (mayHaveSearchIndexes
+                && !existingSearchIndexes!.Contains(name))
             {
-                searchIndexModels!.Add(CreateSearchIndexDocument(index, name, path, options));
+                searchIndexModels!.Add(index.CreateSearchIndexDocument(name, path, options));
                 existingSearchIndexes.Add(name);
             }
         }
@@ -374,35 +389,6 @@ public class MongoClientWrapper : IMongoClientWrapper
             var newPath = path.Append(elementName).ToArray();
             BuildIndexes(model, ownedEntityType, newPath, collectionName, existingIndexesMap, existingSearchIndexesMap, indexModelsMap, searchIndexModelsMap);
         }
-    }
-
-    private static string MakeIndexName(IIndex index, string[] path)
-    {
-        // Mimic the servers index naming convention using the property names and directions
-        var parts = new string[index.Properties.Count * 2];
-
-        var propertyIndex = 0;
-        var partsIndex = 0;
-        foreach (var property in index.Properties)
-        {
-            parts[partsIndex++] = property.GetElementName();
-            parts[partsIndex++] = GetDescending(index, propertyIndex++) ? "-1" : "1";
-        }
-
-        return string.Join('_', path.Concat(parts));
-    }
-
-    private static string MakeIndexName(IKey key, string[] path)
-    {
-        var parts = new string[key.Properties.Count];
-
-        var partsIndex = 0;
-        foreach (var property in key.Properties)
-        {
-            parts[partsIndex++] = property.GetElementName() + "_1";
-        }
-
-        return string.Join('_', path.Concat(parts));
     }
 
     /// <inheritdoc />
@@ -469,72 +455,6 @@ public class MongoClientWrapper : IMongoClientWrapper
 
     private ListDatabaseNamesOptions BuildListDbNameFilterOptions()
         => new() { Filter = Builders<BsonDocument>.Filter.Eq("name", _databaseName) };
-
-    private static CreateIndexModel<BsonDocument> CreateIndexDocument(IIndex index, string indexName, string[] path)
-    {
-        var doc = new BsonDocument();
-        var propertyIndex = 0;
-
-        foreach (var property in index.Properties)
-        {
-            doc.Add(string.Join('.', path.Append(property.GetElementName())), GetDescending(index, propertyIndex++) ? -1 : 1);
-        }
-
-        var options = index.GetCreateIndexOptions() ?? new CreateIndexOptions<BsonDocument>();
-        options.Name ??= indexName;
-        options.Unique ??= index.IsUnique;
-
-        return new CreateIndexModel<BsonDocument>(doc, options);
-    }
-
-    private static CreateSearchIndexModel CreateSearchIndexDocument(IIndex index, string indexName, string[] path, VectorIndexOptions vectorIndexOptions)
-    {
-        var similarityValue = vectorIndexOptions.Similarity == VectorSimilarity.DotProduct
-            ? "dotProduct" // Because neither "DotProduct" or "dotproduct" are allowed.
-            : vectorIndexOptions.Similarity.ToString().ToLowerInvariant();
-
-        var pathString = $", path: '{string.Join('.', path.Append(index.Properties.Single().GetElementName()))}'";
-        var dimensions = $", numDimensions: {vectorIndexOptions.Dimensions}";
-        var similarity = $", similarity: '{similarityValue}'";
-
-        var quantization = vectorIndexOptions.Quantization.HasValue
-            ? $", quantization: '{vectorIndexOptions.Quantization.ToString()?.ToLower()}'"
-            : "";
-
-        var hnswOptions = vectorIndexOptions.HnswMaxEdges != null || vectorIndexOptions.HnswNumEdgeCandidates != null
-            ? $"'hnswOptions': {{ 'maxEdges': {vectorIndexOptions.HnswMaxEdges ?? 16}, 'numEdgeCandidates': {vectorIndexOptions.HnswNumEdgeCandidates ?? 100} }}"
-            : "";
-
-        var model = new CreateSearchIndexModel(
-            indexName,
-            SearchIndexType.VectorSearch,
-            BsonDocument.Parse(
-            $"{{ fields: [ {{ type: 'vector'{pathString}{dimensions}{similarity}{quantization}{hnswOptions} }} ] }}"));
-
-        return model;
-    }
-
-    private static CreateIndexModel<BsonDocument> CreateKeyIndexDocument(IKey key, string indexName, string[] path)
-    {
-        var doc = new BsonDocument();
-
-        foreach (var property in key.Properties)
-        {
-            doc.Add(string.Join('.', path.Append(property.GetElementName())), 1);
-        }
-
-        var options = new CreateIndexOptions<BsonDocument> { Name = indexName, Unique = true };
-        return new CreateIndexModel<BsonDocument>(doc, options);
-    }
-
-    private static bool GetDescending(IIndex index, int propertyIndex)
-        => index.IsDescending switch
-        {
-            null => false,
-            { Count: 0 } => true,
-            { } i when i.Count < propertyIndex => false,
-            { } i => i.ElementAtOrDefault(propertyIndex)
-        };
 
     private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
     {

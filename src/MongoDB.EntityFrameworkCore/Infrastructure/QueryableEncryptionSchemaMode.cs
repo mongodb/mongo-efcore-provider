@@ -17,7 +17,7 @@
 namespace MongoDB.EntityFrameworkCore;
 
 /// <summary>
-/// How Queryable Encryption schemas are managed by the MongoDB EF Core Provider.
+/// How Queryable Encryption schemas are managed by the MongoDB EF Provider.
 /// </summary>
 public enum QueryableEncryptionSchemaMode
 {

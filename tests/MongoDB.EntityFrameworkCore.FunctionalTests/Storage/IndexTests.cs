@@ -141,8 +141,8 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         db.Database.EnsureCreated();
 
         Assert.Contains(
-            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF Core model. " +
-            "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF Core.",
+            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF model. " +
+            "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF.",
             Assert.Throws<InvalidOperationException>(
                 () => db.Set<SimpleEntity>().VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" })).Message);
     }
@@ -161,7 +161,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         db.Database.EnsureCreated();
 
         Assert.Contains(
-            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF Core model. " +
+            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF model. " +
             "Vector query searches must use one of the indexes defined on the EF model.",
             Assert.Throws<InvalidOperationException>(
                 () => db.Set<SimpleEntity>().VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" })).Message);

@@ -232,8 +232,8 @@ public static class MongoPropertyExtensions
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
-            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {
-                property.DeclaringType.Name} entity.");
+            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field '{property.Name}' of '{
+                property.DeclaringType.Name}' entity.");
         }
 
         property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind);
@@ -253,8 +253,8 @@ public static class MongoPropertyExtensions
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
-            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {
-                property.DeclaringType.Name} entity.");
+            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field '{property.Name}' of '{
+                property.DeclaringType.Name}' entity.");
         }
 
         property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind, fromDataAnnotation);

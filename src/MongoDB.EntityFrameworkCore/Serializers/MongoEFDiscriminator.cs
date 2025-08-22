@@ -25,7 +25,7 @@ using MongoDB.Bson.Serialization.Conventions;
 namespace MongoDB.EntityFrameworkCore.Serializers;
 
 /// <summary>
-/// Provides a bridge between EF Core and the MongoDB C# driver for handling discriminator values.
+/// Provides a bridge between EF and the MongoDB C# driver for handling discriminator values.
 /// </summary>
 /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> entity that forms part of the hierarchy.</param>
 internal class MongoEFDiscriminator(IReadOnlyEntityType entityType) :
