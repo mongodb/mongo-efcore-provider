@@ -86,7 +86,8 @@ public class MongoModelValidator : ModelValidator
         {
             foreach (var index in entityType.GetDeclaredIndexes())
             {
-                if (index.GetVectorIndexOptions() != null)
+                var indexOptions = index.GetVectorIndexOptions();
+                if (indexOptions != null)
                 {
                     if (index.Properties.Count > 1)
                     {
@@ -97,7 +98,21 @@ public class MongoModelValidator : ModelValidator
                     if (entityType.FindOwnership()?.IsUnique == false)
                     {
                         throw new InvalidOperationException(
-                            $"THe entity type '{entityType.DisplayName()}' cannot have a vector index because it is part of an nested collection.");
+                            $"The entity type '{entityType.DisplayName()}' cannot have a vector index because it is part of an nested collection.");
+                    }
+
+                    var quantization = indexOptions.Value.Quantization;
+                    if (quantization.HasValue && ((int)quantization.Value < 0 || (int)quantization.Value > 2))
+                    {
+                        throw new InvalidOperationException(
+                            $"Vector quantization is set to '{quantization.Value}' which is not a valid value from the 'VectorQuantization' enum.'");
+                    }
+
+                    var similarity = indexOptions.Value.Similarity;
+                    if ((int)similarity < 0 || (int)similarity > 2)
+                    {
+                        throw new InvalidOperationException(
+                            $"Vector similarity is set to '{similarity}' which is not a valid value from the 'VectorSimilarity' enum.'");
                     }
                 }
             }
@@ -388,7 +403,7 @@ public class MongoModelValidator : ModelValidator
             case BsonType.Double:
             case BsonType.Document:
                 {
-                    throw CannotBeEncryptedForEqualityException($"BsonType.{bsonType} is not a supported type.");
+                    throw CannotBeEncryptedForEqualityException($"'BsonType.{bsonType}' is not a supported type.");
                 }
 
             default:

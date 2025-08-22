@@ -552,6 +552,46 @@ public static class MongoModelValidatorTests
     }
 
     [Fact]
+    public static void Validate_throws_when_vector_index_has_bad_quantization()
+    {
+        using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
+                   .IsVectorIndex(new VectorIndexOptions(VectorSimilarity.Cosine, 2, Quantization: (VectorQuantization?)-1))))
+        {
+            Assert.Contains(
+                "Vector quantization is set to '-1' which is not a valid value from the 'VectorQuantization' enum.",
+                Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+        }
+
+        using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
+                   .IsVectorIndex(new VectorIndexOptions(VectorSimilarity.Cosine, 2, Quantization: (VectorQuantization?)3))))
+        {
+            Assert.Contains(
+                "Vector quantization is set to '3' which is not a valid value from the 'VectorQuantization' enum.",
+                Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+        }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_vector_index_has_bad_similarity()
+    {
+        using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
+                   .IsVectorIndex(new VectorIndexOptions((VectorSimilarity)(-1), 2))))
+        {
+            Assert.Contains(
+                "Vector similarity is set to '-1' which is not a valid value from the 'VectorSimilarity' enum.'",
+                Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+        }
+
+        using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
+                   .IsVectorIndex(new VectorIndexOptions((VectorSimilarity)3, 2))))
+        {
+            Assert.Contains(
+                "Vector similarity is set to '3' which is not a valid value from the 'VectorSimilarity' enum.'",
+                Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+        }
+    }
+
+    [Fact]
     public static void Validate_throws_when_vector_index_is_on_nested_collection()
     {
         using var context = SingleEntityDbContext.Create<Book>(mb =>
@@ -562,7 +602,7 @@ public static class MongoModelValidatorTests
             }));
 
         Assert.Contains(
-            "THe entity type 'Chapter' cannot have a vector index because it is part of an nested collection.",
+            "The entity type 'Chapter' cannot have a vector index because it is part of an nested collection.",
             Assert.Throws<InvalidOperationException>(() => context.Model).Message);
     }
 

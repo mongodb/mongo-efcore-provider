@@ -14,12 +14,14 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
@@ -597,6 +599,33 @@ Books.{ "$match" : { "IsPublished" : true } }, { "$vectorSearch" : { "queryVecto
             """
 Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex" } }
 """);
+    }
+
+    [ConditionalFact]
+    public virtual void VectorSearch_throws_for_driver_IQueryable()
+    {
+        using var context = Fixture.CreateContext();
+        var inputVector = new[] { 0.33f, -0.52f };
+
+        var queryable = context.GetService<IMongoClientWrapper>().GetCollection<Book>("Book").AsQueryable();
+
+        Assert.Contains(
+            "The method 'VectorSearch' can only be called on an IQueryable that starts as a DbSet in EF. The IQueryable used came directly",
+            Assert.Throws<ArgumentException>(
+                () => queryable.VectorSearch(e => e.Preface.Floats, inputVector, limit: 4)).Message);
+    }
+
+    [ConditionalFact]
+    public virtual void VectorSearch_throws_for_L20_IQueryable()
+    {
+        var inputVector = new[] { 0.33f, -0.52f };
+
+        var queryable = new List<Book>().AsQueryable();
+
+        Assert.Contains(
+            "The method 'VectorSearch' can only be called on an IQueryable that starts as a DbSet in EF. The IQueryable came from a",
+            Assert.Throws<ArgumentException>(
+                () => queryable.VectorSearch(e => e.Preface.Floats, inputVector, limit: 4)).Message);
     }
 
     private class Book

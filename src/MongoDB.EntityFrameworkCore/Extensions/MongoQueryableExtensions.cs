@@ -14,8 +14,7 @@
  */
 
 using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -24,6 +23,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 
@@ -31,28 +31,28 @@ using MongoDB.EntityFrameworkCore.Metadata;
 namespace Microsoft.EntityFrameworkCore;
 
 /// <summary>
-/// Extensions to <see cref="IQueryable"/> for the MongoDB EF Core Provider.
+/// LINQ extension methods over <see cref="IQueryable"/> for the MongoDB EF Provider. Note that these methods can only
+/// be used with the <see href="https://www.mongodb.com/docs/entity-framework/current/">MongoDB EF Provider</see>. They
+/// cannot be used directly with the MongoDB C# driver.
 /// </summary>
-/// <remarks>
-/// Some of these are duplicates of what is exposed in the MongoDB C# Driver extensions. They are exposed here
-/// to avoid conflicts with the Async overloads present in the MongoDB C# Driver extensions/namespace versions
-/// that conflict with EF Core.
-/// </remarks>
 public static class MongoQueryableExtensions
 {
     /// <summary>
-    /// Appends a $vectorSearch stage to an <see cref="IQueryable{T}"/> LINQ pipeline.
+    /// Adds an MongoDB Atlas Vector Search to this LINQ query. This method must be called at the root of an EF query
+    /// against MongoDB, except that a <see cref="System.Linq.Queryable.Where{T}(IQueryable{T},Expression{Func{T,bool}}"/>
+    /// clause can be used to add a pre-query filter.
     /// </summary>
+    /// <remarks>
+    /// Note that MongoDB Atlas Vector Search can only be used with MongoDB Atlas, not with other MongoDB configurations.
+    /// </remarks>
     /// <typeparam name="TSource">The type of the elements of <paramref name="source" />.</typeparam>
     /// <typeparam name="TProperty">The type of the vector property to search.</typeparam>
-    /// <param name="source">The <see cref="IQueryable{T}"/> LINQ pipeline to append to.</param>
-    /// <param name="property">The property containing the vectors in the source.</param>
-    /// <param name="queryVector">The vector to search with - typically an array of floats.</param>
+    /// <param name="source">The <see cref="IQueryable{T}"/> LINQ expression from EF.</param>
+    /// <param name="property">The model property mapped to the BSON property containing vectors in the database.</param>
+    /// <param name="queryVector">The vector to search with.</param>
     /// <param name="limit">The number of items to limit the vector search to.</param>
-    /// <param name="options">An optional <see cref="VectorSearchOptions{TDocument}"/> containing additional filters, index names etc.</param>
-    /// <returns>
-    /// The <see cref="IQueryable{TSource}"/> with the $vectorSearch stage appended.
-    /// </returns>
+    /// <param name="options">An optional <see cref="VectorSearchOptions"/> with options for the search, including the specific index name to use.</param>
+    /// <returns>An  <see cref="IQueryable{TSource}"/> that will perform a vector search when executed.</returns>
     public static IQueryable<TSource> VectorSearch<TSource, TProperty>(
         this IQueryable<TSource> source,
         Expression<Func<TSource, TProperty>> property,
@@ -60,19 +60,17 @@ public static class MongoQueryableExtensions
         int limit,
         VectorSearchOptions? options = null)
     {
+        Check.IsEfQueryProvider(source);
+
         options ??= new();
 
         var visitor = new EntityRootFindingVisitor();
         visitor.Visit(source.Expression);
+        Debug.Assert(visitor.RootExpression != null, "EF Core query has null root expression.");
 
-        if (visitor.RootExpression == null)
-        {
-            throw new InvalidOperationException($"Cannot execute a VectorSearch on a non-EF Core IQueryable.");
-        }
-
-        var members = GetMemberAccess<MemberInfo>(property);
+        var members = property.GetMemberAccess<MemberInfo>();
         var entityType = visitor.RootExpression.EntityType;
-        var memberMetadata = entityType?.FindMember(members[0].Name);
+        var memberMetadata = entityType.FindMember(members[0].Name);
 
         if (memberMetadata == null)
         {
@@ -94,20 +92,19 @@ public static class MongoQueryableExtensions
             if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
             {
                 throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because there are no vector indexes defined for this property in the EF model. " +
+                    $"A vector query for '{entityType.DisplayName()}.{members[0].Name}' could not be executed because there are no vector indexes defined for this property in the EF model. " +
                     "Use 'HasIndex' on the EF model builder to define an index. ");
             }
 
             if (vectorIndexesInModel.Count > 1)
             {
                 throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because multiple vector indexes are defined for this property in the EF model. " +
+                    $"A vector query for '{entityType.DisplayName()}.{members[0].Name}' could not be executed because multiple vector indexes are defined for this property in the EF model. " +
                     "Specify the index to use in the call to 'VectorSearch'.");
             }
 
             // There is only one index and none was specified, so use that index.
-            options = options.Value with { IndexName = vectorIndexesInModel[0].Name
-                                                       ?? vectorIndexesInModel[0].Properties.Select(i => i.Name).Single() + "VectorIndex" };
+            options = options.Value with { IndexName = vectorIndexesInModel[0].Name };
         }
         else
         {
@@ -115,14 +112,14 @@ public static class MongoQueryableExtensions
             if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
             {
                 throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because vector index '{options.Value.IndexName}' was not defined in the EF Core model. " +
-                    "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF Core.");
+                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because vector index '{options.Value.IndexName}' was not defined in the EF model. " +
+                    "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF.");
             }
 
-            if (vectorIndexesInModel.All(i => i.Name != null && i.Name != options.Value.IndexName))
+            if (vectorIndexesInModel.All(i => i.Name != options.Value.IndexName))
             {
                 throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because vector index '{options.Value.IndexName}' was not defined in the EF Core model. " +
+                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because vector index '{options.Value.IndexName}' was not defined in the EF model. " +
                     "Vector query searches must use one of the indexes defined on the EF model.");
             }
             // Index name in query already matches, so just continue.
@@ -145,57 +142,4 @@ public static class MongoQueryableExtensions
             return base.Visit(node);
         }
     }
-
-    private static IReadOnlyList<TMemberInfo> GetMemberAccess<TMemberInfo>(this LambdaExpression memberAccessExpression)
-        where TMemberInfo : MemberInfo
-    {
-        var members = memberAccessExpression.Parameters[0].MatchMemberAccess<TMemberInfo>(memberAccessExpression.Body);
-
-        if (members is null)
-        {
-            throw new ArgumentException(
-                $"The expression '{memberAccessExpression}' is not a valid member access expression. The expression should represent a simple property or field access: 't => t.MyProperty'.");
-        }
-        return members;
-    }
-
-    private static IReadOnlyList<TMemberInfo>? MatchMemberAccess<TMemberInfo>(
-        this Expression parameterExpression,
-        Expression memberAccessExpression)
-        where TMemberInfo : MemberInfo
-    {
-        var memberInfos = new List<TMemberInfo>();
-        var unwrappedExpression = RemoveTypeAs(RemoveConvert(memberAccessExpression));
-        do
-        {
-            var memberExpression = unwrappedExpression as MemberExpression;
-            if (!(memberExpression?.Member is TMemberInfo memberInfo))
-            {
-                return null;
-            }
-            memberInfos.Insert(0, memberInfo);
-            unwrappedExpression = RemoveTypeAs(RemoveConvert(memberExpression.Expression));
-        }
-        while (unwrappedExpression != parameterExpression);
-
-        return memberInfos;
-    }
-
-    [return: NotNullIfNotNull(nameof(expression))]
-    private static Expression? RemoveTypeAs(this Expression? expression)
-    {
-        while (expression?.NodeType == ExpressionType.TypeAs)
-        {
-            expression = ((UnaryExpression)RemoveConvert(expression)).Operand;
-        }
-
-        return expression;
-    }
-
-    [return: NotNullIfNotNull(nameof(expression))]
-    private static Expression? RemoveConvert(Expression? expression)
-        => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
-            ? RemoveConvert(unaryExpression.Operand)
-            : expression;
-
 }
