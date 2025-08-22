@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,9 +27,11 @@ using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.Driver.Search;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -99,168 +102,293 @@ public class MongoClientWrapper : IMongoClientWrapper
     /// <inheritdoc />
     public bool CreateDatabase(IDesignTimeModel model)
     {
+        var existingIndexesMap = new Dictionary<string, List<string>?>();
+        var existingSearchIndexesMap = new Dictionary<string, List<string>?>();
+        var indexModelsMap = new Dictionary<string, List<CreateIndexModel<BsonDocument>>?>();
+        var searchIndexModelsMap = new Dictionary<string, List<CreateSearchIndexModel>?>();
+
         var existed = DatabaseExists();
-        var existingCollectionNames = Database.ListCollectionNames().ToList();
+        using var collectionNamesCursor = Database.ListCollectionNames();
+        var collectionNames = collectionNamesCursor.ToList();
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            var collectionName = entityType.GetCollectionName();
+            // Don't try to access Atlas-specific features unless an Atlas vector index is defined.
+            var hasSearchIndexes = entityType.GetIndexes().Any(i => i.GetVectorIndexOptions().HasValue);
 
-            if (!existingCollectionNames.Contains(collectionName))
+            var collectionName = entityType.GetCollectionName();
+            if (!collectionNames.Contains(collectionName))
             {
+                collectionNames.Add(collectionName);
                 try
                 {
                     Database.CreateCollection(collectionName);
-                    existingCollectionNames.Add(collectionName);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
                 }
             }
 
-            var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
-            var existingIndexNames = indexManager.List().ToList().Select(i => i["name"].AsString).ToList();
-            CreateIndexes(entityType, indexManager, existingIndexNames, []);
+            if (!existingIndexesMap.TryGetValue(collectionName, out var indexes))
+            {
+                using var cursor = Database.GetCollection<BsonDocument>(collectionName).Indexes.List();
+                indexes = cursor.ToList().Select(i => i["name"].AsString).ToList();
+                existingIndexesMap[collectionName] =  indexes;
+            }
+
+            if (hasSearchIndexes &&
+                !existingSearchIndexesMap.TryGetValue(collectionName, out var searchIndexes))
+            {
+                using var cursor = Database.GetCollection<BsonDocument>(collectionName).SearchIndexes.List();
+                searchIndexes = cursor.ToList().Select(i => i["name"].AsString).ToList();
+                existingSearchIndexesMap[collectionName] = searchIndexes;
+            }
+
+            BuildIndexes(
+                model.Model, entityType, [], collectionName,
+                existingIndexesMap, existingSearchIndexesMap, indexModelsMap, searchIndexModelsMap);
+        }
+
+        foreach (var collectionName in collectionNames)
+        {
+            if (indexModelsMap.TryGetValue(collectionName, out var indexModels) && indexModels!.Count > 0)
+            {
+                var indexManager = Database.GetCollection<BsonDocument>(collectionName).Indexes;
+                indexManager.CreateMany(indexModels);
+            }
+
+            if (searchIndexModelsMap.TryGetValue(collectionName, out var searchIndexModels) && searchIndexModels!.Count > 0)
+            {
+                var searchIndexManager = Database.GetCollection<BsonDocument>(collectionName).SearchIndexes;
+                searchIndexManager.CreateMany(searchIndexModels);
+                WaitForSearchIndexes(searchIndexManager, searchIndexModels);
+            }
         }
 
         return !existed;
     }
 
-    private static void CreateIndexes(
-        IEntityType entityType,
-        IMongoIndexManager<BsonDocument> indexManager,
-        List<string> existingIndexNames,
-        string[] path)
+    // TODO: Move to driver
+    private static void WaitForSearchIndexes(IMongoSearchIndexManager searchIndexManager, List<CreateSearchIndexModel> searchIndexModels)
     {
-        foreach (var index in entityType.GetIndexes())
+        var delay = 1;
+        bool isReady;
+        do
         {
-            var name = index.Name ?? MakeIndexName(index, path);
-            if (!existingIndexNames.Contains(name))
+            isReady = true;
+            using var cursor = searchIndexManager.List();
+            var existingSearchIndexModels = cursor.ToList();
+
+            foreach (var indexModel in searchIndexModels)
             {
-                indexManager.CreateOne(CreateIndexDocument(index, name, path));
-            }
-        }
+                var existingModel = existingSearchIndexModels.SingleOrDefault(e => e["name"].AsString == indexModel.Name);
+                var status = existingModel?["status"].AsString;
 
-        foreach (var key in entityType.GetKeys().Where(k => !k.IsPrimaryKey()))
-        {
-            var name = MakeIndexName(key, path);
-            if (!existingIndexNames.Contains(name))
+                if (status == "FAILED")
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to build the search index '{existingModel!["name"]}' for path '{existingModel["latestDefinition"]["fields"][0]["path"]}'.");
+                }
+
+                if (status != "READY")
+                {
+                    isReady = false;
+                    Thread.Sleep(delay *= 2);
+                    break;
+                }
+            }
+            if (delay > 8192) // ~16 seconds total
             {
-                indexManager.CreateOne(CreateKeyIndexDocument(key, name, path));
+                throw new InvalidOperationException(
+                    "Index creation timed out. Please create indexes using MongoDB Compass or the mongosh shell.");
             }
-        }
-
-        var ownedEntityTypes = entityType.Model.GetEntityTypes()
-            .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
-
-        foreach (var ownedEntityType in ownedEntityTypes)
-        {
-            var elementName = ownedEntityType.GetContainingElementName()!;
-            var newPath = path.Append(elementName).ToArray();
-            CreateIndexes(ownedEntityType, indexManager, existingIndexNames, newPath);
-        }
+        } while (!isReady);
     }
 
     /// <inheritdoc />
     public async Task<bool> CreateDatabaseAsync(IDesignTimeModel model, CancellationToken cancellationToken = default)
     {
+        var existingIndexesMap = new Dictionary<string, List<string>?>();
+        var existingSearchIndexesMap = new Dictionary<string, List<string>?>();
+        var indexModelsMap = new Dictionary<string, List<CreateIndexModel<BsonDocument>>?>();
+        var searchIndexModelsMap = new Dictionary<string, List<CreateSearchIndexModel>?>();
+
         var existed = await DatabaseExistsAsync(cancellationToken).ConfigureAwait(false);
-        using var collectionNamesCursor =
-            await Database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
-        var existingCollectionNames = collectionNamesCursor.ToList(cancellationToken);
+        using var collectionNamesCursor = await Database.ListCollectionNamesAsync(null, cancellationToken).ConfigureAwait(false);
+        var collectionNames = await collectionNamesCursor.ToListAsync(cancellationToken);
 
         foreach (var entityType in model.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            var collectionName = entityType.GetCollectionName();
+            // Don't try to access Atlas-specific features unless an Atlas vector index is defined.
+            var hasSearchIndexes = entityType.GetIndexes().Any(i => i.GetVectorIndexOptions().HasValue);
 
-            if (!existingCollectionNames.Contains(collectionName))
+            var collectionName = entityType.GetCollectionName();
+            if (!collectionNames.Contains(collectionName))
             {
+                collectionNames.Add(collectionName);
                 try
                 {
-                    await Database.CreateCollectionAsync(collectionName, cancellationToken: cancellationToken)
-                        .ConfigureAwait(false);
-                    existingCollectionNames.Add(collectionName);
+                    await Database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
                 }
                 catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                 {
+                    // Ignore collection already exists in cases of concurrent creation
                 }
             }
 
-            var indexManager = Database.GetCollection<BsonDocument>(entityType.GetCollectionName()).Indexes;
-            var indexCursor = await indexManager.ListAsync(cancellationToken).ConfigureAwait(false);
-            var existingIndexNames = indexCursor.ToList(cancellationToken).Select(i => i["name"].AsString).ToList();
-            await CreateIndexesAsync(entityType, indexManager, existingIndexNames, [], cancellationToken).ConfigureAwait(false);
+            if (!existingIndexesMap.TryGetValue(collectionName, out var indexes))
+            {
+                using var cursor = await Database.GetCollection<BsonDocument>(collectionName)
+                    .Indexes.ListAsync(cancellationToken).ConfigureAwait(false);
+
+                indexes = (await cursor.ToListAsync(cancellationToken)).Select(i => i["name"].AsString).ToList();
+                existingIndexesMap[collectionName] =  indexes;
+            }
+
+            if (hasSearchIndexes
+                && !existingSearchIndexesMap.TryGetValue(collectionName, out var searchIndexes))
+            {
+                using var cursor = await Database.GetCollection<BsonDocument>(collectionName)
+                    .SearchIndexes.ListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                searchIndexes = (await cursor.ToListAsync(cancellationToken)).Select(i => i["name"].AsString).ToList();
+                existingSearchIndexesMap[collectionName] = searchIndexes;
+            }
+
+            BuildIndexes(
+                model.Model, entityType, [], collectionName,
+                existingIndexesMap, existingSearchIndexesMap, indexModelsMap, searchIndexModelsMap);
+        }
+
+        foreach (var collectionName in collectionNames)
+        {
+            if (indexModelsMap.TryGetValue(collectionName, out var indexModels) && indexModels!.Count > 0)
+            {
+                var indexManager = Database.GetCollection<BsonDocument>(collectionName).Indexes;
+                await indexManager.CreateManyAsync(indexModels, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+
+            if (searchIndexModelsMap.TryGetValue(collectionName, out var searchIndexModels) && searchIndexModels!.Count > 0)
+            {
+                var searchIndexManager = Database.GetCollection<BsonDocument>(collectionName).SearchIndexes;
+                await searchIndexManager.CreateManyAsync(searchIndexModels, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await WaitForSearchIndexesAsync(searchIndexManager, searchIndexModels, cancellationToken);
+            }
         }
 
         return !existed;
     }
 
-    private static async Task CreateIndexesAsync(
-        IEntityType entityType,
-        IMongoIndexManager<BsonDocument> indexManager,
-        List<string> existingIndexNames,
-        string[] path,
+    // Move to driver
+    private static async Task WaitForSearchIndexesAsync(
+        IMongoSearchIndexManager searchIndexManager,
+        List<CreateSearchIndexModel> searchIndexModels,
         CancellationToken cancellationToken)
     {
-        foreach (var index in entityType.GetIndexes())
+        var delay = 1;
+        bool isReady;
+        do
         {
-            var name = index.Name ?? MakeIndexName(index, path);
-            if (!existingIndexNames.Contains(name))
+            isReady = true;
+            using var cursor = await searchIndexManager.ListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            var existingSearchIndexModels = await cursor.ToListAsync(cancellationToken).ConfigureAwait(false);
+
+            foreach (var indexModel in searchIndexModels)
             {
-                await indexManager.CreateOneAsync(CreateIndexDocument(index, name, path), null, cancellationToken)
-                    .ConfigureAwait(false);
+                var existingModel = existingSearchIndexModels.SingleOrDefault(e => e["name"].AsString == indexModel.Name);
+                var status = existingModel?["status"].AsString;
+
+                if (status == "FAILED")
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to build the search index '{existingModel!["name"]}' for path '{existingModel["latestDefinition"]["fields"][0]["path"]}'.");
+                }
+
+                if (status != "READY")
+                {
+                    isReady = false;
+                    await Task.Delay(delay *= 2, cancellationToken);
+                    break;
+                }
+            }
+            if (delay > 8192) // ~16 seconds total
+            {
+                throw new InvalidOperationException(
+                    "Index creation timed out. Please create indexes using MongoDB Compass or the mongosh shell.");
+            }
+        } while (!isReady);
+    }
+
+    private void BuildIndexes(
+        IModel model,
+        IEntityType entityType,
+        string[] path,
+        string collectionName,
+        Dictionary<string, List<string>?> existingIndexesMap,
+        Dictionary<string, List<string>?> existingSearchIndexesMap,
+        Dictionary<string, List<CreateIndexModel<BsonDocument>>?> indexModelsMap,
+        Dictionary<string, List<CreateSearchIndexModel>?> searchIndexModelsMap)
+    {
+        var existingIndexes = existingIndexesMap[collectionName]!;
+
+        if (!indexModelsMap.TryGetValue(collectionName, out var indexModels))
+        {
+            indexModels = [];
+            indexModelsMap[collectionName] = indexModels;
+        }
+
+        var mayHaveSearchIndexes = existingSearchIndexesMap.TryGetValue(collectionName, out var existingSearchIndexes);
+        if (!searchIndexModelsMap.TryGetValue(collectionName, out var searchIndexModels)
+            && mayHaveSearchIndexes)
+        {
+            searchIndexModels = [];
+            searchIndexModelsMap[collectionName] = searchIndexModels;
+        }
+
+        foreach (var index in entityType.GetIndexes().Where(i => !i.GetVectorIndexOptions().HasValue))
+        {
+            var name = index.Name;
+            Debug.Assert(name != null, "Index name should have been set by IndexNamingConvention.");
+
+            if (!existingIndexes.Contains(name))
+            {
+                existingIndexes.Add(name);
+                indexModels!.Add(index.CreateIndexDocument(name, path));
             }
         }
 
         foreach (var key in entityType.GetKeys().Where(k => !k.IsPrimaryKey()))
         {
-            var name = MakeIndexName(key, path);
-            if (!existingIndexNames.Contains(name))
+            var name = key.MakeIndexName(path);
+            if (!existingIndexes.Contains(name))
             {
-                await indexManager.CreateOneAsync(CreateKeyIndexDocument(key, name, path), null, cancellationToken)
-                    .ConfigureAwait(false);
+                existingIndexes.Add(name);
+                indexModels!.Add(key.CreateKeyIndexDocument(name, path));
             }
         }
 
-        var ownedEntityTypes = entityType.Model.GetEntityTypes()
-            .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
+        foreach (var index in entityType.GetIndexes().Where(i => i.GetVectorIndexOptions().HasValue))
+        {
+            var name = index.Name;
+            Debug.Assert(name != null, "Index name should have been set by IndexNamingConvention.");
+
+            var options = index.GetVectorIndexOptions()!.Value;
+            if (mayHaveSearchIndexes
+                && !existingSearchIndexes!.Contains(name))
+            {
+                searchIndexModels!.Add(index.CreateSearchIndexDocument(name, path, options));
+                existingSearchIndexes.Add(name);
+            }
+        }
+
+        var ownedEntityTypes = model.GetEntityTypes().Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
 
         foreach (var ownedEntityType in ownedEntityTypes)
         {
             var elementName = ownedEntityType.GetContainingElementName()!;
             var newPath = path.Append(elementName).ToArray();
-            await CreateIndexesAsync(ownedEntityType, indexManager, existingIndexNames, newPath, cancellationToken)
-                .ConfigureAwait(false);
+            BuildIndexes(model, ownedEntityType, newPath, collectionName, existingIndexesMap, existingSearchIndexesMap, indexModelsMap, searchIndexModelsMap);
         }
-    }
-
-    private static string MakeIndexName(IIndex index, string[] path)
-    {
-        // Mimic the servers index naming convention using the property names and directions
-        var parts = new string[index.Properties.Count * 2];
-
-        var propertyIndex = 0;
-        var partsIndex = 0;
-        foreach (var property in index.Properties)
-        {
-            parts[partsIndex++] = property.GetElementName();
-            parts[partsIndex++] = GetDescending(index, propertyIndex++) ? "-1" : "1";
-        }
-
-        return string.Join('_', path.Concat(parts));
-    }
-
-    private static string MakeIndexName(IKey key, string[] path)
-    {
-        var parts = new string[key.Properties.Count];
-
-        var partsIndex = 0;
-        foreach (var property in key.Properties)
-        {
-            parts[partsIndex++] = property.GetElementName() + "_1";
-        }
-
-        return string.Join('_', path.Concat(parts));
     }
 
     /// <inheritdoc />
@@ -328,45 +456,6 @@ public class MongoClientWrapper : IMongoClientWrapper
     private ListDatabaseNamesOptions BuildListDbNameFilterOptions()
         => new() { Filter = Builders<BsonDocument>.Filter.Eq("name", _databaseName) };
 
-    private static CreateIndexModel<BsonDocument> CreateIndexDocument(IIndex index, string indexName, string[] path)
-    {
-        var doc = new BsonDocument();
-        var propertyIndex = 0;
-
-        foreach (var property in index.Properties)
-        {
-            doc.Add(string.Join('.', path.Append(property.GetElementName())), GetDescending(index, propertyIndex++) ? -1 : 1);
-        }
-
-        var options = index.GetCreateIndexOptions() ?? new CreateIndexOptions<BsonDocument>();
-        options.Name ??= indexName;
-        options.Unique ??= index.IsUnique;
-
-        return new CreateIndexModel<BsonDocument>(doc, options);
-    }
-
-    private static CreateIndexModel<BsonDocument> CreateKeyIndexDocument(IKey key, string indexName, string[] path)
-    {
-        var doc = new BsonDocument();
-
-        foreach (var property in key.Properties)
-        {
-            doc.Add(string.Join('.', path.Append(property.GetElementName())), 1);
-        }
-
-        var options = new CreateIndexOptions<BsonDocument> { Name = indexName, Unique = true };
-        return new CreateIndexModel<BsonDocument>(doc, options);
-    }
-
-    private static bool GetDescending(IIndex index, int propertyIndex)
-        => index.IsDescending switch
-        {
-            null => false,
-            { Count: 0 } => true,
-            { } i when i.Count < propertyIndex => false,
-            { } i => i.ElementAtOrDefault(propertyIndex)
-        };
-
     private IEnumerable<T> ExecuteScalar<T>(MongoExecutableQuery executableQuery)
     {
         T? result;
@@ -384,7 +473,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         return [result];
     }
 
-    private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
+private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
     {
         _databaseName = _options?.DatabaseName;
         if (_databaseName == null && options?.ConnectionString != null)
