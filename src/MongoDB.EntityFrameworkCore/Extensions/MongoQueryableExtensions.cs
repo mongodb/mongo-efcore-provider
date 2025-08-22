@@ -72,7 +72,7 @@ public static class MongoQueryableExtensions
 
         var members = GetMemberAccess<MemberInfo>(property);
         var entityType = visitor.RootExpression.EntityType;
-        var memberMetadata = entityType?.FindMember(members[0].Name);
+        var memberMetadata = entityType.FindMember(members[0].Name);
 
         if (memberMetadata == null)
         {
@@ -94,20 +94,19 @@ public static class MongoQueryableExtensions
             if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
             {
                 throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because there are no vector indexes defined for this property in the EF model. " +
+                    $"A vector query for '{entityType.DisplayName()}.{members[0].Name}' could not be executed because there are no vector indexes defined for this property in the EF model. " +
                     "Use 'HasIndex' on the EF model builder to define an index. ");
             }
 
             if (vectorIndexesInModel.Count > 1)
             {
                 throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because multiple vector indexes are defined for this property in the EF model. " +
+                    $"A vector query for '{entityType.DisplayName()}.{members[0].Name}' could not be executed because multiple vector indexes are defined for this property in the EF model. " +
                     "Specify the index to use in the call to 'VectorSearch'.");
             }
 
             // There is only one index and none was specified, so use that index.
-            options = options.Value with { IndexName = vectorIndexesInModel[0].Name
-                                                       ?? vectorIndexesInModel[0].Properties.Select(i => i.Name).Single() + "VectorIndex" };
+            options = options.Value with { IndexName = vectorIndexesInModel[0].Name };
         }
         else
         {
@@ -119,7 +118,7 @@ public static class MongoQueryableExtensions
                     "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF Core.");
             }
 
-            if (vectorIndexesInModel.All(i => i.Name != null && i.Name != options.Value.IndexName))
+            if (vectorIndexesInModel.All(i => i.Name != options.Value.IndexName))
             {
                 throw new InvalidOperationException(
                     $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because vector index '{options.Value.IndexName}' was not defined in the EF Core model. " +
