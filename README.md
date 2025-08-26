@@ -103,12 +103,13 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Includes/joins
 - Geospatial
 - Atlas search
+- Vector search
 - ExecuteUpdate & ExecuteDelete bulk operations (EF 9 only)
 
 ### Not supported, out-of-scope features
 
 - Keyless entity types
-- Migrations (including Seeding)
+- Migrations
 - Database-first & model-first
 - Document (table) splitting
 - Temporal tables
