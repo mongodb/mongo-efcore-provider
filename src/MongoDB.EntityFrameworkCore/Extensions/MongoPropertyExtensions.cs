@@ -599,6 +599,5 @@ public static class MongoPropertyExtensions
         && property.ClrType == typeof(int)
         && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
         && property.GetElementName().Length == 0
-        && !property.IsForeignKey()
         && property.FindContainingPrimaryKey() is { Properties.Count: > 1 };
 }
