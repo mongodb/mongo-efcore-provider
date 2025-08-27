@@ -13,6 +13,9 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.ValueGeneration;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -26,7 +29,7 @@ public class SimpleKeyCrudTests(TemporaryDatabaseFixture database)
     public void Should_insert_composite_key_entity()
     {
         var collection = database.CreateCollection<Entity>();
-        var entity = new Entity {Id = "key", Data = "some text"};
+        var entity = new Entity { Id = "key", Data = "some text" };
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
@@ -50,7 +53,7 @@ public class SimpleKeyCrudTests(TemporaryDatabaseFixture database)
     public void Should_read_composite_key_entity()
     {
         var collection = database.CreateCollection<Entity>();
-        var entity = new Entity {Id = "key", Data = "some text"};
+        var entity = new Entity { Id = "key", Data = "some text" };
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
@@ -74,7 +77,7 @@ public class SimpleKeyCrudTests(TemporaryDatabaseFixture database)
     public void Should_update_composite_key_entity()
     {
         var collection = database.CreateCollection<Entity>();
-        var entity = new Entity {Id = "key", Data = "some text"};
+        var entity = new Entity { Id = "key", Data = "some text" };
 
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
@@ -104,7 +107,7 @@ public class SimpleKeyCrudTests(TemporaryDatabaseFixture database)
         {
             using var db = SingleEntityDbContext.Create(collection, builder =>
                 builder.Entity<Entity>().HasKey(nameof(Entity.Id)));
-            var entity = new Entity {Id = "key", Data = "some text"};
+            var entity = new Entity { Id = "key", Data = "some text" };
             db.Entities.Add(entity);
             db.SaveChanges();
 
@@ -139,6 +142,73 @@ public class SimpleKeyCrudTests(TemporaryDatabaseFixture database)
         }
     }
 
+    [Theory]
+    [InlineData(typeof(Guid))]
+    [InlineData(typeof(ObjectId))]
+    public void Should_insert_shadow_key_entity(Type keyType)
+    {
+        var collection = database.CreateCollection<ShadowKeyEntity>(values: keyType);
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, SetupModel());
+            db.Entities.Add(new ShadowKeyEntity { Data = "Hello" });
+            db.Entities.Add(new ShadowKeyEntity { Data = "There" });
+            db.SaveChanges();
+        }
+        {
+            using var db = SingleEntityDbContext.Create(collection, SetupModel());
+            var actual = db.Entities.ToList();
+            Assert.Single(actual, a => a.Data == "Hello");
+            Assert.Single(actual, a => a.Data == "There");
+            Assert.Equal(2, actual.Count);
+        }
+
+        Action<ModelBuilder> SetupModel() =>
+            b => b.Entity<ShadowKeyEntity>(g =>
+            {
+                g.Property(keyType, "Id");
+                g.HasKey("Id");
+            });
+    }
+
+    [Fact]
+    public void Should_insert_shadow_key_int_entity()
+    {
+        var collection = database.CreateCollection<ShadowKeyEntity>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, SetupModel());
+            db.Entities.Add(new ShadowKeyEntity { Data = "Hello" });
+            db.Entities.Add(new ShadowKeyEntity { Data = "There" });
+            db.SaveChanges();
+        }
+        {
+            using var db = SingleEntityDbContext.Create(collection, SetupModel());
+            var actual = db.Entities.ToList();
+            Assert.Single(actual, a => a.Data == "Hello");
+            Assert.Single(actual, a => a.Data == "There");
+            Assert.Equal(2, actual.Count);
+        }
+
+        Action<ModelBuilder> SetupModel() =>
+            b => b.Entity<ShadowKeyEntity>(g =>
+            {
+                g.Property<int>("Id").HasValueGenerator((_, _) => new IntGenerator());
+                g.HasKey("Id");
+            });
+    }
+
+    public class IntGenerator : ValueGenerator<int>
+    {
+        private int _next;
+
+        public override int Next(EntityEntry entry)
+            => Interlocked.Increment(ref _next);
+
+        public override bool GeneratesTemporaryValues
+            => false;
+    }
+
     private class Entity
     {
         public string Id { get; set; }
@@ -148,6 +218,11 @@ public class SimpleKeyCrudTests(TemporaryDatabaseFixture database)
     private class ReadOnlyKeyEntity
     {
         public ObjectId Id { get; }
+        public string Data { get; set; }
+    }
+
+    private class ShadowKeyEntity
+    {
         public string Data { get; set; }
     }
 }

@@ -143,8 +143,7 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
     }
 
     private static IProperty? FindOrdinalKeyProperty(IEntityType entityType)
-        => entityType.FindPrimaryKey()!.Properties.FirstOrDefault(
-            p => p.GetElementName().Length == 0 && p.IsOwnedCollectionShadowKey());
+        => entityType.FindPrimaryKey()!.Properties.FirstOrDefault(p => p.GetElementName().Length == 0 && p.IsOwnedTypeOrdinalKey());
 
     private static void SetStoreGeneratedValues(IUpdateEntry entry)
     {
@@ -166,7 +165,7 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
     {
         var keyProperties = entry.EntityType.FindPrimaryKey()?
             .Properties
-            .Where(p => !p.IsShadowProperty() && p.GetElementName() != "").ToArray() ?? [];
+            .Where(p => !p.IsOwnedTypeKey()).ToArray() ?? [];
 
         if (!keyProperties.Any()) return;
 
