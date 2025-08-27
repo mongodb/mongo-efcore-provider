@@ -37,15 +37,15 @@ internal class IndexNamingConvention : IModelFinalizingConvention
     {
         foreach (var entityType in modelBuilder.Metadata.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            ProcessEntityType(entityType, []);
+            ProcessEntityType(entityType);
         }
     }
 
-    private static void ProcessEntityType(IConventionEntityType entityType, List<string> path)
+    private static void ProcessEntityType(IConventionEntityType entityType)
     {
         foreach (var index in entityType.GetIndexes().Where(p => p.Name == null).ToList())
         {
-            ReplaceIndex(entityType, index, path);
+            ReplaceIndex(entityType, index);
         }
 
         var ownedEntityTypes = entityType.GetReferencingForeignKeys()
@@ -54,19 +54,17 @@ internal class IndexNamingConvention : IModelFinalizingConvention
 
         foreach (var ownedEntityType in ownedEntityTypes)
         {
-            var newPath = path.ToList();
-            newPath.Add(ownedEntityType.GetContainingElementName()!);
-            ProcessEntityType(ownedEntityType, newPath);
+            ProcessEntityType(ownedEntityType);
         }
     }
 
-    private static void ReplaceIndex(IConventionEntityType entityType, IConventionIndex index, List<string> path)
+    private static void ReplaceIndex(IConventionEntityType entityType, IConventionIndex index)
     {
         entityType.RemoveIndex(index);
 
         var newIndex = entityType.AddIndex(
             index.Properties,
-            index.MakeIndexName(path))!;
+            index.MakeIndexName())!;
 
         newIndex.SetIsUnique(index.IsUnique);
         newIndex.SetIsDescending(index.IsDescending);

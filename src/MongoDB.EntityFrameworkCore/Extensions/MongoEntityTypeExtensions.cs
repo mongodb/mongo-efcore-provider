@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -87,7 +88,15 @@ public static class MongoEntityTypeExtensions
     /// <param name="entityType">The entity type to get the collection name for.</param>
     /// <returns>The default name of the collection to which the entity type would be mapped.</returns>
     public static string GetDefaultCollectionName(this IReadOnlyEntityType entityType)
-        => entityType.HasSharedClrType ? entityType.ShortName() : entityType.ClrType.ShortDisplayName();
+    {
+        var documentRoot = entityType.GetDocumentRoot();
+
+        return documentRoot != entityType
+            ? documentRoot.GetCollectionName()
+            : entityType.HasSharedClrType
+                ? entityType.ShortName()
+                : entityType.ClrType.ShortDisplayName();
+    }
 
     /// <summary>
     /// Determines if an entity is a root document or whether it is an owned entity/complex type.
@@ -152,4 +161,58 @@ public static class MongoEntityTypeExtensions
     public static ConfigurationSource? GetContainingElementNameConfigurationSource(this IConventionEntityType entityType)
         => entityType.FindAnnotation(MongoAnnotationNames.ElementName)
             ?.GetConfigurationSource();
+
+    /// <summary>
+    /// Gets the path from the root of the document to this, possibly nested, entity type.
+    /// </summary>
+    /// <param name="entityType">The entity type, which may be top-level or nested.</param>
+    /// <returns>The path, which will be empty for top-level (root) entities.</returns>
+    public static IReadOnlyList<string> GetDocumentPath(this IReadOnlyEntityType entityType)
+    {
+        var owner = entityType.FindOwnership();
+        if (owner == null)
+        {
+            return [];
+        }
+
+        var path = new List<string>();
+        do
+        {
+            path.Add(owner.DeclaringEntityType.GetContainingElementName()!);
+            owner = owner.PrincipalEntityType.FindOwnership();
+        } while (owner != null);
+
+        path.Reverse();
+        return path;
+    }
+
+    /// <summary>
+    /// Gets the entity type that maps directly to the MongoDB document for either the root itself or any nested entity types.
+    /// </summary>
+    /// <param name="entityType">The entity type, which may be top-level or nested.</param>
+    /// <returns>The <see cref="IEntityType"/> mapped directly to the MongoDB document.</returns>
+    public static IReadOnlyEntityType GetDocumentRoot(this IReadOnlyEntityType entityType)
+    {
+        while (entityType.FindOwnership() != null)
+        {
+            entityType = entityType.FindOwnership()!.PrincipalEntityType;
+        }
+
+        return entityType;
+    }
+
+    /// <summary>
+    /// Gets the entity type that maps directly to the MongoDB document for either the root itself or any nested entity types.
+    /// </summary>
+    /// <param name="entityType">The entity type, which may be top-level or nested.</param>
+    /// <returns>The <see cref="IEntityType"/> mapped directly to the MongoDB document.</returns>
+    public static IMutableEntityType GetDocumentRoot(this IMutableEntityType entityType)
+        => (IMutableEntityType)GetDocumentRoot((IReadOnlyEntityType)entityType);
+    /// <summary>
+    /// Gets the entity type that maps directly to the MongoDB document for either the root itself or any nested entity types.
+    /// </summary>
+    /// <param name="entityType">The entity type, which may be top-level or nested.</param>
+    /// <returns>The <see cref="IEntityType"/> mapped directly to the MongoDB document.</returns>
+    public static IConventionEntityType GetDocumentRoot(this IConventionEntityType entityType)
+        => (IConventionEntityType)GetDocumentRoot((IMutableEntityType)entityType);
 }

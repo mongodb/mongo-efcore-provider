@@ -13,10 +13,12 @@
  * limitations under the License.
  */
 
+using System.Collections.Generic;
+
 namespace MongoDB.EntityFrameworkCore.Metadata;
 
 /// <summary>
-/// The Atlas Vector Search index options.
+/// Atlas Vector Search index options.
 /// See <see href="https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-type">How to Index Fields for Vector Search</see>
 /// for more information.
 /// </summary>
@@ -25,9 +27,20 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 /// <param name="Quantization">Type of automatic vector quantization for your vectors.</param>
 /// <param name="HnswMaxEdges">Maximum number of edges (or connections) that a node can have in the Hierarchical Navigable Small Worlds graph.</param>
 /// <param name="HnswNumEdgeCandidates">Analogous to numCandidates at query-time, this parameter controls the maximum number of nodes to evaluate to find the closest neighbors to connect to a new node.</param>
+/// <param name="FilterPaths">Paths to properties that may be used as filters on the entity type or its nested types.</param>
 public readonly record struct VectorIndexOptions(
     VectorSimilarity Similarity,
     int Dimensions,
     VectorQuantization? Quantization = null,
     int? HnswMaxEdges = null,
-    int? HnswNumEdgeCandidates = null);
+    int? HnswNumEdgeCandidates = null,
+    IReadOnlyList<string>? FilterPaths = null)
+{
+    /// <summary>
+    /// Creates an uninitialized Atlas Vector Search index options object.
+    /// </summary>
+    public VectorIndexOptions()
+        : this((VectorSimilarity)(-1), 0)
+    {
+    }
+}

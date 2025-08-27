@@ -16,13 +16,13 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
-using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
-public class VectorSearchMongoTest : VectorSearchMongoTestBase, IClassFixture<VectorSearchMongoTest.VectorSearchFixture>
+public class VectorSearchExactMongoTest : VectorSearchMongoTestBase,
+    IClassFixture<VectorSearchExactMongoTest.VectorSearchExactFixture>
 {
-    public VectorSearchMongoTest(VectorSearchFixture fixture)
+    public VectorSearchExactMongoTest(VectorSearchExactFixture fixture)
         : base(fixture)
     {
     }
@@ -37,7 +37,7 @@ public class VectorSearchMongoTest : VectorSearchMongoTestBase, IClassFixture<Ve
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }
 """);
     }
 
@@ -47,7 +47,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "Doubles", "limit" : 4, "numCandidates" : 40, "index" : "DoublesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "Doubles", "limit" : 4, "index" : "DoublesIndex", "exact" : true } }
 """);
     }
 
@@ -57,7 +57,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "MemoryFloats", "limit" : 4, "numCandidates" : 40, "index" : "MemoryFloatsIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "MemoryFloats", "limit" : 4, "index" : "MemoryFloatsIndex", "exact" : true } }
 """);
     }
 
@@ -67,7 +67,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "MemoryDoubles", "limit" : 4, "numCandidates" : 40, "index" : "MemoryDoublesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "MemoryDoubles", "limit" : 4, "index" : "MemoryDoublesIndex", "exact" : true } }
 """);
     }
 
@@ -77,7 +77,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "ReadOnlyMemoryFloats", "limit" : 4, "numCandidates" : 40, "index" : "ReadOnlyMemoryFloatsIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "ReadOnlyMemoryFloats", "limit" : 4, "index" : "ReadOnlyMemoryFloatsIndex", "exact" : true } }
 """);
     }
 
@@ -87,7 +87,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "ReadOnlyMemoryDoubles", "limit" : 4, "numCandidates" : 40, "index" : "ReadOnlyMemoryDoublesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "ReadOnlyMemoryDoubles", "limit" : 4, "index" : "ReadOnlyMemoryDoublesIndex", "exact" : true } }
 """);
     }
 
@@ -97,7 +97,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryFloats", "limit" : 4, "numCandidates" : 40, "index" : "BinaryFloatsIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryFloats", "limit" : 4, "index" : "BinaryFloatsIndex", "exact" : true } }
 """);
     }
 
@@ -107,7 +107,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryBytes", "limit" : 4, "numCandidates" : 40, "index" : "BinaryBytesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryBytes", "limit" : 4, "index" : "BinaryBytesIndex", "exact" : true } }
 """);
     }
 
@@ -117,7 +117,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinarySBytes", "limit" : 4, "numCandidates" : 40, "index" : "BinarySBytesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinarySBytes", "limit" : 4, "index" : "BinarySBytesIndex", "exact" : true } }
 """);
     }
 
@@ -127,7 +127,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryMemoryFloats", "limit" : 4, "numCandidates" : 40, "index" : "BinaryMemoryFloatsIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryMemoryFloats", "limit" : 4, "index" : "BinaryMemoryFloatsIndex", "exact" : true } }
 """);
     }
 
@@ -137,7 +137,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryMemoryBytes", "limit" : 4, "numCandidates" : 40, "index" : "BinaryMemoryBytesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryMemoryBytes", "limit" : 4, "index" : "BinaryMemoryBytesIndex", "exact" : true } }
 """);
     }
 
@@ -147,7 +147,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinaryMemorySBytes", "limit" : 4, "numCandidates" : 40, "index" : "BinaryMemorySBytesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinaryMemorySBytes", "limit" : 4, "index" : "BinaryMemorySBytesIndex", "exact" : true } }
 """);
     }
 
@@ -157,7 +157,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemoryFloats", "limit" : 4, "numCandidates" : 40, "index" : "BinaryReadOnlyMemoryFloatsIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemoryFloats", "limit" : 4, "index" : "BinaryReadOnlyMemoryFloatsIndex", "exact" : true } }
 """);
     }
 
@@ -167,7 +167,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemoryBytes", "limit" : 4, "numCandidates" : 40, "index" : "BinaryReadOnlyMemoryBytesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemoryBytes", "limit" : 4, "index" : "BinaryReadOnlyMemoryBytesIndex", "exact" : true } }
 """);
     }
 
@@ -177,7 +177,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemorySBytes", "limit" : 4, "numCandidates" : 40, "index" : "BinaryReadOnlyMemorySBytesIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemorySBytes", "limit" : 4, "index" : "BinaryReadOnlyMemorySBytesIndex", "exact" : true } }
 """);
     }
 
@@ -187,7 +187,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==
 
         AssertMql(
             """
-Books.{ "$match" : { "IsPublished" : true } }, { "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex" } }
+Books.{ "$match" : { "IsPublished" : true } }, { "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }
 """);
     }
 
@@ -228,7 +228,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex", "filter" : { "IsPublished" : true } } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "filter" : { "IsPublished" : true }, "exact" : true } }
 """);
     }
 
@@ -238,7 +238,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Doubles", "limit" : 4, "numCandidates" : 40, "index" : "DoublesIndex", "filter" : { "$and" : [{ "Comments" : "Froody" }, { "$or" : [{ "Pages" : { "$gt" : 500 } }, { "IsPublished" : true }] }] } } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Doubles", "limit" : 4, "index" : "DoublesIndex", "filter" : { "$and" : [{ "Comments" : "Froody" }, { "$or" : [{ "Pages" : { "$gt" : 500 } }, { "IsPublished" : true }] }] }, "exact" : true } }
 """);
     }
 
@@ -248,7 +248,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex", "filter" : { "Preface.IsPublished" : true } } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "index" : "FloatsVectorIndex", "filter" : { "Preface.IsPublished" : true }, "exact" : true } }
 """);
     }
 
@@ -258,41 +258,24 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex", "filter" : { "$and" : [{ "Preface.Comments" : "Froody" }, { "$or" : [{ "Preface.Pages" : { "$gt" : 500 } }, { "Preface.IsPublished" : true }] }] } } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "index" : "FloatsVectorIndex", "filter" : { "$and" : [{ "Preface.Comments" : "Froody" }, { "$or" : [{ "Preface.Pages" : { "$gt" : 500 } }, { "Preface.IsPublished" : true }] }] }, "exact" : true } }
 """);
     }
 
-    [ConditionalTheory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public virtual async Task VectorSearch_with_num_candidates(bool async)
+    [ConditionalFact]
+    public virtual async Task VectorSearch_throws_if_num_candidates_set_for_exact_search()
     {
         await using var context = Fixture.CreateContext();
         var inputVector = new[] { 0.33f, -0.52f };
 
-        var queryable = context.Set<Book>()
-            .VectorSearch(e => e.Floats, inputVector, limit: 20, new("FloatsIndex", NumberOfCandidates: 20));
-
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
-
-        Assert.Equal(4, booksFromStore.Count);
-        Assert.Equal(
-        [
-            "Programming Entity Framework: Code First",
-            "Programming Entity Framework",
-            "Entity Framework Core in Action",
-            "Programming Entity Framework: DbContext"
-        ], booksFromStore.Select(e => e.Title));
-
-        AssertMql(
-            """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 20, "numCandidates" : 20, "index" : "FloatsIndex" } }
-""");
+        Assert.Contains(
+            "The option 'Exact' is set to 'true' indicating an exact nearest neighbour (ENN) search and the number ",
+            Assert.Throws<ArgumentException>(() => context.Set<Book>().VectorSearch(e => e.Preface.Floats, inputVector, limit: 4, new(NumberOfCandidates: 10, Exact: true))).Message);
     }
 
-    public class VectorSearchFixture : VectorSearchFixtureBase
+    public class VectorSearchExactFixture : VectorSearchFixtureBase
     {
-        protected override string StoreName { get; } = TestServer.Atlas.GetUniqueDatabaseName("VectorSearch");
-        public override bool Exact => false;
+        protected override string StoreName { get; } = TestServer.Atlas.GetUniqueDatabaseName("VectorSearchExact");
+        public override bool Exact => true;
     }
 }

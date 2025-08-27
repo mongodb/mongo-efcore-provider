@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Metadata;
 
@@ -37,9 +38,10 @@ internal static class InternalKeyExtensions
         return string.Join('_', path.Concat(parts));
     }
 
-    public static CreateIndexModel<BsonDocument> CreateKeyIndexDocument(this IKey key, string indexName, string[] path)
+    public static CreateIndexModel<BsonDocument> CreateKeyIndexDocument(this IKey key, string indexName)
     {
         var doc = new BsonDocument();
+        var path = key.DeclaringEntityType.GetDocumentPath();
 
         foreach (var property in key.Properties)
         {

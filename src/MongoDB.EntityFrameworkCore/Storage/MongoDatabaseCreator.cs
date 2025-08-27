@@ -18,9 +18,9 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
+using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
@@ -36,7 +36,7 @@ public class MongoDatabaseCreator(
     IUpdateAdapterFactory updateAdapterFactory,
     IDatabase database,
     ICurrentDbContext currentDbContext)
-    : IDatabaseCreator
+    : IMongoDatabaseCreator
 {
     /// <inheritdoc/>
     public bool EnsureDeleted()
@@ -48,25 +48,19 @@ public class MongoDatabaseCreator(
 
     /// <inheritdoc/>
     public bool EnsureCreated()
-    {
-        var created = clientWrapper.CreateDatabase(currentDbContext.Context.GetService<IDesignTimeModel>());
-        if (created)
-        {
-            SeedFromModel();
-        }
-        return created;
-    }
+        => EnsureCreated(new());
 
     /// <inheritdoc/>
-    public async Task<bool> EnsureCreatedAsync(CancellationToken cancellationToken = default)
-    {
-        var created = await clientWrapper.CreateDatabaseAsync(currentDbContext.Context.GetService<IDesignTimeModel>(), cancellationToken).ConfigureAwait(false);
-        if (created)
-        {
-            await SeedFromModelAsync(cancellationToken).ConfigureAwait(false);
-        }
-        return created;
-    }
+    public Task<bool> EnsureCreatedAsync(CancellationToken cancellationToken = default)
+        => EnsureCreatedAsync(new(), cancellationToken);
+
+    /// <inheritdoc/>
+    public bool EnsureCreated(MongoDatabaseCreationOptions options)
+        => clientWrapper.CreateDatabase(currentDbContext.Context.GetService<IDesignTimeModel>(), options, SeedFromModel);
+
+    /// <inheritdoc/>
+    public Task<bool> EnsureCreatedAsync(MongoDatabaseCreationOptions options, CancellationToken cancellationToken = default)
+        => clientWrapper.CreateDatabaseAsync(currentDbContext.Context.GetService<IDesignTimeModel>(), options, SeedFromModelAsync, cancellationToken);
 
     internal void SeedFromModel()
         => database.SaveChanges(AddModelData().GetEntriesToSave());

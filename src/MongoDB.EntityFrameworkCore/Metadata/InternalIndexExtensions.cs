@@ -25,7 +25,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 
 internal static class InternalIndexExtensions
 {
-    public static string MakeIndexName(this IReadOnlyIndex index, IList<string> path)
+    public static string MakeIndexName(this IReadOnlyIndex index)
     {
         // There is no server naming convention for vector indexes, and they cannot be composite, so use a simple name:
         if (index.GetVectorIndexOptions().HasValue)
@@ -44,10 +44,10 @@ internal static class InternalIndexExtensions
             parts[partsIndex++] = GetDescending(index, propertyIndex++) ? "-1" : "1";
         }
 
-        return string.Join('_', path.Concat(parts));
+        return string.Join('_', index.DeclaringEntityType.GetDocumentPath().Concat(parts));
     }
 
-    public static string MakeIndexName(this IKey key, IList<string> path)
+    public static string MakeIndexName(this IKey key)
     {
         var parts = new string[key.Properties.Count];
 
@@ -57,7 +57,7 @@ internal static class InternalIndexExtensions
             parts[partsIndex++] = property.GetElementName() + "_1";
         }
 
-        return string.Join('_', path.Concat(parts));
+        return string.Join('_', key.DeclaringEntityType.GetDocumentPath().Concat(parts));
     }
 
     public static bool GetDescending(this IReadOnlyIndex index, int propertyIndex)
@@ -69,9 +69,11 @@ internal static class InternalIndexExtensions
             { } i => i.ElementAtOrDefault(propertyIndex)
         };
 
-    public static CreateSearchIndexModel CreateSearchIndexDocument(
-        this IIndex index, string indexName, string[] path, VectorIndexOptions vectorIndexOptions)
+    public static CreateSearchIndexModel CreateVectorIndexDocument(
+        this IIndex index, VectorIndexOptions vectorIndexOptions)
     {
+        var path = index.DeclaringEntityType.GetDocumentPath();
+
         var similarityValue = vectorIndexOptions.Similarity == VectorSimilarity.DotProduct
             ? "dotProduct" // Because neither "DotProduct" or "dotproduct" are allowed.
             : vectorIndexOptions.Similarity.ToString().ToLowerInvariant();
@@ -88,17 +90,30 @@ internal static class InternalIndexExtensions
             ? $"'hnswOptions': {{ 'maxEdges': {vectorIndexOptions.HnswMaxEdges ?? 16}, 'numEdgeCandidates': {vectorIndexOptions.HnswNumEdgeCandidates ?? 100} }}"
             : "";
 
+        var filters = "";
+        if (vectorIndexOptions.FilterPaths != null)
+        {
+            foreach (var filterPath in vectorIndexOptions.FilterPaths)
+            {
+                var fullPath = path.Count > 0 ? string.Join('.', path) + '.' + filterPath : filterPath;
+                filters += $", {{ type: 'filter', path: '{fullPath}' }}";
+            }
+
+        }
+
         var model = new CreateSearchIndexModel(
-            indexName,
+            index.Name!,
             SearchIndexType.VectorSearch,
             BsonDocument.Parse(
-                $"{{ fields: [ {{ type: 'vector'{pathString}{dimensions}{similarity}{quantization}{hnswOptions} }} ] }}"));
+                $"{{ fields: [ {{ type: 'vector'{pathString}{dimensions}{similarity}{quantization}{hnswOptions} }}{filters} ] }}"));
 
         return model;
     }
 
-    public static CreateIndexModel<BsonDocument> CreateIndexDocument(this IIndex index, string indexName, string[] path)
+    public static CreateIndexModel<BsonDocument> CreateIndexDocument(this IIndex index)
     {
+        var path = index.DeclaringEntityType.GetDocumentPath();
+
         var doc = new BsonDocument();
         var propertyIndex = 0;
 
@@ -108,7 +123,7 @@ internal static class InternalIndexExtensions
         }
 
         var options = index.GetCreateIndexOptions() ?? new CreateIndexOptions<BsonDocument>();
-        options.Name ??= indexName;
+        options.Name ??= index.Name!;
         options.Unique ??= index.IsUnique;
 
         return new CreateIndexModel<BsonDocument>(doc, options);

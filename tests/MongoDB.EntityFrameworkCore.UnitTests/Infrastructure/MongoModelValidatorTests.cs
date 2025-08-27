@@ -544,7 +544,7 @@ public static class MongoModelValidatorTests
     {
         using var context = SingleEntityDbContext.Create<Book>(mb =>
             mb.Entity<Book>().HasIndex(e => new { e.Floats1, e.Floats2 })
-                .IsVectorIndex(new VectorIndexOptions(VectorSimilarity.Cosine, 2)));
+                .IsVectorIndex(VectorSimilarity.Cosine, 2));
 
         Assert.Contains(
             "A vector index on 'Book' is defined over properties 'Floats1,Floats2'.",
@@ -555,7 +555,7 @@ public static class MongoModelValidatorTests
     public static void Validate_throws_when_vector_index_has_bad_quantization()
     {
         using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
-                   .IsVectorIndex(new VectorIndexOptions(VectorSimilarity.Cosine, 2, Quantization: (VectorQuantization?)-1))))
+                   .IsVectorIndex(VectorSimilarity.Cosine, 2).HasQuantization((VectorQuantization?)-1)))
         {
             Assert.Contains(
                 "Vector quantization is set to '-1' which is not a valid value from the 'VectorQuantization' enum.",
@@ -563,7 +563,7 @@ public static class MongoModelValidatorTests
         }
 
         using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
-                   .IsVectorIndex(new VectorIndexOptions(VectorSimilarity.Cosine, 2, Quantization: (VectorQuantization?)3))))
+                   .IsVectorIndex(VectorSimilarity.Cosine, 2).HasQuantization((VectorQuantization?)3)))
         {
             Assert.Contains(
                 "Vector quantization is set to '3' which is not a valid value from the 'VectorQuantization' enum.",
@@ -575,7 +575,7 @@ public static class MongoModelValidatorTests
     public static void Validate_throws_when_vector_index_has_bad_similarity()
     {
         using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
-                   .IsVectorIndex(new VectorIndexOptions((VectorSimilarity)(-1), 2))))
+                   .IsVectorIndex((VectorSimilarity)(-1), 2)))
         {
             Assert.Contains(
                 "Vector similarity is set to '-1' which is not a valid value from the 'VectorSimilarity' enum.'",
@@ -583,7 +583,7 @@ public static class MongoModelValidatorTests
         }
 
         using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
-                   .IsVectorIndex(new VectorIndexOptions((VectorSimilarity)3, 2))))
+                   .IsVectorIndex((VectorSimilarity)3, 2)))
         {
             Assert.Contains(
                 "Vector similarity is set to '3' which is not a valid value from the 'VectorSimilarity' enum.'",
@@ -598,7 +598,7 @@ public static class MongoModelValidatorTests
             mb.Entity<Book>(b =>
             {
                 b.OwnsMany(x => x.Chapters,
-                    b => { b.HasIndex(e => e.Floats).IsVectorIndex(new VectorIndexOptions(VectorSimilarity.Cosine, 2)); });
+                    b => { b.HasIndex(e => e.Floats).IsVectorIndex(VectorSimilarity.Cosine, 2); });
             }));
 
         Assert.Contains(

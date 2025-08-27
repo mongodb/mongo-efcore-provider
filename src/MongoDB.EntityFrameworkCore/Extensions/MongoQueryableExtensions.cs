@@ -26,6 +26,7 @@ using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
+using ExpressionVisitor = System.Linq.Expressions.ExpressionVisitor;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
 namespace Microsoft.EntityFrameworkCore;
@@ -39,7 +40,7 @@ public static class MongoQueryableExtensions
 {
     /// <summary>
     /// Adds an MongoDB Atlas Vector Search to this LINQ query. This method must be called at the root of an EF query
-    /// against MongoDB, except that a <see cref="System.Linq.Queryable.Where{T}(IQueryable{T},Expression{Func{T,bool}}"/>
+    /// against MongoDB, except that a <see cref="System.Linq.Queryable.Where{T}(IQueryable{T},Expression{Func{T,bool}})"/>
     /// clause can be used to add a pre-query filter.
     /// </summary>
     /// <remarks>
@@ -51,18 +52,52 @@ public static class MongoQueryableExtensions
     /// <param name="property">The model property mapped to the BSON property containing vectors in the database.</param>
     /// <param name="queryVector">The vector to search with.</param>
     /// <param name="limit">The number of items to limit the vector search to.</param>
-    /// <param name="options">An optional <see cref="VectorSearchOptions"/> with options for the search, including the specific index name to use.</param>
+    /// <param name="options">An optional <see cref="VectorQueryOptions"/> with options for the search, including the specific index name to use.</param>
     /// <returns>An  <see cref="IQueryable{TSource}"/> that will perform a vector search when executed.</returns>
     public static IQueryable<TSource> VectorSearch<TSource, TProperty>(
         this IQueryable<TSource> source,
         Expression<Func<TSource, TProperty>> property,
         QueryVector queryVector,
         int limit,
-        VectorSearchOptions? options = null)
+        VectorQueryOptions? options = null)
+        => source.VectorSearch(property, null!, queryVector, limit, options);
+
+    /// <summary>
+    /// Adds an MongoDB Atlas Vector Search to this LINQ query. This method must be called at the root of an EF query
+    /// against MongoDB, except that a <see cref="System.Linq.Queryable.Where{T}(IQueryable{T},Expression{Func{T,bool}})"/>
+    /// clause can be used to add a pre-query filter.
+    /// </summary>
+    /// <remarks>
+    /// Note that MongoDB Atlas Vector Search can only be used with MongoDB Atlas, not with other MongoDB configurations.
+    /// </remarks>
+    /// <typeparam name="TSource">The type of the elements of <paramref name="source" />.</typeparam>
+    /// <typeparam name="TProperty">The type of the vector property to search.</typeparam>
+    /// <param name="source">The <see cref="IQueryable{T}"/> LINQ expression from EF.</param>
+    /// <param name="property">The model property mapped to the BSON property containing vectors in the database.</param>
+    /// <param name="preFilter">A predicate used to filter out documents before starting vector search.</param>
+    /// <param name="queryVector">The vector to search with.</param>
+    /// <param name="limit">The number of items to limit the vector search to.</param>
+    /// <param name="options">An optional <see cref="VectorQueryOptions"/> with options for the search, including the specific index name to use.</param>
+    /// <returns>An  <see cref="IQueryable{TSource}"/> that will perform a vector search when executed.</returns>
+    public static IQueryable<TSource> VectorSearch<TSource, TProperty>(
+        this IQueryable<TSource> source,
+        Expression<Func<TSource, TProperty>> property,
+        Expression<Func<TSource, bool>> preFilter,
+        QueryVector queryVector,
+        int limit,
+        VectorQueryOptions? options = null)
     {
         Check.IsEfQueryProvider(source);
+        ArgumentNullException.ThrowIfNull(property);
+        ArgumentNullException.ThrowIfNull(queryVector);
 
-        options ??= new();
+        var concreteOptions = options ?? new();
+
+        if (concreteOptions is { NumberOfCandidates: not null, Exact: true })
+        {
+            throw new ArgumentException(
+                "The option 'Exact' is set to 'true' indicating an exact nearest neighbour (ENN) search and the number of candidates has also been set. Number of candidates cannot be used with ENN searches.");
+        }
 
         var visitor = new EntityRootFindingVisitor();
         visitor.Visit(source.Expression);
@@ -78,15 +113,17 @@ public static class MongoQueryableExtensions
                 $"Could not create a vector query for '{typeof(TSource).ShortDisplayName()}.{members[0].Name}'. Make sure the entity type is included in the EF model and that the property or field is mapped.");
         }
 
+        var path = memberMetadata.Name;
         foreach (var memberInfo in members.Skip(1))
         {
             memberMetadata = (memberMetadata as INavigation)?.TargetEntityType.FindMember(memberInfo.Name);
+            path += $".{memberInfo.Name}";
         }
 
         var vectorIndexesInModel = memberMetadata?.DeclaringType.ContainingEntityType
             .GetIndexes().Where(i => i.GetVectorIndexOptions() != null && i.Properties[0] == memberMetadata).ToList();
 
-        if (options.Value.IndexName == null)
+        if (concreteOptions.IndexName == null)
         {
             // Index to use was not specified in the query. Throw if there is anything but one index in the model.
             if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
@@ -104,7 +141,7 @@ public static class MongoQueryableExtensions
             }
 
             // There is only one index and none was specified, so use that index.
-            options = options.Value with { IndexName = vectorIndexesInModel[0].Name };
+            concreteOptions = concreteOptions with { IndexName = vectorIndexesInModel[0].Name };
         }
         else
         {
@@ -112,21 +149,32 @@ public static class MongoQueryableExtensions
             if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
             {
                 throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because vector index '{options.Value.IndexName}' was not defined in the EF model. " +
+                    $"A vector query for '{entityType.DisplayName()}.{members[0].Name}' could not be executed because vector index '{concreteOptions.IndexName}' was not defined in the EF model. " +
                     "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF.");
             }
 
-            if (vectorIndexesInModel.All(i => i.Name != options.Value.IndexName))
+            if (vectorIndexesInModel.All(i => i.Name != concreteOptions.IndexName))
             {
                 throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because vector index '{options.Value.IndexName}' was not defined in the EF model. " +
+                    $"A vector query for '{entityType.DisplayName()}.{members[0].Name}' could not be executed because vector index '{concreteOptions.IndexName}' was not defined in the EF model. " +
                     "Vector query searches must use one of the indexes defined on the EF model.");
             }
             // Index name in query already matches, so just continue.
         }
 
-        return source.AppendStage(PipelineStageDefinitionBuilder
-            .VectorSearch(property, queryVector, limit, new() { IndexName = options.Value.IndexName, NumberOfCandidates = options.Value.NumberOfCandidates }));
+        var searchOptions = new VectorSearchOptions<TSource>
+        {
+            IndexName = concreteOptions.IndexName,
+            NumberOfCandidates = concreteOptions.NumberOfCandidates,
+            Exact = concreteOptions.Exact,
+        };
+
+        if (preFilter != null!)
+        {
+            searchOptions.Filter = preFilter;
+        }
+
+        return source.AppendStage(PipelineStageDefinitionBuilder.VectorSearch(property, queryVector, limit, searchOptions));
     }
 
     private sealed class EntityRootFindingVisitor : ExpressionVisitor
