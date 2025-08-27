@@ -163,7 +163,9 @@ public static class MongoPropertyExtensions
     /// <param name="property">The <see cref="IMutableProperty"/> to set the DateTimeKind for.</param>
     /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> that should be used.</param>
     /// <exception cref="InvalidOperationException"></exception>
-    public static void SetDateTimeKind(this IMutableProperty property, DateTimeKind dateTimeKind)
+    public static void SetDateTimeKind(
+        this IMutableProperty property,
+        DateTimeKind dateTimeKind)
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
@@ -181,7 +183,10 @@ public static class MongoPropertyExtensions
     /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> that should be used.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <exception cref="InvalidOperationException"></exception>
-    public static DateTimeKind SetDateTimeKind(this IConventionProperty property, DateTimeKind dateTimeKind, bool fromDataAnnotation = false)
+    public static DateTimeKind SetDateTimeKind(
+        this IConventionProperty property,
+        DateTimeKind dateTimeKind,
+        bool fromDataAnnotation = false)
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
@@ -234,7 +239,8 @@ public static class MongoPropertyExtensions
         this IConventionProperty property,
         Guid? dataKeyId,
         bool fromDataAnnotation = false)
-        => (Guid?)property.SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId), fromDataAnnotation)?.Value;
+        => (Guid?)property
+            .SetOrRemoveAnnotation(MongoAnnotationNames.EncryptionDataKeyId, Check.NotEmpty(dataKeyId), fromDataAnnotation)?.Value;
 
     /// <summary>
     /// Gets the <see cref="ConfigurationSource" /> of the encryption data key id when targeting MongoDB.
@@ -278,7 +284,8 @@ public static class MongoPropertyExtensions
         QueryableEncryptionType? queryableEncryptionType,
         bool fromDataAnnotation = false)
         => (QueryableEncryptionType?)property
-            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType), fromDataAnnotation)
+            .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionType, Check.IsDefinedOrNull(queryableEncryptionType),
+                fromDataAnnotation)
             ?.Value;
 
     /// <summary>
@@ -568,8 +575,7 @@ public static class MongoPropertyExtensions
 
     internal static bool IsOwnedTypeKey(this IReadOnlyProperty property)
     {
-        var entityType = (IReadOnlyEntityType)property.DeclaringType;
-        if (entityType.IsDocumentRoot())
+        if (property.DeclaringType as IReadOnlyEntityType is not { } entityType || entityType.IsDocumentRoot())
         {
             return false;
         }
@@ -587,10 +593,11 @@ public static class MongoPropertyExtensions
                && ownership.Properties.All(fkProperty => pk.Properties.Contains(fkProperty));
     }
 
-    internal static bool IsOwnedCollectionShadowKey(this IReadOnlyProperty property) =>
-        property.FindContainingPrimaryKey()
-            is { Properties.Count: > 1 } && !property.IsForeignKey()
-                                         && property.ClrType == typeof(int)
-                                         && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
-                                         && property.GetElementName().Length == 0;
+    internal static bool IsOwnedTypeOrdinalKey(this IReadOnlyProperty property) =>
+        property.DeclaringType as IReadOnlyEntityType is { } entityType
+        && entityType.IsOwned()
+        && property.ClrType == typeof(int)
+        && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
+        && property.GetElementName().Length == 0
+        && property.FindContainingPrimaryKey() is { Properties.Count: > 1 };
 }

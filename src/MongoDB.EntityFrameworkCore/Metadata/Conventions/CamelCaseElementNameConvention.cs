@@ -35,7 +35,7 @@ public sealed class CamelCaseElementNameConvention : IPropertyAddedConvention, I
         IConventionPropertyBuilder propertyBuilder,
         IConventionContext<IConventionPropertyBuilder> context)
     {
-        if (propertyBuilder.Metadata.Name == "_id" || propertyBuilder.Metadata.IsOwnedCollectionShadowKey()) return;
+        if (propertyBuilder.Metadata.Name == "_id" || propertyBuilder.Metadata.IsOwnedTypeOrdinalKey()) return;
 
         propertyBuilder.HasElementName(propertyBuilder.Metadata.Name.ToCamelCase(CultureInfo.CurrentCulture));
     }

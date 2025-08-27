@@ -33,7 +33,6 @@ internal class EntitySerializer<TValue> :
     IBsonDocumentSerializer,
     IHasDiscriminatorConvention
 {
-    private readonly Func<IReadOnlyProperty, bool> _isStored = p => !p.IsShadowProperty() && p.GetElementName() != "";
     private readonly IReadOnlyEntityType _entityType;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
 
@@ -121,7 +120,7 @@ internal class EntitySerializer<TValue> :
     }
 
     private IReadOnlyProperty[] GetStoredKeyProperties()
-        => _entityType.FindPrimaryKey()?.Properties.Where(_isStored).ToArray() ?? [];
+        => _entityType.FindPrimaryKey()?.Properties.Where(p => p.GetElementName() != "").ToArray() ?? [];
 
     public IDiscriminatorConvention DiscriminatorConvention { get; }
 }

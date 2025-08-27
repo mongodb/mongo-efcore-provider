@@ -560,7 +560,7 @@ public class MongoModelValidator : ModelValidator
             foreach (var key in entityType.GetDeclaredKeys())
             {
                 var mutableProperty = key.Properties.FirstOrDefault(p => p.ValueGenerated.HasFlag(ValueGenerated.OnUpdate));
-                if (mutableProperty != null && !mutableProperty.IsOwnedCollectionShadowKey())
+                if (mutableProperty != null && !mutableProperty.IsOwnedTypeOrdinalKey())
                 {
                     throw new InvalidOperationException(CoreStrings.MutableKeyProperty(mutableProperty.Name));
                 }

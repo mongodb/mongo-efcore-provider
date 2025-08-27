@@ -40,7 +40,7 @@ public class MongoValueGeneratorSelector : ValueGeneratorSelector
     protected override ValueGenerator? FindForType(IProperty property, ITypeBase typeBase, Type clrType)
     {
         // Required to ensure we generate unique IDs for owned entity collections
-        if (typeBase.ContainingEntityType.IsOwned() && property.IsOwnedCollectionShadowKey())
+        if (typeBase.ContainingEntityType.IsOwned() && property.IsOwnedTypeOrdinalKey())
         {
             return new TemporaryNumberValueGeneratorFactory().Create(property, typeBase);
         }

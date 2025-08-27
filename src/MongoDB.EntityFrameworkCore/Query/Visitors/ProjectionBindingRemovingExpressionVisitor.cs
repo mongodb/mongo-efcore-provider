@@ -233,7 +233,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
                     return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, updatedExpression);
                 }
             }
-            
+
             if (binaryExpression.Left is MemberExpression { Member: FieldInfo { IsInitOnly: true } } memberExpression)
             {
                 return memberExpression.Assign(Visit(binaryExpression.Right));
@@ -312,7 +312,7 @@ internal abstract class ProjectionBindingRemovingExpressionVisitor : ExpressionV
             if (!entityType.IsDocumentRoot())
             {
                 var ownership = entityType.FindOwnership();
-                if (ownership?.IsUnique == false && property.IsOwnedCollectionShadowKey())
+                if (ownership?.IsUnique == false && property.IsOwnedTypeOrdinalKey())
                 {
                     var readExpression = _ordinalParameterBindings[docExpression];
                     if (readExpression.Type != type)
