@@ -144,6 +144,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Server_schema_is_used_when_no_client_schema_available(CryptProvider cryptProvider)
     {
+        // Remove me once mongocryptd is fixed for Windows on latest
+        if (cryptProvider == CryptProvider.Mongocryptd && EncryptionTests.IsBuggyMongocryptd) return;
+
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
         var expectedPatients = CreateSamplePatients;
         var dataKeyId = CreateDataKey();
@@ -632,6 +635,8 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_owned_entity_doc(CryptProvider cryptProvider)
     {
+        if (cryptProvider == CryptProvider.Mongocryptd && EncryptionTests.IsBuggyMongocryptd) return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
