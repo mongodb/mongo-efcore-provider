@@ -386,7 +386,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int64)]
-    public void IsEncrypted_round_trips_integer(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncrypted_round_trips_integer(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -428,7 +430,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Double)]
-    public void IsEncrypted_round_trips_float(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncrypted_round_trips_float(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -472,7 +476,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.DateTime)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.String)]
-    public void IsEncrypted_round_trips_datetime(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncrypted_round_trips_datetime(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -915,7 +921,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Double)]
-    public void IsEncryptedForEquality_on_unsupported_float_throws(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncryptedForEquality_on_unsupported_float_throws(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
@@ -1052,7 +1060,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int64)]
-    public void IsEncryptedForEquality_queries_equality_on_integer(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncryptedForEquality_queries_equality_on_integer(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -1094,7 +1104,8 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int64)]
-    public void IsEncryptedForEquality_with_contention_queries_equality_on_integer(CryptProvider cryptProvider,
+    public void IsEncryptedForEquality_with_contention_queries_equality_on_integer(
+        CryptProvider cryptProvider,
         BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
@@ -1199,7 +1210,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int64)]
-    public void IsEncryptedForRange_query_throws_when_integer_out_of_range(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncryptedForRange_query_throws_when_integer_out_of_range(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -1231,7 +1244,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Int64)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int32)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int64)]
-    public void IsEncryptedForRange_queries_range_on_integer(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncryptedForRange_queries_range_on_integer(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -1339,7 +1354,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Double)]
-    public void IsEncryptedForRange_queries_ranges_on_float(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncryptedForRange_queries_ranges_on_float(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -1382,7 +1399,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Double)]
-    public void IsEncryptedForRange_with_all_options_queries_ranges_on_float(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncryptedForRange_with_all_options_queries_ranges_on_float(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
@@ -1426,7 +1445,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.Mongocryptd, BsonType.Double)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Decimal128)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Double)]
-    public void IsEncryptedForRange_without_required_min_max_float_throws(CryptProvider cryptProvider, BsonType storageType)
+    public void IsEncryptedForRange_without_required_min_max_float_throws(
+        CryptProvider cryptProvider,
+        BsonType storageType)
     {
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
@@ -1534,6 +1555,12 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             .WithDatabaseName(_database.MongoDatabase.DatabaseNamespace.DatabaseName)
             .WithKeyVaultNamespace(KeyVaultNamespace)
             .WithKmsProviders(KmsProviders);
+
+        // Remove me once mongocryptd is fixed for Windows on latest
+        if (cryptProvider == CryptProvider.Mongocryptd && EncryptionTests.IsBuggyMongocryptd)
+        {
+            cryptProvider = CryptProvider.AutoEncryptSharedLibrary;
+        }
 
         mongoOptions = cryptProvider switch
         {

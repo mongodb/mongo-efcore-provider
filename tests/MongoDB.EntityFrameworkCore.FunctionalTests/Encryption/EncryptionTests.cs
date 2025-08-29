@@ -83,7 +83,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         Assert.Contains("not all keys requested were satisfied", ex.Message);
     }
 
-    private static bool IsBuggyMongocryptd =>
+    internal static bool IsBuggyMongocryptd =>
         Environment.GetEnvironmentVariable("MONGODB_VERSION") == "latest";
 
     [Theory]
