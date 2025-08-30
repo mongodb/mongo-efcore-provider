@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -712,7 +713,9 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
         => TestMqlLoggerFactory.AssertBaseline(expected);
 
     protected override ITestStoreFactory TestStoreFactory
-        => MongoTestStoreFactory.Instance;
+        => MongoTestStoreFactory.Default;
+
+    protected override string StoreName { get; } = TestServer.Default.GetUniqueDatabaseName("AdHocJsonQuery");
 }
 
 #endif

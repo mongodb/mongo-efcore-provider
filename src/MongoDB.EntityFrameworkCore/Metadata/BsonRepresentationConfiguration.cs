@@ -57,7 +57,7 @@ public record BsonRepresentationConfiguration
 
     /// <summary>
     /// Convert this configuration to an IDictionary representation so it may be
-    /// used within an EF Core static model.
+    /// used within an EF static model.
     /// </summary>
     /// <returns>An IDictionary containing the named properties of this configuration.</returns>
     /// <remarks>Is recreated from this dictionary via <see cref="CreateFrom"/>.</remarks>
@@ -71,7 +71,7 @@ public record BsonRepresentationConfiguration
 
     /// <summary>
     /// Create a <see cref="BsonRepresentationConfiguration"/> from an IDictionary representation
-    /// so it may be recreated from an EF Core static model.
+    /// so it may be recreated from an EF static model.
     /// </summary>
     /// <returns>A <see cref="BsonRepresentationConfiguration"/> with the properties set from the dictionary.</returns>
     /// <remarks>The dictionary passes is typically created by <see cref="ToDictionary"/>.</remarks>

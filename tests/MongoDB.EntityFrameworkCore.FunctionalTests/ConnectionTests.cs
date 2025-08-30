@@ -27,7 +27,7 @@ public class ConnectionTests
     public void Can_connect_using_connection_string_with_database_name()
     {
         var optionsBuilder = StartOptions()
-            .UseMongoDB(TestServer.ConnectionString, TemporaryDatabaseFixture.GetUniqueDatabaseName);
+            .UseMongoDB(TestServer.Default.ConnectionString, TemporaryDatabaseFixture.GetUniqueDatabaseName);
 
         using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_connection_string_with_database_name));
 
@@ -39,7 +39,7 @@ public class ConnectionTests
     {
         var databaseName = TemporaryDatabaseFixture.GetUniqueDatabaseName;
         var collectionName = nameof(Can_connect_using_connection_string_without_database_name);
-        var mongoUrl = new MongoUrlBuilder(TestServer.ConnectionString) { DatabaseName = databaseName };
+        var mongoUrl = new MongoUrlBuilder(TestServer.Default.ConnectionString) { DatabaseName = databaseName };
 
         var optionsBuilder = StartOptions()
             .UseMongoDB(mongoUrl.ToString());
@@ -48,7 +48,7 @@ public class ConnectionTests
 
         context.Database.EnsureCreated();
 
-        var client = new MongoClient(TestServer.ConnectionString);
+        var client = new MongoClient(TestServer.Default.ConnectionString);
         var database = client.GetDatabase(databaseName);
         var collections = database.ListCollectionNames().ToList();
         Assert.Contains(collectionName, collections);
@@ -57,7 +57,7 @@ public class ConnectionTests
     [Fact]
     public void Can_connect_using_mongo_client_settings()
     {
-        var clientSettings = MongoClientSettings.FromConnectionString(TestServer.ConnectionString);
+        var clientSettings = MongoClientSettings.FromConnectionString(TestServer.Default.ConnectionString);
 
         var optionsBuilder = StartOptions()
             .UseMongoDB(clientSettings, TemporaryDatabaseFixture.GetUniqueDatabaseName);
@@ -70,7 +70,7 @@ public class ConnectionTests
     [Fact]
     public void Can_connect_using_mongo_client()
     {
-        var client = new MongoClient(TestServer.ConnectionString);
+        var client = new MongoClient(TestServer.Default.ConnectionString);
 
         var optionsBuilder = StartOptions()
             .UseMongoDB(client, TemporaryDatabaseFixture.GetUniqueDatabaseName);

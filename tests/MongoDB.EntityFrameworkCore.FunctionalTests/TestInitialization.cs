@@ -14,6 +14,7 @@
  */
 
 using System.Runtime.CompilerServices;
+using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests;
 
@@ -22,14 +23,19 @@ public class TestInitialization
     [ModuleInitializer]
     public static void CleanDatabase()
     {
-        var client = TestServer.GetClient();
-        var databaseNameCursor = client.ListDatabaseNames();
-        while (databaseNameCursor.MoveNext())
+        Clean(TestServer.Default.Client);
+        Clean(TestServer.Atlas.Client);
+
+        static void Clean(MongoClient client)
         {
-            foreach (var databaseName in databaseNameCursor.Current)
+            var databaseNameCursor = client.ListDatabaseNames();
+            while (databaseNameCursor.MoveNext())
             {
-                if (databaseName.StartsWith(TemporaryDatabaseFixture.TestDatabasePrefix))
-                    client.DropDatabase(databaseName);
+                foreach (var databaseName in databaseNameCursor.Current)
+                {
+                    if (databaseName.StartsWith(TemporaryDatabaseFixture.TestDatabasePrefix))
+                        client.DropDatabase(databaseName);
+                }
             }
         }
     }

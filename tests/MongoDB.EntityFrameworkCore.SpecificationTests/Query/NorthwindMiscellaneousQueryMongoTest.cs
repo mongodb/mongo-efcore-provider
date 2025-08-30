@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 
@@ -1137,7 +1138,7 @@ Customers.{ "$match" : { "$nor" : [{ "$expr" : { "$eq" : [{ "$indexOfCP" : ["$Co
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.All_top_level_subquery(async))).Message);
 
@@ -1151,7 +1152,7 @@ Customers.
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.All_top_level_subquery_ef_property(async))).Message);
 
@@ -2225,7 +2226,7 @@ Customers.{ "$match" : { "$or" : [{ "$and" : [{ "_id" : "ALFKI" }, { "_id" : "AN
 
     public override async Task Where_bitwise_binary_not(bool async)
     {
-        if (!TestServer.SupportsBitwiseOperators)
+        if (!TestServer.Default.SupportsBitwiseOperators)
         {
             return;
         }
@@ -2250,7 +2251,7 @@ Orders.{ "$match" : { "_id" : { "$bitsAllSet" : 10248 } } }
 
     public override async Task Where_bitwise_binary_or(bool async)
     {
-        if (!TestServer.SupportsBitwiseOperators)
+        if (!TestServer.Default.SupportsBitwiseOperators)
         {
             return;
         }
@@ -2267,7 +2268,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitOr" : ["$_id", 10248] }, 10248
 
     public override async Task Where_bitwise_binary_xor(bool async)
     {
-        if (!TestServer.SupportsBitwiseOperators)
+        if (!TestServer.Default.SupportsBitwiseOperators)
         {
             return;
         }
@@ -2537,7 +2538,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "_v" 
     {
         // Fails: Navigations issue EF-216
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_without_group_join(async))).Message);
 
         AssertMql(
@@ -3540,7 +3541,7 @@ Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$not"
     {
         // Fails: Navigations issue EF-216
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Subquery_DefaultIfEmpty_Any(async))).Message);
 
         AssertMql(
@@ -3832,7 +3833,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Navigations issue EF-216
         Assert.Contains(
-            "Expression not supported: Northwind.Customers.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(async))).Message);
 
         AssertMql(

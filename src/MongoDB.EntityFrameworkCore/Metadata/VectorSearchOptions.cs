@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,12 +13,15 @@
  * limitations under the License.
  */
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+namespace MongoDB.EntityFrameworkCore.Metadata;
 
-public class TemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+/// <summary>
+/// Atlas Vector Search options.
+/// </summary>
+/// <param name="IndexName"></param>
+/// <param name="NumberOfCandidates"></param>
+public readonly record struct VectorSearchOptions(
+    string? IndexName = null,
+    int? NumberOfCandidates = null)
 {
-    public TemporaryDatabaseFixture()
-        : base(TestServer.Default.Client)
-    {
-    }
 }

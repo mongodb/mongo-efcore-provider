@@ -17,28 +17,29 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.TestUtilities;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 public class MongoTestStore : TestStore
 {
-    public static MongoTestStore Create(string name)
-        => new(name, shared: false);
+    private readonly bool _requiresAtlas;
 
-    public static MongoTestStore GetOrCreate(string name)
-        => new(name, shared: true);
+    public static MongoTestStore Create(string name, bool requiresAtlas)
+        => new(name, shared: false, requiresAtlas);
 
-    private MongoTestStore(string name, bool shared = true)
+    private MongoTestStore(string name, bool shared = true, bool requiresAtlas = false)
         : base(name, shared)
     {
+        _requiresAtlas = requiresAtlas;
     }
 
     protected override DbContext CreateDefaultContext()
-        => new TestStoreContext(this);
+        => throw new NotSupportedException();
 
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
-        => builder.UseMongoDB(TestServer.GetClient(), Name);
+        => builder.UseMongoDB(_requiresAtlas ? TestServer.Atlas.Client : TestServer.Default.Client, Name);
 
 #if EF9
     protected override async Task InitializeAsync(Func<DbContext> createContext, Func<DbContext, Task>? seed,
@@ -47,7 +48,12 @@ public class MongoTestStore : TestStore
         await base.InitializeAsync(createContext, seed, clean).ConfigureAwait(false);
 
         using var context = createContext();
-        await ((MongoDatabaseCreator)context.GetService<IDatabaseCreator>()).SeedFromModelAsync().ConfigureAwait(false);
+        var databaseCreator = context.GetService<IDatabaseCreator>();
+        if (!await databaseCreator.EnsureCreatedAsync().ConfigureAwait(false)) // Create or update indexes
+        {
+            // Seed for tests even if we didn't create the database.
+            await ((MongoDatabaseCreator)databaseCreator).SeedFromModelAsync().ConfigureAwait(false);
+        }
     }
 #else
     protected override void Initialize(Func<DbContext> createContext, Action<DbContext>? seed, Action<DbContext>? clean)
@@ -55,21 +61,21 @@ public class MongoTestStore : TestStore
         base.Initialize(createContext, seed, clean);
 
         using var context = createContext();
-        ((MongoDatabaseCreator)context.GetService<IDatabaseCreator>()).SeedFromModel();
+        var databaseCreator = context.GetService<IDatabaseCreator>();
+        if (!databaseCreator.EnsureCreated()) // Create or update indexes
+        {
+            // Seed for tests even if we didn't create the database.
+            ((MongoDatabaseCreator)databaseCreator).SeedFromModel();
+        }
     }
 #endif
 
 #if !EF9
     public override void Clean(DbContext context)
-        => TestServer.GetClient().DropDatabase(Name);
-    #endif
-
-    public override async Task CleanAsync(DbContext context)
-        => await TestServer.GetClient().DropDatabaseAsync(Name).ConfigureAwait(false);
-
-    private class TestStoreContext(MongoTestStore testStore) : DbContext
     {
-        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-            => optionsBuilder.UseMongoDB(TestServer.GetClient(), testStore.Name);
     }
+#endif
+
+    public override Task CleanAsync(DbContext context)
+        => Task.CompletedTask;
 }
