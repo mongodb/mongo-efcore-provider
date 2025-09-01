@@ -102,7 +102,7 @@ public static class MongoServiceCollectionExtensions
     /// <returns>The same service collection so that multiple calls can be chained.</returns>
     /// <remarks>
     /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
-    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Provider can correctly configure and
+    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
     /// dispose of its own <see cref="MongoClient"/> instances.
     /// </remarks>
     public static IServiceCollection AddMongoDB<TContext>(

@@ -269,7 +269,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
         var inputVector = new[] { 0.33f, -0.52f };
 
         Assert.Contains(
-            "The option 'Exact' is set to 'true' indicating an exact nearest neighbour (ENN) search and the number ",
+            "The option 'Exact' is set to 'true', indicating an exact nearest neighbour (ENN) search, and the number of candidates has also been set.",
             Assert.Throws<ArgumentException>(() => context.Set<Book>().VectorSearch(e => e.Preface.Floats, inputVector, limit: 4, new(NumberOfCandidates: 10, Exact: true))).Message);
     }
 

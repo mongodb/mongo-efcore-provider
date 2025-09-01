@@ -80,41 +80,53 @@ public class MongoModelValidator : ModelValidator
         ValidateIndexes(model, logger);
     }
 
-    private static void ValidateIndexes(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    private void ValidateIndexes(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
     {
         foreach (var entityType in model.GetEntityTypes())
         {
             foreach (var index in entityType.GetDeclaredIndexes())
             {
-                var indexOptions = index.GetVectorIndexOptions();
-                if (indexOptions != null)
-                {
-                    if (index.Properties.Count > 1)
-                    {
-                        throw new InvalidOperationException(
-                            $"A vector index on '{entityType.DisplayName()}' is defined over properties '{string.Join(",", index.Properties.Select(e => e.Name))}'. Vector indexes can only target a single property.");
-                    }
+                ValidateIndex(index, logger);
+            }
+        }
+    }
 
-                    if (entityType.FindOwnership()?.IsUnique == false)
-                    {
-                        throw new InvalidOperationException(
-                            $"The entity type '{entityType.DisplayName()}' cannot have a vector index because it is part of an nested collection.");
-                    }
+    /// <summary>
+    /// Validates the given index against MongoDB requirements.
+    /// </summary>
+    /// <param name="index">The <see cref="IIndex"/>.</param>
+    /// <param name="logger">A logger to receive validation diagnostic information.</param>
+    /// <exception cref="InvalidOperationException">if the index is not valid for MongoDB.</exception>
+    protected virtual void ValidateIndex(IIndex index, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        var entityType = index.DeclaringEntityType;
+        var indexOptions = index.GetVectorIndexOptions();
+        if (indexOptions != null)
+        {
+            if (index.Properties.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    $"A vector index on '{entityType.DisplayName()}' is defined over properties '{string.Join(",", index.Properties.Select(e => e.Name))}'. Vector indexes can only target a single property.");
+            }
 
-                    var quantization = indexOptions.Value.Quantization;
-                    if (quantization.HasValue && ((int)quantization.Value < 0 || (int)quantization.Value > 2))
-                    {
-                        throw new InvalidOperationException(
-                            $"Vector quantization is set to '{quantization.Value}' which is not a valid value from the 'VectorQuantization' enum.'");
-                    }
+            if (entityType.FindOwnership()?.IsUnique == false)
+            {
+                throw new InvalidOperationException(
+                    $"The entity type '{entityType.DisplayName()}' cannot have a vector index because it is part of an nested collection.");
+            }
 
-                    var similarity = indexOptions.Value.Similarity;
-                    if ((int)similarity < 0 || (int)similarity > 2)
-                    {
-                        throw new InvalidOperationException(
-                            $"Vector similarity is set to '{similarity}' which is not a valid value from the 'VectorSimilarity' enum.'");
-                    }
-                }
+            var quantization = indexOptions.Value.Quantization;
+            if (quantization.HasValue && ((int)quantization.Value < 0 || (int)quantization.Value > 2))
+            {
+                throw new InvalidOperationException(
+                    $"Vector quantization is set to '{quantization.Value}' which is not a valid value from the 'VectorQuantization' enum.'");
+            }
+
+            var similarity = indexOptions.Value.Similarity;
+            if ((int)similarity < 0 || (int)similarity > 2)
+            {
+                throw new InvalidOperationException(
+                    $"Vector similarity is set to '{similarity}' which is not a valid value from the 'VectorSimilarity' enum.'");
             }
         }
     }
@@ -403,7 +415,7 @@ public class MongoModelValidator : ModelValidator
             case BsonType.Double:
             case BsonType.Document:
                 {
-                    throw CannotBeEncryptedForEqualityException($"'BsonType.{bsonType}' is not a supported type.");
+                    throw CannotBeEncryptedForEqualityException($"BsonType.{bsonType} is not a supported type.");
                 }
 
             default:

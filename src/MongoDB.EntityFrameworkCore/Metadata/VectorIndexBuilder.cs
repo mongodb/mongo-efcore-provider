@@ -52,7 +52,7 @@ public class VectorIndexBuilder(IMutableIndex index, VectorIndexOptions indexOpt
     /// <param name="maxEdges">Maximum number of edges (or connections) that a node can have in the Hierarchical Navigable Small Worlds graph.</param>
     /// <param name="numEdgeCandidates">Analogous to numCandidates at query-time, this parameter controls the maximum number of nodes to evaluate to find the closest neighbors to connect to a new node.</param>
     /// <returns>The same builder instance so that multiple configuration calls can be chained.</returns>
-    public VectorIndexBuilder HasHnswOptions(int maxEdges, int numEdgeCandidates)
+    public VectorIndexBuilder HasEdgeOptions(int maxEdges, int numEdgeCandidates)
     {
         Index.SetVectorIndexOptions(IndexOptions =
             IndexOptions with { HnswMaxEdges = maxEdges, HnswNumEdgeCandidates = numEdgeCandidates });

@@ -24,7 +24,7 @@ namespace MongoDB.EntityFrameworkCore;
 
 internal static class Check
 {
-    public static string? NullButNotEmpty(
+    public static string? NotEmptyButCanBeNull(
         string? value,
         [CallerArgumentExpression(nameof(value))] string parameterName = "")
     {

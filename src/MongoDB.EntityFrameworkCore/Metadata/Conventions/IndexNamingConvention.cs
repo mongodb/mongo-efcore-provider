@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -23,16 +22,21 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
-internal class IndexNamingConvention : IModelFinalizingConvention
+/// <summary>
+/// Runs when the model has been built to find all indexes and give a MongoDB-specific default name to any index that does
+/// not already have a name.
+/// </summary>
+public class IndexNamingConvention : IModelFinalizingConvention
 {
     /// <summary>
-    /// Creates a <see cref="CollectionNameFromDbSetConvention" /> with required dependencies.
+    /// Creates a <see cref="IndexNamingConvention" /> with required dependencies.
     /// </summary>
     /// <param name="dependencies">The <see cref="ProviderConventionSetBuilderDependencies"/> this convention depends upon.</param>
     public IndexNamingConvention(ProviderConventionSetBuilderDependencies dependencies)
     {
     }
 
+    /// <inheritdoc/>
     public void ProcessModelFinalizing(IConventionModelBuilder modelBuilder, IConventionContext<IConventionModelBuilder> context)
     {
         foreach (var entityType in modelBuilder.Metadata.GetEntityTypes().Where(e => e.IsDocumentRoot()))
@@ -41,11 +45,11 @@ internal class IndexNamingConvention : IModelFinalizingConvention
         }
     }
 
-    private static void ProcessEntityType(IConventionEntityType entityType)
+    private void ProcessEntityType(IConventionEntityType entityType)
     {
         foreach (var index in entityType.GetIndexes().Where(p => p.Name == null).ToList())
         {
-            ReplaceIndex(entityType, index);
+            ReplaceIndex(index);
         }
 
         var ownedEntityTypes = entityType.GetReferencingForeignKeys()
@@ -58,8 +62,14 @@ internal class IndexNamingConvention : IModelFinalizingConvention
         }
     }
 
-    private static void ReplaceIndex(IConventionEntityType entityType, IConventionIndex index)
+    /// <summary>
+    /// Replaces the given index with a new one which is the same but with options changed. Override this method to
+    /// change the default naming pattern.
+    /// </summary>
+    /// <param name="index">The <see cref="IIndex"/> that is being named.</param>
+    protected virtual void ReplaceIndex(IConventionIndex index)
     {
+        var entityType = index.DeclaringEntityType;
         entityType.RemoveIndex(index);
 
         var newIndex = entityType.AddIndex(

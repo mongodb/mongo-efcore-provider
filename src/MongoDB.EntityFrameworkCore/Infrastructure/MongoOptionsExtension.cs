@@ -246,19 +246,19 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         if (setting != nameof(ConnectionString) && ConnectionString != null)
         {
             throw new InvalidOperationException(
-                $"Can not set '{setting}' as '{nameof(ConnectionString)}' is already set. Specify only one connection configuration.");
+                $"Can not set {setting} as {nameof(ConnectionString)} is already set. Specify only one connection configuration.");
         }
 
         if (setting != nameof(MongoClient) && MongoClient != null)
         {
             throw new InvalidOperationException(
-                $"Can not set '{setting}' as '{nameof(MongoClient)}' is already set. Specify only one connection configuration.");
+                $"Can not set {setting} as {nameof(MongoClient)} is already set. Specify only one connection configuration.");
         }
 
         if (setting != nameof(ClientSettings) && ClientSettings != null)
         {
             throw new InvalidOperationException(
-                $"Can not set '{setting}' as '{nameof(ClientSettings)}' is already set. Specify only one connection configuration.");
+                $"Can not set {setting} as {nameof(ClientSettings)} is already set. Specify only one connection configuration.");
         }
     }
 

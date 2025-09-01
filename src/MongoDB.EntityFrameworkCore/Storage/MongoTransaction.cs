@@ -93,7 +93,7 @@ public sealed class MongoTransaction(
     }
 
     private const string TransactionByDefault =
-        "The MongoDB EF Provider now uses transactions to ensure all updates in a SaveChanges operation are applied together or not at all.";
+        "The MongoDB EF Core Provider now uses transactions to ensure all updates in a SaveChanges operation are applied together or not at all.";
 
     private const string DisableTransactions =
         "If you are sure you do not need save consistency or optimistic concurrency you can disable transactions by setting 'Database.AutoTransactionBehavior = AutoTransactionBehavior.Never' on your DbContext.";

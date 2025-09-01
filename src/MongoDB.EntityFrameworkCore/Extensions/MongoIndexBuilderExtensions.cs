@@ -69,7 +69,7 @@ public static class MongoIndexBuilderExtensions
     /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="similarity"> The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
+    /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
     /// <param name="dimensions">Number of vector dimensions, between 1 and 8192.</param>
     /// <returns>A builder to further configure the vector index options.</returns>
     public static VectorIndexBuilder IsVectorIndex(
@@ -87,7 +87,7 @@ public static class MongoIndexBuilderExtensions
     /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="similarity"> The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
+    /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
     /// <param name="dimensions">Number of vector dimensions, between 1 and 8192.</param>
     /// <param name="buildAction">A nested builder to configure vector index options.</param>
     /// <returns>A builder to further configure the index.</returns>
@@ -105,7 +105,7 @@ public static class MongoIndexBuilderExtensions
     /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="similarity"> The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
+    /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
     /// <param name="dimensions">Number of vector dimensions, between 1 and 8192.</param>
     /// <param name="buildAction">A nested builder to configure vector index options.</param>
     /// <returns>A builder to further configure the index.</returns>
@@ -120,7 +120,7 @@ public static class MongoIndexBuilderExtensions
     /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="similarity"> The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
+    /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
     /// <param name="dimensions">Number of vector dimensions, between 1 and 8192.</param>
     /// <returns>A builder to further configure the vector index options.</returns>
     public static VectorIndexBuilder<TEntity> IsVectorIndex<TEntity>(
@@ -138,7 +138,7 @@ public static class MongoIndexBuilderExtensions
     /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="similarity"> The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
+    /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
     /// <param name="dimensions">Number of vector dimensions, between 1 and 8192.</param>
     /// <param name="buildAction">A nested builder to configure vector index options.</param>
     /// <returns>A builder to further configure the index.</returns>

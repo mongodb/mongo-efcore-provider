@@ -159,7 +159,7 @@ public static class MongoPropertyExtensions
     /// Sets the <see cref="BinaryVectorDataType"/> for the property to configure how it is stored within MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IMutableProperty"/> to set the BsonType for.</param>
-    /// <param name="binaryVectorDataType">The format to use for packing the binary vector. or <see langword="null" /> to unset
+    /// <param name="binaryVectorDataType">The format to use for packing the binary vector or <see langword="null" /> to unset
     /// the value and use the default.</param>
     /// <returns>Returns the <see cref="BinaryVectorDataType"/> the property is stored as.</returns>
     public static BinaryVectorDataType? SetBinaryVectorDataType(
@@ -180,7 +180,7 @@ public static class MongoPropertyExtensions
     /// Sets the <see cref="BinaryVectorDataType"/> for the property to configure how it is stored within MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IConventionProperty"/> to set the BsonType for.</param>
-    /// <param name="binaryVectorDataType">The format to use for packing the binary vector. or <see langword="null" /> to unset
+    /// <param name="binaryVectorDataType">The format to use for packing the binary vector or <see langword="null" /> to unset
     /// the value and use the default.</param>
     /// <param name="fromDataAnnotation"><see langword="true"/> if the configuration was specified using a data annotation, <see langword="false"/> if not.</param>
     /// <returns>The <see cref="BinaryVectorDataType"/> configured how data on the property will be stored within MongoDB.</returns>

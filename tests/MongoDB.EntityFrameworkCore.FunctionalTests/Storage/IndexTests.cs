@@ -356,7 +356,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .HasIndex("Floats")
                         .IsVectorIndex(VectorSimilarity.DotProduct, 4)
                         .HasQuantization(VectorQuantization.Scalar)
-                        .HasHnswOptions(32, 1600)
+                        .HasEdgeOptions(32, 1600)
                         .AllowsFiltersOn("Filter1")
                         .AllowsFiltersOn("Filter2")
                         .AllowsFiltersOn("Filter3")
@@ -364,7 +364,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .HasIndex(e => e.Floats)
                         .IsVectorIndex(VectorSimilarity.DotProduct, 4)
                         .HasQuantization(VectorQuantization.Scalar)
-                        .HasHnswOptions(32, 1600)
+                        .HasEdgeOptions(32, 1600)
                         .AllowsFiltersOn(e => e.Filter1)
                         .AllowsFiltersOn(e => e.Filter2)
                         .AllowsFiltersOn(e => e.Filter3);
@@ -395,7 +395,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .HasIndex("Floats")
                         .IsVectorIndex(VectorSimilarity.DotProduct, 4)
                         .HasQuantization(VectorQuantization.Scalar)
-                        .HasHnswOptions(32, 1600)
+                        .HasEdgeOptions(32, 1600)
                         .AllowsFiltersOn("FilterN1")
                         .AllowsFiltersOn("Nested.FilterN2")
                     : b.Entity<SimpleEntity>()
@@ -403,7 +403,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .HasIndex(e => e.Floats)
                         .IsVectorIndex(VectorSimilarity.DotProduct, 4)
                         .HasQuantization(VectorQuantization.Scalar)
-                        .HasHnswOptions(32, 1600)
+                        .HasEdgeOptions(32, 1600)
                         .AllowsFiltersOn(e => e.FilterN1)
                         .AllowsFiltersOn(e => e.Nested.FilterN2);
             });
@@ -435,14 +435,14 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .AllowsFiltersOn("Filter1")
                         .AllowsFiltersOn("Filter3")
                         .HasQuantization(VectorQuantization.Binary)
-                        .HasHnswOptions(32, 200)
+                        .HasEdgeOptions(32, 200)
                     : b.Entity<SimpleEntity>()
                         .HasIndex(e => e.Floats, "Shadowfell")
                         .IsVectorIndex(VectorSimilarity.DotProduct, 8)
                         .AllowsFiltersOn(e => e.Filter1)
                         .AllowsFiltersOn(e => e.Filter3)
                         .HasQuantization(VectorQuantization.Binary)
-                        .HasHnswOptions(32, 200);
+                        .HasEdgeOptions(32, 200);
             });
 
         _ = async ? await db.Database.EnsureCreatedAsync() : db.Database.EnsureCreated();
@@ -473,7 +473,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .HasIndex(["Doubles"], "Shadowfell")
                         .IsVectorIndex(VectorSimilarity.DotProduct, 4)
                         .HasQuantization(VectorQuantization.Scalar)
-                        .HasHnswOptions(32, 1600)
+                        .HasEdgeOptions(32, 1600)
                         .AllowsFiltersOn("FilterN2")
                     : b.Entity<SimpleEntity>()
                         .OwnsOne(e => e.Nested)
@@ -481,7 +481,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .HasIndex(e => e.Doubles, "Shadowfell")
                         .IsVectorIndex(VectorSimilarity.DotProduct, 4)
                         .HasQuantization(VectorQuantization.Scalar)
-                        .HasHnswOptions(32, 1600)
+                        .HasEdgeOptions(32, 1600)
                         .AllowsFiltersOn(e => e.FilterN2);
             });
 
@@ -515,7 +515,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                                 b.AllowsFiltersOn("Filter1");
                                 b.AllowsFiltersOn("Filter3");
                                 b.HasQuantization(VectorQuantization.Binary);
-                                b.HasHnswOptions(32, 200);
+                                b.HasEdgeOptions(32, 200);
                             })
                     : b.Entity<SimpleEntity>()
                         .HasIndex(e => e.Floats, "Shadowfell")
@@ -525,7 +525,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                                 b.AllowsFiltersOn(e => e.Filter1);
                                 b.AllowsFiltersOn(e => e.Filter3);
                                 b.HasQuantization(VectorQuantization.Binary);
-                                b.HasHnswOptions(32, 200);
+                                b.HasEdgeOptions(32, 200);
 
                             });
             });
@@ -559,7 +559,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .IsVectorIndex(VectorSimilarity.DotProduct, 4, b =>
                         {
                             b.HasQuantization(VectorQuantization.Scalar);
-                            b.HasHnswOptions(32, 1600);
+                            b.HasEdgeOptions(32, 1600);
                             b.AllowsFiltersOn("FilterN2");
 
                         })
@@ -571,7 +571,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                             b =>
                             {
                                 b.HasQuantization(VectorQuantization.Scalar);
-                                b.HasHnswOptions(32, 1600);
+                                b.HasEdgeOptions(32, 1600);
                                 b.AllowsFiltersOn(e => e.FilterN2);
                             });
             });
@@ -638,8 +638,8 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         db.Database.EnsureCreated();
 
         Assert.Contains(
-            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF model. " +
-            "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF.",
+            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF Core model. " +
+            "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF Core.",
             Assert.Throws<InvalidOperationException>(() =>
                 db.Set<SimpleEntity>()
                     .VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" })).Message);
@@ -655,14 +655,14 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                 b.Entity<SimpleEntity>().HasIndex(e => e.Floats, "Slarti")
                     .IsVectorIndex(VectorSimilarity.DotProduct, 8)
                     .HasQuantization(VectorQuantization.Binary)
-                    .HasHnswOptions(32, 200);
+                    .HasEdgeOptions(32, 200);
             });
 
         db.Database.EnsureCreated();
 
         Assert.Contains(
-            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF model. " +
-            "Vector query searches must use one of the indexes defined on the EF model.",
+            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF Core model. " +
+            "Vector query searches must use one of the indexes defined on the EF Core model.",
             Assert.Throws<InvalidOperationException>(() =>
                 db.Set<SimpleEntity>()
                     .VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" })).Message);
@@ -694,7 +694,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                     b.HasIndex(e => e.Floats, "Slarti")
                         .IsVectorIndex(VectorSimilarity.DotProduct, 8)
                         .HasQuantization(VectorQuantization.Binary)
-                        .HasHnswOptions(32, 200);
+                        .HasEdgeOptions(32, 200);
 
                     b.HasIndex(e => e.Floats, "Bartfast")
                         .IsVectorIndex(VectorSimilarity.Euclidean, 4)

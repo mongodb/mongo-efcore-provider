@@ -19,17 +19,17 @@ using MongoDB.Bson;
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
 /// <summary>
-/// Provides any necessary schemas for a MongoClient based on the current EF model.
+/// Provides any necessary schemas for a MongoClient based on the current EF Core model.
 /// </summary>
 /// <remarks>
-/// This interface is intended for internal use by the MongoDB EF Provider
+/// This interface is intended for internal use by the MongoDB EF Core Provider
 /// and may change in any release without prior notice.
 /// </remarks>
 public interface IQueryableEncryptionSchemaProvider
 {
     /// <summary>
     /// Creates a Queryable Encryption schema for the current model based on the
-    /// configured EF annotations.
+    /// configured EF Core annotations.
     /// </summary>
     /// <returns>A Dictionary of BsonDocuments keyed by collection name.</returns>
     /// <remarks>

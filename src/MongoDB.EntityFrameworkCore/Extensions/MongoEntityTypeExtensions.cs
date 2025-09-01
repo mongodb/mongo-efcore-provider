@@ -208,6 +208,7 @@ public static class MongoEntityTypeExtensions
     /// <returns>The <see cref="IEntityType"/> mapped directly to the MongoDB document.</returns>
     public static IMutableEntityType GetDocumentRoot(this IMutableEntityType entityType)
         => (IMutableEntityType)GetDocumentRoot((IReadOnlyEntityType)entityType);
+
     /// <summary>
     /// Gets the entity type that maps directly to the MongoDB document for either the root itself or any nested entity types.
     /// </summary>

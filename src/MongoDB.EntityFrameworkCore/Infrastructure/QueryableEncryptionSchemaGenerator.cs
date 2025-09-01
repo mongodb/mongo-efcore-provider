@@ -29,14 +29,14 @@ using MongoDB.EntityFrameworkCore.Storage;
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
 /// <summary>
-/// Generates MongoDB Queryable Encryption schemas for the EF models.
+/// Generates MongoDB Queryable Encryption schemas for the EF Core models.
 /// </summary>
 public static class QueryableEncryptionSchemaGenerator
 {
     /// <summary>
-    /// Generate a dictionary of Queryable Encryption schemas for a given EF model.
+    /// Generate a dictionary of Queryable Encryption schemas for a given EF Core model.
     /// </summary>
-    /// <param name="model">The EF <see cref="IModel"/>.</param>
+    /// <param name="model">The EF Core <see cref="IModel"/>.</param>
     /// <returns>A <see cref="Dictionary{TKey,TValue}"/> containing Queryable Encryption schemas keyed by collection name.</returns>
     /// <exception cref="ArgumentNullException">If the <paramref name="model"/> is null.</exception>
     public static Dictionary<string, BsonDocument> GenerateSchemas(IReadOnlyModel model)

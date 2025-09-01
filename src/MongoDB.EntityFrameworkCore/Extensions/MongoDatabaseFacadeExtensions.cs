@@ -26,15 +26,15 @@ namespace MongoDB.EntityFrameworkCore.Extensions;
 
 /// <summary>
 /// MongoDB-specific extension methods for the <see cref="DatabaseFacade"/> obtained from the
-/// EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>
+/// EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>
 /// </summary>
 public static class MongoDatabaseFacadeExtensions
 {
     /// <summary>
-    /// Creates an index in MongoDB based on the EF <see cref="IIndex"/> definition. No attempt is made to check that the index
+    /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
     /// does not already exist and can therefore be created. The index may be an Atlas index or a normal MongoDB index.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="index">The <see cref="IIndex"/> definition.</param>
     public static void CreateIndex(this DatabaseFacade databaseFacade, IIndex index)
     {
@@ -44,10 +44,10 @@ public static class MongoDatabaseFacadeExtensions
     }
 
     /// <summary>
-    /// Creates an index in MongoDB based on the EF <see cref="IIndex"/> definition. No attempt is made to check that the index
+    /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
     /// does not already exist and can therefore be created. The index may be an Atlas index or a normal MongoDB index.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="index">The <see cref="IIndex"/> definition.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
@@ -60,10 +60,10 @@ public static class MongoDatabaseFacadeExtensions
     }
 
     /// <summary>
-    /// Creates indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF model for which there
+    /// Creates indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for which there
     /// is not already an index in the database. This method only creates regular, non-Atlas indexes.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     public static void CreateMissingIndexes(this DatabaseFacade databaseFacade)
     {
         var context = ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context;
@@ -71,10 +71,10 @@ public static class MongoDatabaseFacadeExtensions
     }
 
     /// <summary>
-    /// Creates missing Atlas vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF model for
+    /// Creates missing Atlas vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
     /// which there is not already an index in the database.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     public static void CreateMissingVectorIndexes(this DatabaseFacade databaseFacade)
     {
         var context = ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context;
@@ -82,10 +82,10 @@ public static class MongoDatabaseFacadeExtensions
     }
 
     /// <summary>
-    /// Creates indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF model for which there
+    /// Creates indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for which there
     /// is not already an index in the database. This method only creates regular, non-Atlas indexes.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     public static Task CreateMissingIndexesAsync(this DatabaseFacade databaseFacade, CancellationToken cancellationToken = default)
@@ -95,10 +95,10 @@ public static class MongoDatabaseFacadeExtensions
     }
 
     /// <summary>
-    /// Creates missing Atlas vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF model for
+    /// Creates missing Atlas vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
     /// which there is not already an index in the database.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     public static Task CreateMissingVectorIndexesAsync(this DatabaseFacade databaseFacade, CancellationToken cancellationToken = default)
@@ -110,7 +110,7 @@ public static class MongoDatabaseFacadeExtensions
     /// <summary>
     /// Blocks until all vector indexes in the mapped collections are reporting the 'READY' state.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
     /// The default is 15 seconds. Zero seconds means no timeout.</param>
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
@@ -123,7 +123,7 @@ public static class MongoDatabaseFacadeExtensions
     /// <summary>
     /// Blocks until all vector indexes in the mapped collections are reporting the 'READY' state.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
     /// The default is 15 seconds. Zero seconds means no timeout.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
@@ -140,7 +140,7 @@ public static class MongoDatabaseFacadeExtensions
     /// exist then the MongoDB database is created using the <see cref="MongoDatabaseCreationOptions"/> to determine what
     /// additional actions to take.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="options">An <see cref="MongoDatabaseCreationOptions"/> object specifying additional actions to be taken.</param>
     /// <returns><see langword="true" /> if the database is created, <see langword="false" /> if it already existed.</returns>
     public static bool EnsureCreated(this DatabaseFacade databaseFacade, MongoDatabaseCreationOptions options)
@@ -151,7 +151,7 @@ public static class MongoDatabaseFacadeExtensions
     /// exist then the MongoDB database is created using the <see cref="MongoDatabaseCreationOptions"/> to determine what
     /// additional actions to take.
     /// </summary>
-    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="options">An <see cref="MongoDatabaseCreationOptions"/> object specifying additional actions to be taken.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken" /> to observe while waiting for the task to complete.</param>
     /// <returns>A task that represents the asynchronous save operation. The task result contains <see langword="true" /> if the database is created, <see langword="false" /> if it already existed.

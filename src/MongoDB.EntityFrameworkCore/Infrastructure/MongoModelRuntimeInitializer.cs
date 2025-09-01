@@ -32,7 +32,7 @@ public class MongoModelRuntimeInitializer(ModelRuntimeInitializerDependencies de
     /// </summary>
     /// <remarks>
     /// Specifically, this method initializes the MongoDB C# Driver with the necessary
-    /// configuration to support the model and MongoDB EF provider.
+    /// configuration to support the model and MongoDB EF Core provider.
     /// </remarks>
     /// <param name="model">The model to initialize.</param>
     /// <param name="designTime">Whether the model should contain design-time configuration.</param>

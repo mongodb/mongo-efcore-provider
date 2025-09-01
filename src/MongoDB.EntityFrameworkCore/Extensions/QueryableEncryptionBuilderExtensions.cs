@@ -24,7 +24,7 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace Microsoft.EntityFrameworkCore;
 
 /// <summary>
-/// Extensions to specify MongoDB Queryable Encryption configuration for an EF model.
+/// Extensions to specify MongoDB Queryable Encryption configuration for an EF Core model.
 /// </summary>
 public static class QueryableEncryptionBuilderExtensions
 {

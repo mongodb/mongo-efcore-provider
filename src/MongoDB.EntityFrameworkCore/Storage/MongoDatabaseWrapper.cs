@@ -223,10 +223,10 @@ public class MongoDatabaseWrapper : Database
 
     /// <summary>
     /// We only care about updating root entities as non-root/owned entities must be contained within one.
-    /// Convert the list of entries modified by EF into a list of modified root entries that were either
+    /// Convert the list of entries modified by EF Core into a list of modified root entries that were either
     /// directly modified themselves or indirectly modified by one of the entries they own.
     /// </summary>
-    /// <param name="entries">The list of modified <see cref="IUpdateEntry"/> as determined by EF.</param>
+    /// <param name="entries">The list of modified <see cref="IUpdateEntry"/> as determined by EF Core.</param>
     /// <returns>The actual list of changed root entities as required by MongoDB.</returns>
     private static HashSet<IUpdateEntry> GetAllChangedRootEntries(IList<IUpdateEntry> entries)
     {

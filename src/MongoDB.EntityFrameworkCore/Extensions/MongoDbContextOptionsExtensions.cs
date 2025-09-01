@@ -133,7 +133,7 @@ public static class MongoDbContextOptionsExtensions
     /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
     /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
-    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Provider can correctly configure and
+    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
     /// dispose of its own <see cref="MongoClient"/> instances.
     /// </remarks>
     public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
@@ -158,7 +158,7 @@ public static class MongoDbContextOptionsExtensions
     /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
     /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
-    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Provider can correctly configure and
+    /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
     /// dispose of its own <see cref="MongoClient"/> instances.
     /// </remarks>
     public static DbContextOptionsBuilder UseMongoDB(
@@ -193,7 +193,7 @@ public static class MongoDbContextOptionsExtensions
     /// <typeparam name="TContext">The type of context to be configured.</typeparam>
     /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
-    /// In some scenarios the MongoDB EF Provider may need to change some client settings before connecting depending on
+    /// In some scenarios the MongoDB EF Core Provider may need to change some client settings before connecting depending on
     /// what features are configured.
     /// </remarks>
     public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
@@ -217,7 +217,7 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
-    /// In some scenarios the MongoDB EF Provider may need to change some client settings before connecting depending on
+    /// In some scenarios the MongoDB EF Core Provider may need to change some client settings before connecting depending on
     /// what features are configured.
     /// </remarks>
     public static DbContextOptionsBuilder UseMongoDB(

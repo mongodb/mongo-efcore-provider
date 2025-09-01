@@ -78,34 +78,49 @@ internal static class InternalIndexExtensions
             ? "dotProduct" // Because neither "DotProduct" or "dotproduct" are allowed.
             : vectorIndexOptions.Similarity.ToString().ToLowerInvariant();
 
-        var pathString = $", path: '{string.Join('.', path.Append(index.Properties.Single().GetElementName()))}'";
-        var dimensions = $", numDimensions: {vectorIndexOptions.Dimensions}";
-        var similarity = $", similarity: '{similarityValue}'";
+        var vectorField = new BsonDocument
+        {
+            { "type", BsonString.Create("vector") },
+            { "path", BsonString.Create(string.Join('.', path.Append(index.Properties.Single().GetElementName()))) },
+            { "numDimensions", BsonInt32.Create(vectorIndexOptions.Dimensions) },
+            { "similarity", BsonString.Create(similarityValue) },
+        };
 
-        var quantization = vectorIndexOptions.Quantization.HasValue
-            ? $", quantization: '{vectorIndexOptions.Quantization.ToString()?.ToLower()}'"
-            : "";
+        if (vectorIndexOptions.Quantization.HasValue)
+        {
+            vectorField.Add("quantization", BsonString.Create(vectorIndexOptions.Quantization.ToString()?.ToLower()));
+        }
 
-        var hnswOptions = vectorIndexOptions.HnswMaxEdges != null || vectorIndexOptions.HnswNumEdgeCandidates != null
-            ? $"'hnswOptions': {{ 'maxEdges': {vectorIndexOptions.HnswMaxEdges ?? 16}, 'numEdgeCandidates': {vectorIndexOptions.HnswNumEdgeCandidates ?? 100} }}"
-            : "";
+        if (vectorIndexOptions.HnswMaxEdges != null || vectorIndexOptions.HnswNumEdgeCandidates != null)
+        {
+            var hnswDocument = new BsonDocument
+            {
+                { "maxEdges", BsonInt32.Create(vectorIndexOptions.HnswMaxEdges ?? 16) },
+                { "numEdgeCandidates", BsonInt32.Create(vectorIndexOptions.HnswNumEdgeCandidates ?? 100) }
+            };
+            vectorField.Add("hnswOptions", hnswDocument);
+        }
 
-        var filters = "";
+        var fieldDocuments = new List<BsonDocument> { vectorField };
+
         if (vectorIndexOptions.FilterPaths != null)
         {
             foreach (var filterPath in vectorIndexOptions.FilterPaths)
             {
-                var fullPath = path.Count > 0 ? string.Join('.', path) + '.' + filterPath : filterPath;
-                filters += $", {{ type: 'filter', path: '{fullPath}' }}";
-            }
+                var fieldDocument = new BsonDocument
+                {
+                    { "type", BsonString.Create("filter") },
+                    { "path", BsonString.Create(path.Count > 0 ? string.Join('.', path) + '.' + filterPath : filterPath) }
+                };
 
+                fieldDocuments.Add(fieldDocument);
+            }
         }
 
         var model = new CreateSearchIndexModel(
             index.Name!,
             SearchIndexType.VectorSearch,
-            BsonDocument.Parse(
-                $"{{ fields: [ {{ type: 'vector'{pathString}{dimensions}{similarity}{quantization}{hnswOptions} }}{filters} ] }}"));
+            new BsonDocument { { "fields", BsonArray.Create(fieldDocuments) } });
 
         return model;
     }
