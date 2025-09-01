@@ -18,12 +18,38 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 
-public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture fixture)
+public class TestServer(string connectionString)
+{
+    public static string Default { get; } = GetDefaultConnectionString();
+
+    public static string Atlas { get; } =
+        Environment.GetEnvironmentVariable("ATLAS_SEARCH") ?? GetDefaultConnectionString();
+
+    private static string GetDefaultConnectionString()
+        => Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+}
+
+public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture fixture, ITestOutputHelper testOutputHelper)
     : BuiltInDataTypesTestBase<BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture>(fixture)
 {
+
+    [ConditionalFact]
+    public void TestConnectionString()
+    {
+        testOutputHelper.WriteLine($"Default is not null: {Environment.GetEnvironmentVariable("MONGODB_URI") != null}");
+        testOutputHelper.WriteLine($"Atlas is not null: {Environment.GetEnvironmentVariable("ATLAS_SEARCH") != null}");
+        testOutputHelper.WriteLine($"Atlas != Default: {Environment.GetEnvironmentVariable("ATLAS_SEARCH") != Environment.GetEnvironmentVariable("MONGODB_URI")}");
+        testOutputHelper.WriteLine($"Default same as from test server: {Environment.GetEnvironmentVariable("MONGODB_URI") == TestServer.Default}");
+        testOutputHelper.WriteLine($"Atlas same as from test server: {Environment.GetEnvironmentVariable("ATLAS_SEARCH") == TestServer.Atlas}");
+
+        Assert.Fail("Failing...");
+    }
+
+
     // Fails: Enum casting issue EF-215
     public override async Task Can_filter_projection_with_captured_enum_variable(bool async)
         => Assert.Contains(
