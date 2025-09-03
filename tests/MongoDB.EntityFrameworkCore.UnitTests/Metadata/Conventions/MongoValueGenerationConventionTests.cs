@@ -58,7 +58,7 @@ public class MongoValueGenerationConventionTests
         builder.FinalizeModel();
         var model = builder.Model;
         return model.FindEntityType(clrType)
-            ?? throw new InvalidOperationException($"Could not find entity type {clrType.FullName}");
+            ?? throw new InvalidOperationException($"Could not find entity type '{clrType.FullName}'");
     }
 
     class BasicEntity<T>

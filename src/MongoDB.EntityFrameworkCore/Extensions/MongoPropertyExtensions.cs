@@ -148,6 +148,69 @@ public static class MongoPropertyExtensions
 
 
     /// <summary>
+    /// Returns the <see cref="BinaryVectorDataType"/> the property is stored as when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the element name for.</param>
+    /// <returns>Returns the <see cref="BinaryVectorDataType"/> the property is stored as.</returns>
+    public static BinaryVectorDataType? GetBinaryVectorDataType(this IReadOnlyProperty property)
+        => (BinaryVectorDataType?)property[MongoAnnotationNames.BinaryVectorDataType];
+
+    /// <summary>
+    /// Sets the <see cref="BinaryVectorDataType"/> for the property to configure how it is stored within MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to set the BsonType for.</param>
+    /// <param name="binaryVectorDataType">The format to use for packing the binary vector or <see langword="null" /> to unset
+    /// the value and use the default.</param>
+    /// <returns>Returns the <see cref="BinaryVectorDataType"/> the property is stored as.</returns>
+    public static BinaryVectorDataType? SetBinaryVectorDataType(
+        this IMutableProperty property,
+        BinaryVectorDataType? binaryVectorDataType)
+    {
+        if (binaryVectorDataType == null)
+        {
+            property.RemoveAnnotation(MongoAnnotationNames.BinaryVectorDataType);
+            return null;
+        }
+
+        property.SetAnnotation(MongoAnnotationNames.BinaryVectorDataType, binaryVectorDataType);
+        return binaryVectorDataType;
+    }
+
+    /// <summary>
+    /// Sets the <see cref="BinaryVectorDataType"/> for the property to configure how it is stored within MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to set the BsonType for.</param>
+    /// <param name="binaryVectorDataType">The format to use for packing the binary vector or <see langword="null" /> to unset
+    /// the value and use the default.</param>
+    /// <param name="fromDataAnnotation"><see langword="true"/> if the configuration was specified using a data annotation, <see langword="false"/> if not.</param>
+    /// <returns>The <see cref="BinaryVectorDataType"/> configured how data on the property will be stored within MongoDB.</returns>
+    public static BinaryVectorDataType? SetBinaryVectorDataType(
+        this IConventionProperty property,
+        BinaryVectorDataType? binaryVectorDataType,
+        bool fromDataAnnotation = false)
+    {
+        if (binaryVectorDataType == null)
+        {
+            property.RemoveAnnotation(MongoAnnotationNames.BinaryVectorDataType);
+            return null;
+        }
+
+        property.SetAnnotation(MongoAnnotationNames.BinaryVectorDataType, binaryVectorDataType, fromDataAnnotation);
+        return binaryVectorDataType;
+    }
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the <see cref="BinaryVectorDataType"/> for the property.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the storage <see cref="BinaryVectorDataType"/> for.</param>
+    /// <returns>
+    /// The <see cref="ConfigurationSource" /> the <see cref="BinaryVectorDataType"/> was specified by for this property.
+    /// </returns>
+    public static ConfigurationSource? GetBinaryVectorDataTypeConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.BinaryVectorDataType)?.GetConfigurationSource();
+
+
+    /// <summary>
     /// Gets the <see cref="DateTimeKind"/> of the <see cref="DateTime"/> property is mapped to when targeting MongoDB.
     /// </summary>
     /// <param name="property">The <see cref="IReadOnlyProperty"/> to obtain the <see cref="DateTimeKind"/> for.</param>
@@ -169,8 +232,8 @@ public static class MongoPropertyExtensions
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
-            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {
-                property.DeclaringType.Name} entity.");
+            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field '{property.Name}' of '{
+                property.DeclaringType.Name}' entity.");
         }
 
         property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind);
@@ -190,8 +253,8 @@ public static class MongoPropertyExtensions
     {
         if (property.ClrType != typeof(DateTime) && property.ClrType != typeof(DateTime?))
         {
-            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field {property.Name} of {
-                property.DeclaringType.Name} entity.");
+            throw new InvalidOperationException($"Cannot apply DateTimeKind annotation for non-DateTime field '{property.Name}' of '{
+                property.DeclaringType.Name}' entity.");
         }
 
         property.SetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind, fromDataAnnotation);

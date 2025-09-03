@@ -14,7 +14,10 @@
  */
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using System.Reflection;
 
 namespace MongoDB.EntityFrameworkCore;
 
@@ -29,4 +32,56 @@ internal static class ExpressionExtensionMethods
         => (LambdaExpression)(expression is UnaryExpression unary && expression.NodeType == ExpressionType.Quote
             ? unary.Operand
             : expression);
+
+    internal static IReadOnlyList<TMemberInfo> GetMemberAccess<TMemberInfo>(this LambdaExpression memberAccessExpression)
+        where TMemberInfo : MemberInfo
+    {
+        var members = memberAccessExpression.Parameters[0].MatchMemberAccess<TMemberInfo>(memberAccessExpression.Body);
+
+        if (members is null)
+        {
+            throw new ArgumentException(
+                $"The expression '{memberAccessExpression}' is not a valid member access expression. The expression should represent a simple property or field access: 't => t.MyProperty'.");
+        }
+        return members;
+    }
+
+    internal static IReadOnlyList<TMemberInfo>? MatchMemberAccess<TMemberInfo>(
+        this Expression parameterExpression,
+        Expression memberAccessExpression)
+        where TMemberInfo : MemberInfo
+    {
+        var memberInfos = new List<TMemberInfo>();
+        var unwrappedExpression = RemoveTypeAs(RemoveConvert(memberAccessExpression));
+        do
+        {
+            var memberExpression = unwrappedExpression as MemberExpression;
+            if (!(memberExpression?.Member is TMemberInfo memberInfo))
+            {
+                return null;
+            }
+            memberInfos.Insert(0, memberInfo);
+            unwrappedExpression = RemoveTypeAs(RemoveConvert(memberExpression.Expression));
+        }
+        while (unwrappedExpression != parameterExpression);
+
+        return memberInfos;
+    }
+
+    [return: NotNullIfNotNull(nameof(expression))]
+    internal static Expression? RemoveTypeAs(this Expression? expression)
+    {
+        while (expression?.NodeType == ExpressionType.TypeAs)
+        {
+            expression = ((UnaryExpression)RemoveConvert(expression)).Operand;
+        }
+
+        return expression;
+    }
+
+    [return: NotNullIfNotNull(nameof(expression))]
+    internal static Expression? RemoveConvert(Expression? expression)
+        => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
+            ? RemoveConvert(unaryExpression.Operand)
+            : expression;
 }

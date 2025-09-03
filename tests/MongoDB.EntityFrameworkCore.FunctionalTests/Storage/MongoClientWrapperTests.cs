@@ -20,6 +20,7 @@ using MongoDB.Driver;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
@@ -61,6 +62,25 @@ public class MongoClientWrapperTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task CreateDatabase_can_be_configured_to_not_create_missing_collections(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
+        var client = context.GetService<IMongoClientWrapper>();
+
+        var options = new MongoDatabaseCreationOptions(CreateMissingCollections: false);
+
+        var didCreate = async
+            ? await client.CreateDatabaseAsync(context.GetService<IDesignTimeModel>(), options, seedAsync: null)
+            : client.CreateDatabase(context.GetService<IDesignTimeModel>(), options, seed: null);
+
+        Assert.True(didCreate);
+        Assert.Empty(database.MongoDatabase.ListCollectionNames().ToList());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task CreateDatabase_creates_indexes(bool async)
     {
         var database = new TemporaryDatabaseFixture();
@@ -77,6 +97,46 @@ public class MongoClientWrapperTests
             : client.CreateDatabase(context.GetService<IDesignTimeModel>());
 
         Assert.True(didCreate);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
+        Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_index_creation_can_be_deferred(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase, mb =>
+        {
+            mb.Entity<Customer>().HasIndex(c => c.Name);
+            mb.Entity<Order>().HasIndex(o => o.OrderRef).IsUnique();
+            mb.Entity<Address>().HasIndex(o => o.PostCode, "custom_index_name");
+        });
+        var client = context.GetService<IMongoClientWrapper>();
+
+        var designTimeModel = context.GetService<IDesignTimeModel>();
+        var options = new MongoDatabaseCreationOptions(CreateMissingIndexes: false);
+
+        var didCreate = async
+            ? await client.CreateDatabaseAsync(designTimeModel, options, seedAsync: null)
+            : client.CreateDatabase(designTimeModel, options, seed: null);
+
+        Assert.True(didCreate);
+        Assert.Single(GetIndexes(database.MongoDatabase, "Customers"));
+        Assert.Single(GetIndexes(database.MongoDatabase, "Orders"));
+        Assert.Single(GetIndexes(database.MongoDatabase, "Addresses"));
+
+        if (async)
+        {
+            await client.CreateMissingIndexesAsync(designTimeModel.Model);
+        }
+        else
+        {
+            client.CreateMissingIndexes(designTimeModel.Model);
+        }
+
         Assert.Equal(2, GetIndexes(database.MongoDatabase, "Customers").Count);
         Assert.Equal(2, GetIndexes(database.MongoDatabase, "Orders").Count);
         Assert.Equal(2, GetIndexes(database.MongoDatabase, "Addresses").Count);
@@ -113,6 +173,52 @@ public class MongoClientWrapperTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task CreateDatabase_creates_nested_index_on_owns_one_can_be_deferred(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var collection = database.CreateCollection<Product>(values: async);
+        var context = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<Product>(p =>
+            {
+                p.HasIndex(o => o.Name);
+                p.OwnsOne(q => q.PrimaryCertificate, q => { q.HasIndex(r => r.Name); });
+            });
+        });
+        var client = context.GetService<IMongoClientWrapper>();
+
+        var designTimeModel = context.GetService<IDesignTimeModel>();
+        var options = new MongoDatabaseCreationOptions(CreateMissingIndexes: false);
+
+        _ = async
+            ? await client.CreateDatabaseAsync(designTimeModel, options, seedAsync: null)
+            : client.CreateDatabase(designTimeModel, options, seed: null);
+
+        var indexList = async
+            ? (await collection.Indexes.ListAsync()).ToList()
+            : collection.Indexes.List().ToList();
+
+        Assert.Single(indexList);
+
+        if (async)
+        {
+            await client.CreateMissingIndexesAsync(designTimeModel.Model);
+        }
+        else
+        {
+            client.CreateMissingIndexes(designTimeModel.Model);
+        }
+
+        indexList = async
+            ? (await collection.Indexes.ListAsync()).ToList()
+            : collection.Indexes.List().ToList();
+
+        Assert.Equal(3, indexList.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task CreateDatabase_creates_nested_index_on_owns_many(bool async)
     {
         var database = new TemporaryDatabaseFixture();
@@ -132,6 +238,52 @@ public class MongoClientWrapperTests
             : client.CreateDatabase(context.GetService<IDesignTimeModel>());
 
         var indexList = async
+            ? (await collection.Indexes.ListAsync()).ToList()
+            : collection.Indexes.List().ToList();
+
+        Assert.Equal(3, indexList.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_nested_index_on_owns_many_can_be_deferred(bool async)
+    {
+        var database = new TemporaryDatabaseFixture();
+        var collection = database.CreateCollection<Product>(values: async);
+        var context = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<Product>(p =>
+            {
+                p.HasIndex(o => o.Name);
+                p.OwnsMany(q => q.SecondaryCertificates, q => { q.HasIndex(r => r.Name); });
+            });
+        });
+        var client = context.GetService<IMongoClientWrapper>();
+
+        var designTimeModel = context.GetService<IDesignTimeModel>();
+        var options = new MongoDatabaseCreationOptions(CreateMissingIndexes: false);
+
+        _ = async
+            ? await client.CreateDatabaseAsync(designTimeModel, options, seedAsync: null)
+            : client.CreateDatabase(designTimeModel, options, seed: null);
+
+        var indexList = async
+            ? (await collection.Indexes.ListAsync()).ToList()
+            : collection.Indexes.List().ToList();
+
+        Assert.Single(indexList);
+
+        if (async)
+        {
+            await client.CreateMissingIndexesAsync(designTimeModel.Model);
+        }
+        else
+        {
+            client.CreateMissingIndexes(designTimeModel.Model);
+        }
+
+        indexList = async
             ? (await collection.Indexes.ListAsync()).ToList()
             : collection.Indexes.List().ToList();
 
