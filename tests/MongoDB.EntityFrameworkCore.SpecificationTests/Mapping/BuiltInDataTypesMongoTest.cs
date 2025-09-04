@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
@@ -82,9 +83,16 @@ public class CSTests
         Ensure.IsNotNullOrEmpty(atlasSearchUri, nameof(atlasSearchUri));
 
         var mongoClientSettings = MongoClientSettings.FromConnectionString(atlasSearchUri);
+
+        var clusterSource = typeof(MongoClientSettings).Assembly.GetType("MongoDB.Driver.DisposingClusterSource");
+        var instanceProperty = clusterSource.GetProperty("Instance", BindingFlags.Static | BindingFlags.Public);
+        var instance = instanceProperty.GetValue(null, null);
+        var clusterSourceProperty = typeof(MongoClientSettings).GetProperty("ClusterSource", BindingFlags.Instance | BindingFlags.NonPublic);
+        clusterSourceProperty.SetValue(mongoClientSettings, instance);
+
         //mongoClientSettings.ClusterSource = DisposingClusterSource.Instance;
 
-        var mongoClient = new MongoClient(atlasSearchUri);
+        var mongoClient = new MongoClient(mongoClientSettings);
 
         NewMethod(mongoClient);
 
