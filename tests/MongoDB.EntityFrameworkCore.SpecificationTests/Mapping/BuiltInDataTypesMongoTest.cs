@@ -13,17 +13,147 @@
  * limitations under the License.
  */
 
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
+using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Misc;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 
-public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture fixture)
+// public class TestServer(string connectionString)
+// {
+//     public static TestServer Default { get; } = new(GetDefaultConnectionString());
+//     public static TestServer Atlas { get; } = new(Environment.GetEnvironmentVariable("ATLAS_SEARCH") ?? GetDefaultConnectionString());
+//
+//     private static string GetDefaultConnectionString()
+//         => Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+//
+//     public string ConnectionString { get; } = connectionString;
+//
+//     public MongoClient Client { get; } = new(connectionString);
+//
+//     private SemanticVersion _serverVersion;
+//     private SemanticVersion ServerVersion
+//         => LazyInitializer.EnsureInitialized(ref _serverVersion, () => QueryServerVersion());
+//
+//     public bool SupportsBitwiseOperators
+//         => ServerVersion >= new SemanticVersion(6, 3, 0);
+//
+//     private SemanticVersion QueryServerVersion()
+//     {
+//         var database = Client.GetDatabase("__admin");
+//         var buildInfo = database.RunCommand<BsonDocument>(new BsonDocument("buildinfo", 1), ReadPreference.Primary);
+//         return SemanticVersion.Parse(buildInfo["version"].AsString);
+//     }
+//
+//     private const string TestDatabasePrefix = "EFCoreTest-";
+//     private readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+//     private int _dbCount;
+//     public string GetUniqueDatabaseName(string staticName)
+//         => $"{TestDatabasePrefix}{staticName}-{TimeStamp}-{Interlocked.Increment(ref _dbCount)}";
+//
+//     public static readonly IMongoClient BrokenClient
+//         = new MongoClient(new MongoClientSettings
+//         {
+//             Server = new MongoServerAddress("localhost", 27000),
+//             ServerSelectionTimeout = TimeSpan.Zero,
+//             ConnectTimeout = TimeSpan.FromSeconds(1)
+//         });
+// }
+
+public class CSTests
+{
+    // [ConditionalFact]
+    // public void Default_client()
+    // {
+    //     NewMethod(TestServer.Default.Client);
+    // }
+
+    [ConditionalFact]
+    public void Atlas_client()
+    {
+        var client = new MongoClient(Environment.GetEnvironmentVariable("ATLAS_SEARCH"));
+        var database = client.GetDatabase("TestDb_" + Guid.NewGuid());
+        database.CreateCollection("CN");
+        var collection = database.GetCollection<Book>("CN");
+        collection.InsertOne(new Book { Title = "X", Floats = [0.33f, -0.52f] });
+
+        // var books = new List<Book>();
+        // for (var i = 0; i < 1; i++)
+        // {
+        //     books.Add(new Book { Title = "X", Floats = [0.33f, -0.52f] });
+        //
+        //     collection.InsertMany(books);
+        //
+        //     collection.SearchIndexes.CreateOne(new CreateSearchIndexModel(
+        //         "X",
+        //         SearchIndexType.VectorSearch,
+        //         BsonDocument.Parse(
+        //             "{ fields: [ { type: 'vector', path: 'Floats', numDimensions: 2, similarity: 'cosine' }, { type: 'filter', path: 'Title' } ] }")));
+        // }
+    }
+
+    public class Book
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; }
+        public float[] Floats { get; set; }
+    }
+}
+
+public class BuiltInDataTypesMongoTest(
+    BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture fixture,
+    ITestOutputHelper testOutputHelper)
     : BuiltInDataTypesTestBase<BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture>(fixture)
 {
+
+    // [ConditionalFact]
+    // public void Default_client()
+    // {
+    //     NewMethod(TestServer.Default.Client);
+    // }
+    //
+    // [ConditionalFact]
+    // public void Atlas_client()
+    // {
+    //     NewMethod(TestServer.Atlas.Client);
+    // }
+
+    private static void NewMethod(MongoClient client)
+    {
+        var database = client.GetDatabase("TestDb_" + Guid.NewGuid());
+        database.CreateCollection("CN");
+
+        var collection = database.GetCollection<Book>("CN");
+
+        var books = new List<Book>();
+        for (var i = 0; i < 1; i++)
+        {
+            books.Add(new Book { Title = "X", Floats = [0.33f, -0.52f] });
+
+
+            collection.InsertMany(books);
+
+            collection.SearchIndexes.CreateOne(new CreateSearchIndexModel(
+                "X",
+                SearchIndexType.VectorSearch,
+                BsonDocument.Parse(
+                    "{ fields: [ { type: 'vector', path: 'Floats', numDimensions: 2, similarity: 'cosine' }, { type: 'filter', path: 'Title' } ] }")));
+        }
+    }
+
+    public class Book
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; }
+        public float[] Floats { get; set; }
+    }
+
     // Fails: Enum casting issue EF-215
     public override async Task Can_filter_projection_with_captured_enum_variable(bool async)
         => Assert.Contains(
