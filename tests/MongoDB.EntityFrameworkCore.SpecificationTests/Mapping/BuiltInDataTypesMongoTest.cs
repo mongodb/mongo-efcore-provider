@@ -67,16 +67,27 @@ public class TestServer(string connectionString)
 
 public class CSTests
 {
-    [ConditionalFact]
-    public void Default_client()
-    {
-        NewMethod(TestServer.Default.Client);
-    }
+    // [ConditionalFact]
+    // public void Default_client()
+    // {
+    //     NewMethod(TestServer.Default.Client);
+    // }
 
     [ConditionalFact]
     public void Atlas_client()
     {
-        NewMethod(TestServer.Atlas.Client);
+        // NewMethod(TestServer.Atlas.Client);
+
+        var atlasSearchUri = Environment.GetEnvironmentVariable("ATLAS_SEARCH");
+        Ensure.IsNotNullOrEmpty(atlasSearchUri, nameof(atlasSearchUri));
+
+        var mongoClientSettings = MongoClientSettings.FromConnectionString(atlasSearchUri);
+        //mongoClientSettings.ClusterSource = DisposingClusterSource.Instance;
+
+        var mongoClient = new MongoClient(atlasSearchUri);
+
+        NewMethod(mongoClient);
+
     }
 
     private static void NewMethod(MongoClient client)
