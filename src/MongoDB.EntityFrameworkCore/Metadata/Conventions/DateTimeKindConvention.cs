@@ -23,7 +23,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 /// <summary>
 /// A convention that set <see cref="DateTimeKind"/> for <see cref="DateTime"/> properties.
 /// </summary>
-public class DateTimeKindConvention : IPropertyAddedConvention
+public sealed class DateTimeKindConvention : IPropertyAddedConvention
 {
     /// <summary>
     /// Creates a <see cref="DateTimeKindConvention"/>.
@@ -34,10 +34,7 @@ public class DateTimeKindConvention : IPropertyAddedConvention
         DateTimeKind = dateTimeKind;
     }
 
-    /// <summary>
-    /// <see cref="DateTimeKind"/> to use.
-    /// </summary>
-    protected DateTimeKind DateTimeKind { get; }
+    private DateTimeKind DateTimeKind { get; }
 
     /// <summary>
     /// For every property of <see cref="DateTime"/> type that is added to the model set the configured <see cref="DateTimeKind"/>.
