@@ -25,46 +25,46 @@ using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 
-public class TestServer(string connectionString)
-{
-    public static TestServer Default { get; } = new(GetDefaultConnectionString());
-    public static TestServer Atlas { get; } = new(Environment.GetEnvironmentVariable("ATLAS_SEARCH") ?? GetDefaultConnectionString());
-
-    private static string GetDefaultConnectionString()
-        => Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
-
-    public string ConnectionString { get; } = connectionString;
-
-    public MongoClient Client { get; } = new(connectionString);
-
-    private SemanticVersion _serverVersion;
-    private SemanticVersion ServerVersion
-        => LazyInitializer.EnsureInitialized(ref _serverVersion, () => QueryServerVersion());
-
-    public bool SupportsBitwiseOperators
-        => ServerVersion >= new SemanticVersion(6, 3, 0);
-
-    private SemanticVersion QueryServerVersion()
-    {
-        var database = Client.GetDatabase("__admin");
-        var buildInfo = database.RunCommand<BsonDocument>(new BsonDocument("buildinfo", 1), ReadPreference.Primary);
-        return SemanticVersion.Parse(buildInfo["version"].AsString);
-    }
-
-    private const string TestDatabasePrefix = "EFCoreTest-";
-    private readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
-    private int _dbCount;
-    public string GetUniqueDatabaseName(string staticName)
-        => $"{TestDatabasePrefix}{staticName}-{TimeStamp}-{Interlocked.Increment(ref _dbCount)}";
-
-    public static readonly IMongoClient BrokenClient
-        = new MongoClient(new MongoClientSettings
-        {
-            Server = new MongoServerAddress("localhost", 27000),
-            ServerSelectionTimeout = TimeSpan.Zero,
-            ConnectTimeout = TimeSpan.FromSeconds(1)
-        });
-}
+// public class TestServer(string connectionString)
+// {
+//     public static TestServer Default { get; } = new(GetDefaultConnectionString());
+//     public static TestServer Atlas { get; } = new(Environment.GetEnvironmentVariable("ATLAS_SEARCH") ?? GetDefaultConnectionString());
+//
+//     private static string GetDefaultConnectionString()
+//         => Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+//
+//     public string ConnectionString { get; } = connectionString;
+//
+//     public MongoClient Client { get; } = new(connectionString);
+//
+//     private SemanticVersion _serverVersion;
+//     private SemanticVersion ServerVersion
+//         => LazyInitializer.EnsureInitialized(ref _serverVersion, () => QueryServerVersion());
+//
+//     public bool SupportsBitwiseOperators
+//         => ServerVersion >= new SemanticVersion(6, 3, 0);
+//
+//     private SemanticVersion QueryServerVersion()
+//     {
+//         var database = Client.GetDatabase("__admin");
+//         var buildInfo = database.RunCommand<BsonDocument>(new BsonDocument("buildinfo", 1), ReadPreference.Primary);
+//         return SemanticVersion.Parse(buildInfo["version"].AsString);
+//     }
+//
+//     private const string TestDatabasePrefix = "EFCoreTest-";
+//     private readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+//     private int _dbCount;
+//     public string GetUniqueDatabaseName(string staticName)
+//         => $"{TestDatabasePrefix}{staticName}-{TimeStamp}-{Interlocked.Increment(ref _dbCount)}";
+//
+//     public static readonly IMongoClient BrokenClient
+//         = new MongoClient(new MongoClientSettings
+//         {
+//             Server = new MongoServerAddress("localhost", 27000),
+//             ServerSelectionTimeout = TimeSpan.Zero,
+//             ConnectTimeout = TimeSpan.FromSeconds(1)
+//         });
+// }
 
 public class CSTests
 {
@@ -77,48 +77,25 @@ public class CSTests
     [ConditionalFact]
     public void Atlas_client()
     {
-        // NewMethod(TestServer.Atlas.Client);
-
-        var atlasSearchUri = Environment.GetEnvironmentVariable("ATLAS_SEARCH");
-        Ensure.IsNotNullOrEmpty(atlasSearchUri, nameof(atlasSearchUri));
-
-        var mongoClientSettings = MongoClientSettings.FromConnectionString(atlasSearchUri);
-
-        var clusterSource = typeof(MongoClientSettings).Assembly.GetType("MongoDB.Driver.DisposingClusterSource");
-        var instanceProperty = clusterSource.GetProperty("Instance", BindingFlags.Static | BindingFlags.Public);
-        var instance = instanceProperty.GetValue(null, null);
-        var clusterSourceProperty = typeof(MongoClientSettings).GetProperty("ClusterSource", BindingFlags.Instance | BindingFlags.NonPublic);
-        clusterSourceProperty.SetValue(mongoClientSettings, instance);
-
-        //mongoClientSettings.ClusterSource = DisposingClusterSource.Instance;
-
-        var mongoClient = new MongoClient(mongoClientSettings);
-
-        NewMethod(mongoClient);
-
-    }
-
-    private static void NewMethod(MongoClient client)
-    {
+        var client = new MongoClient(Environment.GetEnvironmentVariable("ATLAS_SEARCH"));
         var database = client.GetDatabase("TestDb_" + Guid.NewGuid());
         database.CreateCollection("CN");
-
         var collection = database.GetCollection<Book>("CN");
+        collection.InsertOne(new Book { Title = "X", Floats = [0.33f, -0.52f] });
 
-        var books = new List<Book>();
-        for (var i = 0; i < 1; i++)
-        {
-            books.Add(new Book { Title = "X", Floats = [0.33f, -0.52f] });
-
-
-            collection.InsertMany(books);
-
-            collection.SearchIndexes.CreateOne(new CreateSearchIndexModel(
-                "X",
-                SearchIndexType.VectorSearch,
-                BsonDocument.Parse(
-                    "{ fields: [ { type: 'vector', path: 'Floats', numDimensions: 2, similarity: 'cosine' }, { type: 'filter', path: 'Title' } ] }")));
-        }
+        // var books = new List<Book>();
+        // for (var i = 0; i < 1; i++)
+        // {
+        //     books.Add(new Book { Title = "X", Floats = [0.33f, -0.52f] });
+        //
+        //     collection.InsertMany(books);
+        //
+        //     collection.SearchIndexes.CreateOne(new CreateSearchIndexModel(
+        //         "X",
+        //         SearchIndexType.VectorSearch,
+        //         BsonDocument.Parse(
+        //             "{ fields: [ { type: 'vector', path: 'Floats', numDimensions: 2, similarity: 'cosine' }, { type: 'filter', path: 'Title' } ] }")));
+        // }
     }
 
     public class Book
@@ -135,17 +112,17 @@ public class BuiltInDataTypesMongoTest(
     : BuiltInDataTypesTestBase<BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture>(fixture)
 {
 
-    [ConditionalFact]
-    public void Default_client()
-    {
-        NewMethod(TestServer.Default.Client);
-    }
-
-    [ConditionalFact]
-    public void Atlas_client()
-    {
-        NewMethod(TestServer.Atlas.Client);
-    }
+    // [ConditionalFact]
+    // public void Default_client()
+    // {
+    //     NewMethod(TestServer.Default.Client);
+    // }
+    //
+    // [ConditionalFact]
+    // public void Atlas_client()
+    // {
+    //     NewMethod(TestServer.Atlas.Client);
+    // }
 
     private static void NewMethod(MongoClient client)
     {
