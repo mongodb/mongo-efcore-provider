@@ -28,7 +28,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 /// A convention that configures store value generation for <see cref="ObjectId"/> and <see cref="Guid"/> keys
 /// as well as the synthesized keys used internally by EF to index owned collection navigations.
 /// </summary>
-internal class MongoValueGenerationConvention : ValueGenerationConvention, IEntityTypeAnnotationChangedConvention
+public class MongoValueGenerationConvention : ValueGenerationConvention, IEntityTypeAnnotationChangedConvention
 {
     /// <summary>
     /// Creates a <see cref="MongoValueGenerationConvention" />.
