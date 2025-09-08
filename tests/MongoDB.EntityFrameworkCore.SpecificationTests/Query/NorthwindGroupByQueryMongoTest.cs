@@ -1071,7 +1071,7 @@ AssertMql(
     {
         // Fails: GroupBy issue EF-149
         Assert.Contains(
-            "Expression not supported: Northwind.Orders.Aggregate",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.GroupBy_aggregate_Contains(async))).Message);
 

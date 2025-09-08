@@ -95,4 +95,14 @@ public static class MongoAnnotationNames
     /// The key for the sparsity specified for a Queryable Encrypted range property/field.
     /// </summary>
     public const string QueryableEncryptionSparsity = Prefix + nameof(QueryableEncryptionSparsity);
+
+    /// <summary>
+    /// Annotation for the <see cref="BinaryVectorDataType"/> of a property.
+    /// </summary>
+    public const string BinaryVectorDataType = Prefix + nameof(BinaryVectorDataType);
+
+    /// <summary>
+    /// Annotation for the Atlas Vector Search index options of a property.
+    /// </summary>
+    public const string VectorIndexOptions = Prefix + nameof(VectorIndexOptions);
 }

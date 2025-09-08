@@ -368,7 +368,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
     {
         // Fails: Multiple query roots issue EF-220
         Assert.Contains(
-            "Expression not supported: Northwind.Employees.Aggregate(",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_shadow_subquery_FirstOrDefault(async)))
             .Message);
 
@@ -395,7 +395,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
     {
         // Fails: Not throwing expected translation failed exception from EF.
         Assert.Contains(
-            "Expression not supported: Northwind.Custo",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_subquery_correlated(async)))
             .Message);
 

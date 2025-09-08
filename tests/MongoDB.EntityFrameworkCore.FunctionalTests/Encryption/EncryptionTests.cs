@@ -100,7 +100,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         // Test driver load
         Assert.Equal("145014000", encryptedCollection.AsQueryable().First().SSN);
 
-        // Test EF Core load & save
+        // Test EF load & save
         {
             using var db = SingleEntityDbContext.Create(encryptedCollection);
             var patient = db.Entities.First();

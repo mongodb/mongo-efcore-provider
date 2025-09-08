@@ -162,7 +162,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IModelValidator, MongoModelValidator>()
             .TryAdd<IProviderConventionSetBuilder, MongoConventionSetBuilder>()
             .TryAdd<IValueGeneratorSelector, MongoValueGeneratorSelector>()
-            .TryAdd<IDatabaseCreator, MongoDatabaseCreator>()
+            .TryAdd<IDatabaseCreator>(p => p.GetRequiredService<IMongoDatabaseCreator>())
             .TryAdd<IQueryContextFactory, MongoQueryContextFactory>()
             .TryAdd<ITypeMappingSource, MongoTypeMappingSource>()
             .TryAdd<IValueConverterSelector, MongoValueConverterSelector>()
@@ -174,6 +174,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IModelRuntimeInitializer, MongoModelRuntimeInitializer>()
             .TryAddProviderSpecificServices(
                 b => b
+                    .TryAddScoped<IMongoDatabaseCreator, MongoDatabaseCreator>()
                     .TryAddScoped<IQueryableEncryptionSchemaProvider, QueryableEncryptionSchemaProvider>()
                     .TryAddScoped<IMongoClientWrapper, MongoClientWrapper>()
                     .TryAddSingleton<MongoShapedQueryCompilingExpressionVisitorDependencies,

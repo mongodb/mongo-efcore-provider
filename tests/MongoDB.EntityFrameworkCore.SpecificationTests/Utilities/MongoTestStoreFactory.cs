@@ -21,17 +21,21 @@ namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 public class MongoTestStoreFactory : ITestStoreFactory
 {
-    public static MongoTestStoreFactory Instance { get; } = new();
+    public static MongoTestStoreFactory Default { get; } = new(requiresAtlas: false);
+    public static MongoTestStoreFactory Atlas { get; } = new(requiresAtlas: true);
 
-    protected MongoTestStoreFactory()
+    private readonly bool _requiresAtlas;
+
+    private MongoTestStoreFactory(bool requiresAtlas)
     {
+        _requiresAtlas = requiresAtlas;
     }
 
     public IServiceCollection AddProviderServices(IServiceCollection serviceCollection)
-        => serviceCollection.AddEntityFrameworkMongoDB().AddSingleton<ILoggerFactory>(new TestMqlLoggerFactory());
+        => serviceCollection.AddEntityFrameworkMongoDB().AddSingleton<ILoggerFactory>(CreateListLoggerFactory(_ => true));
 
     public TestStore Create(string storeName)
-        => MongoTestStore.Create(storeName);
+        => MongoTestStore.Create(storeName, _requiresAtlas);
 
     public virtual TestStore GetOrCreate(string storeName)
         => Create(storeName);

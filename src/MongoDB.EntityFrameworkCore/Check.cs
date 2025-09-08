@@ -14,13 +14,45 @@
  */
 
 using System;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Query.Internal;
+using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore;
 
 internal static class Check
 {
+    public static string? NotEmptyButCanBeNull(
+        string? value,
+        [CallerArgumentExpression(nameof(value))] string parameterName = "")
+    {
+        if (value is not null && value.Length == 0)
+        {
+            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(parameterName), parameterName);
+        }
+
+        return value;
+    }
+
+    public static void IsEfQueryProvider(
+        IQueryable source,
+        [CallerMemberName] string? memberName = null)
+    {
+        if (source.Provider is EntityQueryProvider)
+        {
+            return;
+        }
+
+        if (source.Provider is IMongoQueryProvider)
+        {
+            throw new ArgumentException($"The method '{memberName}' can only be called on an IQueryable that starts as a DbSet in EF. The IQueryable used came directly from the MongoDB driver and so cannot be used with EF-specific extensions.");
+        }
+
+        throw new ArgumentException($"The method '{memberName}' can only be called on an IQueryable that starts as a DbSet in EF. The IQueryable came from a non-MongoDB LINQ implementation.");
+    }
+
     public static Guid? NotEmpty(Guid? argument, [CallerArgumentExpression(nameof(argument))] string? parameterName = null)
         => argument != Guid.Empty
             ? argument

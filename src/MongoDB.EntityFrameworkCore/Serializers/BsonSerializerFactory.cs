@@ -42,6 +42,15 @@ public sealed class BsonSerializerFactory
     private static bool SupportsDictionary(Type type)
         => type.IsGenericType && SupportedDictionaryTypes.Contains(type.GetGenericTypeDefinition());
 
+    private static readonly BinaryVectorSerializer<BinaryVectorFloat32, float> BinaryVectorFloat32Serializer
+        = new(BinaryVectorDataType.Float32);
+
+    private static readonly BinaryVectorSerializer<BinaryVectorInt8, sbyte> BinaryVectorInt8Serializer
+        = new(BinaryVectorDataType.Int8);
+
+    private static readonly BinaryVectorSerializer<BinaryVectorPackedBit, byte> BinaryVectorPackedBitSerializer
+        = new(BinaryVectorDataType.PackedBit);
+
     private readonly ConcurrentDictionary<IReadOnlyEntityType, IBsonSerializer> _entitySerializersCache = new();
 
     internal IBsonSerializer GetEntitySerializer(IReadOnlyEntityType entityType) =>
@@ -54,7 +63,7 @@ public sealed class BsonSerializerFactory
         => type switch
         {
             _ when type == typeof(bool) => BooleanSerializer.Instance,
-            _ when type == typeof(byte) => new ByteSerializer(),
+            _ when type == typeof(byte) => ByteSerializer.Instance,
             _ when type == typeof(char) => new CharSerializer(),
             _ when type == typeof(DateTime) => GetDateTimeSerializer(property),
             _ when type == typeof(DateTimeOffset) => new DateTimeOffsetSerializer(),
@@ -63,19 +72,22 @@ public sealed class BsonSerializerFactory
             _ when type == typeof(decimal) => new DecimalSerializer(),
             _ when type == typeof(double) => DoubleSerializer.Instance,
             _ when type == typeof(Guid) => GuidSerializer.StandardInstance,
-            _ when type == typeof(short) => new Int16Serializer(),
+            _ when type == typeof(short) => Int16Serializer.Instance,
             _ when type == typeof(int) => Int32Serializer.Instance,
             _ when type == typeof(long) => Int64Serializer.Instance,
             _ when type == typeof(ObjectId) => ObjectIdSerializer.Instance,
             _ when type == typeof(TimeSpan) => new TimeSpanSerializer(),
-            _ when type == typeof(sbyte) => new SByteSerializer(),
-            _ when type == typeof(float) => new SingleSerializer(),
-            _ when type == typeof(string) => new StringSerializer(),
-            _ when type == typeof(ushort) => new UInt16Serializer(),
+            _ when type == typeof(sbyte) => SByteSerializer.Instance,
+            _ when type == typeof(float) => SingleSerializer.Instance,
+            _ when type == typeof(string) => StringSerializer.Instance,
+            _ when type == typeof(ushort) => UInt16Serializer.Instance,
             _ when type == typeof(uint) => new UInt32Serializer(),
-            _ when type == typeof(ulong) => new UInt64Serializer(),
-            _ when type == typeof(Decimal128) => new Decimal128Serializer(),
-            _ when type == typeof(byte[]) => new ByteArraySerializer(),
+            _ when type == typeof(ulong) => UInt64Serializer.Instance,
+            _ when type == typeof(Decimal128) => Decimal128Serializer.Instance,
+            _ when type == typeof(byte[]) => ByteArraySerializer.Instance,
+            _ when type == typeof(BinaryVectorFloat32) => BinaryVectorFloat32Serializer,
+            _ when type == typeof(BinaryVectorInt8) => BinaryVectorInt8Serializer,
+            _ when type == typeof(BinaryVectorPackedBit) => BinaryVectorPackedBitSerializer,
             _ when type.IsEnum => EnumSerializer.Create(type),
             {IsArray: true}
                 => GetArraySerializer(type, CreateTypeSerializer(type.GetElementType()!)),
@@ -147,8 +159,8 @@ public sealed class BsonSerializerFactory
         if (converter.ModelClrType.IsNullableValueType())
         {
             throw new NotSupportedException(
-                $"Unsupported ValueConverter for Nullable<{converter.ModelClrType.UnwrapNullableType().Name
-                }> encountered. Null conversion must be left to EF Core. "
+                $"Unsupported ValueConverter for 'Nullable<{converter.ModelClrType.UnwrapNullableType().Name
+                }>' encountered. Null conversion must be left to EF. "
                 + $"If using HasConversion with conversion expressions directly move them to constructor arguments of a ValueConverter instead. "
                 + $"For example: mb.Entity<{property.DeclaringType.DisplayName()}>().Property(e => e.{property.Name
                 }).HasConversion(x => x, y => y) becomes .HasConversion(new ValueConverter(x => x, y => y));");
@@ -223,6 +235,18 @@ public sealed class BsonSerializerFactory
 
     private static IBsonSerializer GetCollectionSerializer(Type type, IBsonSerializer childSerializer)
     {
+        var memoryType = type.TryGetItemType(typeof(Memory<>));
+        if (memoryType is not null)
+        {
+            return CreateGenericSerializer(typeof(MemorySerializer<>), [memoryType]);
+        }
+
+        var readOnlyMemoryType = type.TryGetItemType(typeof(ReadOnlyMemory<>));
+        if (readOnlyMemoryType is not null)
+        {
+            return CreateGenericSerializer(typeof(ReadonlyMemorySerializer<>), [readOnlyMemoryType]);
+        }
+
         var enumerableInterface = type.GetGenericTypeDefinition() == typeof(IEnumerable<>)
             ? type
             : type.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
@@ -269,7 +293,42 @@ public sealed class BsonSerializerFactory
                 ["_id", property.GetElementName()], serializer, serializer.ValueType);
         }
 
+        var type = property.ClrType;
+        var binaryVectorType = property.GetBinaryVectorDataType();
+        if (binaryVectorType != null)
+        {
+            return new BsonSerializationInfo(
+                property.GetElementName(),
+                CreateBinaryVectorSerializer(type, binaryVectorType.Value),
+                serializer.ValueType);
+        }
+
         return new BsonSerializationInfo(property.GetElementName(), serializer, serializer.ValueType);
+    }
+
+    private static IBsonSerializer CreateBinaryVectorSerializer(Type type, BinaryVectorDataType binaryVectorDataType)
+    {
+        if (type.IsArray)
+        {
+            return CreateSerializerInstance(typeof(ArrayAsBinaryVectorSerializer<>).MakeGenericType(type.GetElementType()!), binaryVectorDataType);
+        }
+
+        var memoryType = type.TryGetItemType(typeof(Memory<>));
+        if (memoryType is not null)
+        {
+            return CreateSerializerInstance(typeof(MemoryAsBinaryVectorSerializer<>).MakeGenericType(memoryType), binaryVectorDataType);
+        }
+
+        var readOnlyMemoryType = type.TryGetItemType(typeof(ReadOnlyMemory<>));
+        if (readOnlyMemoryType is not null)
+        {
+            return CreateSerializerInstance(typeof(ReadOnlyMemoryAsBinaryVectorSerializer<>).MakeGenericType(readOnlyMemoryType), binaryVectorDataType);
+        }
+
+        throw new NotSupportedException($"Type '{type.ShortDisplayName()}' cannot be serialized as a binary vector.");
+
+        static IBsonSerializer CreateSerializerInstance(Type serializerType, BinaryVectorDataType binaryVectorDataType)
+            => (IBsonSerializer)Activator.CreateInstance(serializerType, binaryVectorDataType)!;
     }
 
     private static IBsonSerializer GetDictionarySerializer(Type type)

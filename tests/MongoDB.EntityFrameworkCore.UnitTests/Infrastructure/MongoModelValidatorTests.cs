@@ -16,9 +16,11 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Infrastructure;
 
@@ -523,4 +525,85 @@ public static class MongoModelValidatorTests
         [Timestamp] public int VersionA1 { get; set; }
         public int VersionB2 { get; set; }
     }
+
+    class Book
+    {
+        public ObjectId Id { get; set; }
+        public float[] Floats1 { get; set; }
+        public float[] Floats2 { get; set; }
+        public List<Chapter> Chapters { get; set; } = new();
+    }
+
+    class Chapter
+    {
+        public float[] Floats { get; set; }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_vector_index_has_multiple_properties()
+    {
+        using var context = SingleEntityDbContext.Create<Book>(mb =>
+            mb.Entity<Book>().HasIndex(e => new { e.Floats1, e.Floats2 })
+                .IsVectorIndex(VectorSimilarity.Cosine, 2));
+
+        Assert.Contains(
+            "A vector index on 'Book' is defined over properties 'Floats1,Floats2'.",
+            Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+    }
+
+    [Fact]
+    public static void Validate_throws_when_vector_index_has_bad_quantization()
+    {
+        using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
+                   .IsVectorIndex(VectorSimilarity.Cosine, 2).HasQuantization((VectorQuantization?)-1)))
+        {
+            Assert.Contains(
+                "Vector quantization is set to '-1' which is not a valid value from the 'VectorQuantization' enum.",
+                Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+        }
+
+        using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
+                   .IsVectorIndex(VectorSimilarity.Cosine, 2).HasQuantization((VectorQuantization?)3)))
+        {
+            Assert.Contains(
+                "Vector quantization is set to '3' which is not a valid value from the 'VectorQuantization' enum.",
+                Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+        }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_vector_index_has_bad_similarity()
+    {
+        using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
+                   .IsVectorIndex((VectorSimilarity)(-1), 2)))
+        {
+            Assert.Contains(
+                "Vector similarity is set to '-1' which is not a valid value from the 'VectorSimilarity' enum.'",
+                Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+        }
+
+        using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
+                   .IsVectorIndex((VectorSimilarity)3, 2)))
+        {
+            Assert.Contains(
+                "Vector similarity is set to '3' which is not a valid value from the 'VectorSimilarity' enum.'",
+                Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+        }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_vector_index_is_on_nested_collection()
+    {
+        using var context = SingleEntityDbContext.Create<Book>(mb =>
+            mb.Entity<Book>(b =>
+            {
+                b.OwnsMany(x => x.Chapters,
+                    b => { b.HasIndex(e => e.Floats).IsVectorIndex(VectorSimilarity.Cosine, 2); });
+            }));
+
+        Assert.Contains(
+            "The entity type 'Chapter' cannot have a vector index because it is part of an nested collection.",
+            Assert.Throws<InvalidOperationException>(() => context.Model).Message);
+    }
+
 }

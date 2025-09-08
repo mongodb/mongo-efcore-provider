@@ -77,6 +77,58 @@ public class MongoModelValidator : ModelValidator
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
         ValidateQueryableEncryption(model, logger);
+        ValidateIndexes(model, logger);
+    }
+
+    private void ValidateIndexes(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            foreach (var index in entityType.GetDeclaredIndexes())
+            {
+                ValidateIndex(index, logger);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validates the given index against MongoDB requirements.
+    /// </summary>
+    /// <param name="index">The <see cref="IIndex"/>.</param>
+    /// <param name="logger">A logger to receive validation diagnostic information.</param>
+    /// <exception cref="InvalidOperationException">if the index is not valid for MongoDB.</exception>
+    protected virtual void ValidateIndex(IIndex index, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        var entityType = index.DeclaringEntityType;
+        var indexOptions = index.GetVectorIndexOptions();
+        if (indexOptions != null)
+        {
+            if (index.Properties.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    $"A vector index on '{entityType.DisplayName()}' is defined over properties '{string.Join(",", index.Properties.Select(e => e.Name))}'. Vector indexes can only target a single property.");
+            }
+
+            if (entityType.FindOwnership()?.IsUnique == false)
+            {
+                throw new InvalidOperationException(
+                    $"The entity type '{entityType.DisplayName()}' cannot have a vector index because it is part of an nested collection.");
+            }
+
+            var quantization = indexOptions.Value.Quantization;
+            if (quantization.HasValue && ((int)quantization.Value < 0 || (int)quantization.Value > 2))
+            {
+                throw new InvalidOperationException(
+                    $"Vector quantization is set to '{quantization.Value}' which is not a valid value from the 'VectorQuantization' enum.'");
+            }
+
+            var similarity = indexOptions.Value.Similarity;
+            if ((int)similarity < 0 || (int)similarity > 2)
+            {
+                throw new InvalidOperationException(
+                    $"Vector similarity is set to '{similarity}' which is not a valid value from the 'VectorSimilarity' enum.'");
+            }
+        }
     }
 
     /// <summary>
