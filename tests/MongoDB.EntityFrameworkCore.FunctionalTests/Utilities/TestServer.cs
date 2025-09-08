@@ -16,16 +16,28 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Misc;
+using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 public class TestServer(string connectionString)
 {
     public static TestServer Default { get; } = new(GetDefaultConnectionString());
-    public static TestServer Atlas { get; } = new(Environment.GetEnvironmentVariable("ATLAS_SEARCH") ?? GetDefaultConnectionString());
+    public static TestServer Atlas { get; } = new(GetConnectionString("ATLAS_URI") ?? GetDefaultConnectionString());
+
+    private static string? GetConnectionString(string environmentVariableName)
+    {
+        var connectionString = Environment.GetEnvironmentVariable(environmentVariableName);
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return null;
+        }
+
+        return connectionString;
+    }
 
     private static string GetDefaultConnectionString()
-        => Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+        => GetConnectionString("MONGODB_URI") ?? "mongodb://localhost:27017";
 
     public string ConnectionString { get; } = connectionString;
 
@@ -37,6 +49,20 @@ public class TestServer(string connectionString)
 
     public bool SupportsBitwiseOperators
         => ServerVersion >= new SemanticVersion(6, 3, 0);
+
+    public static bool SupportsAtlas
+        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ATLAS_URI"));
+
+    public static bool SkipForAtlas(ITestOutputHelper testOutputHelper, string caller)
+    {
+        if (SupportsAtlas)
+        {
+            return false;
+        }
+
+        testOutputHelper.WriteLine($"'{caller}' skipped because it required Atlas.");
+        return true;
+    }
 
     private SemanticVersion QueryServerVersion()
     {

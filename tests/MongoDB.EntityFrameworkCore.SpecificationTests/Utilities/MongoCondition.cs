@@ -13,6 +13,10 @@
  * limitations under the License.
  */
 
-namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
-public class AtlasTemporaryDatabaseFixture() : TemporaryDatabaseFixtureBase(TestServer.Atlas.Client);
+[Flags]
+public enum MongoCondition
+{
+    IsAtlas = 1 << 0
+}

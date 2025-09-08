@@ -20,6 +20,7 @@ using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
+[MongoCondition(MongoCondition.IsAtlas)]
 public class VectorSearchMongoTest : VectorSearchMongoTestBase, IClassFixture<VectorSearchMongoTest.VectorSearchFixture>
 {
     public VectorSearchMongoTest(VectorSearchFixture fixture)

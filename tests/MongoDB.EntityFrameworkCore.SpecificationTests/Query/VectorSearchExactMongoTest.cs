@@ -19,6 +19,7 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
+[MongoCondition(MongoCondition.IsAtlas)]
 public class VectorSearchExactMongoTest : VectorSearchMongoTestBase,
     IClassFixture<VectorSearchExactMongoTest.VectorSearchExactFixture>
 {
