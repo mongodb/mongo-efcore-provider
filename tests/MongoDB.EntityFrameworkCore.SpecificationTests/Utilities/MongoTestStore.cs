@@ -24,22 +24,22 @@ namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 public class MongoTestStore : TestStore
 {
-    private readonly bool _requiresAtlas;
+    public TestServer TestServer { get; }
 
-    public static MongoTestStore Create(string name, bool requiresAtlas)
-        => new(name, shared: false, requiresAtlas);
+    public static MongoTestStore Create(string name, TestServer testServer)
+        => new(name, testServer);
 
-    private MongoTestStore(string name, bool shared = true, bool requiresAtlas = false)
-        : base(name, shared)
+    private MongoTestStore(string name, TestServer testServer)
+        : base(name, shared: true)
     {
-        _requiresAtlas = requiresAtlas;
+        TestServer = testServer;
     }
 
     protected override DbContext CreateDefaultContext()
         => throw new NotSupportedException();
 
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
-        => builder.UseMongoDB(_requiresAtlas ? TestServer.Atlas.Client : TestServer.Default.Client, Name);
+        => builder.UseMongoDB(TestServer.Client, Name);
 
 #if EF9
     protected override async Task InitializeAsync(Func<DbContext> createContext, Func<DbContext, Task>? seed,

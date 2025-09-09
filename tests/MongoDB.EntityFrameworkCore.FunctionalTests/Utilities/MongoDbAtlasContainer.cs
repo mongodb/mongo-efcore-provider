@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,17 @@
  * limitations under the License.
  */
 
+using DotNet.Testcontainers.Configurations;
+using DotNet.Testcontainers.Containers;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class TemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+public sealed class MongoDbAtlasContainer(ContainerConfiguration configuration) : DockerContainer(configuration)
 {
-    private TestServer? _server;
-
-    public override TestServer TestServer
-        => _server!;
-
-    public override async Task InitializeAsync()
-    {
-        _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
-        await base.InitializeAsync();
-    }
+    public string GetConnectionString()
+        => new UriBuilder("mongodb", Hostname, GetMappedPublicPort(MongoDbAtlasBuilder.MongoDbAtlasPort))
+            {
+                Query = "?directConnection=true"
+            }
+            .ToString();
 }

@@ -105,13 +105,23 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
 
     public class BuiltInDataTypesMongoFixture : BuiltInDataTypesFixtureBase
     {
-        protected override string StoreName { get; } = TestServer.Default.GetUniqueDatabaseName("BuiltInDataTypes");
+        private ITestStoreFactory? _testStoreFactory;
+
+        protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("BuiltInDataTypes");
+
+        public override async Task InitializeAsync()
+        {
+            var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
+            _testStoreFactory = new MongoTestStoreFactory(server);
+
+            await base.InitializeAsync();
+        }
 
         public override DbContextOptionsBuilder AddOptions(DbContextOptionsBuilder builder)
             => base.AddOptions(builder.ConfigureWarnings(w => w.Ignore(MongoEventId.ColumnAttributeWithTypeUsed)));
 
         protected override ITestStoreFactory TestStoreFactory
-            => MongoTestStoreFactory.Default;
+            => _testStoreFactory!;
 
         public override bool StrictEquality
             => true;

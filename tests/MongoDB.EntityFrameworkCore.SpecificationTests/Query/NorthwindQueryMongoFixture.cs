@@ -35,10 +35,20 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
 #endif
     new()
 {
-    protected override string StoreName { get; } = TestServer.Default.GetUniqueDatabaseName("Northwind");
+    protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("Northwind");
+
+    private ITestStoreFactory? _testStoreFactory;
 
     protected override ITestStoreFactory TestStoreFactory
-        => MongoTestStoreFactory.Default;
+        => _testStoreFactory!;
+
+    public override async Task InitializeAsync()
+    {
+        var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
+        _testStoreFactory = new MongoTestStoreFactory(server);
+
+        await base.InitializeAsync();
+    }
 
     protected override bool UsePooling
         => false;

@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
@@ -20,10 +21,11 @@ using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
+using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 
-public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
+public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database, ITestOutputHelper testOutputHelper)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     protected readonly Dictionary<string, IReadOnlyDictionary<string, object>> KmsProviders =
@@ -150,6 +152,9 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
 
     private static string GetEnvironmentVariableOrThrow(string variable)
         => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"{variable}\" not set.");
+
+    protected bool SkipForEncryption([CallerMemberName] string? caller = default)
+        => TestServer.SkipForEncryption(testOutputHelper, caller!);
 
     protected static Patient[] CreateSamplePatients =>
     [

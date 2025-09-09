@@ -16,26 +16,24 @@
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 public class MongoTestStoreFactory : ITestStoreFactory
 {
-    public static MongoTestStoreFactory Default { get; } = new(requiresAtlas: false);
-    public static MongoTestStoreFactory Atlas { get; } = new(requiresAtlas: true);
-
-    private readonly bool _requiresAtlas;
-
-    private MongoTestStoreFactory(bool requiresAtlas)
+    public MongoTestStoreFactory(TestServer testServer)
     {
-        _requiresAtlas = requiresAtlas;
+        TestServer = testServer;
     }
+
+    public TestServer TestServer { get; }
 
     public IServiceCollection AddProviderServices(IServiceCollection serviceCollection)
         => serviceCollection.AddEntityFrameworkMongoDB().AddSingleton<ILoggerFactory>(CreateListLoggerFactory(_ => true));
 
     public TestStore Create(string storeName)
-        => MongoTestStore.Create(storeName, _requiresAtlas);
+        => MongoTestStore.Create(storeName, TestServer);
 
     public virtual TestStore GetOrCreate(string storeName)
         => Create(storeName);

@@ -25,8 +25,9 @@ public class SampleGuidesFixtureCollection : ICollectionFixture<SampleGuidesFixt
 
 public class SampleGuidesFixture : TemporaryDatabaseFixture
 {
-    public SampleGuidesFixture()
+    public override async Task InitializeAsync()
     {
+        await base.InitializeAsync();
         SampleGuides.Populate(MongoDatabase);
     }
 }

@@ -25,12 +25,13 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Metadata;
+using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 
 [XUnitCollection("Encryption")]
-public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
-    : EncryptionTestsBase(database)
+public class QueryableEncryptionTests(TemporaryDatabaseFixture database, ITestOutputHelper  testOutputHelper)
+    : EncryptionTestsBase(database, testOutputHelper)
 {
     private readonly TemporaryDatabaseFixture _database = database;
 
@@ -52,6 +53,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Server_schema_is_used_when_mode_is_ignore(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
         var dataKeyId = CreateDataKey();
         var expectedPatients = CreateSamplePatients;
@@ -98,6 +102,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public async Task Server_schema_is_used_when_mode_is_ignore_async(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
         var dataKeyId = CreateDataKey();
         var expectedPatients = CreateSamplePatients;
@@ -144,6 +151,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Server_schema_is_used_when_no_client_schema_available(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
         var expectedPatients = CreateSamplePatients;
         var dataKeyId = CreateDataKey();
@@ -194,6 +204,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public async Task Server_schema_is_used_when_no_client_schema_available_async(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
         var expectedPatients = CreateSamplePatients;
         var dataKeyId = CreateDataKey();
@@ -240,6 +253,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         QueryableEncryptionType encryptionType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
@@ -260,6 +276,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_on_unsupported_owned_entity_collection_property_throws(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
@@ -282,6 +301,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_on_unsupported_owned_entity_single_inside_collection_property_throws(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
@@ -304,6 +326,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_on_non_nullable_property_does_not_log_warning(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         List<string> logs = [];
 
         var dataKeyId = CreateDataKey();
@@ -325,6 +350,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_on_nullable_property_logs_warning(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         List<string> logs = [];
 
         var dataKeyId = CreateDataKey();
@@ -347,6 +375,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_string(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -390,6 +421,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -434,6 +468,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -480,6 +517,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -520,6 +560,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_guid(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -559,6 +602,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_objectid(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -598,6 +644,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_boolean(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -638,6 +687,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_owned_entity_doc(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -678,6 +730,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_owned_entity_doc_with_equality_sub_property(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId1 = CreateDataKey();
         var dataKeyId2 = CreateDataKey();
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -703,6 +758,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_round_trips_owned_entity_string(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -745,6 +803,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary, BsonType.Int64)]
     public void IsEncrypted_round_trips_owned_entity_integer(CryptProvider cryptProvider, BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -786,6 +847,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_can_encrypt_multiple_properties(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var ssnDataKey = CreateDataKey();
         var doctorDataKey = CreateDataKey();
         var dateOfBirthDataKey = CreateDataKey();
@@ -829,6 +893,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_sharing_data_keys_between_properties_throws(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
 
@@ -851,6 +918,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_sharing_data_keys_between_navigations_throws(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
 
@@ -874,6 +944,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_sharing_data_keys_between_navigation_and_property_throws(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
 
@@ -897,6 +970,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncrypted_sharing_data_keys_between_different_entities_is_permitted(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
 
         using var db = CreateContext(cryptProvider,
@@ -925,6 +1001,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
@@ -946,6 +1025,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForEquality_queries_equality_on_string(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -984,6 +1066,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForEquality_queries_equality_on_guid(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -1022,6 +1107,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForEquality_queries_equality_on_objectid(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -1064,6 +1152,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -1108,6 +1199,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -1148,6 +1242,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_on_unsupported_string_throws(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
@@ -1169,6 +1266,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_on_unsupported_guid_throws(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
@@ -1190,6 +1290,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_on_unsupported_objectid_throws(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
@@ -1214,6 +1317,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -1248,6 +1354,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -1288,6 +1397,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_queries_ranges_on_datetime(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: cryptProvider);
@@ -1328,6 +1440,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_without_recommended_min_max_datetime_logs_warning(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         List<string> logs = [];
 
         var dataKeyId = CreateDataKey();
@@ -1358,6 +1473,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -1403,6 +1521,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         var samplePatients = CreateSamplePatients;
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName(values: [cryptProvider, storageType]);
@@ -1449,6 +1570,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         CryptProvider cryptProvider,
         BsonType storageType)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId = CreateDataKey();
         using var db = CreateContext(cryptProvider, mb =>
         {
@@ -1471,6 +1595,9 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void IsEncryptedForRange_and_equality_queries_mixed(CryptProvider cryptProvider)
     {
+        if (SkipForEncryption())
+            return;
+
         var dataKeyId1 = CreateDataKey();
         var dataKeyId2 = CreateDataKey();
 

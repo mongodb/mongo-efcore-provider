@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,14 @@
  * limitations under the License.
  */
 
+using MongoDB.Driver;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class TemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+public class ExternalDatabaseTestServer(string connectionString) : TestServer
 {
-    private TestServer? _server;
+    public override string ConnectionString
+        => connectionString;
 
-    public override TestServer TestServer
-        => _server!;
-
-    public override async Task InitializeAsync()
-    {
-        _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
-        await base.InitializeAsync();
-    }
+    public override MongoClient Client { get; } = new(connectionString);
 }
