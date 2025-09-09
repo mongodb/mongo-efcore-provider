@@ -159,6 +159,7 @@ functions:
           DRIVER_VERSION=${DRIVER_VERSION} \
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
+          ATLAS_URI="${ATLAS_URI}" \
           MONGODB_VERSION="${version}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug" \
@@ -172,6 +173,7 @@ functions:
           DRIVER_VERSION=${DRIVER_VERSION} \
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
+          ATLAS_URI="${ATLAS_URI}" \
           MONGODB_VERSION="${version}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF9" \
@@ -259,6 +261,7 @@ functions:
           ${PREPARE_SHELL}
           DRIVER_VERSION=${DRIVER_VERSION} \
           MONGODB_URI="${MONGODB_URI}" \
+          ATLAS_URI="${ATLAS_URI}" \
           MONGODB_VERSION="${version}" \
           PACKAGE_VERSION="${PACKAGE_VERSION}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \

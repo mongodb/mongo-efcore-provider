@@ -252,9 +252,11 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void SaveChanges_multi_collection_rolls_back_on_driver_exception()
+    public async Task SaveChanges_multi_collection_rolls_back_on_driver_exception()
     {
         var tempDatabaseFixture = new TemporaryDatabaseFixture();
+        await tempDatabaseFixture.InitializeAsync();
+
         var e1 = new Employee {Id = "E1", Name = "Roy Williams", JobTitle = "Office Manager"};
 
         {
@@ -287,6 +289,8 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     public async Task SaveChangesAsync_multi_collection_rolls_back_on_driver_exception()
     {
         var tempDatabaseFixture = new TemporaryDatabaseFixture();
+        await tempDatabaseFixture.InitializeAsync();
+
         var e1 = new Employee {Id = "E1", Name = "Roy Williams", JobTitle = "Office Manager"};
 
         {
@@ -316,9 +320,11 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void SaveChanges_multi_collection_rolls_back_on_DbUpdateConcurrencyException()
+    public async Task SaveChanges_multi_collection_rolls_back_on_DbUpdateConcurrencyException()
     {
         var tempDatabaseFixture = new TemporaryDatabaseFixture();
+        await tempDatabaseFixture.InitializeAsync();
+
         var e1 = new Employee {Id = "E1", Name = "Roy Williams", JobTitle = "Office Manager"};
         var s1 = new Supplier {Id = "S1", Name = "Friendly Corp.", Address = "123 Main St."};
 
@@ -357,6 +363,8 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
     public async Task SaveChangesAsync_multi_collection_rolls_back_on_DbUpdateConcurrencyException()
     {
         var tempDatabaseFixture = new TemporaryDatabaseFixture();
+        await tempDatabaseFixture.InitializeAsync();
+
         var e1 = new Employee {Id = "E1", Name = "Roy Williams", JobTitle = "Office Manager"};
         var s1 = new Supplier {Id = "S1", Name = "Friendly Corp.", Address = "123 Main St."};
 

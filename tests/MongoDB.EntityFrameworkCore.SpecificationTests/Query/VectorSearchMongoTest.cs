@@ -293,7 +293,9 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
     public class VectorSearchFixture : VectorSearchFixtureBase
     {
-        protected override string StoreName { get; } = TestServer.Atlas.GetUniqueDatabaseName("VectorSearch");
-        public override bool Exact => false;
+        protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("BuiltInDataTypes");
+
+        public override bool Exact
+            => false;
     }
 }

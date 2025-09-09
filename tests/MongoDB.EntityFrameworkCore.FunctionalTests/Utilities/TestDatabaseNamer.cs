@@ -13,10 +13,15 @@
  * limitations under the License.
  */
 
-namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-[Flags]
-public enum MongoCondition
+public static class TestDatabaseNamer
 {
-    IsAtlas = 1 << 0
+    public const string TestDatabasePrefix = "EFTest-";
+
+    private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+    private static int DbCount;
+
+    public static string GetUniqueDatabaseName(string? staticName = null)
+        => $"{TestDatabasePrefix}{TimeStamp}{staticName}-{Interlocked.Increment(ref DbCount)}";
 }
