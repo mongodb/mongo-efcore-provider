@@ -13,7 +13,8 @@
  * limitations under the License.
  */
 
-namespace MongoDB.EntityFrameworkCore.Metadata;
+// ReSharper disable once CheckNamespace
+namespace MongoDB.Driver;
 
 /// <summary>
 /// Type of automatic vector quantization for your vectors. Use this setting only if your embeddings are float or double vectors.

@@ -14,6 +14,7 @@
  */
 
 using System.Collections.Generic;
+using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.Metadata;
 
