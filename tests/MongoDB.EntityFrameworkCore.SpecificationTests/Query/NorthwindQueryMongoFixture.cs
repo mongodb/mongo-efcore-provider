@@ -14,7 +14,6 @@
  */
 
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
@@ -42,10 +41,12 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
     protected override ITestStoreFactory TestStoreFactory
         => _testStoreFactory!;
 
+    public TestServer TestServer { get; private set; }
+
     public override async Task InitializeAsync()
     {
-        var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
-        _testStoreFactory = new MongoTestStoreFactory(server);
+        TestServer = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
+        _testStoreFactory = new MongoTestStoreFactory(TestServer);
 
         await base.InitializeAsync();
     }
