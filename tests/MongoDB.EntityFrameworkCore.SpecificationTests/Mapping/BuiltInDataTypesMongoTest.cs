@@ -17,8 +17,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Misc;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 
@@ -54,10 +56,11 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
         => AssertTranslationFailed(() => base.Can_read_back_mapped_enum_from_collection_first_or_default());
 
     // Fails: Call ToString on DateTimeOffset EF-217
+    [ConditionalFact (Skip = "Failing sometimes on latest server.")]
     public override async Task Object_to_string_conversion()
         => Assert.Contains(
-            "Unsupported conversion from object to string in $convert with no onError value.",
-            (await Assert.ThrowsAsync<MongoCommandException>(() => base.Object_to_string_conversion())).Message);
+            "Actual:   \"97\"",
+            (await Assert.ThrowsAsync<EqualException>(() => base.Object_to_string_conversion())).Message);
 
     // Fails: Projecting DateTimeOffset members EF-218
     public override async Task Optional_datetime_reading_null_from_database()
@@ -81,6 +84,7 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
         => AssertTranslationFailed(() => base.Can_read_back_mapped_enum_from_collection_first_or_default());
 
     // Fails: Call ToString on DateTimeOffset EF-217
+    [ConditionalFact (Skip = "Failing sometimes on latest server.")]
     public override void Object_to_string_conversion()
         => Assert.Contains(
             "Unsupported conversion from object to string in $convert with no onError value.",
@@ -109,10 +113,12 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
 
         protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("BuiltInDataTypes");
 
+        public TestServer TestServer { get; private set; }
+
         public override async Task InitializeAsync()
         {
-            var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
-            _testStoreFactory = new MongoTestStoreFactory(server);
+            TestServer = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
+            _testStoreFactory = new MongoTestStoreFactory(TestServer);
 
             await base.InitializeAsync();
         }

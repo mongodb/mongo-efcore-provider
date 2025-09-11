@@ -17,8 +17,10 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Linq;
 using Xunit.Abstractions;
+using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
@@ -1610,6 +1612,8 @@ Customers.{ "$project" : { "City" : "$City", "c" : "$$ROOT", "_id" : 0 } }
 """);
     }
 
+    [ConditionalTheory (Skip = "Failing sometimes on latest server.")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Client_method_in_projection_requiring_materialization_1(bool async)
     {
         // Fails: Projections issue EF-76

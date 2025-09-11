@@ -122,7 +122,7 @@ public abstract class TestServer : IAsyncLifetime
     public abstract MongoClient Client { get; }
 
     private SemanticVersion _serverVersion;
-    private SemanticVersion ServerVersion
+    public SemanticVersion ServerVersion
         => LazyInitializer.EnsureInitialized(ref _serverVersion, () => QueryServerVersion());
 
     public bool SupportsBitwiseOperators
