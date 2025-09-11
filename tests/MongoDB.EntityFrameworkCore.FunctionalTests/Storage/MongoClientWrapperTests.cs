@@ -34,6 +34,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_database_and_collections(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
         var client = context.GetService<IMongoClientWrapper>();
 
@@ -65,6 +67,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_can_be_configured_to_not_create_missing_collections(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
         var client = context.GetService<IMongoClientWrapper>();
 
@@ -84,6 +88,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_indexes(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase, mb =>
         {
             mb.Entity<Customer>().HasIndex(c => c.Name);
@@ -108,6 +114,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_index_creation_can_be_deferred(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase, mb =>
         {
             mb.Entity<Customer>().HasIndex(c => c.Name);
@@ -148,6 +156,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_nested_index_on_owns_one(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var collection = database.CreateCollection<Product>(values: async);
         var context = SingleEntityDbContext.Create(collection, mb =>
         {
@@ -176,6 +186,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_nested_index_on_owns_one_can_be_deferred(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var collection = database.CreateCollection<Product>(values: async);
         var context = SingleEntityDbContext.Create(collection, mb =>
         {
@@ -222,6 +234,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_nested_index_on_owns_many(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var collection = database.CreateCollection<Product>(values: async);
         var context = SingleEntityDbContext.Create(collection, mb =>
         {
@@ -250,6 +264,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_nested_index_on_owns_many_can_be_deferred(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var collection = database.CreateCollection<Product>(values: async);
         var context = SingleEntityDbContext.Create(collection, mb =>
         {
@@ -296,6 +312,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_nested_index_on_owns_many_owns_one(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var collection = database.CreateCollection<Product>(values: async);
         var context = SingleEntityDbContext.Create(collection, mb =>
         {
@@ -330,6 +348,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_alternate_keys(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase, mb =>
         {
             mb.Entity<Customer>(e =>
@@ -377,6 +397,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_does_not_duplicate_indexes(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
 
         {
             var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
@@ -424,6 +446,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_index_from_string_named_properties(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
             mb => mb.Entity<Address>().HasIndex("PostCode"));
         var client = context.GetService<IMongoClientWrapper>();
@@ -443,6 +467,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_index_from_multiple_string_named_properties(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
             mb => mb.Entity<Address>().HasIndex("Country", "PostCode"));
         var client = context.GetService<IMongoClientWrapper>();
@@ -465,6 +491,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_index_with_descending_property(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
             mb => mb.Entity<Address>().HasIndex(a => a.PostCode).IsDescending(true));
         var client = context.GetService<IMongoClientWrapper>();
@@ -486,6 +514,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_index_with_two_descending_properties(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
             mb => mb.Entity<Address>().HasIndex(a => new { a.PostCode, a.Country }).IsDescending());
         var client = context.GetService<IMongoClientWrapper>();
@@ -508,6 +538,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_index_with_two_properties_mixed_sort_order(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
             mb => mb.Entity<Address>().HasIndex(a => new { a.PostCode, a.Country }).IsDescending(false, true));
         var client = context.GetService<IMongoClientWrapper>();
@@ -530,6 +562,8 @@ public class MongoClientWrapperTests
     public async Task CreateDatabase_creates_index_with_two_properties_unique_descending(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
             mb => mb.Entity<Address>().HasIndex(a => new { a.PostCode, a.Country }).IsUnique().IsDescending());
         var client = context.GetService<IMongoClientWrapper>();
@@ -555,6 +589,8 @@ public class MongoClientWrapperTests
         var filter = Builders<BsonDocument>.Filter.Eq(a => a["Country"], "UK");
         var options = new CreateIndexOptions<BsonDocument> { PartialFilterExpression = filter };
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
             mb => mb.Entity<Address>().HasIndex(a => a.PostCode).HasCreateIndexOptions(options));
         var client = context.GetService<IMongoClientWrapper>();
@@ -576,6 +612,8 @@ public class MongoClientWrapperTests
     {
         var options = new CreateIndexOptions { Sparse = true, Unique = true };
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase,
             mb => mb.Entity<Address>().HasIndex(a => a.PostCode).HasCreateIndexOptions(options));
         var client = context.GetService<IMongoClientWrapper>();
@@ -598,6 +636,7 @@ public class MongoClientWrapperTests
         const int expectedMaxSize = 4096;
 
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
 
         {
             var collection = database.MongoDatabase.GetCollection<Customer>("Customers");
@@ -639,6 +678,8 @@ public class MongoClientWrapperTests
     public async Task DeleteDatabase_deletes_database(bool async)
     {
         var database = new TemporaryDatabaseFixture();
+        await database.InitializeAsync();
+
         var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
         var client = context.GetService<IMongoClientWrapper>();
 

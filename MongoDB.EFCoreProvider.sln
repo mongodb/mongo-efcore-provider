@@ -29,6 +29,19 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		sbom.json = sbom.json
 		syncfork.png = syncfork.png
 		Versions.props = Versions.props
+		evergreen\upload-apidocs.sh = evergreen\upload-apidocs.sh
+		evergreen\generate-version.sh = evergreen\generate-version.sh
+		evergreen\download-augmented-sbom.sh = evergreen\download-augmented-sbom.sh
+		evergreen\run-tests.sh = evergreen\run-tests.sh
+		evergreen\template_ssdlc_compliance_report.md = evergreen\template_ssdlc_compliance_report.md
+		evergreen\generate-ssdlc-report.sh = evergreen\generate-ssdlc-report.sh
+		evergreen\pack-packages.sh = evergreen\pack-packages.sh
+		evergreen\push-packages.sh = evergreen\push-packages.sh
+		evergreen\sign-packages.sh = evergreen\sign-packages.sh
+		evergreen\build-apidocs.sh = evergreen\build-apidocs.sh
+		evergreen\run-smoke-tests.sh = evergreen\run-smoke-tests.sh
+		evergreen\install-dependencies.sh = evergreen\install-dependencies.sh
+		evergreen\evergreen.yml = evergreen\evergreen.yml
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore.SpecificationTests", "tests\MongoDB.EntityFrameworkCore.SpecificationTests\MongoDB.EntityFrameworkCore.SpecificationTests.csproj", "{1BFBE183-6125-402E-826B-1F7A7F86AF00}"

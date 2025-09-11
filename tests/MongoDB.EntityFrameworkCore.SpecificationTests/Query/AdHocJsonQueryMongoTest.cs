@@ -712,10 +712,20 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
     private void AssertMql(params string[] expected)
         => TestMqlLoggerFactory.AssertBaseline(expected);
 
-    protected override ITestStoreFactory TestStoreFactory
-        => MongoTestStoreFactory.Default;
+    private ITestStoreFactory? _testStoreFactory;
 
-    protected override string StoreName { get; } = TestServer.Default.GetUniqueDatabaseName("AdHocJsonQuery");
+    protected override ITestStoreFactory TestStoreFactory
+        => _testStoreFactory!;
+
+    protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("AdHocJsonQuery");
+
+    public override async Task InitializeAsync()
+    {
+        var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
+        _testStoreFactory = new MongoTestStoreFactory(server);
+
+        await base.InitializeAsync();
+    }
 }
 
 #endif

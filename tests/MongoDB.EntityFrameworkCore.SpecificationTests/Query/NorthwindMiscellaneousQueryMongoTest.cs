@@ -2226,7 +2226,7 @@ Customers.{ "$match" : { "$or" : [{ "$and" : [{ "_id" : "ALFKI" }, { "_id" : "AN
 
     public override async Task Where_bitwise_binary_not(bool async)
     {
-        if (!TestServer.Default.SupportsBitwiseOperators)
+        if (!TestServer.SupportsBitwiseOperators)
         {
             return;
         }
@@ -2251,7 +2251,7 @@ Orders.{ "$match" : { "_id" : { "$bitsAllSet" : 10248 } } }
 
     public override async Task Where_bitwise_binary_or(bool async)
     {
-        if (!TestServer.Default.SupportsBitwiseOperators)
+        if (!TestServer.SupportsBitwiseOperators)
         {
             return;
         }
@@ -2268,7 +2268,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitOr" : ["$_id", 10248] }, 10248
 
     public override async Task Where_bitwise_binary_xor(bool async)
     {
-        if (!TestServer.Default.SupportsBitwiseOperators)
+        if (!TestServer.SupportsBitwiseOperators)
         {
             return;
         }
@@ -5047,6 +5047,9 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
     }
 
     #endif
+
+    private TestServer TestServer
+        => ((MongoTestStore)Fixture.TestStore).TestServer;
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

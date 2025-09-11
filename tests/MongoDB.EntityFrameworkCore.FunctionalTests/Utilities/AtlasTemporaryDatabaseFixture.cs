@@ -15,4 +15,16 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class AtlasTemporaryDatabaseFixture() : TemporaryDatabaseFixtureBase(TestServer.Atlas.Client);
+public class AtlasTemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+{
+    private TestServer? _server;
+
+    public override TestServer TestServer
+        => _server!;
+
+    public override async Task InitializeAsync()
+    {
+        _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.IsAtlas);
+        await base.InitializeAsync();
+    }
+}
