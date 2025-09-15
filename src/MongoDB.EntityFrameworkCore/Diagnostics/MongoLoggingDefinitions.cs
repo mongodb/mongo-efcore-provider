@@ -42,4 +42,7 @@ internal class MongoLoggingDefinitions : LoggingDefinitions
     public EventDefinitionBase? LogEncryptedNullablePropertyEncountered;
 
     public EventDefinitionBase? LogColumnAttributeWithTypeUsed;
+
+    public EventDefinitionBase? LogVectorSearchNeedsIndex;
+    public EventDefinitionBase? LogVectorSearchReturnedZeroResults;
 }

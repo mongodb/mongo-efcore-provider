@@ -46,7 +46,9 @@ public static class MongoEventId
         TransactionError,
         RecommendedMinMaxRangeMissing,
         EncryptedNullablePropertyEncountered,
-        ColumnAttributeWithTypeUsed
+        ColumnAttributeWithTypeUsed,
+        VectorSearchNeedsIndex,
+        VectorSearchReturnedZeroResults,
     }
 
     private static EventId MakeDatabaseCommandId(Id id)
@@ -186,4 +188,29 @@ public static class MongoEventId
     ///     <para>This event uses the <see cref="PropertyEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
     /// </remarks>
     public static readonly EventId ColumnAttributeWithTypeUsed = MakeModelId(Id.ColumnAttributeWithTypeUsed);
+
+    private static EventId MakeQueryId(Id id)
+        => new((int)id, DbLoggerCategory.Query.Name + "." + id);
+
+    /// <summary>
+    /// A vector query could not be executed because the vector index for this query could not be found. Use 'HasIndex' on the
+    /// EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF Core.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Query" /> category.</para>
+    ///     <para>This event uses the <see cref="PropertyEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId VectorSearchNeedsIndex = MakeQueryId(Id.VectorSearchNeedsIndex);
+
+    /// <summary>
+    /// The vector query returned zero results. This could be because either there is no vector index defined for query property, or
+    /// because vector data (embeddings) have recently been inserted. Consider disabling index creation in
+    /// 'DbContext.Database.EnsureCreated' and performing initial ingestion before calling
+    /// 'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Query" /> category.</para>
+    ///     <para>This event uses the <see cref="MongoQueryEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId VectorSearchReturnedZeroResults = MakeQueryId(Id.VectorSearchReturnedZeroResults);
 }

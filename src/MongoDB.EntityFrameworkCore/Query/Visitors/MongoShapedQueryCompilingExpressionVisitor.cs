@@ -24,6 +24,7 @@ using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies;
 using MongoDB.EntityFrameworkCore.Serializers;
@@ -142,8 +143,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             executableQuery,
             (_, e) => e,
             contextType,
-            false,
-            threadSafetyChecksEnabled);
+            standAloneStateManager: false,
+            threadSafetyChecksEnabled,
+            onZeroResults: null);
     }
 
     private static QueryingEnumerable<BsonDocument, TResult> TranslateAndExecuteQuery<TSource, TResult>(
@@ -167,13 +169,28 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var executableQuery = new MongoExecutableQuery(translatedQuery, resultCardinality, (IMongoQueryProvider)source.Provider,
             collection.CollectionNamespace);
 
+        Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults = null;
+        if (queryExpression.CapturedExpression is MethodCallExpression methodCallExpression)
+        {
+            if (methodCallExpression.Method.Name == "Select" && methodCallExpression.Arguments is [MethodCallExpression mce, _])
+            {
+                methodCallExpression = mce;
+            }
+
+            if (methodCallExpression.IsVectorSearch())
+            {
+                onZeroResults = (qc, eq) => qc.QueryLogger.VectorSearchReturnedZeroResults(eq);
+            }
+        }
+
         return new QueryingEnumerable<BsonDocument, TResult>(
             mongoQueryContext,
             executableQuery,
             shaper,
             contextType,
             standAloneStateManager,
-            threadSafetyChecksEnabled);
+            threadSafetyChecksEnabled,
+            onZeroResults);
     }
 
     private static readonly MethodInfo TranslateAndExecuteQueryMethodInfo = typeof(MongoShapedQueryCompilingExpressionVisitor)
