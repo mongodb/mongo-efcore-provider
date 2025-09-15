@@ -19,7 +19,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using MongoDB.EntityFrameworkCore.Extensions;
 
-namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Metadata;
 
 public static class MongoBuilderExtensionTest
 {
