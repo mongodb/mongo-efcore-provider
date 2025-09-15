@@ -18,9 +18,10 @@ using Microsoft.EntityFrameworkCore.ValueGeneration;
 using Microsoft.EntityFrameworkCore.ValueGeneration.Internal;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.ValueGeneration;
+
 #pragma warning disable CS0618 // Type or member is obsolete
 
-namespace MongoDB.EntityFrameworkCore.UnitTests.ValueGeneration;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.ValueGeneration;
 
 public class MongoValueGeneratorSelectorTests
 {

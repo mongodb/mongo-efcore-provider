@@ -16,7 +16,7 @@
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 
-namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions;
+namespace MongoDB.EntityFrameworkCore.SpecificationTests.Metadata.Conventions;
 
 public class MongoValueGenerationConventionTests
 {
