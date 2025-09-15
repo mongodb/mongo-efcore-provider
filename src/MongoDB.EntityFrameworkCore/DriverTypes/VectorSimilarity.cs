@@ -13,7 +13,8 @@
  * limitations under the License.
  */
 
-namespace MongoDB.EntityFrameworkCore.Metadata;
+// ReSharper disable once CheckNamespace
+namespace MongoDB.Driver;
 
 /// <summary>
 /// Vector similarity function to use to search for top K-nearest neighbors.
