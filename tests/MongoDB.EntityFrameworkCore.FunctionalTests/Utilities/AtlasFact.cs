@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,23 +15,10 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class TemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+public class AtlasFact : FactAttribute
 {
-    private TestServer? _server;
-
-    public static async Task<TemporaryDatabaseFixture> CreateInitializedAsync()
-    {
-        var fixture = new TemporaryDatabaseFixture();
-        await fixture.InitializeAsync();
-        return fixture;
-    }
-
-    public override TestServer TestServer
-        => _server!;
-
-    public override async Task InitializeAsync()
-    {
-        _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
-        await base.InitializeAsync();
-    }
+    public override string? Skip
+        => TestServer.SupportsAtlas
+            ? null
+            : "Requires Atlas search capabilities.";
 }

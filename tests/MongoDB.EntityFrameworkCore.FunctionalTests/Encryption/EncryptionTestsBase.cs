@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
@@ -21,11 +20,10 @@ using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
-using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 
-public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database, ITestOutputHelper testOutputHelper)
+public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     protected readonly Dictionary<string, IReadOnlyDictionary<string, object>> KmsProviders =
@@ -64,11 +62,10 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database, ITe
     protected class QueryableEncryptionTheory : TheoryAttribute
     {
         public override string? Skip
-        {
-            get => ShouldRunQueryableEncryptionTests
+            => TestServer.SupportsEncryption
+               && ShouldRunQueryableEncryptionTests
                 ? null
                 : "These Queryable Encryption tests require MongoDB 8.0 or later as declared by the VERSION environment variable.";
-        }
     }
 
     protected static bool ShouldRunQueryableEncryptionTests =>
@@ -152,9 +149,6 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database, ITe
 
     private static string GetEnvironmentVariableOrThrow(string variable)
         => Environment.GetEnvironmentVariable(variable) ?? throw new Exception($"Environment variable \"{variable}\" not set.");
-
-    protected bool SkipForEncryption([CallerMemberName] string? caller = default)
-        => TestServer.SkipForEncryption(testOutputHelper, caller!);
 
     protected static Patient[] CreateSamplePatients =>
     [

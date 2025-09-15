@@ -14,7 +14,6 @@
  */
 
 using System.ComponentModel.DataAnnotations.Schema;
-using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -22,12 +21,11 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
-using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
 [XUnitCollection("StorageTests")]
-public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelper  testOutputHelper)
+public class IndexTests(AtlasTemporaryDatabaseFixture database)
     : IClassFixture<AtlasTemporaryDatabaseFixture>
 {
     class SimpleEntity
@@ -57,16 +55,13 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
         public double[] Doubles { get; set; }
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, false, false)]
     [InlineData(true, true, true)]
     [InlineData(false, false, true)]
     [InlineData(true, true, false)]
     public async Task Create_vector_index_in_EnsureCreated(bool async, bool useStrings, bool useOptions)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -93,14 +88,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
         ValidateIndex("FloatsVectorIndex", collection, "Floats", 2, "cosine", expectedFilterPaths: null);
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Create_vector_index_after_EnsureCreated(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b => b.Entity<SimpleEntity>().HasIndex(e => e.Floats).IsVectorIndex(VectorSimilarity.Cosine, 2));
@@ -129,16 +121,13 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
         ValidateIndex("FloatsVectorIndex", collection, "Floats", 2, "cosine", expectedFilterPaths: null);
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, false, false)]
     [InlineData(true, true, true)]
     [InlineData(false, false, true)]
     [InlineData(true, true, false)]
     public async Task Create_vector_index_on_nested_entity_in_EnsureCreated(bool async, bool useStrings, bool useOptions)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -169,14 +158,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
         ValidateIndex("DoublesVectorIndex", collection, "Nested.Nested.Doubles", 2, "cosine", expectedFilterPaths: null);
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Create_vector_index_on_nested_entity_after_EnsureCreated(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(
             collection,
@@ -212,14 +198,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
 
 #if EF9 // HasIndex with name on owned types was accidentally missing in EF8
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Indexes_can_be_created_individually(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(
             collection,
@@ -305,14 +288,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
 
 #endif
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, false)]
     [InlineData(true, true)]
     public async Task Create_vector_index_with_name(bool async, bool useStrings)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -333,14 +313,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
 
 #if EF9 // HasIndex with name on owned types was accidentally missing in EF8
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, true)]
     [InlineData(true, false)]
     public async Task Create_vector_index_with_name_on_nested_entity(bool async, bool useStrings)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -365,14 +342,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
 
 #endif
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, false)]
     [InlineData(true, true)]
     public async Task Create_vector_index_with_options(bool async, bool useStrings)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -406,14 +380,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
         Assert.Equal(1600, field["hnswOptions"]["numEdgeCandidates"].AsInt32);
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, true)]
     [InlineData(true, false)]
     public async Task Create_vector_index_with_options_on_nested_entity(bool async, bool useStrings)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -448,14 +419,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
         Assert.Equal(1600, field["hnswOptions"]["numEdgeCandidates"].AsInt32);
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, false)]
     [InlineData(true, true)]
     public async Task Create_vector_index_with_options_and_name(bool async, bool useStrings)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -489,14 +457,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
 
 #if EF9 // HasIndex with name on owned types was accidentally missing in EF8
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, true)]
     [InlineData(true, false)]
     public async Task Create_vector_index_with_options_and_name_on_nested_entity(bool async, bool useStrings)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -532,14 +497,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
 
 #endif
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, false)]
     [InlineData(true, true)]
     public async Task Create_vector_index_with_options_and_name_using_nested_builder(bool async, bool useStrings)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -580,14 +542,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
 
 #if EF9 // HasIndex with name on owned types was accidentally missing in EF8
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false, true)]
     [InlineData(true, false)]
     public async Task Create_vector_index_with_options_and_name_on_nested_entity_using_nested_builder(bool async, bool useStrings)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -670,12 +629,9 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
         return index;
     }
 
-    [Fact]
+    [AtlasFact]
     public void Query_throws_for_vector_index_specified_but_missing()
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -689,12 +645,9 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
                     .VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" })).Message);
     }
 
-    [Fact]
+    [AtlasFact]
     public void Query_throws_for_vector_index_specified_but_different()
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -715,12 +668,9 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
                     .VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" })).Message);
     }
 
-    [Fact]
+    [AtlasFact]
     public void Query_throws_for_no_vector_index_when_not_specified()
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -732,12 +682,9 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
                 db.Set<SimpleEntity>().VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2)).Message);
     }
 
-    [Fact]
+    [AtlasFact]
     public void Query_throws_for_multiple_vector_indexes_when_not_specified()
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -763,14 +710,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
                 db.Set<SimpleEntity>().VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2)).Message);
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Query_does_not_throw_when_multiple_vector_indexes_but_one_specified(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
@@ -807,12 +751,9 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
         Assert.Equal(2, (async ? await query.ToListAsync() : query.ToList()).Count);
     }
 
-    [Fact]
+    [AtlasFact]
     public void Query_throws_for_unmapped_member()
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection);
 
@@ -823,8 +764,4 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelpe
             Assert.Throws<InvalidOperationException>(() =>
                 db.Set<SimpleEntity>().VectorSearch(e => e.MoreFloats, new[] { 0.33f, -0.52f }, 2)).Message);
     }
-
-    private bool SkipForAtlas([CallerMemberName] string? caller = default)
-        => TestServer.SkipForAtlas(testOutputHelper, caller!);
-
 }

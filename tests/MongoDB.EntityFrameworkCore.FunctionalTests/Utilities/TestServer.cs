@@ -151,17 +151,6 @@ public abstract class TestServer : IAsyncLifetime
         return true;
     }
 
-    public static bool SkipForEncryption(ITestOutputHelper testOutputHelper, string caller)
-    {
-        if (SupportsEncryption)
-        {
-            return false;
-        }
-
-        testOutputHelper.WriteLine($"'{caller}' skipped because it required encryption.");
-        return true;
-    }
-
     private SemanticVersion QueryServerVersion()
     {
         var database = Client.GetDatabase("__admin");

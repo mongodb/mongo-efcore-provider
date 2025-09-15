@@ -16,13 +16,12 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
-using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 
 [XUnitCollection("EncryptionTests")]
-public class EncryptionTests(TemporaryDatabaseFixture database, ITestOutputHelper  testOutputHelper)
-    : EncryptionTestsBase(database, testOutputHelper)
+public class EncryptionTests(TemporaryDatabaseFixture database)
+    : EncryptionTestsBase(database)
 {
     private readonly TemporaryDatabaseFixture _database = database;
 
@@ -44,13 +43,10 @@ public class EncryptionTests(TemporaryDatabaseFixture database, ITestOutputHelpe
         }
     }
 
-    [Theory]
+    [EncryptionTheory]
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_without_encrypted_client(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
-        if (SkipForEncryption())
-            return;
-
         var collection = _database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
         SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName, encryptionMode);
 
@@ -59,13 +55,10 @@ public class EncryptionTests(TemporaryDatabaseFixture database, ITestOutputHelpe
         Assert.Throws<FormatException>(() => db.Entities.First());
     }
 
-    [Theory]
+    [EncryptionTheory]
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_with_wrong_master_key(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
-        if (SkipForEncryption())
-            return;
-
         // Setup data with a master key
         var collection = _database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
         var collectionNamespace = collection.CollectionNamespace;
@@ -93,13 +86,10 @@ public class EncryptionTests(TemporaryDatabaseFixture database, ITestOutputHelpe
     internal static bool IsBuggyMongocryptd =>
         Environment.GetEnvironmentVariable("MONGODB_VERSION") == "latest";
 
-    [Theory]
+    [EncryptionTheory]
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_round_trip(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
-        if (SkipForEncryption())
-            return;
-
         // Remove me once mongocryptd is fixed for Windows on latest
         if (cryptProvider == CryptProvider.Mongocryptd && IsBuggyMongocryptd) return;
 
@@ -131,14 +121,11 @@ public class EncryptionTests(TemporaryDatabaseFixture database, ITestOutputHelpe
         }
     }
 
-    [QueryableEncryptionTheory]
+    [EncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Encrypted_data_can_be_queried_with_range_for_queryable_encryption(CryptProvider cryptProvider)
     {
-        if (SkipForEncryption())
-            return;
-
         if (!ShouldRunQueryableEncryptionTests) return;
 
         var collection = _database.CreateCollection<Patient>(values: [cryptProvider]);
@@ -219,6 +206,14 @@ public class EncryptionTests(TemporaryDatabaseFixture database, ITestOutputHelpe
                 }
             }
         };
+
+    protected class EncryptionTheory : TheoryAttribute
+    {
+        public override string? Skip
+            => TestServer.SupportsEncryption
+                ? null
+                : "Requires encryption library to be present.";
+    }
 
     public enum EncryptionMode
     {

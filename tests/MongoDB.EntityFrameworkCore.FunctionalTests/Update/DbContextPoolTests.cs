@@ -27,8 +27,7 @@ public class DbContextPoolTests(TemporaryDatabaseFixture database)
     [Fact]
     public async Task DbContextPool_honors_AutoTransactionBehavior_set_in_constructor()
     {
-        var fixture = new TemporaryDatabaseFixture();
-        await fixture.InitializeAsync();
+        var fixture = await TemporaryDatabaseFixture.CreateInitializedAsync();
 
         var serviceProvider = new ServiceCollection()
             .AddEntityFrameworkMongoDB()
