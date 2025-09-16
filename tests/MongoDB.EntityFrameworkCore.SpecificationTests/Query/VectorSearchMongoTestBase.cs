@@ -383,35 +383,6 @@ public abstract class VectorSearchMongoTestBase
     [ConditionalTheory]
     [InlineData(false)]
     [InlineData(true)]
-    public virtual async Task VectorSearch_floats_after_where(bool async)
-    {
-        await using var context = Fixture.CreateContext();
-        var inputVector = new[] { 0.33f, -0.52f };
-
-        var queryable = context.Set<Book>()
-            .Where(e => e.IsPublished)
-            .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"));
-
-        Assert.Contains(
-            "$vectorSearch is only valid as the first stage in a pipeline.",
-            (await Assert.ThrowsAsync<MongoCommandException>(async () =>
-            {
-                var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
-
-                Assert.Equal(4, booksFromStore.Count);
-                Assert.Equal(
-                [
-                    "Programming Entity Framework: DbContext",
-                    "Entity Framework Core in Action",
-                    "Programming Entity Framework",
-                    "Programming Entity Framework: Code First"
-                ], booksFromStore.Select(e => e.Title));
-            })).Message);
-    }
-
-    [ConditionalTheory]
-    [InlineData(false)]
-    [InlineData(true)]
     public virtual async Task VectorSearch_floats_before_where(bool async)
     {
         await using var context = Fixture.CreateContext();
@@ -421,22 +392,147 @@ public abstract class VectorSearchMongoTestBase
             .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
             .Where(e => e.IsPublished);
 
-        // Fails: Cannot compose after vector search
-        Assert.Contains(
-            "could not be translated",
-            (await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            {
-                var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
 
-                Assert.Equal(4, booksFromStore.Count);
-                Assert.Equal(
-                [
-                    "Programming Entity Framework: DbContext",
-                    "Entity Framework Core in Action",
-                    "Programming Entity Framework",
-                    "Programming Entity Framework: Code First"
-                ], booksFromStore.Select(e => e.Title));
-            })).Message);
+        Assert.Equal(2, booksFromStore.Count);
+        Assert.Equal(
+        [
+            "Programming Entity Framework",
+            "Entity Framework Core in Action",
+        ], booksFromStore.Select(e => e.Title));
+    }
+
+    [ConditionalTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public virtual async Task VectorSearch_with_projection(bool async)
+    {
+        await using var context = Fixture.CreateContext();
+        var inputVector = new[] { 0.33f, -0.52f };
+
+        var queryable = context.Set<Book>()
+            .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
+            .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
+            .Select(e => e.Author);
+
+        var authors = async ? await queryable.ToListAsync() : queryable.ToList();
+
+        Assert.Equal(2, authors.Count);
+        Assert.Equal(
+        [
+            "Jon P Smith",
+            "Julie Lerman",
+        ], authors);
+    }
+
+    [ConditionalTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public virtual async Task VectorSearch_with_projection_of_score(bool async)
+    {
+        await using var context = Fixture.CreateContext();
+        var inputVector = new[] { 0.33f, -0.52f };
+
+        var queryable = context.Set<Book>()
+            .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
+            .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
+            .Select(e => new { e.Author, Score = Mql.Field<Book, double>(e, "__score", null) });
+
+        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("Jon P Smith", results[0].Author);
+        Assert.Equal("Julie Lerman", results[1].Author);
+        Assert.Equal(0.99974566698074341, results[0].Score, 5);
+        Assert.Equal(0.99961328506469727, results[1].Score, 5);
+    }
+
+    [ConditionalTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public virtual async Task VectorSearch_with_projection_of_score_using_EF_Property(bool async)
+    {
+        await using var context = Fixture.CreateContext();
+        var inputVector = new[] { 0.33f, -0.52f };
+
+        var queryable = context.Set<Book>()
+            .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
+            .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
+            .Select(e => new { e.Author, Score = EF.Property<double>(e, "__score") });
+
+        // Fails: EF.Property
+        await Assert.ThrowsAsync<NullReferenceException>(async () =>
+            _ = async ? await queryable.ToListAsync() : queryable.ToList());
+
+        // Assert.Equal(2, results.Count);
+        // Assert.Equal("Jon P Smith", results[0].Author);
+        // Assert.Equal("Julie Lerman", results[1].Author);
+        // Assert.Equal(0.99974566698074341, results[0].Score, 5);
+        // Assert.Equal(0.99961328506469727, results[1].Score, 5);
+    }
+
+    [ConditionalTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public virtual async Task VectorSearch_with_projection_of_entity_and_score(bool async)
+    {
+        await using var context = Fixture.CreateContext();
+        var inputVector = new[] { 0.33f, -0.52f };
+
+        var queryable = context.Set<Book>()
+            .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
+            .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
+            .Select(e => new { Book = e, Score = Mql.Field<Book, double>(e, "__score", null) });
+
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "An error occurred while deserializing the Book ",
+            (await Assert.ThrowsAsync<FormatException>(async () =>
+                _ = async ? await queryable.ToListAsync() : queryable.ToList()))
+            .Message);
+    }
+
+    [ConditionalTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public virtual async Task VectorSearch_with_projection_of_constructed_entity_and_score(bool async)
+    {
+        await using var context = Fixture.CreateContext();
+        var inputVector = new[] { 0.33f, -0.52f };
+
+        var queryable = context.Set<Book>()
+            .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
+            .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
+            .Select(e => new
+            {
+                Book = new Book
+                {
+                    Id = e.Id,
+                    Title = e.Title,
+                    Author = e.Author,
+                    Isbn = e.Isbn,
+                    Comments = e.Comments,
+                    Pages = e.Pages,
+                    IsPublished = e.IsPublished
+                },
+                Score = Mql.Field<Book, double>(e, "__score", null)
+            });
+
+        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+        Assert.Equal(2, results.Count);
+
+        Assert.Equal("Entity Framework Core in Action", results[0].Book.Title);
+        Assert.Equal("Jon P Smith", results[0].Book.Author);
+        Assert.Equal([1, 1, 1, 1], results[0].Book.Isbn);
+        Assert.Equal(["Fab", "Froody"], results[0].Book.Comments);
+        Assert.Equal(500, results[0].Book.Pages);
+
+        Assert.Equal("Programming Entity Framework: DbContext", results[1].Book.Title);
+        Assert.Equal("Julie Lerman", results[1].Book.Author);
+        Assert.Equal([1, 1, 1, 2], results[1].Book.Isbn);
+        Assert.Equal(["Fab", "Froody"], results[1].Book.Comments);
+        Assert.Equal(600, results[1].Book.Pages);
+        Assert.False(results[1].Book.IsPublished);
     }
 
     [ConditionalTheory]
@@ -560,29 +656,33 @@ public abstract class VectorSearchMongoTestBase
         ], booksFromStore.Select(e => e.Title));
     }
 
-    [ConditionalFact]
-    public virtual void VectorSearch_throws_for_driver_IQueryable()
+    [ConditionalTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public abstract Task VectorSearch_logs_for_zero_results(bool async);
+
+    protected async Task VectorSearchZeroResults(bool async, string expectedQuery)
     {
-        using var context = Fixture.CreateContext();
+        await using var context = Fixture.CreateContext();
         var inputVector = new[] { 0.33f, -0.52f };
 
-        var queryable = context.GetService<IMongoClientWrapper>().GetCollection<Book>("Book").AsQueryable();
+        var queryable = context.Set<Book>()
+            .VectorSearch(e => e.FloatsWithNoData, inputVector, limit: 4);
 
+        // This throws by default because warnings as errors is on in the spec tests.
         Assert.Contains(
-            "The method 'VectorSearch' can only be called on an IQueryable that starts as a DbSet in EF. The IQueryable used came directly",
-            Assert.Throws<ArgumentException>(() => queryable.VectorSearch(e => e.Preface.Floats, inputVector, limit: 4)).Message);
-    }
-
-    [ConditionalFact]
-    public virtual void VectorSearch_throws_for_L2O_IQueryable()
-    {
-        var inputVector = new[] { 0.33f, -0.52f };
-
-        var queryable = new List<Book>().AsQueryable();
-
-        Assert.Contains(
-            "The method 'VectorSearch' can only be called on an IQueryable that starts as a DbSet in EF. The IQueryable came from a",
-            Assert.Throws<ArgumentException>(() => queryable.VectorSearch(e => e.Preface.Floats, inputVector, limit: 4)).Message);
+            $"An error was generated for warning 'Microsoft.EntityFrameworkCore.Query.VectorSearchReturnedZeroResults': The vector " +
+            $"query '{expectedQuery}' " +
+            "returned zero results. This could be because either there is no vector index defined for query property, or because " +
+            "vector data (embeddings) have recently been inserted. Consider disabling index creation in " +
+            "'DbContext.Database.EnsureCreated' and performing initial ingestion before calling " +
+            "'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'. " +
+            "This exception can be suppressed or logged by passing event ID 'MongoEventId.VectorSearchReturnedZeroResults' " +
+            "to the 'ConfigureWarnings' method in 'DbContext.OnConfiguring' or 'AddDbContext'.",
+            (await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            {
+                _ = async ? await queryable.ToListAsync() : queryable.ToList();
+            })).Message);
     }
 
     private VectorQueryOptions? CreateQueryOptions(string? indexName)
@@ -614,12 +714,11 @@ public abstract class VectorSearchMongoTestBase
         public float[] Floats { get; set; }
         public double[] Doubles { get; set; }
 
+        public float[] FloatsWithNoData { get; set; }
+
         public Memory<float> MemoryFloats { get; set; }
-
         public Memory<double> MemoryDoubles { get; set; }
-
         public ReadOnlyMemory<float> ReadOnlyMemoryFloats { get; set; }
-
         public ReadOnlyMemory<double> ReadOnlyMemoryDoubles { get; set; }
 
         [BinaryVector(BinaryVectorDataType.Float32)]
@@ -686,6 +785,8 @@ public abstract class VectorSearchMongoTestBase
                 b.HasIndex(e => e.Floats, "FloatsIndex").IsVectorIndex(VectorSimilarity.Cosine, 2)
                     .AllowsFiltersOn(e => e.IsPublished);
 
+                b.HasIndex(e => e.FloatsWithNoData, "FloatsWithNoDataIndex").IsVectorIndex(VectorSimilarity.Cosine, 2);
+
                 b.HasIndex(e => e.Doubles, "DoublesIndex").IsVectorIndex(VectorSimilarity.Euclidean, 2, b =>
                 {
                     b.AllowsFiltersOn(e => e.Comments);
@@ -731,6 +832,7 @@ public abstract class VectorSearchMongoTestBase
                 IsPublished = true,
                 Floats = [0.332f, -0.562f],
                 Doubles = [0.332, -0.532],
+                FloatsWithNoData = [],
                 MemoryFloats = new([0.332f, -0.562f]),
                 MemoryDoubles = new([0.332, -0.532]),
                 ReadOnlyMemoryFloats = new([0.332f, -0.562f]),
@@ -762,6 +864,7 @@ public abstract class VectorSearchMongoTestBase
                 Pages = 600,
                 Floats = [0.338f, -0.582f],
                 Doubles = [0.833, -0.582],
+                FloatsWithNoData = [],
                 MemoryFloats = new([0.338f, -0.582f]),
                 MemoryDoubles = new([0.833, -0.582]),
                 ReadOnlyMemoryFloats = new([0.338f, -0.582f]),
@@ -795,6 +898,7 @@ public abstract class VectorSearchMongoTestBase
                 Pages = 700,
                 IsPublished = true,
                 Floats = [0.334f, -0.542f],
+                FloatsWithNoData = [],
                 Doubles = [0.373, -0.562],
                 MemoryFloats = new([0.334f, -0.542f]),
                 MemoryDoubles = new([0.373, -0.562]),
@@ -827,6 +931,7 @@ public abstract class VectorSearchMongoTestBase
                 Comments = ["Fab"],
                 Pages = 800,
                 Floats = [0.333f, -0.526f],
+                FloatsWithNoData = [],
                 Doubles = [0.333, -0.452],
                 MemoryFloats = new([0.333f, -0.526f]),
                 MemoryDoubles = new([0.333, -0.452]),

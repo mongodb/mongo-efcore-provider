@@ -629,24 +629,33 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         return index;
     }
 
-    [AtlasFact]
-    public void Query_throws_for_vector_index_specified_but_missing()
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Query_throws_for_vector_index_specified_but_missing(bool async)
     {
         var collection = database.CreateCollection<SimpleEntity>();
-        using var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection, b => b.Entity<SimpleEntity>().Ignore(e => e.Nested));
 
         db.Database.EnsureCreated();
 
+        var queryable = db.Set<SimpleEntity>()
+            .VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" });
+
         Assert.Contains(
-            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF Core model. " +
-            "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your MongoDB indexes outside of EF Core.",
-            Assert.Throws<InvalidOperationException>(() =>
-                db.Set<SimpleEntity>()
-                    .VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" })).Message);
+            "An error was generated for warning 'Microsoft.EntityFrameworkCore.Query.VectorSearchNeedsIndex': A vector query for " +
+            "'SimpleEntity.Floats' could not be executed because the vector index for this query could not be found. " +
+            "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your " +
+            "MongoDB indexes outside of EF Core. This exception can be suppressed or logged by passing event ID " +
+            "'MongoEventId.VectorSearchNeedsIndex' to the 'ConfigureWarnings' method in 'DbContext.OnConfiguring' or 'AddDbContext'.",
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => _ = async ? await queryable.ToListAsync() : queryable.ToList())).Message);
     }
 
-    [AtlasFact]
-    public void Query_throws_for_vector_index_specified_but_different()
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Query_throws_for_vector_index_specified_but_different(bool async)
     {
         var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection,
@@ -656,34 +665,49 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                     .IsVectorIndex(VectorSimilarity.DotProduct, 8)
                     .HasQuantization(VectorQuantization.Binary)
                     .HasEdgeOptions(32, 200);
+
+                b.Entity<SimpleEntity>().Ignore(e => e.Nested);
             });
 
         db.Database.EnsureCreated();
 
+        var queryable = db.Set<SimpleEntity>()
+            .VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" });
+
         Assert.Contains(
-            "A vector query for 'SimpleEntity.Floats' could not be executed because vector index 'MissingIndex' was not defined in the EF Core model. " +
-            "Vector query searches must use one of the indexes defined on the EF Core model.",
-            Assert.Throws<InvalidOperationException>(() =>
-                db.Set<SimpleEntity>()
-                    .VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2, new() { IndexName = "MissingIndex" })).Message);
+            "An error was generated for warning 'Microsoft.EntityFrameworkCore.Query.VectorSearchNeedsIndex': A vector query for " +
+            "'SimpleEntity.Floats' could not be executed because the vector index for this query could not be found. " +
+            "Use 'HasIndex' on the EF model builder to specify the index, or disable this warning if you have created your " +
+            "MongoDB indexes outside of EF Core. This exception can be suppressed or logged by passing event ID " +
+            "'MongoEventId.VectorSearchNeedsIndex' to the 'ConfigureWarnings' method in 'DbContext.OnConfiguring' or 'AddDbContext'.",
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => _ = async ? await queryable.ToListAsync() : queryable.ToList())).Message);
     }
 
-    [AtlasFact]
-    public void Query_throws_for_no_vector_index_when_not_specified()
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Query_throws_for_no_vector_index_when_not_specified(bool async)
     {
         var collection = database.CreateCollection<SimpleEntity>();
-        using var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection, b => b.Entity<SimpleEntity>().Ignore(e => e.Nested));
 
         db.Database.EnsureCreated();
 
+        var queryable = db.Set<SimpleEntity>().VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2);
+
         Assert.Contains(
-            "A vector query for 'SimpleEntity.Floats' could not be executed because there are no vector indexes defined",
-            Assert.Throws<InvalidOperationException>(() =>
-                db.Set<SimpleEntity>().VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2)).Message);
+            "A vector query for 'SimpleEntity.Floats' could not be executed because the vector " +
+            "index for this query could not be found. Use 'HasIndex' on the EF model builder to specify the index, or " +
+            "specify the index name in the call to 'VectorQuery' if indexes are being managed outside of EF Core.",
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => _ = async ? await queryable.ToListAsync() : queryable.ToList())).Message);
     }
 
-    [AtlasFact]
-    public void Query_throws_for_multiple_vector_indexes_when_not_specified()
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Query_throws_for_multiple_vector_indexes_when_not_specified(bool async)
     {
         var collection = database.CreateCollection<SimpleEntity>();
         using var db = SingleEntityDbContext.Create(collection,
@@ -699,15 +723,19 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                     b.HasIndex(e => e.Floats, "Bartfast")
                         .IsVectorIndex(VectorSimilarity.Euclidean, 4)
                         .HasQuantization(VectorQuantization.Scalar);
+
+                    b.Ignore(e => e.Nested);
                 });
             });
 
         db.Database.EnsureCreated();
 
+        var queryable = db.Set<SimpleEntity>().VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2);
+
         Assert.Contains(
             "A vector query for 'SimpleEntity.Floats' could not be executed because multiple vector indexes are defined",
-            Assert.Throws<InvalidOperationException>(() =>
-                db.Set<SimpleEntity>().VectorSearch(e => e.Floats, new[] { 0.33f, -0.52f }, 2)).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => _ = async ? await queryable.ToListAsync() : queryable.ToList())).Message);
     }
 
     [AtlasTheory]
@@ -751,17 +779,21 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         Assert.Equal(2, (async ? await query.ToListAsync() : query.ToList()).Count);
     }
 
-    [AtlasFact]
-    public void Query_throws_for_unmapped_member()
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Query_throws_for_unmapped_member(bool async)
     {
         var collection = database.CreateCollection<SimpleEntity>();
-        using var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection, b => b.Entity<SimpleEntity>().Ignore(e => e.Nested));
 
         db.Database.EnsureCreated();
 
+        var queryable = db.Set<SimpleEntity>().VectorSearch(e => e.MoreFloats, new[] { 0.33f, -0.52f }, 2);
+
         Assert.Contains(
             "Could not create a vector query for 'SimpleEntity.MoreFloats'.",
-            Assert.Throws<InvalidOperationException>(() =>
-                db.Set<SimpleEntity>().VectorSearch(e => e.MoreFloats, new[] { 0.33f, -0.52f }, 2)).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => _ = async ? await queryable.ToListAsync() : queryable.ToList())).Message);
     }
 }

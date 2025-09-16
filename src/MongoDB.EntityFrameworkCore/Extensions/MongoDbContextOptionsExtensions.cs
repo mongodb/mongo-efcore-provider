@@ -285,8 +285,9 @@ public static class MongoDbContextOptionsExtensions
               ?? new CoreOptionsExtension();
 
         coreOptionsExtension = coreOptionsExtension.WithWarningsConfiguration(
-            coreOptionsExtension.WarningsConfiguration.TryWithExplicit(
-                MongoEventId.ColumnAttributeWithTypeUsed, WarningBehavior.Throw));
+            coreOptionsExtension.WarningsConfiguration
+                .TryWithExplicit(MongoEventId.ColumnAttributeWithTypeUsed, WarningBehavior.Throw)
+                .TryWithExplicit(MongoEventId.VectorSearchNeedsIndex, WarningBehavior.Throw));
 
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(coreOptionsExtension);
     }

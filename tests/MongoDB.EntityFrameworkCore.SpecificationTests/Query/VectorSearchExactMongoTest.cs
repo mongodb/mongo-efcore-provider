@@ -38,7 +38,7 @@ public class VectorSearchExactMongoTest : VectorSearchMongoTestBase,
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -48,7 +48,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "Doubles", "limit" : 4, "index" : "DoublesIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "Doubles", "limit" : 4, "index" : "DoublesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -58,7 +58,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "MemoryFloats", "limit" : 4, "index" : "MemoryFloatsIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "MemoryFloats", "limit" : 4, "index" : "MemoryFloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -68,7 +68,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "MemoryDoubles", "limit" : 4, "index" : "MemoryDoublesIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "MemoryDoubles", "limit" : 4, "index" : "MemoryDoublesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -78,7 +78,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "ReadOnlyMemoryFloats", "limit" : 4, "index" : "ReadOnlyMemoryFloatsIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "ReadOnlyMemoryFloats", "limit" : 4, "index" : "ReadOnlyMemoryFloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -88,7 +88,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "ReadOnlyMemoryDoubles", "limit" : 4, "index" : "ReadOnlyMemoryDoublesIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000000002], "path" : "ReadOnlyMemoryDoubles", "limit" : 4, "index" : "ReadOnlyMemoryDoublesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -98,7 +98,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000000000000002, -0.52000000000
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryFloats", "limit" : 4, "index" : "BinaryFloatsIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryFloats", "limit" : 4, "index" : "BinaryFloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -108,7 +108,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryBytes", "limit" : 4, "index" : "BinaryBytesIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryBytes", "limit" : 4, "index" : "BinaryBytesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -118,7 +118,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinarySBytes", "limit" : 4, "index" : "BinarySBytesIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinarySBytes", "limit" : 4, "index" : "BinarySBytesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -128,7 +128,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryMemoryFloats", "limit" : 4, "index" : "BinaryMemoryFloatsIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryMemoryFloats", "limit" : 4, "index" : "BinaryMemoryFloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -138,7 +138,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryMemoryBytes", "limit" : 4, "index" : "BinaryMemoryBytesIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryMemoryBytes", "limit" : 4, "index" : "BinaryMemoryBytesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -148,7 +148,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinaryMemorySBytes", "limit" : 4, "index" : "BinaryMemorySBytesIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinaryMemorySBytes", "limit" : 4, "index" : "BinaryMemorySBytesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -158,7 +158,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemoryFloats", "limit" : 4, "index" : "BinaryReadOnlyMemoryFloatsIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+uB4Fvw==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemoryFloats", "limit" : 4, "index" : "BinaryReadOnlyMemoryFloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -168,7 +168,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "JwDD9ag+
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemoryBytes", "limit" : 4, "index" : "BinaryReadOnlyMemoryBytesIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemoryBytes", "limit" : 4, "index" : "BinaryReadOnlyMemoryBytesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -178,17 +178,7 @@ Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "EAA6Fw==
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemorySBytes", "limit" : 4, "index" : "BinaryReadOnlyMemorySBytesIndex", "exact" : true } }
-""");
-    }
-
-    public override async Task VectorSearch_floats_after_where(bool async)
-    {
-        await base.VectorSearch_floats_after_where(async);
-
-        AssertMql(
-            """
-Books.{ "$match" : { "IsPublished" : true } }, { "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : { "$binary" : { "base64" : "AwAB/g==", "subType" : "09" } }, "path" : "BinaryReadOnlyMemorySBytes", "limit" : 4, "index" : "BinaryReadOnlyMemorySBytesIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -196,7 +186,20 @@ Books.{ "$match" : { "IsPublished" : true } }, { "$vectorSearch" : { "queryVecto
     {
         await base.VectorSearch_floats_before_where(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "IsPublished" : true } }
+""");
+    }
+
+    public override async Task VectorSearch_with_projection(bool async)
+    {
+        await base.VectorSearch_with_projection(async);
+
+        AssertMql(
+            """
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "_v" : "$Author", "_id" : 0 } }
+""");
     }
 
     public override async Task VectorSearch_on_nested_reference(bool async, bool specifyIndex)
@@ -205,22 +208,8 @@ Books.{ "$match" : { "IsPublished" : true } }, { "$vectorSearch" : { "queryVecto
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex" } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex" } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
-    }
-
-    public override void VectorSearch_throws_for_driver_IQueryable()
-    {
-        base.VectorSearch_throws_for_driver_IQueryable();
-
-        AssertMql();
-    }
-
-    public override void VectorSearch_throws_for_L2O_IQueryable()
-    {
-        base.VectorSearch_throws_for_L2O_IQueryable();
-
-        AssertMql();
     }
 
     public override async Task VectorSearch_with_bool_pre_filter(bool async)
@@ -229,7 +218,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "filter" : { "IsPublished" : true }, "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "filter" : { "IsPublished" : true }, "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -239,7 +228,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Doubles", "limit" : 4, "index" : "DoublesIndex", "filter" : { "$and" : [{ "Comments" : "Froody" }, { "$or" : [{ "Pages" : { "$gt" : 500 } }, { "IsPublished" : true }] }] }, "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Doubles", "limit" : 4, "index" : "DoublesIndex", "filter" : { "$and" : [{ "Comments" : "Froody" }, { "$or" : [{ "Pages" : { "$gt" : 500 } }, { "IsPublished" : true }] }] }, "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -249,7 +238,7 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "index" : "FloatsVectorIndex", "filter" : { "Preface.IsPublished" : true }, "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "index" : "FloatsVectorIndex", "filter" : { "Preface.IsPublished" : true }, "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -259,19 +248,75 @@ Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "index" : "FloatsVectorIndex", "filter" : { "$and" : [{ "Preface.Comments" : "Froody" }, { "$or" : [{ "Preface.Pages" : { "$gt" : 500 } }, { "Preface.IsPublished" : true }] }] }, "exact" : true } }
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Preface.Floats", "limit" : 4, "index" : "FloatsVectorIndex", "filter" : { "$and" : [{ "Preface.Comments" : "Froody" }, { "$or" : [{ "Preface.Pages" : { "$gt" : 500 } }, { "Preface.IsPublished" : true }] }] }, "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
-    [ConditionalFact]
-    public virtual async Task VectorSearch_throws_if_num_candidates_set_for_exact_search()
+    public override async Task VectorSearch_with_projection_of_score(bool async)
+    {
+        await base.VectorSearch_with_projection_of_score(async);
+
+        AssertMql(
+            """
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "Author" : "$Author", "Score" : "$__score", "_id" : 0 } }
+""");
+    }
+
+    public override async Task VectorSearch_with_projection_of_entity_and_score(bool async)
+    {
+        await base.VectorSearch_with_projection_of_entity_and_score(async);
+
+        AssertMql(
+            """
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "Book" : "$$ROOT", "Score" : "$__score", "_id" : 0 } }
+""");
+    }
+
+    public override async Task VectorSearch_with_projection_of_constructed_entity_and_score(bool async)
+    {
+        await base.VectorSearch_with_projection_of_constructed_entity_and_score(async);
+
+        AssertMql(
+            """
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "Book" : { "_id" : "$_id", "Title" : "$Title", "Author" : "$Author", "Isbn" : "$Isbn", "Comments" : "$Comments", "Pages" : "$Pages", "IsPublished" : "$IsPublished" }, "Score" : "$__score", "_id" : 0 } }
+""");
+    }
+
+    public override async Task VectorSearch_logs_for_zero_results(bool async)
+    {
+        var expectedQuery =
+            """
+            Books.aggregate([{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "FloatsWithNoData", "limit" : 4, "numCandidates" : 40, "index" : "FloatsWithNoDataIndex" } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }])
+            """;
+
+        await VectorSearchZeroResults(async, expectedQuery);
+
+        AssertMql(
+            """
+Books.{ "$vectorSearch" : { "queryVector" : [0.33000001311302185, -0.51999998092651367], "path" : "FloatsWithNoData", "limit" : 4, "numCandidates" : 40, "index" : "FloatsWithNoDataIndex" } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
+""");
+    }
+
+    public override async Task VectorSearch_with_projection_of_score_using_EF_Property(bool async)
+    {
+        await base.VectorSearch_with_projection_of_score_using_EF_Property(async);
+
+        AssertMql();
+    }
+
+    [ConditionalTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public virtual async Task VectorSearch_throws_if_num_candidates_set_for_exact_search(bool async)
     {
         await using var context = Fixture.CreateContext();
         var inputVector = new[] { 0.33f, -0.52f };
+        var queryable = context.Set<Book>().VectorSearch(e => e.Preface.Floats, inputVector, limit: 4, new(NumberOfCandidates: 10, Exact: true));
 
         Assert.Contains(
-            "The option 'Exact' is set to 'true', indicating an exact nearest neighbour (ENN) search, and the number of candidates has also been set.",
-            Assert.Throws<ArgumentException>(() => context.Set<Book>().VectorSearch(e => e.Preface.Floats, inputVector, limit: 4, new(NumberOfCandidates: 10, Exact: true))).Message);
+            "The option 'Exact' is set to 'true' on a call to 'VectorQuery', indicating an exact nearest neighbour (ENN) search, and the number of candidates has also been set.",
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => _ = async ? await queryable.ToListAsync() : queryable.ToList())).Message);
     }
 
     public class VectorSearchExactFixture : VectorSearchFixtureBase

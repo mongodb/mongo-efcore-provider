@@ -262,4 +262,122 @@ internal static class MongoLoggerExtensions
         "Property '{entityType}.{propertyType}' specifies a 'ColumnAttribute.TypeName' which is not supported by MongoDB. " +
         "Use MongoDB-specific attributes or the model building API to configure your model for MongoDB. " +
         "The 'TypeName' will be ignored if this event is suppressed.";
+
+
+    public static void VectorSearchNeedsIndex(
+        this IDiagnosticsLogger<DbLoggerCategory.Query> diagnostics,
+        IReadOnlyProperty property)
+    {
+        var definition = LogVectorSearchNeedsIndex(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(diagnostics, property.DeclaringType.DisplayName(), property.Name);
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new PropertyEventData(
+                definition,
+                (d, p) => ((EventDefinition<string, string>)d).GenerateMessage(
+                    ((PropertyEventData)p).Property.DeclaringType.DisplayName(),
+                    ((PropertyEventData)p).Property.Name),
+                property);
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static EventDefinition<string, string> LogVectorSearchNeedsIndex(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogVectorSearchNeedsIndex;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogVectorSearchNeedsIndex,
+                logger,
+                static logger => new EventDefinition<string, string>(
+                    logger.Options,
+                    MongoEventId.VectorSearchNeedsIndex,
+                    LogLevel.Warning,
+                    "MongoEventId.VectorSearchNeedsIndex",
+                    level => LoggerMessage.Define<string, string>(
+                        level,
+                        MongoEventId.VectorSearchNeedsIndex,
+                        VectorSearchNeedsIndexString)));
+        }
+
+        return (EventDefinition<string, string>)definition;
+    }
+
+    private const string VectorSearchNeedsIndexString =
+        "A vector query for '{entityType}.{propertyType}' could not be executed because the vector " +
+        "index for this query could not be found. Use 'HasIndex' on the EF model builder to specify the index, or disable " +
+        "this warning if you have created your MongoDB indexes outside of EF Core.";
+
+
+    internal static void VectorSearchReturnedZeroResults(
+        this IDiagnosticsLogger<DbLoggerCategory.Query> diagnostics,
+        MongoExecutableQuery mongoExecutableQuery)
+        => VectorSearchReturnedZeroResults(diagnostics, mongoExecutableQuery.CollectionNamespace, mongoExecutableQuery.Provider.LoggedStages);
+
+    public static void VectorSearchReturnedZeroResults(
+        this IDiagnosticsLogger<DbLoggerCategory.Query> diagnostics,
+        CollectionNamespace collectionNamespace,
+        BsonDocument[]? loggedStages)
+    {
+        var definition = LogVectorSearchReturnedZeroResults(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(
+                diagnostics,
+                collectionNamespace.CollectionName,
+                diagnostics.ShouldLogSensitiveData()
+                    ? LoggedStagesToMql(loggedStages)
+                    : "<Redacted MQL: Use 'DbContextOptionsBuilder.EnableSensitiveDataLogging' to reveal>");
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new MongoQueryEventData(
+                definition,
+                (d, p) => ((EventDefinition<string, string>)d).GenerateMessage(
+                    ((MongoQueryEventData)p).CollectionNamespace.CollectionName,
+                    ((MongoQueryEventData)p).QueryMql),
+                collectionNamespace,
+                LoggedStagesToMql(loggedStages),
+                diagnostics.ShouldLogSensitiveData());
+
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static EventDefinition<string, string> LogVectorSearchReturnedZeroResults(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogVectorSearchReturnedZeroResults;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogVectorSearchReturnedZeroResults,
+                logger,
+                static logger => new EventDefinition<string, string>(
+                    logger.Options,
+                    MongoEventId.VectorSearchReturnedZeroResults,
+                    LogLevel.Warning,
+                    "MongoEventId.VectorSearchReturnedZeroResults",
+                    level => LoggerMessage.Define<string, string>(
+                        level,
+                        MongoEventId.VectorSearchReturnedZeroResults,
+                        VectorSearchReturnedZeroResultsString)));
+        }
+
+        return (EventDefinition<string, string>)definition;
+    }
+
+    private const string VectorSearchReturnedZeroResultsString =
+        "The vector query '{collectionNamespace}.aggregate([{queryMql}])' returned zero results. " +
+        "This could be because either there is no vector index defined for query property, or " +
+        "because vector data (embeddings) have recently been inserted. " +
+        "Consider disabling index creation in 'DbContext.Database.EnsureCreated' and performing initial ingestion before calling " +
+        "'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'.";
 }
