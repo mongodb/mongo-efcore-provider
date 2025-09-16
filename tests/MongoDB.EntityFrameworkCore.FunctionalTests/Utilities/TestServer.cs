@@ -20,38 +20,125 @@ using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class TestServer(string connectionString)
+public abstract class TestServer : IAsyncLifetime
 {
-    public static TestServer Default { get; } = new(GetDefaultConnectionString());
-    public static TestServer Atlas { get; } = new(GetConnectionString("ATLAS_URI") ?? GetDefaultConnectionString());
+    private static readonly SemaphoreSlim AtlasSempahore = new(1);
+    private static TestServer? Default;
+    private static readonly SemaphoreSlim DefaultSempahore = new(1);
+    private static TestServer? Atlas;
 
-    private static string? GetConnectionString(string environmentVariableName)
+    public static async Task<TestServer> GetOrInitializeTestServerAsync(MongoCondition requiredCondition)
     {
-        var connectionString = Environment.GetEnvironmentVariable(environmentVariableName);
-        if (string.IsNullOrWhiteSpace(connectionString))
+        if (requiredCondition.HasFlag(MongoCondition.IsAtlas))
         {
-            return null;
+            // Double-check locking; don't tell Java!
+            if (Atlas != null)
+            {
+                return Atlas;
+            }
+
+            await AtlasSempahore.WaitAsync();
+            try
+            {
+                if (Atlas == null)
+                {
+                    Atlas = await GetOrInitialize("ATLAS_URI");
+                }
+
+                if (Atlas == null)
+                {
+                    Atlas = await GetOrCreateDefault();
+                }
+
+                return Atlas;
+            }
+            finally
+            {
+                AtlasSempahore.Release();
+            }
         }
 
-        return connectionString;
+        return await GetOrCreateDefault();
+
+        static async Task<TestServer> GetOrCreateDefault()
+        {
+            // Double-check locking; don't tell Java!
+            if (Default != null)
+            {
+                return Default;
+            }
+
+            await DefaultSempahore.WaitAsync();
+            try
+            {
+                if (Default == null)
+                {
+                    Default = await GetOrInitialize("MONGODB_URI");
+                }
+
+                return Default!;
+            }
+            finally
+            {
+                DefaultSempahore.Release();
+            }
+        }
+
+        static async Task<TestServer?> GetOrInitialize(string uriName)
+        {
+            var uri = Environment.GetEnvironmentVariable(uriName);
+            if (string.IsNullOrWhiteSpace(uri))
+            {
+                var containersServer = new TestContainersTestServer();
+                await containersServer.InitializeAsync();
+                return containersServer;
+            }
+
+            if (uri.Equals("Disabled", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var externalServer = new ExternalDatabaseTestServer(uri);
+            await externalServer.InitializeAsync();
+
+            var databaseNameCursor = await externalServer.Client.ListDatabaseNamesAsync();
+            while (await databaseNameCursor.MoveNextAsync())
+            {
+                foreach (var databaseName in databaseNameCursor.Current)
+                {
+                    if (databaseName.StartsWith(TestDatabaseNamer.TestDatabasePrefix))
+                    {
+                        await externalServer.Client.DropDatabaseAsync(databaseName);
+                    }
+                }
+            }
+
+            return externalServer;
+        }
     }
 
-    private static string GetDefaultConnectionString()
-        => GetConnectionString("MONGODB_URI") ?? "mongodb://localhost:27017";
-
-    public string ConnectionString { get; } = connectionString;
-
-    public MongoClient Client { get; } = new(connectionString);
+    public abstract string ConnectionString { get; }
+    public abstract MongoClient Client { get; }
 
     private SemanticVersion _serverVersion;
-    private SemanticVersion ServerVersion
+    public SemanticVersion ServerVersion
         => LazyInitializer.EnsureInitialized(ref _serverVersion, () => QueryServerVersion());
 
     public bool SupportsBitwiseOperators
         => ServerVersion >= new SemanticVersion(6, 3, 0);
 
     public static bool SupportsAtlas
-        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ATLAS_URI"));
+    {
+        get
+        {
+            var uri = Environment.GetEnvironmentVariable("ATLAS_URI");
+            return uri == null || !uri.Equals("Disabled", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    public static bool SupportsEncryption
+        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CRYPT_SHARED_LIB_PATH"));
 
     public static bool SkipForAtlas(ITestOutputHelper testOutputHelper, string caller)
     {
@@ -71,12 +158,6 @@ public class TestServer(string connectionString)
         return SemanticVersion.Parse(buildInfo["version"].AsString);
     }
 
-    private const string TestDatabasePrefix = "EFCoreTest-";
-    private readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
-    private int _dbCount;
-    public string GetUniqueDatabaseName(string staticName)
-        => $"{TestDatabasePrefix}{staticName}-{TimeStamp}-{Interlocked.Increment(ref _dbCount)}";
-
     public static readonly IMongoClient BrokenClient
         = new MongoClient(new MongoClientSettings
         {
@@ -84,4 +165,10 @@ public class TestServer(string connectionString)
             ServerSelectionTimeout = TimeSpan.Zero,
             ConnectTimeout = TimeSpan.FromSeconds(1)
         });
+
+    public virtual Task InitializeAsync()
+        => Task.CompletedTask;
+
+    public virtual Task DisposeAsync()
+        => Task.CompletedTask;
 }

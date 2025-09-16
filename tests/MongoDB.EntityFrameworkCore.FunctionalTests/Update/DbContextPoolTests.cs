@@ -25,14 +25,16 @@ public class DbContextPoolTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     [Fact]
-    public void DbContextPool_honors_AutoTransactionBehavior_set_in_constructor()
+    public async Task DbContextPool_honors_AutoTransactionBehavior_set_in_constructor()
     {
+        var fixture = await TemporaryDatabaseFixture.CreateInitializedAsync();
+
         var serviceProvider = new ServiceCollection()
             .AddEntityFrameworkMongoDB()
             .AddDbContextPool<CustomerContext>(
                 (p, o) =>
                     o.UseMongoDB(
-                            Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017",
+                            fixture.TestServer.ConnectionString,
                             database.MongoDatabase.DatabaseNamespace.DatabaseName)
                         .UseInternalServiceProvider(p)
             )

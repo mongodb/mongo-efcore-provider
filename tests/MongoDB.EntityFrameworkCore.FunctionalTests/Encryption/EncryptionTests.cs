@@ -43,7 +43,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
+    [EncryptionTheory]
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_without_encrypted_client(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
@@ -55,7 +55,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         Assert.Throws<FormatException>(() => db.Entities.First());
     }
 
-    [Theory]
+    [EncryptionTheory]
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_with_wrong_master_key(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
@@ -86,7 +86,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
     internal static bool IsBuggyMongocryptd =>
         Environment.GetEnvironmentVariable("MONGODB_VERSION") == "latest";
 
-    [Theory]
+    [EncryptionTheory]
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_round_trip(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
@@ -121,7 +121,7 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [QueryableEncryptionTheory]
+    [EncryptionTheory]
     [InlineData(CryptProvider.Mongocryptd)]
     [InlineData(CryptProvider.AutoEncryptSharedLibrary)]
     public void Encrypted_data_can_be_queried_with_range_for_queryable_encryption(CryptProvider cryptProvider)
@@ -206,6 +206,14 @@ public class EncryptionTests(TemporaryDatabaseFixture database)
                 }
             }
         };
+
+    protected class EncryptionTheory : TheoryAttribute
+    {
+        public override string? Skip
+            => TestServer.SupportsEncryption
+                ? null
+                : "Requires encryption library to be present.";
+    }
 
     public enum EncryptionMode
     {

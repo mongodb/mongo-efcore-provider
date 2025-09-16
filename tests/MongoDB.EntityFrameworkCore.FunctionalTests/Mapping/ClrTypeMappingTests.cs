@@ -15,17 +15,15 @@
 
 using System.Collections.ObjectModel;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
-using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
 [XUnitCollection("MappingTests")]
-public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database, ITestOutputHelper testOutputHelper)
+public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
     : IClassFixture<AtlasTemporaryDatabaseFixture>
 {
     private readonly Random _random = new();
@@ -1357,14 +1355,11 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database, ITestOu
         public Memory<float> MemoryFloats { get; set; }
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task BinaryVectorPackedBit_read_update(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<BinaryVectorPackedBitEntity>(values: [async]);
 
         collection.InsertOne(new BinaryVectorPackedBitEntity
@@ -1454,14 +1449,11 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database, ITestOu
         public BinaryVectorPackedBit BinaryVector { get; set; }
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task BinaryVectorFloat32_read_update(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<BinaryVectorFloat32Entity>(values: [async]);
 
         collection.InsertOne(new BinaryVectorFloat32Entity
@@ -1548,14 +1540,11 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database, ITestOu
         public BinaryVectorFloat32 BinaryVector { get; set; }
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task BinaryVectorDataType_Int8_read_update(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<BinaryVectorInt8Entity>(values: [async]);
 
         collection.InsertOne(new BinaryVectorInt8Entity
@@ -1641,14 +1630,11 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database, ITestOu
         public BinaryVectorInt8 BinaryVector { get; set; }
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task BinaryVectorPackedBit_via_model_builder_read_update(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<BinaryVectorPackedBitEntityNoAttributes>(values: [async]);
 
         using (var db = CreateContext())
@@ -1726,14 +1712,11 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database, ITestOu
         public ReadOnlyMemory<byte> ReadOnlyMemoryBytes { get; set; }
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task BinaryVectorFloat32_via_model_builder_read_update(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<BinaryVectorFloat32EntityNoAttributes>(values: [async]);
 
         using (var db = CreateContext())
@@ -1811,14 +1794,11 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database, ITestOu
         public ReadOnlyMemory<float> ReadOnlyMemoryFloats { get; set; }
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task BinaryVectorDataType_via_model_builder_Int8_read_update(bool async)
     {
-        if (SkipForAtlas())
-            return;
-
         var collection = database.CreateCollection<BinaryVectorInt8EntityNoAttributes>(values: [async]);
 
         using (var db = CreateContext())
@@ -1888,9 +1868,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database, ITestOu
                 });
             });
     }
-
-    private bool SkipForAtlas([CallerMemberName] string? caller = default)
-        => TestServer.SkipForAtlas(testOutputHelper, caller!);
 
     class BinaryVectorInt8EntityNoAttributes : IdEntity
     {

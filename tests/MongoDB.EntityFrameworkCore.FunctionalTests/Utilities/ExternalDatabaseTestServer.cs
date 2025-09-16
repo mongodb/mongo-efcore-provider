@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,21 +13,14 @@
  * limitations under the License.
  */
 
+using MongoDB.Driver;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-[CollectionDefinition(nameof(SampleGuidesFixture))]
-public class SampleGuidesFixtureCollection : ICollectionFixture<SampleGuidesFixture>
+public class ExternalDatabaseTestServer(string connectionString) : TestServer
 {
-    // This class has no code, and is never created. Its purpose is simply
-    // to be the place to apply [CollectionDefinition] and all the
-    // ICollectionFixture<> interfaces.
-}
+    public override string ConnectionString
+        => connectionString;
 
-public class SampleGuidesFixture : TemporaryDatabaseFixture
-{
-    public override async Task InitializeAsync()
-    {
-        await base.InitializeAsync();
-        SampleGuides.Populate(MongoDatabase);
-    }
+    public override MongoClient Client { get; } = new(connectionString);
 }

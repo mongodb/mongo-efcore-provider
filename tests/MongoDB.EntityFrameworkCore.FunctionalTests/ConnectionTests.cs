@@ -21,13 +21,20 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests;
 
-public class ConnectionTests
+public class ConnectionTests : IClassFixture<TemporaryDatabaseFixture>
 {
+    public ConnectionTests(TemporaryDatabaseFixture fixture)
+    {
+        Fixture = fixture;
+    }
+
+    private TemporaryDatabaseFixture Fixture { get; }
+
     [Fact]
     public void Can_connect_using_connection_string_with_database_name()
     {
         var optionsBuilder = StartOptions()
-            .UseMongoDB(TestServer.Default.ConnectionString, TemporaryDatabaseFixture.GetUniqueDatabaseName);
+            .UseMongoDB(Fixture.TestServer.ConnectionString, TestDatabaseNamer.GetUniqueDatabaseName());
 
         using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_connection_string_with_database_name));
 
@@ -37,9 +44,9 @@ public class ConnectionTests
     [Fact]
     public void Can_connect_using_connection_string_without_database_name()
     {
-        var databaseName = TemporaryDatabaseFixture.GetUniqueDatabaseName;
+        var databaseName = TestDatabaseNamer.GetUniqueDatabaseName();
         var collectionName = nameof(Can_connect_using_connection_string_without_database_name);
-        var mongoUrl = new MongoUrlBuilder(TestServer.Default.ConnectionString) { DatabaseName = databaseName };
+        var mongoUrl = new MongoUrlBuilder(Fixture.TestServer.ConnectionString) { DatabaseName = databaseName };
 
         var optionsBuilder = StartOptions()
             .UseMongoDB(mongoUrl.ToString());
@@ -48,7 +55,7 @@ public class ConnectionTests
 
         context.Database.EnsureCreated();
 
-        var client = new MongoClient(TestServer.Default.ConnectionString);
+        var client = new MongoClient(Fixture.TestServer.ConnectionString);
         var database = client.GetDatabase(databaseName);
         var collections = database.ListCollectionNames().ToList();
         Assert.Contains(collectionName, collections);
@@ -57,10 +64,10 @@ public class ConnectionTests
     [Fact]
     public void Can_connect_using_mongo_client_settings()
     {
-        var clientSettings = MongoClientSettings.FromConnectionString(TestServer.Default.ConnectionString);
+        var clientSettings = MongoClientSettings.FromConnectionString(Fixture.TestServer.ConnectionString);
 
         var optionsBuilder = StartOptions()
-            .UseMongoDB(clientSettings, TemporaryDatabaseFixture.GetUniqueDatabaseName);
+            .UseMongoDB(clientSettings, TestDatabaseNamer.GetUniqueDatabaseName());
 
         using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_mongo_client_settings));
 
@@ -70,10 +77,10 @@ public class ConnectionTests
     [Fact]
     public void Can_connect_using_mongo_client()
     {
-        var client = new MongoClient(TestServer.Default.ConnectionString);
+        var client = new MongoClient(Fixture.TestServer.ConnectionString);
 
         var optionsBuilder = StartOptions()
-            .UseMongoDB(client, TemporaryDatabaseFixture.GetUniqueDatabaseName);
+            .UseMongoDB(client, TestDatabaseNamer.GetUniqueDatabaseName());
 
         using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_mongo_client));
 

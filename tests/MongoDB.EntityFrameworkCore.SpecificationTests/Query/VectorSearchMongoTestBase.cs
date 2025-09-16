@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Storage;
 
@@ -856,10 +857,20 @@ public abstract class VectorSearchMongoTestBase
             return context;
         }
 
-        public TestMqlLoggerFactory TestMqlLoggerFactory
-            => (TestMqlLoggerFactory)ListLoggerFactory;
+        private ITestStoreFactory? _testStoreFactory;
 
         protected override ITestStoreFactory TestStoreFactory
-            => MongoTestStoreFactory.Atlas;
+            => _testStoreFactory!;
+
+        public override async Task InitializeAsync()
+        {
+            var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.IsAtlas);
+            _testStoreFactory = new MongoTestStoreFactory(server);
+
+            await base.InitializeAsync();
+        }
+
+        public TestMqlLoggerFactory TestMqlLoggerFactory
+            => (TestMqlLoggerFactory)ListLoggerFactory;
     }
 }

@@ -25,15 +25,19 @@ public class ReadOnlySampleGuidesFixtureCollection : ICollectionFixture<ReadOnly
     // ICollectionFixture<> interfaces.
 }
 
-public class ReadOnlySampleGuidesFixture
+public class ReadOnlySampleGuidesFixture : IAsyncLifetime
 {
-    public ReadOnlySampleGuidesFixture()
+    public IMongoDatabase MongoDatabase { get; private set; }
+    public IMongoClient Client { get; private set; }
+
+    public async Task InitializeAsync()
     {
-        Client = TestServer.Default.Client;
-        MongoDatabase = Client.GetDatabase("EFCoreTest-SampleGuides");
+        var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
+        Client = server.Client;
+        MongoDatabase = Client.GetDatabase($"{TestDatabaseNamer.TestDatabasePrefix}SampleGuides");
         SampleGuides.Populate(MongoDatabase);
     }
 
-    public IMongoDatabase MongoDatabase { get; }
-    public IMongoClient Client { get; }
+    public Task DisposeAsync()
+        => Task.CompletedTask;
 }

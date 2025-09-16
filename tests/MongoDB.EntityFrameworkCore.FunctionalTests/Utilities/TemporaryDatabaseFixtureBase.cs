@@ -21,25 +21,19 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public abstract class TemporaryDatabaseFixtureBase
+public abstract class TemporaryDatabaseFixtureBase : IAsyncLifetime
 {
-    public const string TestDatabasePrefix = "EFCoreTest-";
-
-    private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
-    private static int DbCount;
-
     private static int CollectionIdFallback;
 
-    protected TemporaryDatabaseFixtureBase(MongoClient client)
-    {
-        Client = client;
-        MongoDatabase = Client.GetDatabase(GetUniqueDatabaseName);
-    }
+    private IMongoDatabase? _mongoDatabase;
 
-    public static string GetUniqueDatabaseName
-        => $"{TestDatabasePrefix}{TimeStamp}-{Interlocked.Increment(ref DbCount)}";
+    public abstract TestServer TestServer { get; }
 
-    public IMongoDatabase MongoDatabase { get; }
+    public virtual IMongoDatabase MongoDatabase
+        => _mongoDatabase!;
+
+    public virtual IMongoClient Client
+        => TestServer.Client;
 
     public static string CreateCollectionName([CallerMemberName] string? prefix = null, params object?[] values)
     {
@@ -95,8 +89,6 @@ public abstract class TemporaryDatabaseFixtureBase
     public IMongoCollection<T> GetCollection<T>(CollectionNamespace collectionNamespace)
         => MongoDatabase.GetCollection<T>(collectionNamespace.CollectionName);
 
-    public IMongoClient Client { get; }
-
     private static string TransformNameIfNeeded(string? name)
     {
         if (name == ".ctor")
@@ -111,4 +103,13 @@ public abstract class TemporaryDatabaseFixtureBase
         return name ?? throw new InvalidOperationException(
             "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
     }
+
+    public virtual Task InitializeAsync()
+    {
+        _mongoDatabase = Client.GetDatabase(TestDatabaseNamer.GetUniqueDatabaseName());
+        return Task.CompletedTask;
+    }
+
+    public virtual Task DisposeAsync()
+        => Task.CompletedTask;
 }

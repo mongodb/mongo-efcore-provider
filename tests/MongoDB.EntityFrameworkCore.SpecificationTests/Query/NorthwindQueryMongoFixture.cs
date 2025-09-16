@@ -14,7 +14,6 @@
  */
 
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
@@ -35,10 +34,22 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
 #endif
     new()
 {
-    protected override string StoreName { get; } = TestServer.Default.GetUniqueDatabaseName("Northwind");
+    protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("Northwind");
+
+    private ITestStoreFactory? _testStoreFactory;
 
     protected override ITestStoreFactory TestStoreFactory
-        => MongoTestStoreFactory.Default;
+        => _testStoreFactory!;
+
+    public TestServer TestServer { get; private set; }
+
+    public override async Task InitializeAsync()
+    {
+        TestServer = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
+        _testStoreFactory = new MongoTestStoreFactory(TestServer);
+
+        await base.InitializeAsync();
+    }
 
     protected override bool UsePooling
         => false;
