@@ -460,15 +460,13 @@ public abstract class VectorSearchMongoTestBase
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
             .Select(e => new { e.Author, Score = EF.Property<double>(e, "__score") });
 
-        // Fails: EF.Property
-        await Assert.ThrowsAsync<NullReferenceException>(async () =>
-            _ = async ? await queryable.ToListAsync() : queryable.ToList());
+        var results = async ? await queryable.ToListAsync() : queryable.ToList();
 
-        // Assert.Equal(2, results.Count);
-        // Assert.Equal("Jon P Smith", results[0].Author);
-        // Assert.Equal("Julie Lerman", results[1].Author);
-        // Assert.Equal(0.99974566698074341, results[0].Score, 5);
-        // Assert.Equal(0.99961328506469727, results[1].Score, 5);
+        Assert.Equal(2, results.Count);
+        Assert.Equal("Jon P Smith", results[0].Author);
+        Assert.Equal("Julie Lerman", results[1].Author);
+        Assert.Equal(0.99974566698074341, results[0].Score, 5);
+        Assert.Equal(0.99961328506469727, results[1].Score, 5);
     }
 
     [ConditionalTheory]
