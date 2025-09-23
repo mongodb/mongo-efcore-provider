@@ -274,10 +274,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                 // Index to use was not specified in the query. Throw or warn if there is anything but one index in the model.
                 if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
                 {
-                    ThrowForBadOptions(
-                        $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because the vector " +
-                        "index for this query could not be found. Use 'HasIndex' on the EF model builder to specify the index, or " +
-                        "specify the index name in the call to 'VectorQuery' if indexes are being managed outside of EF Core.");
+                    ThrowForBadOptions("the vector index for this query could not be found. Use 'HasIndex' on the EF model builder to specify the index, or " +
+                                       "specify the index name in the call to 'VectorQuery' if indexes are being managed outside of EF Core.");
                 }
 
                 if (vectorIndexesInModel!.Count > 1)

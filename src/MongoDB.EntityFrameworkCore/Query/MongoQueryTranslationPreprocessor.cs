@@ -79,7 +79,7 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
 
     private sealed class VectorSearchReplacer : ExpressionVisitor
     {
-        private readonly  MethodCallExpression _removed;
+        private readonly MethodCallExpression _removed;
 
         private VectorSearchReplacer(MethodCallExpression removed)
         {
