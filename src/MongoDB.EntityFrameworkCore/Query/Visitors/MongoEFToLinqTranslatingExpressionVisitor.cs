@@ -222,7 +222,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                     return ConvertIfRequired(callExpression, methodCallExpression.Method.ReturnType);
                 }
 
-                return base.Visit(methodCallExpression);
+                return VisitMethodCall(methodCallExpression);
 
             // Handle method call to VectorQuery
             case MethodCallExpression methodCallExpression
