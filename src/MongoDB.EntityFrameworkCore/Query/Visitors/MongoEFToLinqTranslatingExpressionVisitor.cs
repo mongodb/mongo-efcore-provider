@@ -212,6 +212,16 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                     return ConvertIfRequired(propertyExpression, methodCallExpression.Method.ReturnType);
                 }
 
+                var defaultSerializer = BsonSerializer.LookupSerializer(methodCallExpression.Type);
+                if (defaultSerializer != null)
+                {
+                    var mqlField = MqlFieldMethodInfo.MakeGenericMethod(source.Type, methodCallExpression.Type);
+                    var callExpression = Expression.Call(null, mqlField, source,
+                        propertyNameExpression,
+                        Expression.Constant(defaultSerializer));
+                    return ConvertIfRequired(callExpression, methodCallExpression.Method.ReturnType);
+                }
+
                 return VisitMethodCall(methodCallExpression);
 
             // Handle method call to VectorQuery

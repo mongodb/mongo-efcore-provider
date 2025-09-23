@@ -4122,20 +4122,22 @@ Customers.
 
     public override async Task Select_Property_when_shadow(bool async)
     {
-        // Fails: Using EF.Property issue EF-219
-        await Assert.ThrowsAsync<NullReferenceException>(() => base.Select_Property_when_shadow(async));
+        await base.Select_Property_when_shadow(async);
 
         AssertMql(
-);
+            """
+Employees.{ "$project" : { "_v" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_Property_when_non_shadow(bool async)
     {
-        // Fails: Using EF.Property issue EF-219
-        await Assert.ThrowsAsync<NullReferenceException>(() => base.Select_Property_when_non_shadow(async));
+        await base.Select_Property_when_non_shadow(async);
 
         AssertMql(
-);
+            """
+Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
+""");
     }
 
     public override async Task OrderByDescending_ThenBy(bool async)
@@ -4159,11 +4161,12 @@ Customers.{ "$sort" : { "_id" : -1, "Country" : 1 } }, { "$project" : { "_v" : "
 
     public override async Task Select_Property_when_shadow_unconstrained_generic_method(bool async)
     {
-        // Fails: Using EF.Property issue EF-219
-        await Assert.ThrowsAsync<NullReferenceException>(() => base.Select_Property_when_shadow_unconstrained_generic_method(async));
+        await base.Select_Property_when_shadow_unconstrained_generic_method(async);
 
         AssertMql(
-);
+            """
+Employees.{ "$project" : { "_v" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_Property_when_shadow(bool async)
@@ -4178,14 +4181,11 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }
 
     public override async Task Where_Property_when_shadow_unconstrained_generic_method(bool async)
     {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_Property_when_shadow_unconstrained_generic_method(async))).Message);
+        await base.Where_Property_when_shadow_unconstrained_generic_method(async);
 
         AssertMql(
             """
-Employees.
+Employees.{ "$match" : { "Title" : "Sales Representative" } }
 """);
     }
 

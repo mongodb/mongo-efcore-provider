@@ -514,9 +514,11 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     private static Expression MatchTypes(
         Expression expression,
         Type targetType)
-        => targetType != expression.Type && targetType.TryGetItemType() == null
-            ? Expression.Convert(expression, targetType)
-            : expression;
+        => expression == null
+            ? Expression.Default(targetType)
+            : targetType != expression.Type && targetType.TryGetItemType() == null
+                ? Expression.Convert(expression, targetType)
+                : expression;
 
     private static readonly MethodInfo GetParameterValueMethodInfo
         = typeof(MongoProjectionBindingExpressionVisitor)

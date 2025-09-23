@@ -96,9 +96,15 @@ Customers.{ "$project" : { "_v" : "$Region", "_id" : 0 } }
     public override async Task Project_to_object_array(bool async)
     {
         // Fails: Projections issue EF-76
-        await Assert.ThrowsAsync<NullReferenceException>(() => base.Project_to_object_array(async));
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
+                base.Project_to_object_array(async))).Message);
 
-        AssertMql();
+        AssertMql(
+            """
+Employees.
+""");
     }
 
     public override async Task Projection_of_entity_type_into_object_array(bool async)

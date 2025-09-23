@@ -347,11 +347,12 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_simple_shadow_projection(bool async)
     {
-        // Fails: Using EF.Property issue EF-219
-        await Assert.ThrowsAsync<NullReferenceException>(() => base.Where_simple_shadow_projection(async));
+        await base.Where_simple_shadow_projection(async);
 
         AssertMql(
-        );
+            """
+Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "_v" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_simple_shadow_subquery(bool async)
@@ -1984,10 +1985,15 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
     public override async Task Where_simple_shadow_projection_mixed(bool async)
     {
-        // Fails: Using EF.Property issue EF-219
-        await Assert.ThrowsAsync<NullReferenceException>(() => base.Where_simple_shadow_projection_mixed(async));
+        // Fails: Projected entity issue EF-76
+        Assert.Contains(
+            "An error occurred while deserializing the e property ",
+            (await Assert.ThrowsAsync<FormatException>(() => base.Where_simple_shadow_projection_mixed(async))).Message);
 
-        AssertMql();
+        AssertMql(
+            """
+Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "e" : "$$ROOT", "Title" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_primitive_tracked(bool async)
