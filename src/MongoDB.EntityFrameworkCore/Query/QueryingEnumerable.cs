@@ -33,6 +33,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
     private readonly Type _contextType;
     private readonly bool _standAloneStateManager;
     private readonly bool _threadSafetyChecksEnabled;
+    private readonly Action<MongoQueryContext, MongoExecutableQuery>? _onZeroResults;
 
     public QueryingEnumerable(
         MongoQueryContext queryContext,
@@ -40,7 +41,8 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         Func<MongoQueryContext, TSource, TTarget> shaper,
         Type contextType,
         bool standAloneStateManager,
-        bool threadSafetyChecksEnabled)
+        bool threadSafetyChecksEnabled,
+        Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults)
     {
         _queryContext = queryContext;
         _executableQuery = executableQuery;
@@ -48,6 +50,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         _shaper = shaper;
         _standAloneStateManager = standAloneStateManager;
         _threadSafetyChecksEnabled = threadSafetyChecksEnabled;
+        _onZeroResults = onZeroResults;
     }
 
     public IAsyncEnumerator<TTarget> GetAsyncEnumerator(CancellationToken cancellationToken = default)
@@ -70,6 +73,8 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         private readonly IConcurrencyDetector? _concurrencyDetector;
         private readonly IExceptionDetector _exceptionDetector;
         private readonly MongoExecutableQuery _executableQuery;
+        private readonly Action<MongoQueryContext, MongoExecutableQuery>? _onZeroResults;
+        private bool _gotResults;
 
         private IEnumerator<TSource>? _enumerator;
 
@@ -83,6 +88,8 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
             _standAloneStateManager = queryingEnumerable._standAloneStateManager;
             _cancellationToken = cancellationToken;
             _exceptionDetector = _queryContext.ExceptionDetector;
+            _onZeroResults = queryingEnumerable._onZeroResults;
+
             Current = default!;
 
             _concurrencyDetector = queryingEnumerable._threadSafetyChecksEnabled
@@ -174,9 +181,24 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
             logAction?.Invoke();
 
-            Current = hasNext
-                ? _shaper(_queryContext, _enumerator.Current)
-                : default!;
+            if (hasNext)
+            {
+                Current = _shaper(_queryContext, _enumerator.Current);
+
+                if (!_gotResults)
+                {
+                    _gotResults = true;
+                }
+            }
+            else
+            {
+                Current = default!;
+
+                if (!_gotResults && _onZeroResults != null)
+                {
+                    _onZeroResults(_queryContext, _executableQuery);
+                }
+            }
 
             return hasNext;
         }
