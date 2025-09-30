@@ -404,7 +404,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// <param name="declaredType">The optional <see cref="ITypeBase"/> this element comes from.</param>
     /// <param name="typeMapping">Any associated <see cref="CoreTypeMapping"/> to be used in mapping the value.</param>
     /// <returns>A compilable <see cref="Expression"/> to obtain the desired value as the correct type.</returns>
-    protected virtual Expression CreateGetValueExpression(
+    protected Expression CreateGetValueExpression(
         Expression docExpression,
         string? propertyName,
         bool required,
