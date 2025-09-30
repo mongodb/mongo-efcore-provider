@@ -391,7 +391,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// </summary>
     /// <param name="projectionBindingExpression">The <see cref="ProjectionBindingExpression"/> to look-up.</param>
     /// <returns>The registered <see cref="ProjectionExpression"/> this <paramref name="projectionBindingExpression"/> relates to.</returns>
-    protected virtual ProjectionExpression GetProjection(ProjectionBindingExpression projectionBindingExpression)
+    protected ProjectionExpression GetProjection(ProjectionBindingExpression projectionBindingExpression)
         => _queryExpression.Projection[GetProjectionIndex(projectionBindingExpression)];
 
     /// <summary>
