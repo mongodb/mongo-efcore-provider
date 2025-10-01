@@ -14,10 +14,12 @@
  */
 
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
@@ -53,13 +55,16 @@ internal static class BsonBinding
             return CreateGetPropertyValue(documentExpression, alias, property);
         }
 
-        var navigation = (INavigation)propertyBase!;
-        return navigation.IsCollection
-            ? CreateGetBsonArray(documentExpression, alias, navigation)
-            : CreateGetBsonDocument(documentExpression, alias, navigation);
+        Debug.Assert(propertyBase is INavigationBase,
+            $"Not a property and not a navigation, but a {propertyBase.GetType().ShortDisplayName()}");
+
+        var navigationBase = (INavigationBase)propertyBase!;
+        return navigationBase.IsCollection
+            ? CreateGetBsonArray(documentExpression, alias, navigationBase)
+            : CreateGetBsonDocument(documentExpression, alias, navigationBase);
     }
 
-    private static MethodCallExpression CreateGetBsonArray(Expression documentExpression, string? alias, INavigation navigation)
+    private static MethodCallExpression CreateGetBsonArray(Expression documentExpression, string? alias, INavigationBase navigation)
         => Expression.Call(
             GetBsonArrayMethodInfo,
             documentExpression,
@@ -83,10 +88,10 @@ internal static class BsonBinding
     }
 
     private static MethodCallExpression CreateGetBsonDocument(
-        Expression documentExpression, string? alias, INavigation navigation)
-        => Expression.Call(null, GetBsonDocumentMethodInfo, documentExpression, Expression.Constant(alias ?? navigation.Name),
-            Expression.Constant(navigation.ForeignKey.IsRequiredDependent),
-            Expression.Constant(navigation.DeclaringEntityType));
+        Expression documentExpression, string? alias, INavigationBase navigationBase)
+        => Expression.Call(null, GetBsonDocumentMethodInfo, documentExpression, Expression.Constant(alias ?? navigationBase.Name),
+            Expression.Constant(navigationBase is INavigation { ForeignKey.IsRequiredDependent: true }),
+            Expression.Constant(navigationBase.DeclaringEntityType));
 
     private static readonly MethodInfo GetBsonDocumentMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)

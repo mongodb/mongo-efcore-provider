@@ -184,8 +184,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             {
                 if (parameterExpression.Type == typeof(BsonDocument) || parameterExpression.Type == typeof(BsonArray))
                 {
+                    // "alias" will be different from the property/navigation name when mapped to a different name in the document.
                     string? alias = null;
-                    var fieldRequired = true;
                     IPropertyBase? propertyBase = null;
 
                     var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
@@ -222,7 +222,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                 innerAccessExpression = innerObjectAccessExpression.AccessExpression;
                                 _ownerMappings[accessExpression] =
                                     (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
-                                fieldRequired = innerObjectAccessExpression.Required;
                                 propertyBase = innerObjectAccessExpression.Navigation;
                                 break;
                             case RootReferenceExpression:
@@ -400,6 +399,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// </summary>
     /// <param name="documentExpression">The <see cref="Expression"/> used to access the <see cref="BsonDocument"/>.</param>
     /// <param name="alias">The name of the property.</param>
+    /// <param name="propertyBase">The <see cref="INavigation"/> or <see cref="IProperty"/> associated with the value.</param>
     /// <returns>A compilable <see cref="Expression"/> to obtain the desired value as the correct type.</returns>
     private Expression CreateGetValueExpression(
         Expression documentExpression,
