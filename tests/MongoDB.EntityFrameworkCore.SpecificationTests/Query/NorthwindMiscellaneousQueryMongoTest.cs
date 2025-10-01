@@ -2384,43 +2384,46 @@ Orders.{ "$match" : { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : 
 
     public override async Task Select_expression_long_to_string(bool async)
     {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "The property 'Order.ShipName' could not be found.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Select_expression_long_to_string(async))).Message);
+        await base.Select_expression_long_to_string(async);
 
         AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : { "$toString" : { "$toLong" : "$_id" } }, "_id" : 0 } }
+            """
 );
     }
 
     public override async Task Select_expression_int_to_string(bool async)
     {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "The property 'Order.ShipName' could not be found.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Select_expression_int_to_string(async))).Message);
+        await base.Select_expression_int_to_string(async);
 
         AssertMql(
-);
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : { "$toString" : "$_id" }, "_id" : 0 } }
+            """
+        );
     }
 
     public override async Task ToString_with_formatter_is_evaluated_on_the_client(bool async)
     {
         // Fails: Client eval in final projection EF-250
         Assert.Contains(
-            "The property 'Order.ShipName' could not be found.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.ToString_with_formatter_is_evaluated_on_the_client(async))).Message);
+            "Expression not supported: o.OrderID.ToString(\"X\")",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.ToString_with_formatter_is_evaluated_on_the_client(async))).Message);
 
         AssertMql(
-);
+            """
+            Orders.
+            """
+        );
     }
 
     public override async Task Select_expression_other_to_string(bool async)
     {
         // Fails: Client eval in final projection EF-250
         Assert.Contains(
-            "The property 'Order.ShipName' could not be found.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Select_expression_other_to_string(async))).Message);
+            "cannot be called with instance of type",
+            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_other_to_string(async))).Message);
 
         AssertMql(
 );
@@ -2507,7 +2510,7 @@ Orders.{ "$match" : { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : 
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Rewriting child expression",
+            "No coercion operator is defined",
             (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Select_expression_date_add_milliseconds_large_number_divided(async))).Message);
 
         AssertMql(
