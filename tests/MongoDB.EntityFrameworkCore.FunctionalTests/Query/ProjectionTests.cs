@@ -74,6 +74,17 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         });
     }
 
+    [Fact]
+    public void Select_projection_to_tuple_with_expressions()
+    {
+        var results = _db.Planets.Take(10).Select(p => Tuple.Create(p.name + "X", p.orderFromSun > 3, p.hasRings ? "Rings" : "No rings"));
+        Assert.All(results, r =>
+        {
+            Assert.NotNull(r.Item1);
+            //Assert.InRange(r.Item2, 1, 8);
+        });
+    }
+
     [Fact(Skip = "Projections not yet completely supported")]
     public void Select_projection_to_constructor_initializer()
     {

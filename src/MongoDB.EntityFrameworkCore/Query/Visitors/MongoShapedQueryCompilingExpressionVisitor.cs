@@ -71,17 +71,24 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // TODO: Handle select expressions and non-EF shapers more comprehensively
         if (projectedEntityType == null)
         {
-            // We are relying on raw/scalar values coming back from LINQ V3 provider for now - no shaper required
-            return Expression.Call(null,
-                TranslateAndExecuteUnshapedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType,
-                    shapedQueryExpression.ShaperExpression.Type),
-                QueryCompilationContext.QueryContextParameter,
-                Expression.Constant(rootEntityType),
-                Expression.Constant(_bsonSerializerFactory),
-                Expression.Constant(mongoQueryExpression),
-                Expression.Constant(_contextType),
-                Expression.Constant(_threadSafetyChecksEnabled),
-                Expression.Constant(shapedQueryExpression.ResultCardinality));
+            if (mongoQueryExpression.CapturedExpression is MethodCallExpression { Method.IsGenericMethod: true } mce
+                && mce.Method.GetGenericMethodDefinition() == QueryableMethods.Select)
+            {
+            }
+            else
+            {
+                // We are relying on raw/scalar values coming back from LINQ V3 provider for now - no shaper required
+                return Expression.Call(null,
+                    TranslateAndExecuteUnshapedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType,
+                        shapedQueryExpression.ShaperExpression.Type),
+                    QueryCompilationContext.QueryContextParameter,
+                    Expression.Constant(rootEntityType),
+                    Expression.Constant(_bsonSerializerFactory),
+                    Expression.Constant(mongoQueryExpression),
+                    Expression.Constant(_contextType),
+                    Expression.Constant(_threadSafetyChecksEnabled),
+                    Expression.Constant(shapedQueryExpression.ResultCardinality));
+            }
         }
 
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
