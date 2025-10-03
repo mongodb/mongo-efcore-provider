@@ -419,6 +419,16 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         return memberInitExpression.Update((NewExpression)newExpression, newBindings);
     }
 
+    protected override Expression VisitBinary(BinaryExpression binaryExpression)
+    {
+        var currentProjectionMember = GetCurrentProjectionMember();
+        _projectionMapping[currentProjectionMember] = binaryExpression;
+
+        return _currentOrdinal >= 0
+            ? new MongoProjectionBindingExpression(_queryExpression, _currentOrdinal, binaryExpression.Type, _currentType!)
+            : new MongoProjectionBindingExpression(_queryExpression, currentProjectionMember, binaryExpression.Type);
+    }
+
     protected override Expression VisitMember(MemberExpression memberExpression)
     {
         var currentProjectionMember = GetCurrentProjectionMember();
@@ -427,6 +437,16 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         return _currentOrdinal >= 0
             ? new MongoProjectionBindingExpression(_queryExpression, _currentOrdinal, memberExpression.Type, _currentType!)
             : new MongoProjectionBindingExpression(_queryExpression, currentProjectionMember, memberExpression.Type);
+    }
+
+    protected override Expression VisitConditional(ConditionalExpression conditionalExpression)
+    {
+        var currentProjectionMember = GetCurrentProjectionMember();
+        _projectionMapping[currentProjectionMember] = conditionalExpression;
+
+        return _currentOrdinal >= 0
+            ? new MongoProjectionBindingExpression(_queryExpression, _currentOrdinal, conditionalExpression.Type, _currentType!)
+            : new MongoProjectionBindingExpression(_queryExpression, currentProjectionMember, conditionalExpression.Type);
     }
 
     /// <inheritdoc />

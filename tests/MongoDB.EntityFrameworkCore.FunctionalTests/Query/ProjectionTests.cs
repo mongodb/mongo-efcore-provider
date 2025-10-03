@@ -77,11 +77,12 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Select_projection_to_tuple_with_expressions()
     {
-        var results = _db.Planets.Take(10).Select(p => Tuple.Create(p.name + "X", p.orderFromSun > 3, p.hasRings ? "Rings" : "No rings"));
+        var results = _db.Planets.Take(10).Select(p => Tuple.Create(p.name + "X", p.orderFromSun > 3, p.orderFromSun, p.hasRings ? "Rings" : "No rings", p.hasRings));
         Assert.All(results, r =>
         {
-            Assert.NotNull(r.Item1);
-            //Assert.InRange(r.Item2, 1, 8);
+            Assert.EndsWith("X", r.Item1);
+            Assert.Equal(r.Item2, r.Item3 > 3);
+            Assert.Equal(r.Item4, r.Item5 ? "Rings" : "No rings");
         });
     }
 
