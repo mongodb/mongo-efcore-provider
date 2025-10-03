@@ -509,13 +509,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
     private static void IncludeReference<TIncludingEntity, TIncludedEntity>(
 #pragma warning disable EF1001 // Internal EF Core API usage.
-        InternalEntityEntry entry,
+        InternalEntityEntry? entry,
 #pragma warning restore EF1001 // Internal EF Core API usage.
-        object entity,
+        object? entity,
         IEntityType entityType,
         TIncludedEntity relatedEntity,
         INavigation navigation,
-        INavigation inverseNavigation,
+        INavigation? inverseNavigation,
         Action<TIncludingEntity, TIncludedEntity> fixup,
         bool __)
     {
@@ -613,7 +613,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         Type entityType,
         Type relatedEntityType,
         INavigation navigation,
-        INavigation inverseNavigation)
+        INavigation? inverseNavigation)
     {
         var entityParameter = Expression.Parameter(entityType);
         var relatedEntityParameter = Expression.Parameter(relatedEntityType);

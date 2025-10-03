@@ -199,10 +199,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             onZeroResults);
     }
 
-    private static readonly MethodInfo TranslateAndExecuteQueryMethodInfo = typeof(MongoShapedQueryCompilingExpressionVisitor)
-        .GetTypeInfo()
-        .DeclaredMethods
-        .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
+    private static readonly MethodInfo TranslateAndExecuteQueryMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(TranslateAndExecuteQuery));
 
     private static readonly MethodInfo TranslateAndExecuteUnshapedQueryMethodInfo =
         typeof(MongoShapedQueryCompilingExpressionVisitor)

@@ -21,7 +21,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 ///     See <see href="https://aka.ms/efcore-docs-providers">Implementation of database providers and extensions</see>
 ///     and <see href="https://aka.ms/efcore-docs-how-query-works">How EF Core queries work</see> for more information and examples.
 /// </remarks>
-public class MongoProjectionBindingExpression : Expression, IPrintableExpression
+public sealed class MongoProjectionBindingExpression : Expression, IPrintableExpression
 {
     /// <summary>
     ///     Creates a new instance of the <see cref="ProjectionBindingExpression" /> class.
@@ -61,17 +61,17 @@ public class MongoProjectionBindingExpression : Expression, IPrintableExpression
     /// <summary>
     ///     The query expression to bind with.
     /// </summary>
-    public virtual Expression QueryExpression { get; }
+    public Expression QueryExpression { get; }
 
     /// <summary>
     ///     The projection member to bind if binding is via projection member.
     /// </summary>
-    public virtual MongoProjectionMember? ProjectionMember { get; }
+    public MongoProjectionMember? ProjectionMember { get; }
 
     /// <summary>
     ///     The projection member to bind if binding is via projection index.
     /// </summary>
-    public virtual int? Index { get; }
+    public int? Index { get; }
 
     /// <inheritdoc />
     public override Type Type { get; }
@@ -79,7 +79,7 @@ public class MongoProjectionBindingExpression : Expression, IPrintableExpression
     public Type ProjectionType { get; }
 
     /// <inheritdoc />
-    public sealed override ExpressionType NodeType
+    public override ExpressionType NodeType
         => ExpressionType.Extension;
 
     /// <inheritdoc />
