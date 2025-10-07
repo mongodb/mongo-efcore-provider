@@ -203,7 +203,7 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
 
     private static void WriteProperty(IBsonWriter writer, object? value, IProperty property)
     {
-        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(null, property);
         writer.WriteName(serializationInfo.ElementPath?.Last() ?? serializationInfo.ElementName);
         var root = BsonSerializationContext.CreateRoot(writer);
         serializationInfo.Serializer.Serialize(root, value);
