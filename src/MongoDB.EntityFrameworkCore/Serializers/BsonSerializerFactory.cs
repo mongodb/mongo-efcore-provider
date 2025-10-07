@@ -282,7 +282,7 @@ public sealed class BsonSerializerFactory
         return CreateGenericSerializer(typeof(EnumerableInterfaceImplementerSerializer<,>), [type, itemType], childSerializer);
     }
 
-    internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property)
+    internal static BsonSerializationInfo GetPropertySerializationInfo(string? alias, IReadOnlyProperty property)
     {
         var serializer = CreateTypeSerializer(property);
 
@@ -298,12 +298,12 @@ public sealed class BsonSerializerFactory
         if (binaryVectorType != null)
         {
             return new BsonSerializationInfo(
-                property.GetElementName(),
+                alias ?? property.GetElementName(),
                 CreateBinaryVectorSerializer(type, binaryVectorType.Value),
                 serializer.ValueType);
         }
 
-        return new BsonSerializationInfo(property.GetElementName(), serializer, serializer.ValueType);
+        return new BsonSerializationInfo(alias ?? property.GetElementName(), serializer, serializer.ValueType);
     }
 
     private static IBsonSerializer CreateBinaryVectorSerializer(Type type, BinaryVectorDataType binaryVectorDataType)

@@ -64,7 +64,7 @@ public class BsonBindingTests
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ IntProperty: 12 }");
 
-        var value = BsonBinding.GetPropertyValue<int>(document, property);
+        var value = BsonBinding.GetPropertyValue<int>(document, null, property);
 
         Assert.Equal(12, value);
     }
@@ -81,7 +81,7 @@ public class BsonBindingTests
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ property: 12 }");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => BsonBinding.GetPropertyValue<int>(document, property));
+        var ex = Assert.Throws<InvalidOperationException>(() => BsonBinding.GetPropertyValue<int>(document, null, property));
         Assert.Contains("IntProperty", ex.Message);
     }
 
@@ -97,7 +97,7 @@ public class BsonBindingTests
         var property = entity.GetProperty(nameof(TestEntity.NullableProperty));
 
         var document = BsonDocument.Parse("{ somevalue: 12 }");
-        var value = BsonBinding.GetPropertyValue<int?>(document, property);
+        var value = BsonBinding.GetPropertyValue<int?>(document, null, property);
 
         Assert.Null(value);
     }
