@@ -280,7 +280,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
         var argumentsCount = methodCallExpression.Arguments.Count;
         var methodParameters = methodCallExpression.Method.GetParameters();
-        var parameterizeArguments = methodCallExpression.Method.IsGenericMethod
+        var parameterizeArguments = methodCallExpression.Method is { IsGenericMethod: true, Name: nameof(Tuple.Create) }
                                     && methodCallExpression.Method.GetGenericMethodDefinition() ==
                                     typeof(Tuple).GetMethods().Single(e => e.Name == nameof(Tuple.Create)
                                                                            && e.GetParameters().Length == argumentsCount);

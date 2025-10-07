@@ -37,6 +37,7 @@ public sealed class MongoProjectionBindingExpression : Expression, IPrintableExp
         QueryExpression = queryExpression;
         ProjectionMember = projectionMember;
         Type = type;
+        ProjectionType = type;
     }
 
     /// <summary>
