@@ -76,12 +76,6 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             case null:
                 return null;
 
-            case NewExpression:
-            case MemberInitExpression:
-            case StructuralTypeShaperExpression:
-            case MaterializeCollectionNavigationExpression:
-                return base.Visit(expression);
-
             case ParameterExpression parameterExpression:
                 if (_collectionShaperMapping.ContainsKey(parameterExpression))
                 {
@@ -101,14 +95,6 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
             case ConstantExpression:
                 return expression;
-
-            case MemberExpression memberExpression:
-                var currentProjectionMember = GetCurrentProjectionMember();
-                _projectionMapping[currentProjectionMember] = memberExpression;
-
-                return _currentOrdinal >= 0
-                    ? new MongoProjectionBindingExpression(_queryExpression, _currentOrdinal, expression.Type, expression.Type)
-                    : new MongoProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
 
             default:
                 return base.Visit(expression);
@@ -434,105 +420,13 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
     protected override Expression VisitMember(MemberExpression memberExpression)
     {
-        var innerExpression = Visit(memberExpression.Expression);
+        var currentProjectionMember = GetCurrentProjectionMember();
+        _projectionMapping[currentProjectionMember] = memberExpression;
 
-        StructuralTypeShaperExpression shaperExpression;
-        switch (innerExpression)
-        {
-            case StructuralTypeShaperExpression shaper:
-                shaperExpression = shaper;
-                break;
-
-            case UnaryExpression unaryExpression:
-                shaperExpression = unaryExpression.Operand as StructuralTypeShaperExpression;
-                if (shaperExpression == null
-                    || unaryExpression.NodeType != ExpressionType.Convert)
-                {
-                    return NullSafeUpdate(innerExpression);
-                }
-
-                break;
-
-            default:
-                return NullSafeUpdate(innerExpression);
-        }
-
-        EntityProjectionExpression innerEntityProjection;
-        switch (shaperExpression.ValueBufferExpression)
-        {
-            case MongoProjectionBindingExpression innerProjectionBindingExpression:
-                innerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[
-                    innerProjectionBindingExpression.Index.Value].Expression;
-                break;
-
-            case UnaryExpression unaryExpression:
-                // Unwrap EntityProjectionExpression when the root entity is not projected
-                innerEntityProjection = (EntityProjectionExpression)((UnaryExpression)unaryExpression.Operand).Operand;
-                break;
-
-            default:
-                throw new InvalidOperationException(CoreStrings.TranslationFailed(memberExpression.Print()));
-        }
-
-        var navigationProjection = innerEntityProjection.BindMember(
-            memberExpression.Member, innerExpression.Type, out var propertyBase);
-
-        if (propertyBase is not INavigation navigation || !navigation.IsEmbedded())
-        {
-            return NullSafeUpdate(innerExpression);
-        }
-
-        switch (navigationProjection)
-        {
-            case EntityProjectionExpression entityProjection:
-                return new StructuralTypeShaperExpression(
-                    navigation.TargetEntityType,
-                    Expression.Convert(Expression.Convert(entityProjection, typeof(object)), typeof(ValueBuffer)),
-                    nullable: true);
-
-            case ObjectArrayProjectionExpression objectArrayProjectionExpression:
-                {
-                    var innerShaperExpression = new StructuralTypeShaperExpression(
-                        navigation.TargetEntityType,
-                        Expression.Convert(
-                            Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)),
-                            typeof(ValueBuffer)),
-                        nullable: true);
-
-                    return new CollectionShaperExpression(
-                        objectArrayProjectionExpression,
-                        innerShaperExpression,
-                        navigation,
-                        innerShaperExpression.StructuralType.ClrType);
-                }
-
-            default:
-                throw new InvalidOperationException(CoreStrings.TranslationFailed(memberExpression.Print()));
-        }
-
-        Expression NullSafeUpdate(Expression expression)
-        {
-            Expression updatedMemberExpression = memberExpression.Update(
-                expression != null ? MatchTypes(expression, memberExpression.Expression.Type) : expression);
-
-            if (expression?.Type.IsNullableType() == true)
-            {
-                var nullableReturnType = memberExpression.Type.MakeNullable();
-                if (!memberExpression.Type.IsNullableType())
-                {
-                    updatedMemberExpression = Expression.Convert(updatedMemberExpression, nullableReturnType);
-                }
-
-                updatedMemberExpression = Expression.Condition(
-                    Expression.Equal(expression, Expression.Default(expression.Type)),
-                    Expression.Constant(null, nullableReturnType),
-                    updatedMemberExpression);
-            }
-
-            return updatedMemberExpression;
-        }
+        return _currentOrdinal >= 0
+            ? new MongoProjectionBindingExpression(_queryExpression, _currentOrdinal, memberExpression.Type, memberExpression.Type)
+            : new MongoProjectionBindingExpression(_queryExpression, currentProjectionMember, memberExpression.Type);
     }
-
 
     /// <inheritdoc />
     protected override ElementInit VisitElementInit(ElementInit elementInit)
