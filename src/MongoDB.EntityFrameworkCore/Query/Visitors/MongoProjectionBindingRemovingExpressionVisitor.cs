@@ -28,6 +28,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -82,8 +83,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                     var typeBase = ((StructuralTypeShaperExpression)memberExpression.Expression!).StructuralType;
                     var propertyBase = typeBase.FindMember(memberExpression.Member.Name);
+                    var serializationInfo = BsonSerializerFactory.GetTypeSerializationInfo(memberExpression.Type);
 
-                    return CreateGetValueExpression(_docParameter, projection.Alias, propertyBase);
+                    return projectionBindingExpression.ProjectionMember == null
+                        ? BsonBinding.CreateGetNextValueByOrdinal(
+                            _docParameter, projectionBindingExpression.Index!.Value, projectionBindingExpression.ProjectionType, serializationInfo)
+                        : CreateGetValueExpression(
+                            _docParameter, projection.Alias, propertyBase);
                 }
 
             case CollectionShaperExpression collectionShaperExpression:
@@ -184,8 +190,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             {
                 if (parameterExpression.Type == typeof(BsonDocument) || parameterExpression.Type == typeof(BsonArray))
                 {
-                    // "alias" will be different from the property/navigation name when mapped to a different name in the document.
-                    string? alias = null;
+                    string? docKeyName = null;
                     IPropertyBase? propertyBase = null;
 
                     var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
@@ -193,7 +198,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     {
                         var projection = GetProjection(projectionBindingExpression);
                         projectionExpression = projection.Expression;
-                        alias = projection.Alias;
+                        docKeyName = projection.Alias;
                     }
                     else if (projectionExpression is UnaryExpression convertExpression &&
                              convertExpression.NodeType == ExpressionType.Convert)
@@ -206,7 +211,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     {
                         innerAccessExpression = objectArrayProjectionExpression.AccessExpression;
                         _projectionBindings[objectArrayProjectionExpression] = parameterExpression;
-                        alias ??= objectArrayProjectionExpression.Name;
+                        docKeyName ??= objectArrayProjectionExpression.Name;
                         propertyBase = objectArrayProjectionExpression.Navigation;
                     }
                     else
@@ -214,7 +219,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         var entityProjectionExpression = (EntityProjectionExpression)projectionExpression;
                         var accessExpression = entityProjectionExpression.ParentAccessExpression;
                         _projectionBindings[accessExpression] = parameterExpression;
-                        alias ??= entityProjectionExpression.Name;
+                        docKeyName ??= entityProjectionExpression.Name;
 
                         switch (accessExpression)
                         {
@@ -233,7 +238,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         }
                     }
 
-                    var valueExpression = CreateGetValueExpression(innerAccessExpression, alias, propertyBase);
+                    var valueExpression = CreateGetValueExpression(innerAccessExpression, docKeyName, propertyBase);
 
                     return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
                 }

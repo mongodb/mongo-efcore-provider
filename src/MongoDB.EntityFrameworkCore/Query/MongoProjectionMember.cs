@@ -111,6 +111,6 @@ public sealed class MongoProjectionMember
     /// <inheritdoc />
     public override string ToString()
         => _memberChain.Any()
-            ? string.Join(".", _memberChain.Select(mi => mi))
+            ? string.Join(".", _memberChain)
             : "EmptyMongoProjectionMember";
 }

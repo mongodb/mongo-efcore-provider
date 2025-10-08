@@ -306,6 +306,12 @@ public sealed class BsonSerializerFactory
         return new BsonSerializationInfo(alias ?? property.GetElementName(), serializer, serializer.ValueType);
     }
 
+    internal static BsonSerializationInfo GetTypeSerializationInfo(Type type)
+    {
+        var serializer = CreateTypeSerializer(type);
+        return new BsonSerializationInfo(null, serializer, serializer.ValueType);
+    }
+
     private static IBsonSerializer CreateBinaryVectorSerializer(Type type, BinaryVectorDataType binaryVectorDataType)
     {
         if (type.IsArray)
