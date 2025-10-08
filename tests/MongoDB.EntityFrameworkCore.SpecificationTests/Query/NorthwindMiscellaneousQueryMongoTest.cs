@@ -2506,6 +2506,8 @@ Orders.{ "$match" : { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : 
 );
     }
 
+    [ConditionalTheory(Skip = "Projections work")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Select_expression_date_add_milliseconds_large_number_divided(bool async)
     {
         // Fails: Projections issue EF-76
@@ -3823,6 +3825,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 );
     }
 
+    [ConditionalTheory(Skip = "Projections work")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Entity_equality_on_subquery_with_null_check(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216

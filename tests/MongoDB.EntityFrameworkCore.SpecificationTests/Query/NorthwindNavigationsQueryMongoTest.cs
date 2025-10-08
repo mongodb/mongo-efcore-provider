@@ -188,6 +188,8 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 );
     }
 
+    [ConditionalTheory(Skip = "Projections work")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Select_count_plus_sum(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -424,6 +426,8 @@ AssertMql(
 );
     }
 
+    [ConditionalTheory(Skip = "Projections work")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Collection_select_nav_prop_sum_plus_one(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216

@@ -282,7 +282,7 @@ public sealed class BsonSerializerFactory
         return CreateGenericSerializer(typeof(EnumerableInterfaceImplementerSerializer<,>), [type, itemType], childSerializer);
     }
 
-    internal static BsonSerializationInfo GetPropertySerializationInfo(string? alias, IReadOnlyProperty property)
+    internal static BsonSerializationInfo GetPropertySerializationInfo(IReadOnlyProperty property, string? alias = null)
     {
         var serializer = CreateTypeSerializer(property);
 

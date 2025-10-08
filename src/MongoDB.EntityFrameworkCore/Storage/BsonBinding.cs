@@ -123,7 +123,7 @@ internal static class BsonBinding
 
     internal static T? GetPropertyValue<T>(BsonDocument document, string? alias, IReadOnlyProperty property)
     {
-        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(alias, property);
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property, alias);
         if (TryReadElementValue(document, serializationInfo, out T? value))
         {
             if (value == null && !property.IsNullable)
