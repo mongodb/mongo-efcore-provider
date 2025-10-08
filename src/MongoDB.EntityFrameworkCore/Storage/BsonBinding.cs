@@ -140,6 +140,24 @@ internal static class BsonBinding
         throw new InvalidOperationException($"Document element is missing for required non-nullable property '{alias ?? property.Name}'.");
     }
 
+    public static MethodCallExpression
+        CreateGetNextValueByOrdinal(Expression documentExpression, int ordinal, Type type, BsonSerializationInfo serializationInfo)
+        => Expression.Call(
+            GetNextValueByOrdinalMethodInfo.MakeGenericMethod(type),
+            documentExpression,
+            Expression.Constant(ordinal),
+            Expression.Constant(serializationInfo));
+
+    private static readonly MethodInfo GetNextValueByOrdinalMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetNextValueByOrdinal));
+
+    internal static T? GetNextValueByOrdinal<T>(BsonDocument document, int ordinal, BsonSerializationInfo serializationInfo)
+    {
+        var values = document.GetElement("_v").Value.AsBsonArray; // Ideally, we would get the array once and re-use it.
+
+        return (T)serializationInfo.DeserializeValue(values[ordinal]);
+    }
     internal static T? GetElementValue<T>(BsonDocument document, string elementName)
     {
         var type = typeof(T);

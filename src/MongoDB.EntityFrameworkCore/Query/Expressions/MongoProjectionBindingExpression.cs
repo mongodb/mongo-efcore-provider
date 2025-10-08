@@ -79,6 +79,9 @@ public sealed class MongoProjectionBindingExpression : Expression, IPrintableExp
     /// <inheritdoc />
     public override Type Type { get; }
 
+    /// <summary>
+    ///     The type of the final projection result.
+    /// </summary>
     public Type ProjectionType { get; }
 
     /// <inheritdoc />

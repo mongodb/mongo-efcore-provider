@@ -41,6 +41,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     private readonly Stack<INavigation> _includedNavigations = new();
 
     private MongoQueryExpression _queryExpression;
+    private int _currentOrdinal = -1;
 
     /// <summary>
     /// Perform translation of the <paramref name="expression" /> that belongs to the
@@ -105,7 +106,9 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 var currentProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[currentProjectionMember] = memberExpression;
 
-                return new MongoProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
+                return _currentOrdinal >= 0
+                    ? new MongoProjectionBindingExpression(_queryExpression, _currentOrdinal, expression.Type, expression.Type)
+                    : new MongoProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
 
             default:
                 return base.Visit(expression);
@@ -287,33 +290,70 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         }
 
         var newObject = Visit(methodCallExpression.Object);
-        var newArguments = new Expression[methodCallExpression.Arguments.Count];
-        for (var i = 0; i < newArguments.Length; i++)
-        {
-            var argument = methodCallExpression.Arguments[i];
-            var newArgument = Visit(argument);
-            newArguments[i] = MatchTypes(newArgument, argument.Type);
-        }
 
-        Expression updatedMethodCallExpression = methodCallExpression.Update(
-            newObject != null ? MatchTypes(newObject, methodCallExpression.Object?.Type) : null,
-            newArguments);
+        // Handle Tuple.Create so that the tuple element values will all be available as projection members.
+        var argumentsCount = methodCallExpression.Arguments.Count;
+        var methodParameters = methodCallExpression.Method.GetParameters();
+        var parameterizeArguments = methodCallExpression.Method is { IsGenericMethod: true, Name: nameof(Tuple.Create) }
+                                    && methodCallExpression.Method.GetGenericMethodDefinition() ==
+                                    typeof(Tuple).GetMethods().Single(e => e.Name == nameof(Tuple.Create)
+                                                                           && e.GetParameters().Length == argumentsCount);
 
-        if (newObject?.Type.IsNullableType() == true && !methodCallExpression.Object.Type.IsNullableType())
+        var oldOrdinal = _currentOrdinal;
+        _currentOrdinal = -1;
+
+        try
         {
-            var nullableReturnType = methodCallExpression.Type.MakeNullable();
-            if (!methodCallExpression.Type.IsNullableType())
+            var newArguments = new Expression[argumentsCount];
+            for (var i = 0; i < newArguments.Length; i++)
             {
-                updatedMethodCallExpression = Expression.Convert(updatedMethodCallExpression, nullableReturnType);
+                var argument = methodCallExpression.Arguments[i];
+
+                if (parameterizeArguments)
+                {
+                    _currentOrdinal++;
+
+                    EnterProjectionMember(methodParameters[i].Name);
+                    try
+                    {
+                        newArguments[i] = MatchTypes(Visit(argument), argument.Type);
+                    }
+                    finally
+                    {
+                        ExitProjectionMember();
+                    }
+                }
+                else
+                {
+                    var newArgument = Visit(argument);
+                    newArguments[i] = MatchTypes(newArgument, argument.Type);
+                }
             }
 
-            return Expression.Condition(
-                Expression.Equal(newObject, Expression.Default(newObject.Type)),
-                Expression.Constant(null, nullableReturnType),
-                updatedMethodCallExpression);
-        }
+            Expression updatedMethodCallExpression = methodCallExpression.Update(
+                newObject != null ? MatchTypes(newObject, methodCallExpression.Object?.Type) : null,
+                newArguments);
 
-        return updatedMethodCallExpression;
+            if (newObject?.Type.IsNullableType() == true && methodCallExpression.Object?.Type.IsNullableType() != true)
+            {
+                var nullableReturnType = methodCallExpression.Type.MakeNullable();
+                if (!methodCallExpression.Type.IsNullableType())
+                {
+                    updatedMethodCallExpression = Expression.Convert(updatedMethodCallExpression, nullableReturnType);
+                }
+
+                return Expression.Condition(
+                    Expression.Equal(newObject, Expression.Default(newObject.Type)),
+                    Expression.Constant(null, nullableReturnType),
+                    updatedMethodCallExpression);
+            }
+
+            return updatedMethodCallExpression;
+        }
+        finally
+        {
+            _currentOrdinal = oldOrdinal;
+        }
     }
 
     /// <inheritdoc />
@@ -329,7 +369,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
             if (hasMembers)
             {
-                EnterProjectionMember(newExpression.Members[i]);
+                EnterProjectionMember(newExpression.Members[i].Name);
             }
 
             var visitedArgument = Visit(argument);
@@ -352,7 +392,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
     protected override MemberAssignment VisitMemberAssignment(MemberAssignment memberAssignment)
     {
-        EnterProjectionMember(memberAssignment.Member);
+        EnterProjectionMember(memberAssignment.Member.Name);
         var visitedExpression = Visit(memberAssignment.Expression);
         ExitProjectionMember();
 
@@ -505,8 +545,8 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     private MongoProjectionMember GetCurrentProjectionMember()
         => _projectionMembers.Peek();
 
-    private void EnterProjectionMember(MemberInfo memberInfo)
-        => _projectionMembers.Push(_projectionMembers.Peek().Append(memberInfo.Name));
+    private void EnterProjectionMember(string memberName)
+        => _projectionMembers.Push(_projectionMembers.Peek().Append(memberName));
 
     private void ExitProjectionMember()
         => _projectionMembers.Pop();
