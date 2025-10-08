@@ -119,6 +119,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                             serializationInfo);
                     }
 
+                    // Only MemberExpression, BinaryExpression, and ConditionalExpression are expected here.
+                    // If other expression types reach this point, it likely indicates a bug or an unsupported scenario.
+                    // Consider extending support for additional expression types if needed.
                     throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
                 }
 
