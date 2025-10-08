@@ -83,7 +83,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         }
 
                         var typeBase = ((StructuralTypeShaperExpression)memberExpression.Expression!).StructuralType;
-                        var property = typeBase.FindProperty(memberExpression.Member.Name)!;
+                        var property = typeBase.FindProperty(memberExpression.Member.Name);
+                        if (property == null)
+                        {
+                            throw new InvalidOperationException($"Property '{memberExpression.Member.Name}' not found on type '{typeBase.Name}'.");
+                        }
                         var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
 
                         return projectionBindingExpression.ProjectionMember == null
