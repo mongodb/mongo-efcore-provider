@@ -35,8 +35,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// </summary>
 internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisitor
 {
-    private readonly Dictionary<ProjectionMember, Expression> _projectionMapping = new();
-    private readonly Stack<ProjectionMember> _projectionMembers = new();
+    private readonly Dictionary<MongoProjectionMember, Expression> _projectionMapping = new();
+    private readonly Stack<MongoProjectionMember> _projectionMembers = new();
     private readonly Dictionary<ParameterExpression, CollectionShaperExpression> _collectionShaperMapping = new();
     private readonly Stack<INavigation> _includedNavigations = new();
 
@@ -54,7 +54,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         Expression expression)
     {
         _queryExpression = queryExpression;
-        _projectionMembers.Push(new ProjectionMember());
+        _projectionMembers.Push(new MongoProjectionMember());
 
         var result = Visit(expression);
 
@@ -105,7 +105,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 var currentProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[currentProjectionMember] = memberExpression;
 
-                return new ProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
+                return new MongoProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
 
             default:
                 return base.Visit(expression);
@@ -120,14 +120,14 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             case StructuralTypeShaperExpression structuralTypeShaperExpression:
                 {
                     var projectionBindingExpression =
-                        (ProjectionBindingExpression)structuralTypeShaperExpression.ValueBufferExpression;
+                        (MongoProjectionBindingExpression)structuralTypeShaperExpression.ValueBufferExpression;
 
                     var entityProjection = (EntityProjectionExpression)_queryExpression.GetMappedProjection(
                         projectionBindingExpression.ProjectionMember);
 
                     return structuralTypeShaperExpression.Update(
-                        new ProjectionBindingExpression(
-                            _queryExpression, _queryExpression.AddToProjection(entityProjection), typeof(ValueBuffer)));
+                        new MongoProjectionBindingExpression(
+                            _queryExpression, _queryExpression.AddToProjection(entityProjection), typeof(ValueBuffer), typeof(ValueBuffer)));
                 }
 
             case MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression:
@@ -195,7 +195,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             EntityProjectionExpression innerEntityProjection;
             switch (shaperExpression.ValueBufferExpression)
             {
-                case ProjectionBindingExpression innerProjectionBindingExpression:
+                case MongoProjectionBindingExpression innerProjectionBindingExpression:
                     innerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[
                         innerProjectionBindingExpression.Index.Value].Expression;
                     break;
@@ -420,7 +420,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         EntityProjectionExpression innerEntityProjection;
         switch (shaperExpression.ValueBufferExpression)
         {
-            case ProjectionBindingExpression innerProjectionBindingExpression:
+            case MongoProjectionBindingExpression innerProjectionBindingExpression:
                 innerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[
                     innerProjectionBindingExpression.Index.Value].Expression;
                 break;
@@ -502,11 +502,11 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     protected override Expression VisitNewArray(NewArrayExpression newArrayExpression)
         => newArrayExpression.Update(newArrayExpression.Expressions.Select(e => MatchTypes(Visit(e), e.Type)));
 
-    private ProjectionMember GetCurrentProjectionMember()
+    private MongoProjectionMember GetCurrentProjectionMember()
         => _projectionMembers.Peek();
 
     private void EnterProjectionMember(MemberInfo memberInfo)
-        => _projectionMembers.Push(_projectionMembers.Peek().Append(memberInfo));
+        => _projectionMembers.Push(_projectionMembers.Peek().Append(memberInfo.Name));
 
     private void ExitProjectionMember()
         => _projectionMembers.Pop();

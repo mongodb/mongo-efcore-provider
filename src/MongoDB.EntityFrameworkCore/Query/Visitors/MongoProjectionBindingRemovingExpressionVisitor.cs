@@ -70,7 +70,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     {
         switch (extensionExpression)
         {
-            case ProjectionBindingExpression projectionBindingExpression:
+            case MongoProjectionBindingExpression projectionBindingExpression:
                 {
                     var projection = GetProjection(projectionBindingExpression);
 
@@ -91,7 +91,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     ObjectArrayProjectionExpression objectArrayProjection;
                     switch (collectionShaperExpression.Projection)
                     {
-                        case ProjectionBindingExpression projectionBindingExpression:
+                        case MongoProjectionBindingExpression projectionBindingExpression:
                             var projection = GetProjection(projectionBindingExpression);
                             objectArrayProjection = (ObjectArrayProjectionExpression)projection.Expression;
                             break;
@@ -189,7 +189,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     IPropertyBase? propertyBase = null;
 
                     var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
-                    if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
+                    if (projectionExpression is MongoProjectionBindingExpression projectionBindingExpression)
                     {
                         var projection = GetProjection(projectionBindingExpression);
                         projectionExpression = projection.Expression;
@@ -243,7 +243,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     var newExpression = (NewExpression)binaryExpression.Right;
 
                     EntityProjectionExpression entityProjectionExpression;
-                    if (newExpression.Arguments[0] is ProjectionBindingExpression projectionBindingExpression)
+                    if (newExpression.Arguments[0] is MongoProjectionBindingExpression projectionBindingExpression)
                     {
                         var projection = GetProjection(projectionBindingExpression);
                         entityProjectionExpression = (EntityProjectionExpression)projection.Expression;
@@ -289,7 +289,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         {
             var property = methodCallExpression.Arguments[2].GetConstantValue<IProperty>();
             Expression innerExpression;
-            if (methodCallExpression.Arguments[0] is ProjectionBindingExpression projectionBindingExpression)
+            if (methodCallExpression.Arguments[0] is MongoProjectionBindingExpression projectionBindingExpression)
             {
                 var projection = GetProjection(projectionBindingExpression);
                 innerExpression = CreateGetValueExpression(_docParameter, projection.Alias, property);
@@ -387,11 +387,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
-    /// Obtain the registered <see cref="ProjectionExpression"/> for a given <see cref="ProjectionBindingExpression"/>.
+    /// Obtain the registered <see cref="ProjectionExpression"/> for a given <see cref="MongoProjectionBindingExpression"/>.
     /// </summary>
-    /// <param name="projectionBindingExpression">The <see cref="ProjectionBindingExpression"/> to look-up.</param>
+    /// <param name="projectionBindingExpression">The <see cref="MongoProjectionBindingExpression"/> to look-up.</param>
     /// <returns>The registered <see cref="ProjectionExpression"/> this <paramref name="projectionBindingExpression"/> relates to.</returns>
-    private ProjectionExpression GetProjection(ProjectionBindingExpression projectionBindingExpression)
+    private ProjectionExpression GetProjection(MongoProjectionBindingExpression projectionBindingExpression)
         => _queryExpression.Projection[GetProjectionIndex(projectionBindingExpression)];
 
     /// <summary>
@@ -674,7 +674,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         = typeof(IClrCollectionAccessor).GetTypeInfo()
             .GetDeclaredMethod(nameof(IClrCollectionAccessor.Add))!;
 
-    private int GetProjectionIndex(ProjectionBindingExpression projectionBindingExpression)
+    private int GetProjectionIndex(MongoProjectionBindingExpression projectionBindingExpression)
         => projectionBindingExpression.ProjectionMember != null
             ? _queryExpression.GetMappedProjection(projectionBindingExpression.ProjectionMember).GetConstantValue<int>()
             : projectionBindingExpression.Index

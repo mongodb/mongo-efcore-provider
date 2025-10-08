@@ -146,7 +146,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             queryExpression,
             shaperExpression: new StructuralTypeShaperExpression(
                 entityType,
-                new ProjectionBindingExpression(queryExpression, new ProjectionMember(), typeof(ValueBuffer)),
+                new MongoProjectionBindingExpression(queryExpression, new MongoProjectionMember(), typeof(ValueBuffer)),
                 false));
     }
 
@@ -270,8 +270,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     private static ShapedQueryExpression ReshapeShaperExpression(ShapedQueryExpression source, Type returnType)
         => source.UpdateShaperExpression(
             Expression.Convert(
-                new ProjectionBindingExpression(
-                    source.QueryExpression, new ProjectionMember(), returnType.MakeNullable()), returnType));
+                new MongoProjectionBindingExpression(
+                    source.QueryExpression, new MongoProjectionMember(), returnType.MakeNullable()), returnType));
 
     #endregion
 

@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoQueryExpression : Expression
 {
-    private Dictionary<ProjectionMember, Expression> _projectionMapping = new();
+    private Dictionary<MongoProjectionMember, Expression> _projectionMapping = new();
     private readonly List<ProjectionExpression> _projection = [];
 
     /// <summary>
@@ -37,7 +37,7 @@ internal sealed class MongoQueryExpression : Expression
     public MongoQueryExpression(IEntityType entityType)
     {
         CollectionExpression = new MongoCollectionExpression(entityType);
-        _projectionMapping[new ProjectionMember()] =
+        _projectionMapping[new MongoProjectionMember()] =
             new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType));
     }
 
@@ -81,7 +81,7 @@ internal sealed class MongoQueryExpression : Expression
         return _projection.Count - 1;
     }
 
-    public Expression GetMappedProjection(ProjectionMember projectionMember)
+    public Expression GetMappedProjection(MongoProjectionMember projectionMember)
         => _projectionMapping[projectionMember];
 
     public IReadOnlyList<ProjectionExpression> Projection
@@ -94,16 +94,16 @@ internal sealed class MongoQueryExpression : Expression
             return;
         }
 
-        Dictionary<ProjectionMember, Expression> result = new();
+        Dictionary<MongoProjectionMember, Expression> result = new();
         foreach (var (projectionMember, expression) in _projectionMapping)
         {
-            result[projectionMember] = Constant(AddToProjection(expression, projectionMember.Last?.Name));
+            result[projectionMember] = Constant(AddToProjection(expression, projectionMember.Last));
         }
 
         _projectionMapping = result;
     }
 
-    public void ReplaceProjectionMapping(IDictionary<ProjectionMember, Expression> projectionMapping)
+    public void ReplaceProjectionMapping(IDictionary<MongoProjectionMember, Expression> projectionMapping)
     {
         _projectionMapping.Clear();
         foreach (var (projectionMember, expression) in projectionMapping)
