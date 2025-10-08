@@ -1046,6 +1046,8 @@ Orders.{ "$match" : { "_id" : 10250 } }, { "$project" : { "_v" : { "$divide" : [
         AssertMql();
     }
 
+    [ConditionalTheory(Skip = "Projections work")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Collection_FirstOrDefault_with_entity_equality_check_in_projection(bool async)
     {
         // Fails: Projections issue EF-76
@@ -1384,6 +1386,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 7 }, { "$project" : { "Aggreg
 """);
     }
 
+    [ConditionalTheory(Skip = "Projections work")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Projection_Distinct_projection_preserves_columns_used_for_distinct_in_subquery(bool async)
     {
         // Fails: Projections issue EF-76

@@ -60,7 +60,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         if (shapedQueryExpression.QueryExpression is not MongoQueryExpression mongoQueryExpression)
             throw new NotSupportedException(
-                $" Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
+                $"Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
 
         var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
         var projectedEntityType = QueryCompilationContext.Model.FindEntityType(

@@ -75,21 +75,58 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                 {
                     var projection = GetProjection(projectionBindingExpression);
 
-                    var memberExpression = (MemberExpression)projection.Expression;
-                    while (memberExpression.Expression is MemberExpression nestedMemberExpression)
+                    if (projection.Expression is MemberExpression memberExpression)
                     {
-                        memberExpression = nestedMemberExpression;
+                        while (memberExpression.Expression is MemberExpression nestedMemberExpression)
+                        {
+                            memberExpression = nestedMemberExpression;
+                        }
+
+                        var typeBase = ((StructuralTypeShaperExpression)memberExpression.Expression!).StructuralType;
+                        var property = typeBase.FindProperty(memberExpression.Member.Name);
+                        if (property == null)
+                        {
+                            throw new InvalidOperationException($"Property '{memberExpression.Member.Name}' not found on type '{typeBase.Name}'.");
+                        }
+                        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+
+                        return projectionBindingExpression.ProjectionMember == null
+                            ? BsonBinding.CreateGetNextValueByOrdinal(
+                                _docParameter,
+                                projectionBindingExpression.Index!.Value,
+                                projectionBindingExpression.ProjectionType,
+                                serializationInfo)
+                            : CreateGetValueExpression(
+                                _docParameter,
+                                projection.Alias,
+                                property);
                     }
 
-                    var typeBase = ((StructuralTypeShaperExpression)memberExpression.Expression!).StructuralType;
-                    var propertyBase = typeBase.FindMember(memberExpression.Member.Name);
-                    var serializationInfo = BsonSerializerFactory.GetTypeSerializationInfo(memberExpression.Type);
+                    if (projection.Expression is BinaryExpression binaryExpression)
+                    {
+                        var serializationInfo = BsonSerializerFactory.GetTypeSerializationInfo(binaryExpression.Type);
 
-                    return projectionBindingExpression.ProjectionMember == null
-                        ? BsonBinding.CreateGetNextValueByOrdinal(
-                            _docParameter, projectionBindingExpression.Index!.Value, projectionBindingExpression.ProjectionType, serializationInfo)
-                        : CreateGetValueExpression(
-                            _docParameter, projection.Alias, propertyBase);
+                        return BsonBinding.CreateGetNextValueByOrdinal(
+                            _docParameter,
+                            projectionBindingExpression.Index!.Value,
+                            projectionBindingExpression.ProjectionType,
+                            serializationInfo);
+                    }
+
+                    if (projection.Expression is ConditionalExpression conditionalExpression)
+                    {
+                        var serializationInfo = BsonSerializerFactory.GetTypeSerializationInfo(conditionalExpression.Type);
+                        return BsonBinding.CreateGetNextValueByOrdinal(
+                            _docParameter,
+                            projectionBindingExpression.Index!.Value,
+                            projectionBindingExpression.ProjectionType,
+                            serializationInfo);
+                    }
+
+                    // Only MemberExpression, BinaryExpression, and ConditionalExpression are expected here.
+                    // If other expression types reach this point, it likely indicates a bug or an unsupported scenario.
+                    // Consider extending support for additional expression types if needed.
+                    throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
                 }
 
             case CollectionShaperExpression collectionShaperExpression:

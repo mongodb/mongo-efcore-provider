@@ -98,7 +98,7 @@ internal class EntitySerializer<TValue> :
         var property = _entityType.FindProperty(memberName);
         if (property != null)
         {
-            serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(null, property);
+            serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
             return true;
         }
 
