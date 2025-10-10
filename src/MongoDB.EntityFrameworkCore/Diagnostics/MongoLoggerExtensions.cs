@@ -325,6 +325,8 @@ internal static class MongoLoggerExtensions
         CollectionNamespace collectionNamespace,
         BsonDocument[]? loggedStages)
     {
+        const string redacted = "<Redacted MQL: Use 'DbContextOptionsBuilder.EnableSensitiveDataLogging' to reveal>";
+
         var definition = LogVectorSearchReturnedZeroResults(diagnostics);
 
         if (diagnostics.ShouldLog(definition))
@@ -332,9 +334,7 @@ internal static class MongoLoggerExtensions
             definition.Log(
                 diagnostics,
                 collectionNamespace.CollectionName,
-                diagnostics.ShouldLogSensitiveData()
-                    ? LoggedStagesToMql(loggedStages)
-                    : "<Redacted MQL: Use 'DbContextOptionsBuilder.EnableSensitiveDataLogging' to reveal>");
+                diagnostics.ShouldLogSensitiveData() ? LoggedStagesToMql(loggedStages) : redacted);
         }
 
         if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
@@ -343,7 +343,7 @@ internal static class MongoLoggerExtensions
                 definition,
                 (d, p) => ((EventDefinition<string, string>)d).GenerateMessage(
                     ((MongoQueryEventData)p).CollectionNamespace.CollectionName,
-                    ((MongoQueryEventData)p).QueryMql),
+                    ((MongoQueryEventData)p).LogSensitiveData ? ((MongoQueryEventData)p).QueryMql : redacted),
                 collectionNamespace,
                 LoggedStagesToMql(loggedStages),
                 diagnostics.ShouldLogSensitiveData());

@@ -434,6 +434,54 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         }
     }
 
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Vector_query_warning_logged_with_sensitive_data(bool async)
+    {
+        List<string> logs = [];
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        {
+            logs.Add(s);
+            testOutputHelper.WriteLine(s);
+        });
+
+        var queryable = db.Moons.VectorSearch(e => e.embedding, new[] { 0.2f, 0.3f }, 10);
+
+        _ = async ? await queryable.ToListAsync() : queryable.ToList();
+
+        var logLine = logs.Single(l => l.Contains("returned zero results"));
+        Assert.Contains(
+            """
+            The vector query 'moons.aggregate([{ "$vectorSearch" : { "queryVector" : [0.20000000298023224, 0.30000001192092896], "path" : "embedding", "limit" : 10, "numCandidates" : 100, "index" : "embeddingVectorIndex" } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }])' returned zero results.
+            """,
+            logLine);
+    }
+
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)] // Ticket EF-270
+    public async Task Vector_query_warning_logged_without_sensitive_data(bool async)
+    {
+        List<string> logs = [];
+        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        {
+            logs.Add(s);
+            testOutputHelper.WriteLine(s);
+        }, sensitiveDataLogging: false);
+
+        var queryable = db.Moons.VectorSearch(e => e.embedding, new[] { 0.2f, 0.3f }, 10);
+
+        _ = async ? await queryable.ToListAsync() : queryable.ToList();
+
+        var logLine = logs.Single(l => l.Contains("returned zero results"));
+        Assert.Contains(
+            """
+            The vector query 'moons.aggregate([<Redacted MQL: Use 'DbContextOptionsBuilder.EnableSensitiveDataLogging' to reveal>])' returned zero results.
+            """,
+            logLine);
+    }
+
     private static string GetLogMessageByEventId(SpyLoggerProvider spyLogger, EventId? eventId = null)
     {
         eventId ??= MongoEventId.ExecutedMqlQuery;
