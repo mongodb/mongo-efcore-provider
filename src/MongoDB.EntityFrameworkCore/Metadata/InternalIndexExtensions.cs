@@ -72,7 +72,8 @@ internal static class InternalIndexExtensions
     public static CreateSearchIndexModel CreateVectorIndexDocument(
         this IIndex index, VectorIndexOptions vectorIndexOptions)
     {
-        var path = index.DeclaringEntityType.GetDocumentPath();
+        var entityType = index.DeclaringEntityType;
+        var path = entityType.GetDocumentPath();
 
         var similarityValue = vectorIndexOptions.Similarity == VectorSimilarity.DotProduct
             ? "dotProduct" // Because neither "DotProduct" or "dotproduct" are allowed.
@@ -107,10 +108,41 @@ internal static class InternalIndexExtensions
         {
             foreach (var filterPath in vectorIndexOptions.FilterPaths)
             {
+                var currentEntityType = entityType;
+                var pathRemaining = filterPath;
+                var builtPath = path.ToList();
+                while (true)
+                {
+                    var dotIndex = pathRemaining.IndexOf('.');
+                    if (dotIndex < 0)
+                    {
+                        break;
+                    }
+
+                    // This is a navigation to an owned type
+                    var navigationName = pathRemaining.Substring(0, dotIndex);
+                    var navigation = currentEntityType?.FindNavigation(navigationName);
+                    if (navigation != null)
+                    {
+                        currentEntityType = navigation.TargetEntityType;
+                        builtPath.Add(currentEntityType.GetContainingElementName()!);
+                    }
+                    else
+                    {
+                        builtPath.Add(navigationName); // Could be non-mapped but specified by string
+                        currentEntityType = null;
+                    }
+
+                    pathRemaining = pathRemaining.Substring(dotIndex + 1);
+                }
+
+                var property = currentEntityType?.GetProperty(pathRemaining);
+                builtPath.Add(property != null ? property.GetElementName() : pathRemaining);
+
                 var fieldDocument = new BsonDocument
                 {
                     { "type", BsonString.Create("filter") },
-                    { "path", BsonString.Create(path.Count > 0 ? string.Join('.', path) + '.' + filterPath : filterPath) }
+                    { "path", BsonString.Create(string.Join('.', builtPath)) }
                 };
 
                 fieldDocuments.Add(fieldDocument);

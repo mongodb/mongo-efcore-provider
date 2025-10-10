@@ -128,7 +128,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true, true, false)]
     public async Task Create_vector_index_on_nested_entity_in_EnsureCreated(bool async, bool useStrings, bool useOptions)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings, useOptions]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -293,7 +293,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true, true)]
     public async Task Create_vector_index_with_name(bool async, bool useStrings)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -318,7 +318,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true, false)]
     public async Task Create_vector_index_with_name_on_nested_entity(bool async, bool useStrings)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -343,11 +343,13 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
 #endif
 
     [AtlasTheory]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    public async Task Create_vector_index_with_options(bool async, bool useStrings)
+    [InlineData(false, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, true, true)]
+    public async Task Create_vector_index_with_options(bool async, bool useStrings, bool useElementNames)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings, useElementNames]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -368,11 +370,23 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .AllowsFiltersOn(e => e.Filter1)
                         .AllowsFiltersOn(e => e.Filter2)
                         .AllowsFiltersOn(e => e.Filter3);
+
+                if (useElementNames)
+                {
+                    b.Entity<SimpleEntity>(b =>
+                    {
+                        b.Property(e => e.Filter1).HasElementName("filter_1");
+                        b.Property(e => e.Filter2).HasElementName("filter_2");
+                        b.Property(e => e.Filter3).HasElementName("filter_3");
+                    });
+                }
             });
 
         _ = async ? await db.Database.EnsureCreatedAsync() : db.Database.EnsureCreated();
 
-        var index = ValidateIndex("FloatsVectorIndex", collection, "Floats", 4, "dotProduct", ["Filter1", "Filter2", "Filter3"]);
+        var index = ValidateIndex(
+            "FloatsVectorIndex", collection, "Floats", 4, "dotProduct",
+            useElementNames ? ["filter_1", "filter_2", "filter_3"] : ["Filter1", "Filter2", "Filter3"]);
 
         var field = index["latestDefinition"]["fields"][0];
         Assert.Equal("scalar", field["quantization"].AsString);
@@ -381,11 +395,13 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     }
 
     [AtlasTheory]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    public async Task Create_vector_index_with_options_on_nested_entity(bool async, bool useStrings)
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    public async Task Create_vector_index_with_options_on_nested_entity(bool async, bool useStrings, bool useElementNames)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings, useElementNames]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -406,12 +422,31 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
                         .HasEdgeOptions(32, 1600)
                         .AllowsFiltersOn(e => e.FilterN1)
                         .AllowsFiltersOn(e => e.Nested.FilterN2);
+
+                if (useElementNames)
+                {
+                    b.Entity<SimpleEntity>().OwnsOne(e => e.Nested, b =>
+                    {
+                        b.HasElementName("nest1");
+                        b.Property(e => e.FilterN1).HasElementName("fn1");
+                        b.OwnsOne(e => e.Nested, b =>
+                        {
+                            b.HasElementName("nest2");
+                            b.Property(e => e.FilterN2).HasElementName("fn2");
+                        });
+                    });
+                }
             });
 
         _ = async ? await db.Database.EnsureCreatedAsync() : db.Database.EnsureCreated();
 
-        var index = ValidateIndex("FloatsVectorIndex", collection, "Nested.Floats", 4, "dotProduct",
-            ["Nested.FilterN1", "Nested.Nested.FilterN2"]);
+        var index = ValidateIndex(
+            "FloatsVectorIndex",
+            collection,
+            useElementNames ? "nest1.Floats" : "Nested.Floats",
+            4,
+            "dotProduct",
+            useElementNames ? ["nest1.fn1", "nest1.nest2.fn2"] : ["Nested.FilterN1", "Nested.Nested.FilterN2"]);
 
         var field = index["latestDefinition"]["fields"][0];
         Assert.Equal("scalar", field["quantization"].AsString);
@@ -424,7 +459,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true, true)]
     public async Task Create_vector_index_with_options_and_name(bool async, bool useStrings)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -462,7 +497,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true, false)]
     public async Task Create_vector_index_with_options_and_name_on_nested_entity(bool async, bool useStrings)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -502,7 +537,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true, true)]
     public async Task Create_vector_index_with_options_and_name_using_nested_builder(bool async, bool useStrings)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -547,7 +582,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true, false)]
     public async Task Create_vector_index_with_options_and_name_on_nested_entity_using_nested_builder(bool async, bool useStrings)
     {
-        var collection = database.CreateCollection<SimpleEntity>(values: async);
+        var collection = database.CreateCollection<SimpleEntity>(values: [async, useStrings]);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -634,7 +669,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true)]
     public async Task Query_throws_for_vector_index_specified_but_missing(bool async)
     {
-        var collection = database.CreateCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection, b => b.Entity<SimpleEntity>().Ignore(e => e.Nested));
 
         db.Database.EnsureCreated();
@@ -657,7 +692,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true)]
     public async Task Query_throws_for_vector_index_specified_but_different(bool async)
     {
-        var collection = database.CreateCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -689,7 +724,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true)]
     public async Task Query_throws_for_no_vector_index_when_not_specified(bool async)
     {
-        var collection = database.CreateCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection, b => b.Entity<SimpleEntity>().Ignore(e => e.Nested));
 
         db.Database.EnsureCreated();
@@ -709,7 +744,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true)]
     public async Task Query_throws_for_multiple_vector_indexes_when_not_specified(bool async)
     {
-        var collection = database.CreateCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection,
             b =>
             {
@@ -784,7 +819,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     [InlineData(true)]
     public async Task Query_throws_for_unmapped_member(bool async)
     {
-        var collection = database.CreateCollection<SimpleEntity>();
+        var collection = database.CreateCollection<SimpleEntity>(values: async);
         using var db = SingleEntityDbContext.Create(collection, b => b.Entity<SimpleEntity>().Ignore(e => e.Nested));
 
         db.Database.EnsureCreated();
