@@ -1,0 +1,168 @@
+﻿<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Namespace MongoDB.EntityFrameworkCore.Storage | MongoDB EF Core Provider API Reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Namespace MongoDB.EntityFrameworkCore.Storage | MongoDB EF Core Provider API Reference ">
+      
+      
+      <link rel="icon" href="../favicon.ico">
+      <link rel="stylesheet" href="../public/docfx.min.css">
+      <link rel="stylesheet" href="../public/main.css">
+      <meta name="docfx:navrel" content="">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      
+      
+      
+      
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./../public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="../index.html">
+            <img id="logo" class="svg" src="../images/mongodb-logo.svg" alt="">
+            
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+      <div class="toc-offcanvas">
+        <div class="offcanvas-md offcanvas-start" tabindex="-1" id="tocOffcanvas" aria-labelledby="tocOffcanvasLabel">
+          <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="tocOffcanvasLabel">Table of Contents</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#tocOffcanvas" aria-label="Close"></button>
+          </div>
+          <div class="offcanvas-body">
+            <nav class="toc" id="toc"></nav>
+          </div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="actionbar">
+          <button class="btn btn-lg border-0 d-md-none" style="margin-top: -.65em; margin-left: -.8em" type="button" data-bs-toggle="offcanvas" data-bs-target="#tocOffcanvas" aria-controls="tocOffcanvas" aria-expanded="false" aria-label="Show table of contents">
+            <i class="bi bi-list"></i>
+          </button>
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="MongoDB.EntityFrameworkCore.Storage">
+
+  <h1 id="MongoDB_EntityFrameworkCore_Storage" data-uid="MongoDB.EntityFrameworkCore.Storage" class="text-break">Namespace MongoDB.EntityFrameworkCore.Storage</h1>
+  <div class="markdown level0 summary"></div>
+  <div class="markdown level0 conceptual"></div>
+  <div class="markdown level0 remarks"></div>
+
+    <h3 id="classes">
+Classes
+</h3>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoClientWrapper.html">MongoClientWrapper</a></dt>
+      <dd><p>Provides the implementation of the <a class="xref" href="MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.html">IMongoClientWrapper</a> between the MongoDB Entity Framework Core
+provider and the underlying <span class="xref">MongoDB.Driver.IMongoClient</span>.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseCreator.html">MongoDatabaseCreator</a></dt>
+      <dd><p>Creates and deletes databases on MongoDB servers.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoDatabaseWrapper.html">MongoDatabaseWrapper</a></dt>
+      <dd><p>Provides EF database-level operations using the underlying <a class="xref" href="MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.html">IMongoClientWrapper</a>.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransaction.html">MongoTransaction</a></dt>
+      <dd><p>Provides an EF-friendly wrapper around a MongoDB transaction.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTransactionManager.html">MongoTransactionManager</a></dt>
+      <dd><p>Placeholder for a MongoDB transaction manager that for now just flags that transactions
+are not supported in case somebody attempts to use them.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTypeMapping.html">MongoTypeMapping</a></dt>
+      <dd><p>Represents the mapping between a .NET type and a MongoDB database type.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTypeMappingSource.html">MongoTypeMappingSource</a></dt>
+      <dd><p>Create a <a class="xref" href="MongoDB.EntityFrameworkCore.Storage.MongoTypeMapping.html">MongoTypeMapping</a> (or <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.coretypemapping">CoreTypeMapping</a>) for
+each property of an entity that should be mapped to the underlying MongoDB database.</p>
+</dd>
+    </dl>
+    <h3 id="interfaces">
+Interfaces
+</h3>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper.html">IMongoClientWrapper</a></dt>
+      <dd><p>For internal use only. Interface may change between minor versions.
+Provides the interface between the MongoDB Entity Framework provider
+and the underlying <span class="xref">MongoDB.Driver.IMongoClient</span> for a given database.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Storage.IMongoDatabaseCreator.html">IMongoDatabaseCreator</a></dt>
+      <dd><p>Creates and deletes MongoDB databases.</p>
+</dd>
+    </dl>
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          &copy; 2023 MongoDB, Inc.
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
