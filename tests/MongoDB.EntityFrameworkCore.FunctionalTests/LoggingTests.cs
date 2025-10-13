@@ -453,7 +453,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var logLine = logs.Single(l => l.Contains("returned zero results"));
         Assert.Contains(
             """
-            The vector query 'moons.aggregate([{ "$vectorSearch" : { "queryVector" : [0.20000000298023224, 0.30000001192092896], "path" : "embedding", "limit" : 10, "numCandidates" : 100, "index" : "embeddingVectorIndex" } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }])' returned zero results.
+            The vector query against 'Moon.embedding' using index 'embeddingVectorIndex' returned zero results.
             """,
             logLine);
     }
@@ -477,7 +477,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var logLine = logs.Single(l => l.Contains("returned zero results"));
         Assert.Contains(
             """
-            The vector query 'moons.aggregate([<Redacted MQL: Use 'DbContextOptionsBuilder.EnableSensitiveDataLogging' to reveal>])' returned zero results.
+            The vector query against 'Moon.embedding' using index 'embeddingVectorIndex' returned zero results.
             """,
             logLine);
     }

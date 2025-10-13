@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Collections.ObjectModel;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Driver;
@@ -28,4 +29,14 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// <param name="Cardinality">Whether many or a single result are expected (or enforced) as a <see cref="ResultCardinality"/>.</param>
 /// <param name="Provider">The MongoDB V3 LINQ <see cref="IMongoQueryProvider"/> that will execute this query.</param>
 /// <param name="CollectionNamespace">The <see cref="CollectionNamespace"/> this query will run against.</param>
-public record MongoExecutableQuery(Expression Query, ResultCardinality Cardinality, IMongoQueryProvider Provider, CollectionNamespace CollectionNamespace);
+/// <param name="AdditionalState">Any additional state gathered by query translation for use later.</param>
+public record MongoExecutableQuery(
+    Expression Query,
+    ResultCardinality Cardinality,
+    IMongoQueryProvider Provider,
+    CollectionNamespace CollectionNamespace,
+    ReadOnlyDictionary<string, object> AdditionalState)
+{
+    public const string VectorQueryProperty = nameof(VectorQueryProperty);
+    public const string VectorQueryIndexName = nameof(VectorQueryIndexName);
+}

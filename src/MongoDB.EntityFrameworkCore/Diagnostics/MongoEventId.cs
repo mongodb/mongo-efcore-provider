@@ -210,7 +210,7 @@ public static class MongoEventId
     /// </summary>
     /// <remarks>
     ///     <para>This event is in the <see cref="DbLoggerCategory.Query" /> category.</para>
-    ///     <para>This event uses the <see cref="MongoQueryEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    ///     <para>This event uses the <see cref="PropertyAndIndexNameEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
     /// </remarks>
     public static readonly EventId VectorSearchReturnedZeroResults = MakeQueryId(Id.VectorSearchReturnedZeroResults);
 }

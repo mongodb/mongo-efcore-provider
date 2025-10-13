@@ -669,14 +669,14 @@ public abstract class VectorSearchMongoTestBase
 
         // This throws by default because warnings as errors is on in the spec tests.
         Assert.Contains(
-            $"An error was generated for warning 'Microsoft.EntityFrameworkCore.Query.VectorSearchReturnedZeroResults': The vector " +
-            $"query '{expectedQuery}' " +
-            "returned zero results. This could be because either there is no vector index defined for query property, or because " +
-            "vector data (embeddings) have recently been inserted. Consider disabling index creation in " +
-            "'DbContext.Database.EnsureCreated' and performing initial ingestion before calling " +
-            "'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'. " +
-            "This exception can be suppressed or logged by passing event ID 'MongoEventId.VectorSearchReturnedZeroResults' " +
-            "to the 'ConfigureWarnings' method in 'DbContext.OnConfiguring' or 'AddDbContext'.",
+            "An error was generated for warning 'Microsoft.EntityFrameworkCore.Query.VectorSearchReturnedZeroResults': The " +
+            "vector query against 'Book.FloatsWithNoData' using index 'FloatsWithNoDataIndex' returned zero results. This could " +
+            "be because either there is no vector index defined in the database for query property, or because vector data " +
+            "(embeddings) have recently been inserted and the index is still building. Consider disabling index creation in " +
+            "'DbContext.Database.EnsureCreated' and performing initial ingestion of embeddings, before calling " +
+            "'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'. This exception can " +
+            "be suppressed or logged by passing event ID 'MongoEventId.VectorSearchReturnedZeroResults' to the " +
+            "'ConfigureWarnings' method in 'DbContext.OnConfiguring' or 'AddDbContext'.",
             (await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             {
                 _ = async ? await queryable.ToListAsync() : queryable.ToList();

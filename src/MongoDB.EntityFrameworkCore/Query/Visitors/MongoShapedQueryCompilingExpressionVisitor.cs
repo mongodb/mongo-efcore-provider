@@ -135,8 +135,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var translatedQuery = queryTranslator.Visit(queryExpression.CapturedExpression)!;
 
         var executableQuery =
-            new MongoExecutableQuery(translatedQuery, resultCardinality, (IMongoQueryProvider)source.Provider,
-                collection.CollectionNamespace);
+            new MongoExecutableQuery(
+                translatedQuery,
+                resultCardinality,
+                (IMongoQueryProvider)source.Provider,
+                collection.CollectionNamespace,
+                new(queryTranslator.AdditionalState));
 
         return new QueryingEnumerable<TResult, TResult>(
             mongoQueryContext,
@@ -166,8 +170,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression, bsonSerializerFactory);
         var translatedQuery = queryTranslator.Translate(queryExpression.CapturedExpression, resultCardinality);
 
-        var executableQuery = new MongoExecutableQuery(translatedQuery, resultCardinality, (IMongoQueryProvider)source.Provider,
-            collection.CollectionNamespace);
+        var executableQuery = new MongoExecutableQuery(
+            translatedQuery,
+            resultCardinality,
+            (IMongoQueryProvider)source.Provider,
+            collection.CollectionNamespace,
+            new(queryTranslator.AdditionalState));
 
         Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults = null;
         if (queryExpression.CapturedExpression is MethodCallExpression methodCallExpression)
@@ -179,7 +187,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
             if (methodCallExpression.IsVectorSearch())
             {
-                onZeroResults = (qc, eq) => qc.QueryLogger.VectorSearchReturnedZeroResults(eq);
+                onZeroResults = (qc, eq) => qc.QueryLogger.VectorSearchReturnedZeroResults(
+                    (IProperty)eq.AdditionalState[MongoExecutableQuery.VectorQueryProperty],
+                    (string)eq.AdditionalState[MongoExecutableQuery.VectorQueryIndexName]);
             }
         }
 
