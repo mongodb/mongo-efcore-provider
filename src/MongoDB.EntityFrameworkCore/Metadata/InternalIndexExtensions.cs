@@ -103,50 +103,9 @@ internal static class InternalIndexExtensions
         }
 
         var fieldDocuments = new List<BsonDocument> { vectorField };
-
         if (vectorIndexOptions.FilterPaths != null)
         {
-            foreach (var filterPath in vectorIndexOptions.FilterPaths)
-            {
-                var currentEntityType = entityType;
-                var pathRemaining = filterPath;
-                var builtPath = path.ToList();
-                while (true)
-                {
-                    var dotIndex = pathRemaining.IndexOf('.');
-                    if (dotIndex < 0)
-                    {
-                        break;
-                    }
-
-                    // This is a navigation to an owned type
-                    var navigationName = pathRemaining.Substring(0, dotIndex);
-                    var navigation = currentEntityType?.FindNavigation(navigationName);
-                    if (navigation != null)
-                    {
-                        currentEntityType = navigation.TargetEntityType;
-                        builtPath.Add(currentEntityType.GetContainingElementName()!);
-                    }
-                    else
-                    {
-                        builtPath.Add(navigationName); // Could be non-mapped but specified by string
-                        currentEntityType = null;
-                    }
-
-                    pathRemaining = pathRemaining.Substring(dotIndex + 1);
-                }
-
-                var property = currentEntityType?.GetProperty(pathRemaining);
-                builtPath.Add(property != null ? property.GetElementName() : pathRemaining);
-
-                var fieldDocument = new BsonDocument
-                {
-                    { "type", BsonString.Create("filter") },
-                    { "path", BsonString.Create(string.Join('.', builtPath)) }
-                };
-
-                fieldDocuments.Add(fieldDocument);
-            }
+            BuildFilterPaths(entityType, path, vectorIndexOptions.FilterPaths, fieldDocuments);
         }
 
         var model = new CreateSearchIndexModel(
@@ -155,6 +114,63 @@ internal static class InternalIndexExtensions
             new BsonDocument { { "fields", BsonArray.Create(fieldDocuments) } });
 
         return model;
+    }
+
+    /// <summary>
+    /// Filter paths each point to a single property on a document, but that document may be nested. For tested documents,
+    /// the navigations must be followed from the root entity type down to the nested entity type to create the full path.
+    /// However, the entity type on which the query is run may also be nested, in which case the first path of the path
+    /// comes from here.
+    /// </summary>
+    private static void BuildFilterPaths(
+        IEntityType entityType,
+        IReadOnlyList<string> basePath,
+        IReadOnlyList<string> specifiedPaths,
+        List<BsonDocument> fieldDocuments)
+    {
+        foreach (var filterPath in specifiedPaths)
+        {
+            var currentEntityType = entityType;
+            var pathRemaining = filterPath;
+            var builtPath = basePath.ToList();
+            while (true)
+            {
+                var dotIndex = pathRemaining.IndexOf('.');
+                if (dotIndex < 0)
+                {
+                    // No more dots means this is the last part of the path, which is a property.
+                    break;
+                }
+
+                // If we are not at the last part, then this part of the path is a navigation to an owned type
+                var navigationName = pathRemaining.Substring(0, dotIndex);
+                var navigation = currentEntityType?.FindNavigation(navigationName);
+                if (navigation != null)
+                {
+                    currentEntityType = navigation.TargetEntityType;
+                    builtPath.Add(currentEntityType.GetContainingElementName()!);
+                }
+                else
+                {
+                    // This part handles paths passed as strings for which the fields are not mapped.
+                    builtPath.Add(navigationName); // Could be non-mapped but specified by string
+                    currentEntityType = null;
+                }
+
+                pathRemaining = pathRemaining.Substring(dotIndex + 1);
+            }
+
+            var property = currentEntityType?.GetProperty(pathRemaining);
+            builtPath.Add(property != null ? property.GetElementName() : pathRemaining);
+
+            var fieldDocument = new BsonDocument
+            {
+                { "type", BsonString.Create("filter") },
+                { "path", BsonString.Create(string.Join('.', builtPath)) }
+            };
+
+            fieldDocuments.Add(fieldDocument);
+        }
     }
 
     public static CreateIndexModel<BsonDocument> CreateIndexDocument(this IIndex index)
