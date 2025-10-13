@@ -49,7 +49,12 @@ internal class GuidesDbContext(DbContextOptions options)
         {
             b.ToCollection("moons");
             b.HasKey(nameof(Moon.planetId), nameof(Moon.label));
-            b.HasData(new Moon { planetId = planetId,  name = "Endor", label = "Forest", yearOfDiscovery = 1983 });
+            b.HasData(new Moon { planetId = planetId,  name = "Endor", label = "Forest", yearOfDiscovery = 1983, embedding = [0.2f, 0.3f] });
+
+            if (TestServer.SupportsAtlas)
+            {
+                b.HasIndex(e => e.embedding).IsVectorIndex(VectorSimilarity.DotProduct, dimensions: 2);
+            }
         });
 
         modelBuilder.Entity<Planet>(b =>

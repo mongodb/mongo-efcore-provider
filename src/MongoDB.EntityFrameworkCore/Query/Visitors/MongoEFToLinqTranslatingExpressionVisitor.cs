@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -29,6 +30,7 @@ using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -54,6 +56,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
         _source = source;
         _bsonSerializerFactory = bsonSerializerFactory;
     }
+
+    public Dictionary<string, object> AdditionalState { get; } = new();
 
     public MethodCallExpression Translate(
         Expression? efQueryExpression,
@@ -276,6 +280,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                 memberMetadata = (memberMetadata as INavigation)?.TargetEntityType.FindMember(memberInfo.Name);
             }
 
+            AdditionalState[MongoExecutableQuery.VectorQueryProperty] = memberMetadata!;
+
             var vectorIndexesInModel = memberMetadata?.DeclaringType.ContainingEntityType
                 .GetIndexes().Where(i => i.GetVectorIndexOptions() != null && i.Properties[0] == memberMetadata).ToList();
 
@@ -306,6 +312,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                 }
                 // Index name in query already matches, so just continue.
             }
+
+            AdditionalState[MongoExecutableQuery.VectorQueryIndexName] = concreteOptions.IndexName!;
 
             var searchOptionsType = typeof(VectorSearchOptions<>).MakeGenericType(entityType!.ClrType);
             var searchOptions = Activator.CreateInstance(searchOptionsType)!;

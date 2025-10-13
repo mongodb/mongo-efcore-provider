@@ -315,15 +315,8 @@ internal static class MongoLoggerExtensions
         "this warning if you have created your MongoDB indexes outside of EF Core.";
 
 
-    internal static void VectorSearchReturnedZeroResults(
-        this IDiagnosticsLogger<DbLoggerCategory.Query> diagnostics,
-        MongoExecutableQuery mongoExecutableQuery)
-        => VectorSearchReturnedZeroResults(diagnostics, mongoExecutableQuery.CollectionNamespace, mongoExecutableQuery.Provider.LoggedStages);
-
     public static void VectorSearchReturnedZeroResults(
-        this IDiagnosticsLogger<DbLoggerCategory.Query> diagnostics,
-        CollectionNamespace collectionNamespace,
-        BsonDocument[]? loggedStages)
+        this IDiagnosticsLogger<DbLoggerCategory.Query> diagnostics, IProperty property, string indexName)
     {
         var definition = LogVectorSearchReturnedZeroResults(diagnostics);
 
@@ -331,28 +324,27 @@ internal static class MongoLoggerExtensions
         {
             definition.Log(
                 diagnostics,
-                collectionNamespace.CollectionName,
-                diagnostics.ShouldLogSensitiveData()
-                    ? LoggedStagesToMql(loggedStages)
-                    : "<Redacted MQL: Use 'DbContextOptionsBuilder.EnableSensitiveDataLogging' to reveal>");
+                property.DeclaringType.DisplayName(),
+                property.Name,
+                indexName);
         }
 
         if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
         {
-            var eventData = new MongoQueryEventData(
+            var eventData = new PropertyAndIndexNameEventData(
                 definition,
-                (d, p) => ((EventDefinition<string, string>)d).GenerateMessage(
-                    ((MongoQueryEventData)p).CollectionNamespace.CollectionName,
-                    ((MongoQueryEventData)p).QueryMql),
-                collectionNamespace,
-                LoggedStagesToMql(loggedStages),
-                diagnostics.ShouldLogSensitiveData());
+                (d, p) => ((EventDefinition<string, string, string>)d).GenerateMessage(
+                    ((PropertyAndIndexNameEventData)p).Property.DeclaringType.DisplayName(),
+                    ((PropertyAndIndexNameEventData)p).Property.Name,
+                    ((PropertyAndIndexNameEventData)p).IndexName),
+                property,
+                indexName);
 
             diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
         }
     }
 
-    private static EventDefinition<string, string> LogVectorSearchReturnedZeroResults(IDiagnosticsLogger logger)
+    private static EventDefinition<string, string, string> LogVectorSearchReturnedZeroResults(IDiagnosticsLogger logger)
     {
         var definition = ((MongoLoggingDefinitions)logger.Definitions).LogVectorSearchReturnedZeroResults;
         if (definition == null)
@@ -360,24 +352,25 @@ internal static class MongoLoggerExtensions
             definition = NonCapturingLazyInitializer.EnsureInitialized(
                 ref ((MongoLoggingDefinitions)logger.Definitions).LogVectorSearchReturnedZeroResults,
                 logger,
-                static logger => new EventDefinition<string, string>(
+                static logger => new EventDefinition<string, string, string>(
                     logger.Options,
                     MongoEventId.VectorSearchReturnedZeroResults,
                     LogLevel.Warning,
                     "MongoEventId.VectorSearchReturnedZeroResults",
-                    level => LoggerMessage.Define<string, string>(
+                    level => LoggerMessage.Define<string, string, string>(
                         level,
                         MongoEventId.VectorSearchReturnedZeroResults,
                         VectorSearchReturnedZeroResultsString)));
         }
 
-        return (EventDefinition<string, string>)definition;
+        return (EventDefinition<string, string, string>)definition;
     }
 
     private const string VectorSearchReturnedZeroResultsString =
-        "The vector query '{collectionNamespace}.aggregate([{queryMql}])' returned zero results. " +
-        "This could be because either there is no vector index defined for query property, or " +
-        "because vector data (embeddings) have recently been inserted. " +
-        "Consider disabling index creation in 'DbContext.Database.EnsureCreated' and performing initial ingestion before calling " +
-        "'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'.";
+        "The vector query against '{entityType}.{property}' using index '{indexName}' returned zero results. " +
+        "This could be because either there is no vector index defined in the database for query property, or " +
+        "because vector data (embeddings) have recently been inserted and the index is still building. " +
+        "Consider disabling index creation in 'DbContext.Database.EnsureCreated' and performing initial ingestion " +
+        "of embeddings, before calling 'DbContext.Database.CreateMissingVectorIndexes' and " +
+        "'DbContext.Database.WaitForVectorIndexes'.";
 }
