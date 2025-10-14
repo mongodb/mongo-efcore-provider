@@ -14,11 +14,16 @@
  */
 
 using System;
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
+
+/// <summary>
+///     A <see cref="DiagnosticSource" /> event payload class for events that have a property and an index name.
+/// </summary>
 public class PropertyAndIndexNameEventData : PropertyEventData
 {
     /// <summary>

@@ -203,10 +203,10 @@ public static class MongoEventId
     public static readonly EventId VectorSearchNeedsIndex = MakeQueryId(Id.VectorSearchNeedsIndex);
 
     /// <summary>
-    /// The vector query returned zero results. This could be because either there is no vector index defined for query property, or
-    /// because vector data (embeddings) have recently been inserted. Consider disabling index creation in
-    /// 'DbContext.Database.EnsureCreated' and performing initial ingestion before calling
-    /// 'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'.
+    /// The vector query returned zero results. This could be because either there is no vector index defined in the database for
+    /// the query property, or because vector data (embeddings) have recently been inserted and the index is still building.
+    /// Consider disabling index creation in 'DbContext.Database.EnsureCreated' and performing initial ingestion of embeddings,
+    /// before calling 'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'.
     /// </summary>
     /// <remarks>
     ///     <para>This event is in the <see cref="DbLoggerCategory.Query" /> category.</para>
