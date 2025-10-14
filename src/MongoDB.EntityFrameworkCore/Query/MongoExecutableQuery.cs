@@ -37,6 +37,6 @@ public record MongoExecutableQuery(
     CollectionNamespace CollectionNamespace,
     ReadOnlyDictionary<string, object> AdditionalState)
 {
-    public const string VectorQueryProperty = nameof(VectorQueryProperty);
-    public const string VectorQueryIndexName = nameof(VectorQueryIndexName);
+    internal const string VectorQueryProperty = nameof(VectorQueryProperty);
+    internal const string VectorQueryIndexName = nameof(VectorQueryIndexName);
 }
