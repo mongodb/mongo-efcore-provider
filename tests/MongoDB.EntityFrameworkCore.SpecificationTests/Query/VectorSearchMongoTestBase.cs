@@ -778,6 +778,9 @@ public abstract class VectorSearchMongoTestBase
                         b.AllowsFiltersOn(e => e.Pages);
                         b.AllowsFiltersOn(e => e.IsPublished);
                     });
+
+                    b.Property(e => e.Comments).HasElementName("PrefaceComments");
+                    b.Property(e => e.IsPublished).HasElementName("Published");
                 });
 
                 b.HasIndex(e => e.Floats, "FloatsIndex").IsVectorIndex(VectorSimilarity.Cosine, 2)
@@ -791,6 +794,9 @@ public abstract class VectorSearchMongoTestBase
                     b.AllowsFiltersOn(e => e.Pages);
                     b.AllowsFiltersOn(e => e.IsPublished);
                 });
+
+                b.Property(x => x.Comments).HasElementName("comments");
+                b.Property(x => x.IsPublished).HasElementName("is_published");
 
                 b.HasIndex(e => e.MemoryFloats, "MemoryFloatsIndex").IsVectorIndex(VectorSimilarity.Cosine, 2);
                 b.HasIndex(e => e.MemoryDoubles, "MemoryDoublesIndex").IsVectorIndex(VectorSimilarity.Euclidean, 2);
