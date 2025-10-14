@@ -117,7 +117,7 @@ internal static class InternalIndexExtensions
     }
 
     /// <summary>
-    /// Filter paths each point to a single property on a document, but that document may be nested. For tested documents,
+    /// Filter paths each point to a single property on a document, but that document may be nested. For nested documents,
     /// the navigations must be followed from the root entity type down to the nested entity type to create the full path.
     /// However, the entity type on which the query is run may also be nested, in which case the first path of the path
     /// comes from here.
