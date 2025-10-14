@@ -368,7 +368,7 @@ internal static class MongoLoggerExtensions
 
     private const string VectorSearchReturnedZeroResultsString =
         "The vector query against '{entityType}.{property}' using index '{indexName}' returned zero results. " +
-        "This could be because either there is no vector index defined in the database for query property, or " +
+        "This could be because either there is no vector index defined in the database for the query property, or " +
         "because vector data (embeddings) have recently been inserted and the index is still building. " +
         "Consider disabling index creation in 'DbContext.Database.EnsureCreated' and performing initial ingestion " +
         "of embeddings, before calling 'DbContext.Database.CreateMissingVectorIndexes' and " +

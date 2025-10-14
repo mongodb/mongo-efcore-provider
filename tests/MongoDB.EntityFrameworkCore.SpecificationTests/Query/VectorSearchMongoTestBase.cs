@@ -671,7 +671,7 @@ public abstract class VectorSearchMongoTestBase
         Assert.Contains(
             "An error was generated for warning 'Microsoft.EntityFrameworkCore.Query.VectorSearchReturnedZeroResults': The " +
             "vector query against 'Book.FloatsWithNoData' using index 'FloatsWithNoDataIndex' returned zero results. This could " +
-            "be because either there is no vector index defined in the database for query property, or because vector data " +
+            "be because either there is no vector index defined in the database for the query property, or because vector data " +
             "(embeddings) have recently been inserted and the index is still building. Consider disabling index creation in " +
             "'DbContext.Database.EnsureCreated' and performing initial ingestion of embeddings, before calling " +
             "'DbContext.Database.CreateMissingVectorIndexes' and 'DbContext.Database.WaitForVectorIndexes'. This exception can " +
