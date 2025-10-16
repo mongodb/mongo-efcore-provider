@@ -73,6 +73,7 @@ Later on, simply inject `PlanetDbContext` where it's needed and continue as you 
 Entity Framework Core and MongoDB have a wide variety of features. This provider supports a subset of the functionality available in both, specifically:
 
 - Querying with `Where`, `Find`, `First`, `Single`, `OrderBy`, `ThenBy`, `Skip`, `Take` etc.
+- Vector search with the `VectorSearch` extension method on DbSet and fluent vector index configuration
 - Top-level aggregate `Any`, `Count`, `LongCount`, `Sum`, `Min`, `Max`, `Average`, `All`
 - Mapping properties to BSON elements using `[Column]` or `[BsonElement]` attributes or `HasElementName("name")` method
 - Mapping entities to collections via `[Table("name")]`,  `ToCollection("name")` or by convention from the DbSet property name
@@ -103,7 +104,6 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - Includes/joins
 - Geospatial
 - Atlas search
-- Vector search
 - ExecuteUpdate & ExecuteDelete bulk operations (EF 9 only)
 
 ### Not supported, out-of-scope features
