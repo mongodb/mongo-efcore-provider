@@ -20,12 +20,14 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 
@@ -41,7 +43,8 @@ public class MongoDatabaseCreator(
     IMongoClientWrapper clientWrapper,
     IDesignTimeModel designTimeModel,
     IUpdateAdapterFactory updateAdapterFactory,
-    IDatabase database)
+    IDatabase database,
+    IDiagnosticsLogger<DbLoggerCategory.Database> logger)
     : IMongoDatabaseCreator
 {
     private bool _useDatabaseNameFilter = true;
@@ -376,8 +379,11 @@ public class MongoDatabaseCreator(
                             $"Failed to build the vector index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'.");
                     }
 
-                    if (status != "READY")
+                    var remainingBeforeTimeout = failAfter - DateTime.UtcNow;
+                    if (status != "READY" && remainingBeforeTimeout > TimeSpan.Zero)
                     {
+                        logger.WaitingForVectorIndex(remainingBeforeTimeout);
+
                         isReady = false;
                         Thread.Sleep(delay *= 2);
                         break;
@@ -395,11 +401,10 @@ public class MongoDatabaseCreator(
 
     private static DateTimeOffset CalculateTimeoutDateTime(TimeSpan? timeout)
     {
-        timeout ??= TimeSpan.FromSeconds(15);
-        var failAfter = timeout.Value == TimeSpan.Zero
+        timeout ??= TimeSpan.FromSeconds(60);
+        return timeout.Value == TimeSpan.Zero
             ? DateTime.MaxValue
-            : DateTimeOffset.UtcNow.Add(timeout.Value);
-        return failAfter;
+            : DateTime.UtcNow.Add(timeout.Value);
     }
 
     /// <inheritdoc />
@@ -508,8 +513,11 @@ public class MongoDatabaseCreator(
                             $"Failed to build the vector index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'.");
                     }
 
-                    if (status != "READY")
+                    var remainingBeforeTimeout = failAfter - DateTime.UtcNow;
+                    if (status != "READY" && remainingBeforeTimeout > TimeSpan.Zero)
                     {
+                        logger.WaitingForVectorIndex(remainingBeforeTimeout);
+
                         isReady = false;
                         await Task.Delay(delay *= 2, cancellationToken).ConfigureAwait(false);
                         break;

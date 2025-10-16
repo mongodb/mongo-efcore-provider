@@ -45,4 +45,6 @@ internal class MongoLoggingDefinitions : LoggingDefinitions
 
     public EventDefinitionBase? LogVectorSearchNeedsIndex;
     public EventDefinitionBase? LogVectorSearchReturnedZeroResults;
+
+    public EventDefinitionBase? LogWaitingForVectorIndex;
 }

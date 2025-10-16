@@ -114,8 +114,8 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
 
             Assert.Equal(0, GetVectorIndexCount(collection));
 
-            await db.Database.CreateMissingVectorIndexesAsync();
-            await db.Database.WaitForVectorIndexesAsync();
+            db.Database.CreateMissingVectorIndexes();
+            db.Database.WaitForVectorIndexes();
         }
 
         ValidateIndex("FloatsVectorIndex", collection, "Floats", 2, "cosine", expectedFilterPaths: null);
@@ -189,8 +189,8 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
 
             Assert.Equal(0, GetVectorIndexCount(collection));
 
-            await db.Database.CreateMissingVectorIndexesAsync();
-            await db.Database.WaitForVectorIndexesAsync();
+            db.Database.CreateMissingVectorIndexes();
+            db.Database.WaitForVectorIndexes();
         }
 
         ValidateIndex("DoublesVectorIndex", collection, "Nested.Nested.Doubles", 2, "cosine", expectedFilterPaths: null);

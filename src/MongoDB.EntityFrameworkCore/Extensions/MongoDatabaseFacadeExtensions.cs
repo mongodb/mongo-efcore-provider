@@ -101,7 +101,7 @@ public static class MongoDatabaseFacadeExtensions
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
-    /// The default is 15 seconds. Zero seconds means no timeout.</param>
+    /// The default is 60 seconds. Zero seconds means no timeout.</param>
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
     public static void WaitForVectorIndexes(this DatabaseFacade databaseFacade, TimeSpan? timeout = null)
         => GetDatabaseCreator(databaseFacade).WaitForVectorIndexes(timeout);
@@ -111,7 +111,7 @@ public static class MongoDatabaseFacadeExtensions
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
-    /// The default is 15 seconds. Zero seconds means no timeout.</param>
+    /// The default is 60 seconds. Zero seconds means no timeout.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
