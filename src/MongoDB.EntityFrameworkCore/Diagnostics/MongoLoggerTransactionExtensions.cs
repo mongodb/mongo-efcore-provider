@@ -43,7 +43,7 @@ internal static class MongoLoggerTransactionExtensions
     public static void TransactionStarting(
         this IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> diagnostics,
         IClientSession session,
-        DbContext context,
+        DbContext? context,
         TransactionOptions transactionOptions,
         Guid transactionId,
         bool async,

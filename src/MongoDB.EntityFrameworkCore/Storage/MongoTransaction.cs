@@ -34,7 +34,7 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// <param name="transactionId">The unique identifier from EF for this transaction.</param>
 /// <param name="transactionLogger">A <see cref="IDiagnosticsLogger"/> for logging the <see cref="DbLoggerCategory.Database.Transaction"/> messages.</param>
 public sealed class MongoTransaction(
-    IClientSession session,
+    IClientSessionHandle session,
     DbContext context,
     Guid transactionId,
     IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
@@ -54,7 +54,7 @@ public sealed class MongoTransaction(
     private TransactionState _transactionState = TransactionState.Active;
 
     internal static MongoTransaction Start(
-        IClientSession session,
+        IClientSessionHandle session,
         DbContext context,
         bool async,
         TransactionOptions transactionOptions,
@@ -97,6 +97,12 @@ public sealed class MongoTransaction(
 
     private const string DisableTransactions =
         "If you are sure you do not need save consistency or optimistic concurrency you can disable transactions by setting 'Database.AutoTransactionBehavior = AutoTransactionBehavior.Never' on your DbContext.";
+
+    /// <summary>
+    /// The underlying <see cref="IClientSession"/> this transaction is using which is required
+    /// to issue commands against.
+    /// </summary>
+    internal IClientSessionHandle Session => session;
 
     /// <inheritdoc />
     public Guid TransactionId { get; } = transactionId;
