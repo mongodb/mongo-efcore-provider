@@ -515,7 +515,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
     }
 
-    private static void BuildIndexes(
+    private void BuildIndexes(
         IModel model,
         IEntityType entityType,
         string collectionName,
@@ -560,7 +560,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
     }
 
-    private static void BuildVectorIndexes(
+    private void BuildVectorIndexes(
         IModel model,
         IEntityType entityType,
         string collectionName,
