@@ -27,12 +27,12 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// <summary>
 /// Explicit transaction manager for MongoDB EF Core provider.
 /// </summary>
-public class MongoTransactionManager : IDbContextTransactionManager
+public class MongoTransactionManager : IMongoTransactionManager
 {
     private readonly IMongoClientWrapper _client;
     private readonly DbContext _context;
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> _logger;
-    private readonly TransactionOptions _transactionOptions = new();
+    private readonly TransactionOptions _defaultTransactionOptions = new();
 
     /// <summary>
     /// Create a <see cref="MongoTransactionManager"/>.
@@ -70,7 +70,15 @@ public class MongoTransactionManager : IDbContextTransactionManager
     {
         EnsureNoTransactions();
         var session = _client.StartSession();
-        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, _transactionOptions, _logger);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: false, _defaultTransactionOptions, _logger);
+    }
+
+    /// <inheritdoc />
+    public IDbContextTransaction BeginTransaction(TransactionOptions transactionOptions)
+    {
+        EnsureNoTransactions();
+        var session = _client.StartSession();
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: false, transactionOptions, _logger);
     }
 
     /// <inheritdoc />
@@ -78,7 +86,14 @@ public class MongoTransactionManager : IDbContextTransactionManager
     {
         EnsureNoTransactions();
         var session = await _client.StartSessionAsync(cancellationToken).ConfigureAwait(false);
-        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, _transactionOptions, _logger);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, _defaultTransactionOptions, _logger);
+    }
+
+    public async Task<IDbContextTransaction> BeginTransactionAsync(TransactionOptions transactionOptions, CancellationToken cancellationToken = new())
+    {
+        EnsureNoTransactions();
+        var session = await _client.StartSessionAsync(cancellationToken).ConfigureAwait(false);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, transactionOptions, _logger);
     }
 
     /// <inheritdoc />

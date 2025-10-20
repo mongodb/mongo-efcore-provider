@@ -15,6 +15,10 @@
 
 using System.Transactions;
 using Microsoft.EntityFrameworkCore;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using Microsoft.Extensions.Logging;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
@@ -22,9 +26,17 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 public class TransactionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
+    private static string GetLogMessageByEventId(SpyLoggerProvider spyLogger, EventId? eventId = null)
+    {
+        eventId ??= MongoEventId.TransactionStarted;
+        var key = eventId.Value.Name.Substring(0, eventId.Value.Name.LastIndexOf('.'));
+        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == key).Value;
+        return Assert.Single(logger.Records, log => log.EventId == eventId && log.Exception == null).message;
+    }
+
     class SimpleEntity
     {
-        public Guid _id { get; set; }
+        public ObjectId _id { get; set; }
         public string name { get; set; }
     }
 
@@ -74,6 +86,80 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             await db.SaveChangesAsync();
             await db.Database.CommitTransactionAsync();
         }
+
+        await using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var entity = await db.Entities.FirstOrDefaultAsync();
+            Assert.Equal("updated", entity.name);
+        }
+    }
+
+    [Fact]
+    public void Explicit_transactions_with_TransactionOptions_can_be_used_around_SaveChanges()
+    {
+        var collection = database.CreateCollection<SimpleEntity>();
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            db.Entities.Add(new SimpleEntity { name = "test" });
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection, loggerFactory))
+        {
+            var options = new Driver.TransactionOptions(readConcern: new Optional<ReadConcern>(ReadConcern.Majority));
+            using var transaction = db.Database.BeginTransaction(options);
+            var entity = db.Entities.First();
+            entity.name = "updated";
+            db.SaveChanges();
+            transaction.Commit();
+        }
+
+        // Verify logging including read concern
+        var beginTransactionMessage = GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarting);
+        Assert.Contains("Beginning transaction", beginTransactionMessage);
+        Assert.Contains(" ReadConcern '{ \"level\" : \"majority\" }'", beginTransactionMessage);
+        Assert.Contains("Began transaction", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarted));
+        Assert.Contains("Committing transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitting));
+        Assert.Contains("Committed transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitted));
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var entity = db.Entities.First();
+            Assert.Equal("updated", entity.name);
+        }
+    }
+
+    [Fact]
+    public async Task Explicit_transactions_with_TransactionOptions_can_be_used_around_SaveChangesAsync()
+    {
+        var collection = database.CreateCollection<SimpleEntity>();
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+
+        await using (var db = SingleEntityDbContext.Create(collection))
+        {
+            await db.Entities.AddAsync(new SimpleEntity { name = "test" });
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = SingleEntityDbContext.Create(collection, loggerFactory))
+        {
+            var options = new Driver.TransactionOptions(readConcern: new Optional<ReadConcern>(ReadConcern.Majority));
+            var transaction = await db.Database.BeginTransactionAsync(options);
+            var entity = await db.Entities.FirstOrDefaultAsync();
+            entity.name = "updated";
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+
+        // Verify logging including read concern
+        var beginTransactionMessage = GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarting);
+        Assert.Contains("Beginning transaction", beginTransactionMessage);
+        Assert.Contains(" ReadConcern '{ \"level\" : \"majority\" }'", beginTransactionMessage);
+        Assert.Contains("Began transaction", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarted));
+        Assert.Contains("Committing transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitting));
+        Assert.Contains("Committed transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitted));
 
         await using (var db = SingleEntityDbContext.Create(collection))
         {
@@ -144,7 +230,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         var collection = database.CreateCollection<SimpleEntity>();
 
         // Pre-insert a conflicting document to cause duplicate key on the second insert
-        var conflictingId = Guid.NewGuid();
+        var conflictingId = ObjectId.GenerateNewId();
         collection.InsertOne(new SimpleEntity { _id = conflictingId, name = "existing" });
 
         // Ensure implicit transactions are enabled when needed (default is WhenNeeded)
@@ -153,7 +239,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             db.Database.AutoTransactionBehavior = AutoTransactionBehavior.WhenNeeded;
 
             db.Entities.AddRange(
-                new SimpleEntity { _id = Guid.NewGuid(), name = "ok-1" }, // will succeed if executed alone
+                new SimpleEntity { _id = ObjectId.GenerateNewId(), name = "ok-1" }, // will succeed if executed alone
                 new SimpleEntity { _id = conflictingId, name = "dup-key-should-fail" }); // will throw duplicate key
 
             // SaveChanges should throw and roll back the successful first insert due to implicit transaction
@@ -174,7 +260,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleEntity>();
 
-        var conflictingId = Guid.NewGuid();
+        var conflictingId = ObjectId.GenerateNewId();
         await collection.InsertOneAsync(new SimpleEntity { _id = conflictingId, name = "existing" });
 
         await using (var db = SingleEntityDbContext.Create(collection))
@@ -182,7 +268,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             db.Database.AutoTransactionBehavior = AutoTransactionBehavior.WhenNeeded;
 
             await db.Entities.AddRangeAsync(
-                new SimpleEntity { _id = Guid.NewGuid(), name = "ok-1" },
+                new SimpleEntity { _id = ObjectId.GenerateNewId(), name = "ok-1" },
                 new SimpleEntity { _id = conflictingId, name = "dup-key-should-fail" });
 
             await Assert.ThrowsAnyAsync<Exception>(async () => await db.SaveChangesAsync());
@@ -201,7 +287,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleEntity>();
 
-        var conflictingId = Guid.NewGuid();
+        var conflictingId = ObjectId.GenerateNewId();
         collection.InsertOne(new SimpleEntity { _id = conflictingId, name = "existing" });
 
         using (var db = SingleEntityDbContext.Create(collection))
@@ -210,7 +296,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
 
             // Two root operations; without implicit transactions, first insert will commit, second throws
             db.Entities.AddRange(
-                new SimpleEntity { _id = Guid.NewGuid(), name = "will-commit" },
+                new SimpleEntity { _id = ObjectId.GenerateNewId(), name = "will-commit" },
                 new SimpleEntity { _id = conflictingId, name = "dup-key-should-fail" });
 
             Assert.ThrowsAny<Exception>(() => db.SaveChanges());
@@ -340,28 +426,28 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleEntity>();
 
-        // Pre-insert to cause duplicate key on second insert inside the tx
-        var conflictingId = Guid.NewGuid();
+        // Pre-insert to cause duplicate key on second insert inside the transaction
+        var conflictingId = ObjectId.GenerateNewId();
         collection.InsertOne(new SimpleEntity { _id = conflictingId, name = "existing" });
 
         using var db = SingleEntityDbContext.Create(collection);
         using var transaction = db.Database.BeginTransaction();
 
         db.Entities.AddRange(
-            new SimpleEntity { _id = Guid.NewGuid(), name = "tx-ok" },
-            new SimpleEntity { _id = conflictingId, name = "tx-dup" });
+            new SimpleEntity { _id = ObjectId.GenerateNewId(), name = "transaction-ok" },
+            new SimpleEntity { _id = conflictingId, name = "transaction-dup" });
 
         // Act: SaveChanges should throw, but nothing should become visible to other contexts yet.
         Assert.ThrowsAny<Exception>(() => db.SaveChanges());
 
-        // The same DbContext (same tx) can still see its own pending changes if it were to query
+        // The same DbContext (same transaction) can still see its own pending changes if it were to query
         // (MongoDB read-your-own-writes within a transaction). We only assert external visibility here.
         using (var outsider = SingleEntityDbContext.Create(collection))
         {
             var names = outsider.Entities.Select(e => e.name).ToList();
-            Assert.Contains("existing", names);      // original
-            Assert.DoesNotContain("tx-ok", names);   // not visible outside the tx
-            Assert.DoesNotContain("tx-dup", names);
+            Assert.Contains("existing", names); // original
+            Assert.DoesNotContain("transaction-ok", names); // not visible outside the transaction
+            Assert.DoesNotContain("transaction-dup", names);
         }
 
         // Rollback explicitly; the staged writes should be discarded.
@@ -377,15 +463,15 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleEntity>();
 
-        var conflictingId = Guid.NewGuid();
+        var conflictingId = ObjectId.GenerateNewId();
         await collection.InsertOneAsync(new SimpleEntity { _id = conflictingId, name = "existing" });
 
         await using var db = SingleEntityDbContext.Create(collection);
         await using var transaction = await db.Database.BeginTransactionAsync();
 
         await db.Entities.AddRangeAsync(
-            new SimpleEntity { _id = Guid.NewGuid(), name = "tx-ok" },
-            new SimpleEntity { _id = conflictingId, name = "tx-dup" });
+            new SimpleEntity { _id = ObjectId.GenerateNewId(), name = "transaction-ok" },
+            new SimpleEntity { _id = conflictingId, name = "transaction-dup" });
 
         await Assert.ThrowsAnyAsync<Exception>(() => db.SaveChangesAsync());
 
@@ -393,8 +479,8 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         {
             var names = await outsider.Entities.Select(e => e.name).ToListAsync();
             Assert.Contains("existing", names);
-            Assert.DoesNotContain("tx-ok", names);
-            Assert.DoesNotContain("tx-dup", names);
+            Assert.DoesNotContain("transaction-ok", names);
+            Assert.DoesNotContain("transaction-dup", names);
         }
 
         await transaction.RollbackAsync();
@@ -422,7 +508,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         db.SaveChanges();
 
         // Projections visible inside same transaction
-        Assert.Equal(["first", "second"],  db.Entities.Select(e => e.name).OrderBy(n => n));
+        Assert.Equal(["first", "second"], db.Entities.Select(e => e.name).OrderBy(n => n));
         Assert.Equal(2, db.Entities.Count());
 
         // Entity reads visible inside same transaction
@@ -458,7 +544,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         await db.SaveChangesAsync();
 
         // Projections visible inside same transaction
-        Assert.Equal(["first", "second"],  db.Entities.Select(e => e.name).OrderBy(n => n));
+        Assert.Equal(["first", "second"], db.Entities.Select(e => e.name).OrderBy(n => n));
         Assert.Equal(2, await db.Entities.CountAsync());
 
         // Entity reads visible inside same transaction
@@ -488,7 +574,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             using var transaction = db.Database.BeginTransaction();
             db.Entities.Add(new SimpleEntity { name = "pending" });
             db.SaveChanges();
-            // transaction goes out of scope without Commit/Rollback -> Dispose should throw
+            // Transaction goes out of scope without Commit/Rollback -> Dispose should throw
         });
 
         Assert.Contains("Dispose", ex.Message);
@@ -507,7 +593,7 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             await using var transaction = await db.Database.BeginTransactionAsync();
             await db.Entities.AddAsync(new SimpleEntity { name = "pending" });
             await db.SaveChangesAsync();
-            // transaction goes out of scope without Commit/Rollback -> DisposeAsync should throw
+            // Transaction goes out of scope without Commit/Rollback -> DisposeAsync should throw
         });
 
         Assert.Contains("Dispose", ex.Message);

@@ -40,7 +40,7 @@ public sealed class MongoTransaction(
     IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
     : IDbContextTransaction
 {
-    enum TransactionState
+    private enum TransactionState
     {
         Active,
         Committing,
@@ -231,6 +231,13 @@ public sealed class MongoTransaction(
         AssertCorrectState("Dispose", TransactionState.Committed, TransactionState.RolledBack, TransactionState.Failed);
         _transactionState = TransactionState.Disposed;
         return ValueTask.CompletedTask;
+    }
+
+    private void AssertCorrectState(string action, TransactionState validState)
+    {
+        if (_transactionState != validState)
+            throw new
+                InvalidOperationException($"Can not {action} MongoTransaction {TransactionId} because it is {_transactionState}.");
     }
 
     private void AssertCorrectState(string action, params TransactionState[] validStates)
