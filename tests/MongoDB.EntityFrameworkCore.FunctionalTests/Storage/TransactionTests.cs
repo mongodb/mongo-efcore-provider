@@ -17,7 +17,6 @@ using System.Transactions;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using Microsoft.Extensions.Logging;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
@@ -26,14 +25,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 public class TransactionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    private static string GetLogMessageByEventId(SpyLoggerProvider spyLogger, EventId? eventId = null)
-    {
-        eventId ??= MongoEventId.TransactionStarted;
-        var key = eventId.Value.Name.Substring(0, eventId.Value.Name.LastIndexOf('.'));
-        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == key).Value;
-        return Assert.Single(logger.Records, log => log.EventId == eventId && log.Exception == null).message;
-    }
-
     class SimpleEntity
     {
         public ObjectId _id { get; set; }
@@ -117,12 +108,12 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         }
 
         // Verify logging including read concern
-        var beginTransactionMessage = GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarting);
+        var beginTransactionMessage = spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarting);
         Assert.Contains("Beginning transaction", beginTransactionMessage);
         Assert.Contains(" ReadConcern '{ \"level\" : \"majority\" }'", beginTransactionMessage);
-        Assert.Contains("Began transaction", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarted));
-        Assert.Contains("Committing transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitting));
-        Assert.Contains("Committed transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitted));
+        Assert.Contains("Began transaction", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarted));
+        Assert.Contains("Committing transaction.", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionCommitting));
+        Assert.Contains("Committed transaction.", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionCommitted));
 
         using (var db = SingleEntityDbContext.Create(collection))
         {
@@ -154,12 +145,12 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         }
 
         // Verify logging including read concern
-        var beginTransactionMessage = GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarting);
+        var beginTransactionMessage = spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarting);
         Assert.Contains("Beginning transaction", beginTransactionMessage);
         Assert.Contains(" ReadConcern '{ \"level\" : \"majority\" }'", beginTransactionMessage);
-        Assert.Contains("Began transaction", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarted));
-        Assert.Contains("Committing transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitting));
-        Assert.Contains("Committed transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitted));
+        Assert.Contains("Began transaction", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarted));
+        Assert.Contains("Committing transaction.", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionCommitting));
+        Assert.Contains("Committed transaction.", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionCommitted));
 
         await using (var db = SingleEntityDbContext.Create(collection))
         {

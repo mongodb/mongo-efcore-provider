@@ -148,7 +148,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotEmpty(items);
 
-        var message = GetLogMessageByEventId(spyLogger);
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])",
             message);
@@ -164,7 +164,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotNull(item);
 
-        var message = GetLogMessageByEventId(spyLogger);
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains(
             _dbName
@@ -182,7 +182,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotNull(item);
 
-        var message = GetLogMessageByEventId(spyLogger);
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains(
             _dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])",
@@ -199,7 +199,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotEmpty(items);
 
-        var message = GetLogMessageByEventId(spyLogger);
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
         Assert.DoesNotContain("yearOfDiscovery", message);
@@ -215,7 +215,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotNull(item);
 
-        var message = GetLogMessageByEventId(spyLogger);
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
         Assert.DoesNotContain("yearOfDiscovery", message);
@@ -231,7 +231,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.NotNull(item);
 
-        var message = GetLogMessageByEventId(spyLogger);
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
         Assert.DoesNotContain("yearOfDiscovery", message);
@@ -246,7 +246,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.Throws<TimeoutException>(() => db.Moons.SingleOrDefault(m => m.yearOfDiscovery == 1949));
 
-        var message = GetLogMessageByEventId(spyLogger);
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains("na.moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])",
             message);
@@ -261,7 +261,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         Assert.Throws<TimeoutException>(() => db.Moons.Where(m => m.yearOfDiscovery == 1949).ToList());
 
-        var message = GetLogMessageByEventId(spyLogger);
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains("na.moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }])",
             message);
@@ -397,18 +397,18 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var usingTransactions = db.Database.AutoTransactionBehavior != AutoTransactionBehavior.Never;
         if (usingTransactions)
         {
-            Assert.Contains("Beginning transaction", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarting));
-            Assert.Contains("Began transaction", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionStarted));
+            Assert.Contains("Beginning transaction", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarting));
+            Assert.Contains("Began transaction", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarted));
         }
 
-        var executingBulkEvent = GetLogMessageByEventId(spyLogger, MongoEventId.ExecutingBulkWrite);
+        var executingBulkEvent = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutingBulkWrite);
         Assert.Contains("Executing Bulk Write", executingBulkEvent);
         Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'", executingBulkEvent);
         Assert.Contains("Insertions=1, Deletions=2, Modifications=4", executingBulkEvent);
 
         if (!fail)
         {
-            var executedBulkEvent = GetLogMessageByEventId(spyLogger, MongoEventId.ExecutedBulkWrite);
+            var executedBulkEvent = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedBulkWrite);
             Assert.Contains("Executed Bulk Write", executedBulkEvent);
             Assert.Contains($"Collection='{guidesFixture.MongoDatabase.DatabaseNamespace.DatabaseName}.planets'",
                 executedBulkEvent);
@@ -423,13 +423,13 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         {
             if (fail)
             {
-                Assert.Contains("Rolling back transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionRollingBack));
-                Assert.Contains("Rolled back transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionRolledBack));
+                Assert.Contains("Rolling back transaction.", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionRollingBack));
+                Assert.Contains("Rolled back transaction.", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionRolledBack));
             }
             else
             {
-                Assert.Contains("Committing transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitting));
-                Assert.Contains("Committed transaction.", GetLogMessageByEventId(spyLogger, MongoEventId.TransactionCommitted));
+                Assert.Contains("Committing transaction.", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionCommitting));
+                Assert.Contains("Committed transaction.", spyLogger.GetLogMessageByEventId(MongoEventId.TransactionCommitted));
             }
         }
     }
@@ -480,18 +480,6 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             The vector query against 'Moon.embedding' using index 'embeddingVectorIndex' returned zero results.
             """,
             logLine);
-    }
-
-    private static string GetLogMessageByEventId(SpyLoggerProvider spyLogger, EventId? eventId = null)
-    {
-        eventId ??= MongoEventId.ExecutedMqlQuery;
-        var key = eventId.Value.Name.Substring(0, eventId.Value.Name.LastIndexOf('.'));
-        var logger = Assert.Single(spyLogger.Loggers, s => s.Key == key).Value;
-
-        return Assert.Single(logger.Records, log =>
-            log.EventId == eventId &&
-            log.Exception == null
-        ).message;
     }
 
     private static void AssertNoLogMessageForEventId(SpyLoggerProvider spyLogger, EventId eventId)

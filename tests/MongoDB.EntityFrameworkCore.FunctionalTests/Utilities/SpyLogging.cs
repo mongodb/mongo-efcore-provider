@@ -36,6 +36,13 @@ internal class SpyLoggerProvider : ILoggerProvider
 
     public ILogger CreateLogger(string categoryName)
         => Loggers.GetOrAdd(categoryName, _ => new SpyLogger());
+
+    public string GetLogMessageByEventId(EventId eventId)
+    {
+        var key = eventId.Name[..eventId.Name.LastIndexOf('.')];
+        var logger = Assert.Single(Loggers, s => s.Key == key).Value;
+        return Assert.Single(logger.Records, log => log.EventId == eventId && log.Exception == null).Message;
+    }
 }
 
 internal class SpyLogger : ILogger
@@ -44,7 +51,7 @@ internal class SpyLogger : ILogger
 
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter)
-        => Records.Add(new SpyLogRecord(logLevel, eventId, formatter(state, exception) , exception));
+        => Records.Add(new SpyLogRecord(logLevel, eventId, formatter(state, exception), exception));
 
     public bool IsEnabled(LogLevel logLevel)
         => true;
@@ -53,4 +60,4 @@ internal class SpyLogger : ILogger
         => throw new NotImplementedException();
 }
 
-internal record SpyLogRecord(LogLevel LogLevel, EventId EventId, string message, Exception? Exception);
+internal record SpyLogRecord(LogLevel LogLevel, EventId EventId, string Message, Exception? Exception);
