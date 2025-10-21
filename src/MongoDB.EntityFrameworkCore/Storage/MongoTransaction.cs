@@ -37,6 +37,7 @@ public sealed class MongoTransaction(
     IClientSessionHandle session,
     DbContext context,
     Guid transactionId,
+    IMongoTransactionManager? transactionManager,
     IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
     : IDbContextTransaction
 {
@@ -58,6 +59,7 @@ public sealed class MongoTransaction(
         DbContext context,
         bool async,
         TransactionOptions transactionOptions,
+        IMongoTransactionManager? transactionManager,
         IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
     {
         var startTime = DateTimeOffset.UtcNow;
@@ -75,18 +77,18 @@ public sealed class MongoTransaction(
             if (ex.Message == "Standalone servers do not support transactions.")
             {
                 throw new NotSupportedException(string.Join(" ", TransactionByDefault,
-                    "Your current MongoDB server configuration does not support transactions and you should consider switching to a replica set or load balanced configuration.",
-                    DisableTransactions),
+                        "Your current MongoDB server configuration does not support transactions and you should consider switching to a replica set or load balanced configuration.",
+                        DisableTransactions),
                     ex);
             }
 
             throw new NotSupportedException(string.Join(" ", TransactionByDefault,
-                "Your current MongoDB server version does not support transactions and you should consider upgrading to a newer version.",
-                DisableTransactions),
+                    "Your current MongoDB server version does not support transactions and you should consider upgrading to a newer version.",
+                    DisableTransactions),
                 ex);
         }
 
-        var transaction = new MongoTransaction(session, context, transactionId, transactionLogger);
+        var transaction = new MongoTransaction(session, context, transactionId, transactionManager, transactionLogger);
         transactionLogger.TransactionStarted(transaction, async, startTime, stopwatch.Elapsed);
 
         return transaction;
@@ -135,6 +137,7 @@ public sealed class MongoTransaction(
 
         _transactionState = TransactionState.Committed;
         transactionLogger.TransactionCommitted(this, false, startTime, stopwatch.Elapsed);
+        transactionManager?.ResetState();
     }
 
     /// <inheritdoc />
@@ -160,6 +163,10 @@ public sealed class MongoTransaction(
 
         _transactionState = TransactionState.Committed;
         transactionLogger.TransactionCommitted(this, true, startTime, stopwatch.Elapsed);
+        if (transactionManager is not null)
+        {
+            await transactionManager.ResetStateAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc />
@@ -185,6 +192,7 @@ public sealed class MongoTransaction(
 
         _transactionState = TransactionState.RolledBack;
         transactionLogger.TransactionRolledBack(this, false, startTime, stopwatch.Elapsed);
+        transactionManager?.ResetState();
     }
 
     /// <inheritdoc />
@@ -210,6 +218,10 @@ public sealed class MongoTransaction(
 
         _transactionState = TransactionState.RolledBack;
         transactionLogger.TransactionRolledBack(this, true, startTime, stopwatch.Elapsed);
+        if (transactionManager is not null)
+        {
+            await transactionManager.ResetStateAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -221,15 +233,21 @@ public sealed class MongoTransaction(
     /// <inheritdoc />
     public void Dispose()
     {
+        if (_transactionState == TransactionState.Disposed) return;
+
         AssertCorrectState("Dispose", TransactionState.Committed, TransactionState.RolledBack, TransactionState.Failed);
         _transactionState = TransactionState.Disposed;
+        session.Dispose();
     }
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
+        if (_transactionState == TransactionState.Disposed) return ValueTask.CompletedTask;
+
         AssertCorrectState("Dispose", TransactionState.Committed, TransactionState.RolledBack, TransactionState.Failed);
         _transactionState = TransactionState.Disposed;
+        session.Dispose();
         return ValueTask.CompletedTask;
     }
 

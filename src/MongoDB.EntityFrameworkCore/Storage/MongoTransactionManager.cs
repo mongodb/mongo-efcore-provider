@@ -70,7 +70,7 @@ public class MongoTransactionManager : IMongoTransactionManager
     {
         EnsureNoTransactions();
         var session = _client.StartSession();
-        return CurrentTransaction = MongoTransaction.Start(session, _context, async: false, _defaultTransactionOptions, _logger);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: false, _defaultTransactionOptions, this, _logger);
     }
 
     /// <inheritdoc />
@@ -78,7 +78,7 @@ public class MongoTransactionManager : IMongoTransactionManager
     {
         EnsureNoTransactions();
         var session = _client.StartSession();
-        return CurrentTransaction = MongoTransaction.Start(session, _context, async: false, transactionOptions, _logger);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: false, transactionOptions, this, _logger);
     }
 
     /// <inheritdoc />
@@ -86,14 +86,14 @@ public class MongoTransactionManager : IMongoTransactionManager
     {
         EnsureNoTransactions();
         var session = await _client.StartSessionAsync(cancellationToken).ConfigureAwait(false);
-        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, _defaultTransactionOptions, _logger);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, _defaultTransactionOptions, this, _logger);
     }
 
     public async Task<IDbContextTransaction> BeginTransactionAsync(TransactionOptions transactionOptions, CancellationToken cancellationToken = new())
     {
         EnsureNoTransactions();
         var session = await _client.StartSessionAsync(cancellationToken).ConfigureAwait(false);
-        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, transactionOptions, _logger);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, transactionOptions, this, _logger);
     }
 
     /// <inheritdoc />
@@ -145,7 +145,7 @@ public class MongoTransactionManager : IMongoTransactionManager
            ?? throw new InvalidOperationException("No transaction is in progress. Call BeginTransaction to start a transaction.");
 
     /// <inheritdoc />
-    public IDbContextTransaction? CurrentTransaction { get; private set; }
+    public IDbContextTransaction? CurrentTransaction { get; internal set; }
 
     private void EnsureNoTransactions()
     {

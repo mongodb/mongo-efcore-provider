@@ -25,6 +25,7 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// Interface that adds MongoDB-specific transaction management support such as
 /// exposing <see cref="TransactionOptions"/> when starting new transactions.
 /// </summary>
+/// <remarks>This interface should be considered internal and may change between minor versions.</remarks>
 public interface IMongoTransactionManager : IDbContextTransactionManager
 {
     /// <summary>

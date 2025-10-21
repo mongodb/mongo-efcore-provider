@@ -95,7 +95,7 @@ public class MongoDatabaseWrapper : Database
 
         // Implicit transaction mode
         using var transaction =
-            MongoTransaction.Start(session, _currentDbContext.Context, false, _transactionOptions, _transactionLogger);
+            MongoTransaction.Start(session, _currentDbContext.Context, false, _transactionOptions, null, _transactionLogger);
 
         int result;
         try
@@ -139,7 +139,7 @@ public class MongoDatabaseWrapper : Database
 
         // Implicit transaction mode
         await using var transaction =
-            MongoTransaction.Start(session, _currentDbContext.Context, true, _transactionOptions, _transactionLogger);
+            MongoTransaction.Start(session, _currentDbContext.Context, true, _transactionOptions, null, _transactionLogger);
 
         int result;
         try

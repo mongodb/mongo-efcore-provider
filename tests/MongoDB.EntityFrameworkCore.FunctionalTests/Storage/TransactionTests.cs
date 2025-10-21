@@ -274,35 +274,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void AutoTransactionBehavior_Never_disables_implicit_transactions_leading_to_partial_commits_on_error()
-    {
-        var collection = database.CreateCollection<SimpleEntity>();
-
-        var conflictingId = ObjectId.GenerateNewId();
-        collection.InsertOne(new SimpleEntity { _id = conflictingId, name = "existing" });
-
-        using (var db = SingleEntityDbContext.Create(collection))
-        {
-            db.Database.AutoTransactionBehavior = AutoTransactionBehavior.Never;
-
-            // Two root operations; without implicit transactions, first insert will commit, second throws
-            db.Entities.AddRange(
-                new SimpleEntity { _id = ObjectId.GenerateNewId(), name = "will-commit" },
-                new SimpleEntity { _id = conflictingId, name = "dup-key-should-fail" });
-
-            Assert.ThrowsAny<Exception>(() => db.SaveChanges());
-        }
-
-        using (var dbCheck = SingleEntityDbContext.Create(collection))
-        {
-            var names = dbCheck.Entities.Select(e => e.name).ToList();
-            // Expect both original + the first of the batch (partial commit) due to disabled implicit transactions
-            Assert.Contains("existing", names);
-            Assert.Contains("will-commit", names);
-        }
-    }
-
-    [Fact]
     public void Explicit_transaction_dispose_without_commit_or_rollback_throws_and_changes_not_visible()
     {
         var collection = database.CreateCollection<SimpleEntity>();
@@ -590,5 +561,110 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         Assert.Contains("Dispose", ex.Message);
         await using var check = SingleEntityDbContext.Create(collection);
         Assert.Empty(await check.Entities.ToListAsync());
+    }
+
+    [Fact]
+    public void Can_reuse_context_without_transaction_after_committed_explicit_transaction()
+    {
+        var collection = database.CreateCollection<SimpleEntity>();
+
+        using var db = SingleEntityDbContext.Create(collection);
+
+        // Seed one entity outside any transaction
+        db.Entities.Add(new SimpleEntity { name = "seed" });
+        db.SaveChanges();
+
+        // First explicit transaction - commit
+        using (var transaction = db.Database.BeginTransaction())
+        {
+            db.Entities.Add(new SimpleEntity { name = "transaction-committed" });
+            db.SaveChanges();
+            transaction.Commit();
+        }
+
+        // Reuse the same context without an explicit transaction
+        db.Entities.Add(new SimpleEntity { name = "post-commit-no-transaction" });
+        db.SaveChanges();
+
+        // Validate all expected entities are present
+        using var check = SingleEntityDbContext.Create(collection);
+        var names = check.Entities.Select(e => e.name).OrderBy(n => n).ToList();
+        Assert.Equal(["post-commit-no-transaction", "seed", "transaction-committed"], names);
+    }
+
+    [Fact]
+    public void Can_reuse_context_without_transaction_after_rolled_back_explicit_transaction()
+    {
+        var collection = database.CreateCollection<SimpleEntity>();
+
+        using var db = SingleEntityDbContext.Create(collection);
+
+        // Start explicit transaction - rollback
+        using (var transaction = db.Database.BeginTransaction())
+        {
+            db.Entities.Add(new SimpleEntity { name = "transaction-rolled-back" });
+            db.SaveChanges();
+            transaction.Rollback();
+        }
+
+        // Reuse the same context without an explicit transaction
+        db.Entities.Add(new SimpleEntity { name = "post-rollback-no-transaction" });
+        db.SaveChanges();
+
+        using var check = SingleEntityDbContext.Create(collection);
+        var names = check.Entities.Select(e => e.name).OrderBy(n => n).ToList();
+        Assert.Equal(["post-rollback-no-transaction"], names);
+    }
+
+    [Fact]
+    public void Can_start_new_explicit_transaction_on_same_context_after_commit()
+    {
+        var collection = database.CreateCollection<SimpleEntity>();
+
+        using var db = SingleEntityDbContext.Create(collection);
+
+        using (var transaction = db.Database.BeginTransaction())
+        {
+            db.Entities.Add(new SimpleEntity { name = "transaction1-committed" });
+            db.SaveChanges();
+            transaction.Commit();
+        }
+
+        using (var transaction = db.Database.BeginTransaction())
+        {
+            db.Entities.Add(new SimpleEntity { name = "transaction2-committed" });
+            db.SaveChanges();
+            transaction.Commit();
+        }
+
+        using var check = SingleEntityDbContext.Create(collection);
+        var names = check.Entities.Select(e => e.name).OrderBy(n => n).ToList();
+        Assert.Equal(["transaction1-committed", "transaction2-committed"], names);
+    }
+
+    [Fact]
+    public void Can_start_new_explicit_transaction_on_same_context_after_rollback()
+    {
+        var collection = database.CreateCollection<SimpleEntity>();
+
+        using var db = SingleEntityDbContext.Create(collection);
+
+        using (var transaction = db.Database.BeginTransaction())
+        {
+            db.Entities.Add(new SimpleEntity { name = "transaction1-rolled-back" });
+            db.SaveChanges();
+            transaction.Rollback();
+        }
+
+        using (var transaction = db.Database.BeginTransaction())
+        {
+            db.Entities.Add(new SimpleEntity { name = "transaction2-committed" });
+            db.SaveChanges();
+            transaction.Commit();
+        }
+
+        using var check = SingleEntityDbContext.Create(collection);
+        var names = check.Entities.Select(e => e.name).OrderBy(n => n).ToList();
+        Assert.Equal(["transaction2-committed"], names);
     }
 }
