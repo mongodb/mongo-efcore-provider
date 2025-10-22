@@ -89,6 +89,7 @@ public class MongoTransactionManager : IMongoTransactionManager
         return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, _defaultTransactionOptions, this, _logger);
     }
 
+    /// <inheritdoc />
     public async Task<IDbContextTransaction> BeginTransactionAsync(TransactionOptions transactionOptions, CancellationToken cancellationToken = new())
     {
         EnsureNoTransactions();
