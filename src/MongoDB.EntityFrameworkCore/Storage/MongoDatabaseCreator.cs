@@ -421,7 +421,7 @@ public class MongoDatabaseCreator(
             {
                 using var cursor = await clientWrapper.Database.GetCollection<BsonDocument>(collectionName).Indexes.ListAsync(cancellationToken).ConfigureAwait(false);
                 indexes = (await cursor.ToListAsync(cancellationToken: cancellationToken).ConfigureAwait(false)).Select(i => i["name"].AsString).ToList();
-                existingIndexesMap[collectionName] =  indexes;
+                existingIndexesMap[collectionName] = indexes;
             }
 
             BuildIndexes(entityType, collectionName, existingIndexesMap, indexModelsMap);
