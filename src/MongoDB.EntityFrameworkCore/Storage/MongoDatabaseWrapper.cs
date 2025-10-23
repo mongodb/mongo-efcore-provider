@@ -39,6 +39,7 @@ public class MongoDatabaseWrapper : Database
 {
     private readonly ICurrentDbContext _currentDbContext;
     private readonly IMongoClientWrapper _mongoClient;
+    private readonly IDbContextTransactionManager _transactionManager;
     private readonly IDiagnosticsLogger<DbLoggerCategory.Update> _updateLogger;
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> _transactionLogger;
     private readonly TransactionOptions _transactionOptions = new();
@@ -49,18 +50,21 @@ public class MongoDatabaseWrapper : Database
     /// <param name="dependencies">The <see cref="DatabaseDependencies"/> this object should use.</param>
     /// <param name="currentDbContext">The <see cref="ICurrentDbContext"/> this should use to interact with the current context.</param>
     /// <param name="mongoClient">The <see cref="IMongoClientWrapper"/> this should use to interact with MongoDB.</param>
+    /// <param name="transactionManager">The <see cref="IDbContextTransactionManager"/> this should use when determining transaction behavior.</param>
     /// <param name="updateLogger">The <see cref="IDiagnosticsLogger"/> for <see cref="DbLoggerCategory.Update"/>.</param>
     /// <param name="transactionLogger">The <see cref="IDiagnosticsLogger"/> for <see cref="DbLoggerCategory.Database.Transaction"/>.</param>
     public MongoDatabaseWrapper(
         DatabaseDependencies dependencies,
         ICurrentDbContext currentDbContext,
         IMongoClientWrapper mongoClient,
+        IDbContextTransactionManager transactionManager,
         IDiagnosticsLogger<DbLoggerCategory.Update> updateLogger,
         IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
         : base(dependencies)
     {
         _currentDbContext = currentDbContext;
         _mongoClient = mongoClient;
+        _transactionManager = transactionManager;
         _updateLogger = updateLogger;
         _transactionLogger = transactionLogger;
     }
@@ -75,11 +79,37 @@ public class MongoDatabaseWrapper : Database
         var rootEntries = GetAllChangedRootEntries(entries);
         var updates = MongoUpdate.CreateAll(rootEntries);
 
+        // Explicit transaction mode
+        if (_transactionManager.CurrentTransaction is MongoTransaction mongoTransaction)
+        {
+            return WriteBatches(updates, mongoTransaction.Session);
+        }
+
         using var session = _mongoClient.StartSession();
 
-        return ShouldStartTransaction(rootEntries.Count)
-            ? ExecuteInTransaction(() => WriteBatches(updates, session), session)
-            : WriteBatches(updates, session);
+        // No transaction mode
+        if (!ShouldUseImplicitTransaction(rootEntries.Count))
+        {
+            return WriteBatches(updates, session);
+        }
+
+        // Implicit transaction mode
+        using var transaction =
+            MongoTransaction.Start(session, _currentDbContext.Context, false, _transactionOptions, null, _transactionLogger);
+
+        int result;
+        try
+        {
+            result = WriteBatches(updates, session);
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+
+        transaction.Commit();
+        return result;
     }
 
     /// <summary>
@@ -93,43 +123,28 @@ public class MongoDatabaseWrapper : Database
         var rootEntries = GetAllChangedRootEntries(entries);
         var updates = MongoUpdate.CreateAll(rootEntries);
 
+        // Explicit transaction mode
+        if (_transactionManager.CurrentTransaction is MongoTransaction mongoTransaction)
+        {
+            return await WriteBatchesAsync(updates, mongoTransaction.Session, cancellationToken).ConfigureAwait(false);
+        }
+
         using var session = await _mongoClient.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        return ShouldStartTransaction(rootEntries.Count)
-            ? await ExecuteInTransactionAsync(c => WriteBatchesAsync(updates, session, c), session, cancellationToken).ConfigureAwait(false)
-            : await WriteBatchesAsync(updates, session, cancellationToken).ConfigureAwait(false);
-    }
-
-    private T ExecuteInTransaction<T>(Func<T> operation, IClientSession session)
-    {
-        using var transaction =
-            MongoTransaction.Start(session, _currentDbContext.Context, false, _transactionOptions, _transactionLogger);
-
-        T result;
-        try
+        // No transaction mode
+        if (!ShouldUseImplicitTransaction(rootEntries.Count))
         {
-            result = operation();
-        }
-        catch
-        {
-            transaction.Rollback();
-            throw;
+            return await WriteBatchesAsync(updates, session, cancellationToken).ConfigureAwait(false);
         }
 
-        transaction.Commit();
-
-        return result;
-    }
-
-    private async Task<T> ExecuteInTransactionAsync<T>(Func<CancellationToken, Task<T>> operation, IClientSession session, CancellationToken cancellationToken)
-    {
+        // Implicit transaction mode
         await using var transaction =
-            MongoTransaction.Start(session, _currentDbContext.Context, true, _transactionOptions, _transactionLogger);
+            MongoTransaction.Start(session, _currentDbContext.Context, true, _transactionOptions, null, _transactionLogger);
 
-        T result;
+        int result;
         try
         {
-            result = await operation(cancellationToken).ConfigureAwait(false);
+            result = await WriteBatchesAsync(updates, session, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -150,16 +165,19 @@ public class MongoDatabaseWrapper : Database
         {
             stopwatch.Restart();
             var collection = _mongoClient.GetCollection<BsonDocument>(batch.CollectionName);
-            _updateLogger.ExecutingBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, batch.Inserts, batch.Deletes, batch.Modified);
+            _updateLogger.ExecutingBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, batch.Inserts, batch.Deletes,
+                batch.Modified);
             var result = collection.BulkWrite(session, batch.Updates.Select(u => u.Model));
             documentsAffected += AssertWritesApplied(batch, result, collection.CollectionNamespace);
-            _updateLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
+            _updateLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount,
+                result.DeletedCount, result.ModifiedCount);
         }
 
         return documentsAffected;
     }
 
-    private async Task<int> WriteBatchesAsync(IEnumerable<MongoUpdate> updates, IClientSessionHandle session, CancellationToken cancellationToken)
+    private async Task<int> WriteBatchesAsync(IEnumerable<MongoUpdate> updates, IClientSessionHandle session,
+        CancellationToken cancellationToken)
     {
         var stopwatch = new Stopwatch();
         var documentsAffected = 0;
@@ -168,10 +186,14 @@ public class MongoDatabaseWrapper : Database
         {
             stopwatch.Restart();
             var collection = _mongoClient.GetCollection<BsonDocument>(batch.CollectionName);
-            _updateLogger.ExecutingBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, batch.Inserts, batch.Deletes, batch.Modified);
-            var result = await collection.BulkWriteAsync(session, batch.Updates.Select(u => u.Model), cancellationToken: cancellationToken).ConfigureAwait(false);
+            _updateLogger.ExecutingBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, batch.Inserts, batch.Deletes,
+                batch.Modified);
+            var result = await collection
+                .BulkWriteAsync(session, batch.Updates.Select(u => u.Model), cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
             documentsAffected += AssertWritesApplied(batch, result, collection.CollectionNamespace);
-            _updateLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount, result.DeletedCount, result.ModifiedCount);
+            _updateLogger.ExecutedBulkWrite(stopwatch.Elapsed, collection.CollectionNamespace, result.InsertedCount,
+                result.DeletedCount, result.ModifiedCount);
         }
 
         return documentsAffected;
@@ -188,7 +210,8 @@ public class MongoDatabaseWrapper : Database
     /// <exception cref="DbUpdateConcurrencyException">
     /// Thrown if the counts in <paramref name="batch"/> does not match the counts in <paramref name="result"/>.
     /// </exception>
-    private static int AssertWritesApplied(MongoUpdateBatch batch, BulkWriteResult<BsonDocument> result, CollectionNamespace collectionNamespace)
+    private static int AssertWritesApplied(MongoUpdateBatch batch, BulkWriteResult<BsonDocument> result,
+        CollectionNamespace collectionNamespace)
     {
         // Modified count does not include docs that that did not need modification - i.e. no modifications - so we use matched count instead.
         if (result.MatchedCount != batch.Modified || result.DeletedCount != batch.Deletes || result.InsertedCount != batch.Inserts)
@@ -205,21 +228,27 @@ public class MongoDatabaseWrapper : Database
                                                               || u.Model.ModelType == WriteModelType.UpdateOne
                                                               && modifiedVariance != 0).Select(u => u.Entry).ToList();
 
-            throw new DbUpdateConcurrencyException($"Conflicts were detected when performing updates to '{collectionNamespace.FullName}'. " +
-                $"Did not perform {modifiedVariance} modifications, {insertedVariance} insertions, and {deletedVariance} deletions.", conflictingEntries);
+            throw new DbUpdateConcurrencyException(
+                $"Conflicts were detected when performing updates to '{collectionNamespace.FullName}'. " +
+                $"Did not perform {modifiedVariance} modifications, {insertedVariance} insertions, and {deletedVariance} deletions.",
+                conflictingEntries);
         }
 
         return (int)(result.ModifiedCount + result.DeletedCount + result.InsertedCount);
     }
 
-    private bool ShouldStartTransaction(int operationCount)
-        => _currentDbContext.Context.Database.AutoTransactionBehavior switch
+    private bool ShouldUseImplicitTransaction(int operationCount)
+    {
+        if (_transactionManager.CurrentTransaction != null) return false;
+
+        return _currentDbContext.Context.Database.AutoTransactionBehavior switch
         {
             AutoTransactionBehavior.Always => true,
             AutoTransactionBehavior.Never => false,
             AutoTransactionBehavior.WhenNeeded => operationCount > 1,
             _ => throw new InvalidOperationException("Invalid AutoTransactionBehavior value.")
         };
+    }
 
     /// <summary>
     /// We only care about updating root entities as non-root/owned entities must be contained within one.

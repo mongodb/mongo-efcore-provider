@@ -16,62 +16,150 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Transactions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Placeholder for a MongoDB transaction manager that for now just flags that transactions
-/// are not supported in case somebody attempts to use them.
+/// Explicit transaction manager for MongoDB EF Core provider.
 /// </summary>
-public class MongoTransactionManager : IDbContextTransactionManager, ITransactionEnlistmentManager
+public class MongoTransactionManager : IMongoTransactionManager
 {
-    /// <inheritdoc />
-    public void ResetState()
+    private readonly IMongoClientWrapper _client;
+    private readonly DbContext _context;
+    private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> _logger;
+    private readonly TransactionOptions _defaultTransactionOptions = new();
+
+    /// <summary>
+    /// Create a <see cref="MongoTransactionManager"/>.
+    /// </summary>
+    public MongoTransactionManager(
+        IMongoClientWrapper client,
+        ICurrentDbContext currentContext,
+        IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> logger)
     {
+        _client = client;
+        _context = currentContext.Context;
+        _logger = logger;
     }
 
     /// <inheritdoc />
-    public Task ResetStateAsync(CancellationToken cancellationToken = new())
-        => Task.CompletedTask;
+    public void ResetState()
+    {
+        CurrentTransaction?.Dispose();
+        CurrentTransaction = null;
+    }
+
+    /// <inheritdoc />
+    public async Task ResetStateAsync(CancellationToken cancellationToken = new())
+    {
+        if (CurrentTransaction != null)
+        {
+            await CurrentTransaction.DisposeAsync().ConfigureAwait(false);
+        }
+
+        CurrentTransaction = null;
+    }
 
     /// <inheritdoc />
     public IDbContextTransaction BeginTransaction()
-        => throw CreateNotSupportedException();
+    {
+        EnsureNoTransactions();
+        var session = _client.StartSession();
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: false, _defaultTransactionOptions, this, _logger);
+    }
 
     /// <inheritdoc />
-    public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = new())
-        => throw CreateNotSupportedException();
+    public IDbContextTransaction BeginTransaction(TransactionOptions transactionOptions)
+    {
+        EnsureNoTransactions();
+        var session = _client.StartSession();
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: false, transactionOptions, this, _logger);
+    }
+
+    /// <inheritdoc />
+    public async Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = new())
+    {
+        EnsureNoTransactions();
+        var session = await _client.StartSessionAsync(cancellationToken).ConfigureAwait(false);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, _defaultTransactionOptions, this, _logger);
+    }
+
+    /// <inheritdoc />
+    public async Task<IDbContextTransaction> BeginTransactionAsync(TransactionOptions transactionOptions, CancellationToken cancellationToken = new())
+    {
+        EnsureNoTransactions();
+        var session = await _client.StartSessionAsync(cancellationToken).ConfigureAwait(false);
+        return CurrentTransaction = MongoTransaction.Start(session, _context, async: true, transactionOptions, this, _logger);
+    }
 
     /// <inheritdoc />
     public void CommitTransaction()
-        => throw CreateNotSupportedException();
+    {
+        if (GetRequiredCurrentTransaction() is { } acquiredTransaction)
+        {
+            acquiredTransaction.Commit();
+            acquiredTransaction.Dispose();
+            CurrentTransaction = null;
+        }
+    }
 
     /// <inheritdoc />
-    public Task CommitTransactionAsync(CancellationToken cancellationToken = new())
-        => throw CreateNotSupportedException();
+    public async Task CommitTransactionAsync(CancellationToken cancellationToken = new())
+    {
+        if (GetRequiredCurrentTransaction() is { } acquiredTransaction)
+        {
+            await acquiredTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await acquiredTransaction.DisposeAsync().ConfigureAwait(false);
+            CurrentTransaction = null;
+        }
+    }
 
     /// <inheritdoc />
     public void RollbackTransaction()
-        => throw CreateNotSupportedException();
+    {
+        if (GetRequiredCurrentTransaction() is { } acquiredTransaction)
+        {
+            acquiredTransaction.Rollback();
+            acquiredTransaction.Dispose();
+            CurrentTransaction = null;
+        }
+    }
 
     /// <inheritdoc />
-    public Task RollbackTransactionAsync(CancellationToken cancellationToken = new())
-        => throw CreateNotSupportedException();
+    public async Task RollbackTransactionAsync(CancellationToken cancellationToken = new())
+    {
+        if (GetRequiredCurrentTransaction() is { } acquiredTransaction)
+        {
+            await acquiredTransaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await acquiredTransaction.DisposeAsync().ConfigureAwait(false);
+            CurrentTransaction = null;
+        }
+    }
+
+    private IDbContextTransaction GetRequiredCurrentTransaction()
+        => CurrentTransaction
+           ?? throw new InvalidOperationException("No transaction is in progress. Call BeginTransaction to start a transaction.");
 
     /// <inheritdoc />
-    public void EnlistTransaction(Transaction? transaction)
-        => throw CreateNotSupportedException();
+    public IDbContextTransaction? CurrentTransaction { get; internal set; }
 
-    /// <inheritdoc />
-    public Transaction? EnlistedTransaction
-        => null;
+    private void EnsureNoTransactions()
+    {
+        if (CurrentTransaction != null)
+        {
+            throw new InvalidOperationException(
+                "The connection is already in a transaction and cannot participate in another transaction.");
+        }
 
-    /// <inheritdoc />
-    public IDbContextTransaction? CurrentTransaction
-        => null;
-
-    private static NotSupportedException CreateNotSupportedException()
-        => new("The MongoDB EF Provider does not support transactions.");
+        if (System.Transactions.Transaction.Current != null)
+        {
+            throw new InvalidOperationException(
+                "An ambient transaction has been detected. The ambient transaction needs to be completed before starting a new transaction on this connection.");
+        }
+    }
 }

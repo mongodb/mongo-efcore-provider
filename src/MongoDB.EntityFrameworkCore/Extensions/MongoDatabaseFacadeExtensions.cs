@@ -19,10 +19,12 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Storage;
 
-namespace MongoDB.EntityFrameworkCore.Extensions;
+// ReSharper disable once CheckNamespace
+namespace MongoDB.EntityFrameworkCore;
 
 /// <summary>
 /// MongoDB-specific extension methods for the <see cref="DatabaseFacade"/> obtained from the
@@ -158,4 +160,32 @@ public static class MongoDatabaseFacadeExtensions
     /// </returns>
     public static Task<bool> EnsureCreatedAsync(this DatabaseFacade databaseFacade, MongoDatabaseCreationOptions options, CancellationToken cancellationToken = default)
         => ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context.GetService<IMongoDatabaseCreator>().EnsureCreatedAsync(options, cancellationToken);
+
+    /// <summary>
+    /// Begin a new transaction with the supplied <paramref name="transactionOptions"/>.
+    /// </summary>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade" /> for the context.</param>
+    /// <param name="transactionOptions">The <see cref="TransactionOptions"/> that control the behavior of this transaction.</param>
+    /// <returns>The <see cref="IDbContextTransaction"/> that has begun.</returns>
+    public static IDbContextTransaction BeginTransaction(
+        this DatabaseFacade databaseFacade,
+        TransactionOptions transactionOptions)
+        => GetMongoTransactionManager(databaseFacade).BeginTransaction(transactionOptions);
+
+    /// <summary>
+    /// Begin a new async transaction with the supplied <paramref name="transactionOptions"/>.
+    /// </summary>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade" /> for the context.</param>
+    /// <param name="transactionOptions">The <see cref="TransactionOptions"/> that control the behavior of this transaction.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken" /> to observe while waiting for the task to complete.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the newly begun <see cref="IDbContextTransaction"/>.</returns>
+    /// <exception cref="OperationCanceledException">If the <see cref="CancellationToken" /> is canceled.</exception>
+    public static Task<IDbContextTransaction> BeginTransactionAsync(
+        this DatabaseFacade databaseFacade,
+        TransactionOptions transactionOptions,
+        CancellationToken cancellationToken = default)
+        => GetMongoTransactionManager(databaseFacade).BeginTransactionAsync(transactionOptions, cancellationToken);
+
+    private static IMongoTransactionManager GetMongoTransactionManager(DatabaseFacade databaseFacade)
+        => (IMongoTransactionManager)((IDatabaseFacadeDependenciesAccessor)databaseFacade).Dependencies.TransactionManager;
 }

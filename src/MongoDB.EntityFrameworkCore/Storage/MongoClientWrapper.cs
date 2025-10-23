@@ -229,7 +229,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             {
                 using var cursor = Database.GetCollection<BsonDocument>(collectionName).Indexes.List();
                 indexes = cursor.ToList().Select(i => i["name"].AsString).ToList();
-                existingIndexesMap[collectionName] =  indexes;
+                existingIndexesMap[collectionName] = indexes;
             }
 
             BuildIndexes(model, entityType, collectionName, existingIndexesMap, indexModelsMap);
@@ -293,7 +293,8 @@ public class MongoClientWrapper : IMongoClientWrapper
             return true;
         }
 
-        foreach (var ownedEntityType in entityType.Model.GetEntityTypes().Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType))
+        foreach (var ownedEntityType in entityType.Model.GetEntityTypes()
+                     .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType))
         {
             return HasAtlasIndexes(ownedEntityType);
         }
@@ -400,9 +401,11 @@ public class MongoClientWrapper : IMongoClientWrapper
 
             if (!existingIndexesMap.TryGetValue(collectionName, out var indexes))
             {
-                using var cursor = await Database.GetCollection<BsonDocument>(collectionName).Indexes.ListAsync(cancellationToken).ConfigureAwait(false);
-                indexes = (await cursor.ToListAsync(cancellationToken: cancellationToken).ConfigureAwait(false)).Select(i => i["name"].AsString).ToList();
-                existingIndexesMap[collectionName] =  indexes;
+                using var cursor = await Database.GetCollection<BsonDocument>(collectionName).Indexes.ListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                indexes = (await cursor.ToListAsync(cancellationToken: cancellationToken).ConfigureAwait(false))
+                    .Select(i => i["name"].AsString).ToList();
+                existingIndexesMap[collectionName] = indexes;
             }
 
             BuildIndexes(model, entityType, collectionName, existingIndexesMap, indexModelsMap);
@@ -441,8 +444,10 @@ public class MongoClientWrapper : IMongoClientWrapper
 
             if (!existingIndexesMap.TryGetValue(collectionName, out var indexes))
             {
-                using var cursor = await Database.GetCollection<BsonDocument>(collectionName).SearchIndexes.ListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-                indexes = (await cursor.ToListAsync(cancellationToken: cancellationToken).ConfigureAwait(false)).Select(i => i["name"].AsString).ToList();
+                using var cursor = await Database.GetCollection<BsonDocument>(collectionName).SearchIndexes
+                    .ListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+                indexes = (await cursor.ToListAsync(cancellationToken: cancellationToken).ConfigureAwait(false))
+                    .Select(i => i["name"].AsString).ToList();
                 existingIndexesMap[collectionName] = indexes;
             }
 
@@ -460,7 +465,10 @@ public class MongoClientWrapper : IMongoClientWrapper
     }
 
     /// <inheritdoc />
-    public async Task WaitForVectorIndexesAsync(IModel model, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+    public async Task WaitForVectorIndexesAsync(
+        IModel model,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
     {
         // Don't try to access Atlas-specific features unless an Atlas vector index is defined.
         if (model.GetEntityTypes().All(e => !HasAtlasIndexes(e)))
@@ -476,7 +484,8 @@ public class MongoClientWrapper : IMongoClientWrapper
             do
             {
                 isReady = true;
-                using var cursor = await Database.GetCollection<BsonDocument>(collectionName).SearchIndexes.ListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+                using var cursor = await Database.GetCollection<BsonDocument>(collectionName).SearchIndexes
+                    .ListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
                 var indexModels = await cursor.ToListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 foreach (var indexModel in indexModels)
@@ -672,7 +681,7 @@ public class MongoClientWrapper : IMongoClientWrapper
         return [result];
     }
 
-private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
+    private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
     {
         _databaseName = _options?.DatabaseName;
         if (_databaseName == null && options?.ConnectionString != null)
@@ -689,7 +698,7 @@ private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, ISer
 
         var queryableEncryptionSchema = _schemaProvider.GetQueryableEncryptionSchema();
         var applyQueryableEncryptionSchema = queryableEncryptionSchema.Count > 0 &&
-                                                   options?.QueryableEncryptionSchemaMode != QueryableEncryptionSchemaMode.Ignore;
+                                             options?.QueryableEncryptionSchemaMode != QueryableEncryptionSchemaMode.Ignore;
 
         var createOwnMongoClient = applyQueryableEncryptionSchema || MongoClientSettingsHelper.HasMongoClientOptions(options);
 

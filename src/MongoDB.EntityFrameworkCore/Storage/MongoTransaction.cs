@@ -32,15 +32,17 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// <param name="session">A <see cref="IClientSession"/> for handling the transaction in MongoDB.</param>
 /// <param name="context">The <see cref="DbContext"/> this transaction is being used with.</param>
 /// <param name="transactionId">The unique identifier from EF for this transaction.</param>
+/// <param name="transactionManager">The <see cref="IMongoTransactionManager"/> this transaction is started from or <see langword="null"/> if it is implicit.</param>
 /// <param name="transactionLogger">A <see cref="IDiagnosticsLogger"/> for logging the <see cref="DbLoggerCategory.Database.Transaction"/> messages.</param>
 public sealed class MongoTransaction(
-    IClientSession session,
+    IClientSessionHandle session,
     DbContext context,
     Guid transactionId,
+    IMongoTransactionManager? transactionManager,
     IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
     : IDbContextTransaction
 {
-    enum TransactionState
+    private enum TransactionState
     {
         Active,
         Committing,
@@ -54,10 +56,11 @@ public sealed class MongoTransaction(
     private TransactionState _transactionState = TransactionState.Active;
 
     internal static MongoTransaction Start(
-        IClientSession session,
+        IClientSessionHandle session,
         DbContext context,
         bool async,
         TransactionOptions transactionOptions,
+        IMongoTransactionManager? transactionManager,
         IDiagnosticsLogger<DbLoggerCategory.Database.Transaction> transactionLogger)
     {
         var startTime = DateTimeOffset.UtcNow;
@@ -75,18 +78,18 @@ public sealed class MongoTransaction(
             if (ex.Message == "Standalone servers do not support transactions.")
             {
                 throw new NotSupportedException(string.Join(" ", TransactionByDefault,
-                    "Your current MongoDB server configuration does not support transactions and you should consider switching to a replica set or load balanced configuration.",
-                    DisableTransactions),
+                        "Your current MongoDB server configuration does not support transactions and you should consider switching to a replica set or load balanced configuration.",
+                        DisableTransactions),
                     ex);
             }
 
             throw new NotSupportedException(string.Join(" ", TransactionByDefault,
-                "Your current MongoDB server version does not support transactions and you should consider upgrading to a newer version.",
-                DisableTransactions),
+                    "Your current MongoDB server version does not support transactions and you should consider upgrading to a newer version.",
+                    DisableTransactions),
                 ex);
         }
 
-        var transaction = new MongoTransaction(session, context, transactionId, transactionLogger);
+        var transaction = new MongoTransaction(session, context, transactionId, transactionManager, transactionLogger);
         transactionLogger.TransactionStarted(transaction, async, startTime, stopwatch.Elapsed);
 
         return transaction;
@@ -97,6 +100,12 @@ public sealed class MongoTransaction(
 
     private const string DisableTransactions =
         "If you are sure you do not need save consistency or optimistic concurrency you can disable transactions by setting 'Database.AutoTransactionBehavior = AutoTransactionBehavior.Never' on your DbContext.";
+
+    /// <summary>
+    /// The underlying <see cref="IClientSession"/> this transaction is using which is required
+    /// to issue commands against.
+    /// </summary>
+    internal IClientSessionHandle Session => session;
 
     /// <inheritdoc />
     public Guid TransactionId { get; } = transactionId;
@@ -129,6 +138,7 @@ public sealed class MongoTransaction(
 
         _transactionState = TransactionState.Committed;
         transactionLogger.TransactionCommitted(this, false, startTime, stopwatch.Elapsed);
+        transactionManager?.ResetState();
     }
 
     /// <inheritdoc />
@@ -154,6 +164,10 @@ public sealed class MongoTransaction(
 
         _transactionState = TransactionState.Committed;
         transactionLogger.TransactionCommitted(this, true, startTime, stopwatch.Elapsed);
+        if (transactionManager is not null)
+        {
+            await transactionManager.ResetStateAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc />
@@ -179,6 +193,7 @@ public sealed class MongoTransaction(
 
         _transactionState = TransactionState.RolledBack;
         transactionLogger.TransactionRolledBack(this, false, startTime, stopwatch.Elapsed);
+        transactionManager?.ResetState();
     }
 
     /// <inheritdoc />
@@ -204,6 +219,10 @@ public sealed class MongoTransaction(
 
         _transactionState = TransactionState.RolledBack;
         transactionLogger.TransactionRolledBack(this, true, startTime, stopwatch.Elapsed);
+        if (transactionManager is not null)
+        {
+            await transactionManager.ResetStateAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -215,16 +234,29 @@ public sealed class MongoTransaction(
     /// <inheritdoc />
     public void Dispose()
     {
+        if (_transactionState == TransactionState.Disposed) return;
+
         AssertCorrectState("Dispose", TransactionState.Committed, TransactionState.RolledBack, TransactionState.Failed);
         _transactionState = TransactionState.Disposed;
+        session.Dispose();
     }
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
+        if (_transactionState == TransactionState.Disposed) return ValueTask.CompletedTask;
+
         AssertCorrectState("Dispose", TransactionState.Committed, TransactionState.RolledBack, TransactionState.Failed);
         _transactionState = TransactionState.Disposed;
+        session.Dispose();
         return ValueTask.CompletedTask;
+    }
+
+    private void AssertCorrectState(string action, TransactionState validState)
+    {
+        if (_transactionState != validState)
+            throw new
+                InvalidOperationException($"Can not {action} MongoTransaction {TransactionId} because it is {_transactionState}.");
     }
 
     private void AssertCorrectState(string action, params TransactionState[] validStates)

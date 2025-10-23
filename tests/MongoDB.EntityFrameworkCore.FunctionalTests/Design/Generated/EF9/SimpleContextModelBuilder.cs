@@ -11,7 +11,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
     public partial class SimpleContextModel
     {
         private SimpleContextModel()
-            : base(skipDetectChanges: false, modelId: new Guid("b12b61f4-af75-4e2e-904a-d7028bf2fba1"), entityTypeCount: 2)
+            : base(skipDetectChanges: false, modelId: new Guid("6325edd6-1c15-4805-a628-9a4895560071"), entityTypeCount: 2)
         {
         }
 
@@ -25,7 +25,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
             EveryTypeEntityType.CreateAnnotations(everyType);
             OwnedEntityEntityType.CreateAnnotations(ownedEntity);
 
-            AddAnnotation("ProductVersion", "9.0.8");
+            AddAnnotation("ProductVersion", "9.0.9");
         }
     }
 }

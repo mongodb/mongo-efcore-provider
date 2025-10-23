@@ -54,6 +54,22 @@ internal static class SingleEntityDbContext
         Action<ModelBuilder>? modelBuilderAction = null,
         Action<ModelConfigurationBuilder>? configBuilderAction = null) where T1 : class where T2 : class
         => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction);
+
+    // New overloads for logging support in tests (no caching to ensure logger is applied)
+    public static SingleEntityDbContext<T> Create<T>(
+        IMongoCollection<T> collection,
+        Microsoft.Extensions.Logging.LoggerFactory loggerFactory,
+        Action<ModelBuilder>? modelBuilderAction = null,
+        Action<ModelConfigurationBuilder>? configBuilderAction = null) where T : class
+        => new(new DbContextOptionsBuilder<SingleEntityDbContext<T>>()
+                .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
+                .UseLoggerFactory(loggerFactory)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .Options,
+            collection.CollectionNamespace.CollectionName,
+            modelBuilderAction,
+            configBuilderAction);
 }
 
 internal class SingleEntityDbContext<T>(
