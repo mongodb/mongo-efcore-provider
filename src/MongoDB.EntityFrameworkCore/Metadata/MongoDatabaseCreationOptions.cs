@@ -19,8 +19,8 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 
 /// <summary>
 /// Creates a <see cref="MongoDatabaseCreationOptions"/> to determine which additional actions are taken when
-/// <see cref="MongoDB.EntityFrameworkCore.Extensions.MongoDatabaseFacadeExtensions.EnsureCreated"/> or
-/// <see cref="MongoDB.EntityFrameworkCore.Extensions.MongoDatabaseFacadeExtensions.EnsureCreatedAsync"/>
+/// <see cref="MongoDB.EntityFrameworkCore.MongoDatabaseFacadeExtensions.EnsureCreated"/> or
+/// <see cref="MongoDB.EntityFrameworkCore.MongoDatabaseFacadeExtensions.EnsureCreatedAsync"/>
 /// </summary>
 /// <param name="CreateMissingCollections">Creates any MongoDB database collections that do not already exist. The default is true.</param>
 /// <param name="CreateMissingIndexes">Creates any non-Atlas MongoDB indexes that do not already exist. The default is true.</param>

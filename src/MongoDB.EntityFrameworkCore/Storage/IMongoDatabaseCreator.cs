@@ -48,13 +48,13 @@ public interface IMongoDatabaseCreator : IDatabaseCreator
     Task<bool> EnsureCreatedAsync(MongoDatabaseCreationOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Determine if the database already exists or not.
+    /// Determines if the database already exists or not.
     /// </summary>
     /// <returns><see langword="true" /> if the database exists, <see langword="false" /> if it does not.</returns>
     bool DatabaseExists();
 
     /// <summary>
-    /// Determine if the database already exists or not asynchronously.
+    /// Determines if the database already exists or not asynchronously.
     /// </summary>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>

@@ -30,19 +30,19 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 public interface IMongoClientWrapper
 {
     /// <summary>
-    /// The underlying <see cref="IMongoClient"/>. May cause the underlying client to be created.
+    /// The underlying <see cref="IMongoClient"/>. Accessing this may cause the underlying client to be created.
     /// </summary>
-    public IMongoClient Client { get; }
+    IMongoClient Client { get; }
 
     /// <summary>
-    /// The underlying <see cref="IMongoDatabase"/>. May cause the underlying client to be created.
+    /// The underlying <see cref="IMongoDatabase"/>. Accessing this may cause the underlying client to be created.
     /// </summary>
-    public IMongoDatabase Database { get; }
+    IMongoDatabase Database { get; }
 
     /// <summary>
-    /// Gets the name of the underlying <see cref="IMongoDatabase"/>. May cause the underlying client to be created.
+    /// Gets the name of the underlying <see cref="IMongoDatabase"/>. Accessing this may cause the underlying client to be created.
     /// </summary>
-    public string DatabaseName { get; }
+    string DatabaseName { get; }
 
     /// <summary>
     /// Get an <see cref="IMongoCollection{T}"/> for the given <paramref name="collectionName"/>.
