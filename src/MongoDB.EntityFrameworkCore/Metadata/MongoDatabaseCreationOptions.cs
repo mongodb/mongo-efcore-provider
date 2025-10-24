@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 /// <param name="CreateMissingVectorIndexes">Creates any MongoDB Atlas vector indexes that do not already exist. The default is true.</param>
 /// <param name="WaitForVectorIndexes">Waits all MongoDB Atlas vector indexes to be 'READY' before continuing. The default is true.</param>
 /// <param name="IndexCreationTimeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
-/// The default is 15 seconds. Zero seconds means no timeout.</param>
+/// The default is 60 seconds. Zero seconds means no timeout.</param>
 public readonly record struct MongoDatabaseCreationOptions(
     bool CreateMissingCollections = true,
     bool CreateMissingIndexes = true,

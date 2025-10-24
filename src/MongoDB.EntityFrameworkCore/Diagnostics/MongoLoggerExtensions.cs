@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Globalization;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -373,4 +374,54 @@ internal static class MongoLoggerExtensions
         "Consider disabling index creation in 'DbContext.Database.EnsureCreated' and performing initial ingestion " +
         "of embeddings, before calling 'DbContext.Database.CreateMissingVectorIndexes' and " +
         "'DbContext.Database.WaitForVectorIndexes'.";
+
+
+
+    public static void WaitingForVectorIndex(
+        this IDiagnosticsLogger<DbLoggerCategory.Database> diagnostics,
+        TimeSpan remainingBeforeTimeout)
+    {
+        var definition = LogWaitingForVectorIndex(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(diagnostics, remainingBeforeTimeout.TotalSeconds.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new TimeSpanEventData(
+                definition,
+                (d, p) => ((EventDefinition<string>)d).GenerateMessage(
+                    ((TimeSpanEventData)p).TimeSpan.TotalSeconds.ToString(CultureInfo.InvariantCulture)),
+                    remainingBeforeTimeout);
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static EventDefinition<string> LogWaitingForVectorIndex(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogWaitingForVectorIndex;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogWaitingForVectorIndex,
+                logger,
+                static logger => new EventDefinition<string>(
+                    logger.Options,
+                    MongoEventId.WaitingForVectorIndex,
+                    LogLevel.Information,
+                    "MongoEventId.WaitingForVectorIndex",
+                    level => LoggerMessage.Define<string>(
+                        level,
+                        MongoEventId.WaitingForVectorIndex,
+                        WaitingForVectorIndexString)));
+        }
+
+        return (EventDefinition<string>)definition;
+    }
+
+    private const string WaitingForVectorIndexString =
+        "EF Core is waiting for vector indexes to be ready. The time remaining before failing with a timeout is " +
+        "{secondsRemaining} seconds.";
 }

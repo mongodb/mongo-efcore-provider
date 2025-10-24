@@ -107,7 +107,7 @@ public interface IMongoDatabaseCreator : IDatabaseCreator
     /// Blocks until all vector indexes in the mapped collections are reporting the 'READY' state.
     /// </summary>
     /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
-    /// The default is 15 seconds. Zero seconds means no timeout.</param>
+    /// The default is 60 seconds. Zero seconds means no timeout.</param>
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
     void WaitForVectorIndexes(TimeSpan? timeout = null);
 
@@ -115,7 +115,7 @@ public interface IMongoDatabaseCreator : IDatabaseCreator
     /// Blocks until all vector indexes in the mapped collections are reporting the 'READY' state.
     /// </summary>
     /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
-    /// The default is 15 seconds. Zero seconds means no timeout.</param>
+    /// The default is 60 seconds. Zero seconds means no timeout.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
