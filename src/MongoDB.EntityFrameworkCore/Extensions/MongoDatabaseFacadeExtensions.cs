@@ -42,7 +42,7 @@ public static class MongoDatabaseFacadeExtensions
     {
         ArgumentNullException.ThrowIfNull(index);
 
-        ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context.GetService<IMongoClientWrapper>().CreateIndex(index);
+        GetDatabaseCreator(databaseFacade).CreateIndex(index);
     }
 
     /// <summary>
@@ -57,8 +57,7 @@ public static class MongoDatabaseFacadeExtensions
     {
         ArgumentNullException.ThrowIfNull(index);
 
-        return ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context.GetService<IMongoClientWrapper>()
-            .CreateIndexAsync(index, cancellationToken);
+        return GetDatabaseCreator(databaseFacade).CreateIndexAsync(index, cancellationToken);
     }
 
     /// <summary>
@@ -67,10 +66,7 @@ public static class MongoDatabaseFacadeExtensions
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     public static void CreateMissingIndexes(this DatabaseFacade databaseFacade)
-    {
-        var context = ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context;
-        context.GetService<IMongoClientWrapper>().CreateMissingIndexes(context.GetService<IDesignTimeModel>().Model);
-    }
+        => GetDatabaseCreator(databaseFacade).CreateMissingIndexes();
 
     /// <summary>
     /// Creates missing Atlas vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
@@ -78,10 +74,7 @@ public static class MongoDatabaseFacadeExtensions
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     public static void CreateMissingVectorIndexes(this DatabaseFacade databaseFacade)
-    {
-        var context = ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context;
-        context.GetService<IMongoClientWrapper>().CreateMissingVectorIndexes(context.GetService<IDesignTimeModel>().Model);
-    }
+        => GetDatabaseCreator(databaseFacade).CreateMissingVectorIndexes();
 
     /// <summary>
     /// Creates indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for which there
@@ -91,10 +84,7 @@ public static class MongoDatabaseFacadeExtensions
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     public static Task CreateMissingIndexesAsync(this DatabaseFacade databaseFacade, CancellationToken cancellationToken = default)
-    {
-        var context = ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context;
-        return context.GetService<IMongoClientWrapper>().CreateMissingIndexesAsync(context.GetService<IDesignTimeModel>().Model, cancellationToken);
-    }
+        => GetDatabaseCreator(databaseFacade).CreateMissingIndexesAsync(cancellationToken);
 
     /// <summary>
     /// Creates missing Atlas vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
@@ -104,10 +94,7 @@ public static class MongoDatabaseFacadeExtensions
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     public static Task CreateMissingVectorIndexesAsync(this DatabaseFacade databaseFacade, CancellationToken cancellationToken = default)
-    {
-        var context = ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context;
-        return context.GetService<IMongoClientWrapper>().CreateMissingVectorIndexesAsync(context.GetService<IDesignTimeModel>().Model, cancellationToken);
-    }
+        => GetDatabaseCreator(databaseFacade).CreateMissingVectorIndexesAsync(cancellationToken);
 
     /// <summary>
     /// Blocks until all vector indexes in the mapped collections are reporting the 'READY' state.
@@ -117,10 +104,7 @@ public static class MongoDatabaseFacadeExtensions
     /// The default is 15 seconds. Zero seconds means no timeout.</param>
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
     public static void WaitForVectorIndexes(this DatabaseFacade databaseFacade, TimeSpan? timeout = null)
-    {
-        var context = ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context;
-        context.GetService<IMongoClientWrapper>().WaitForVectorIndexes(context.GetService<IDesignTimeModel>().Model, timeout);
-    }
+        => GetDatabaseCreator(databaseFacade).WaitForVectorIndexes(timeout);
 
     /// <summary>
     /// Blocks until all vector indexes in the mapped collections are reporting the 'READY' state.
@@ -132,10 +116,7 @@ public static class MongoDatabaseFacadeExtensions
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
     public static Task WaitForVectorIndexesAsync(this DatabaseFacade databaseFacade, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
-    {
-        var context = ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context;
-        return context.GetService<IMongoClientWrapper>().WaitForVectorIndexesAsync(context.GetService<IDesignTimeModel>().Model, timeout, cancellationToken);
-    }
+        => GetDatabaseCreator(databaseFacade).WaitForVectorIndexesAsync(timeout, cancellationToken);
 
     /// <summary>
     /// Ensures that the database for the context exists. If it exists, no action is taken. If it does not
@@ -146,7 +127,7 @@ public static class MongoDatabaseFacadeExtensions
     /// <param name="options">An <see cref="MongoDatabaseCreationOptions"/> object specifying additional actions to be taken.</param>
     /// <returns><see langword="true" /> if the database is created, <see langword="false" /> if it already existed.</returns>
     public static bool EnsureCreated(this DatabaseFacade databaseFacade, MongoDatabaseCreationOptions options)
-        => ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context.GetService<IMongoDatabaseCreator>().EnsureCreated(options);
+        => GetDatabaseCreator(databaseFacade).EnsureCreated(options);
 
     /// <summary>
     /// Asynchronously ensures that the database for the context exists. If it exists, no action is taken. If it does not
@@ -188,4 +169,7 @@ public static class MongoDatabaseFacadeExtensions
 
     private static IMongoTransactionManager GetMongoTransactionManager(DatabaseFacade databaseFacade)
         => (IMongoTransactionManager)((IDatabaseFacadeDependenciesAccessor)databaseFacade).Dependencies.TransactionManager;
+
+    private static IMongoDatabaseCreator GetDatabaseCreator(DatabaseFacade databaseFacade)
+        => ((IDatabaseFacadeDependenciesAccessor)databaseFacade).Context.GetService<IMongoDatabaseCreator>();
 }

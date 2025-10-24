@@ -17,9 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Driver;
-using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
@@ -31,6 +29,21 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// </summary>
 public interface IMongoClientWrapper
 {
+    /// <summary>
+    /// The underlying <see cref="IMongoClient"/>. Accessing this may cause the underlying client to be created.
+    /// </summary>
+    IMongoClient Client { get; }
+
+    /// <summary>
+    /// The underlying <see cref="IMongoDatabase"/>. Accessing this may cause the underlying client to be created.
+    /// </summary>
+    IMongoDatabase Database { get; }
+
+    /// <summary>
+    /// Gets the name of the underlying <see cref="IMongoDatabase"/>. Accessing this may cause the underlying client to be created.
+    /// </summary>
+    string DatabaseName { get; }
+
     /// <summary>
     /// Get an <see cref="IMongoCollection{T}"/> for the given <paramref name="collectionName"/>.
     /// </summary>
@@ -48,146 +61,6 @@ public interface IMongoClientWrapper
     /// <typeparam name="T">The type of items being returned by the query.</typeparam>
     /// <returns>An <see cref="IEnumerable{T}"/> containing the items returned by the query.</returns>
     IEnumerable<T> Execute<T>(MongoExecutableQuery executableQuery, out Action log);
-
-    /// <summary>
-    /// Create a new database with the name specified in the connection options.
-    /// </summary>
-    /// <remarks>If the database already exists only new collections will be created.</remarks>
-    /// <param name="model">The <see cref="IDesignTimeModel"/> that informs how the database should be created.</param>
-    /// <returns><see langword="true" /> if the database was created from scratch, <see langword="false" /> if it already existed.</returns>
-    bool CreateDatabase(IDesignTimeModel model);
-
-    /// <summary>
-    /// Create a new database with the name specified in the connection options.
-    /// </summary>
-    /// <remarks>If the database already exists only new collections will be created.</remarks>
-    /// <param name="model">The <see cref="IDesignTimeModel"/> that informs how the database should be created.</param>
-    /// <param name="options">An <see cref="MongoDatabaseCreationOptions"/> object specifying additional actions to be taken.</param>
-    /// <param name="seed">A delegate called to seed the database before any Atlas indexes are created.</param>
-    /// <returns><see langword="true" /> if the database was created from scratch, <see langword="false" /> if it already existed.</returns>
-    bool CreateDatabase(IDesignTimeModel model, MongoDatabaseCreationOptions options, Action? seed);
-
-    /// <summary>
-    /// Create a new database with the name specified in the connection options asynchronously.
-    /// </summary>
-    /// <remarks>If the database already exists only new collections will be created.</remarks>
-    /// <param name="model">The <see cref="IDesignTimeModel"/> that informs how the database should be created.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
-    /// <returns>
-    /// A <see cref="Task"/> that, when resolved, will be
-    /// <see langword="true" /> if the database was created from scratch, <see langword="false" /> if it already existed.
-    /// </returns>
-    Task<bool> CreateDatabaseAsync(IDesignTimeModel model, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Create a new database with the name specified in the connection options asynchronously.
-    /// </summary>
-    /// <remarks>If the database already exists only new collections will be created.</remarks>
-    /// <param name="model">The <see cref="IDesignTimeModel"/> that informs how the database should be created.</param>
-    /// <param name="options">An <see cref="MongoDatabaseCreationOptions"/> object specifying additional actions to be taken.</param>
-    /// <param name="seedAsync">A delegate called to seed the database before any Atlas indexes are created.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
-    /// <returns>
-    /// A <see cref="Task"/> that, when resolved, will be
-    /// <see langword="true" /> if the database was created from scratch, <see langword="false" /> if it already existed.
-    /// </returns>
-    Task<bool> CreateDatabaseAsync(IDesignTimeModel model, MongoDatabaseCreationOptions options, Func<CancellationToken, Task>? seedAsync, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Delete the database specified in the connection options.
-    /// </summary>
-    /// <returns><see langword="true" /> if the database was deleted, <see langword="false" /> if it did not exist.</returns>
-    bool DeleteDatabase();
-
-    /// <summary>
-    /// Delete the database specified in the connection options asynchronously.
-    /// </summary>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
-    /// <returns>
-    /// A <see cref="Task"/> that, when resolved, will be
-    /// <see langword="true" /> if the database was deleted, <see langword="false" /> if it already existed.
-    /// </returns>
-    Task<bool> DeleteDatabaseAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Determine if the database already exists or not.
-    /// </summary>
-    /// <returns><see langword="true" /> if the database exists, <see langword="false" /> if it does not.</returns>
-    bool DatabaseExists();
-
-    /// <summary>
-    /// Determine if the database already exists or not asynchronously.
-    /// </summary>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
-    /// <returns>
-    /// A <see cref="Task"/> that, when resolved, will be
-    /// <see langword="true" /> if the database exists, <see langword="false" /> if it does not.
-    /// </returns>
-    Task<bool> DatabaseExistsAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
-    /// does not already exist and can therefore be created. The index may be an Atlas index or a normal MongoDB index.
-    /// </summary>
-    /// <param name="index">The <see cref="IIndex"/> definition.</param>
-    void CreateIndex(IIndex index);
-
-    /// <summary>
-    /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
-    /// does not already exist and can therefore be created. The index may be an Atlas index or a normal MongoDB index.
-    /// </summary>
-    /// <param name="index">The <see cref="IIndex"/> definition.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
-    /// <returns>A <see cref="Task"/> to track this async operation.</returns>
-    Task CreateIndexAsync(IIndex index, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Creates any non-Atlas MongoDB indexes defined in the EF Core model that do not already exist.
-    /// </summary>
-    /// <param name="model">The EF Core <see cref="IModel"/>.</param>
-    void CreateMissingIndexes(IModel model);
-
-    /// <summary>
-    /// Creates any non-Atlas MongoDB indexes defined in the EF Core model that do not already exist.
-    /// </summary>
-    /// <param name="model">The EF Core <see cref="IModel"/>.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
-    /// <returns>A <see cref="Task"/> to track this async operation.</returns>
-    Task CreateMissingIndexesAsync(IModel model, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Creates any MongoDB Atlas vector indexes defined in the EF Core model that do not already exist.
-    /// </summary>
-    /// <param name="model">The EF Core <see cref="IModel"/>.</param>
-    void CreateMissingVectorIndexes(IModel model);
-
-    /// <summary>
-    /// Creates any MongoDB Atlas vector indexes defined in the EF Core model that do not already exist.
-    /// </summary>
-    /// <param name="model">The EF Core <see cref="IModel"/>.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
-    /// <returns>A <see cref="Task"/> to track this async operation.</returns>
-    Task CreateMissingVectorIndexesAsync(IModel model, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Blocks until all vector indexes in the mapped collections are reporting the 'READY' state.
-    /// </summary>
-    /// <param name="model">The EF Core <see cref="IModel"/></param>
-    /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
-    /// The default is 15 seconds. Zero seconds means no timeout.</param>
-    /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
-    void WaitForVectorIndexes(IModel model, TimeSpan? timeout = null);
-
-    /// <summary>
-    /// Blocks until all vector indexes in the mapped collections are reporting the 'READY' state.
-    /// </summary>
-    /// <param name="model">The EF Core <see cref="IModel"/></param>
-    /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
-    /// The default is 15 seconds. Zero seconds means no timeout.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
-    /// <returns>A <see cref="Task"/> to track this async operation.</returns>
-    /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
-    Task WaitForVectorIndexesAsync(IModel model, TimeSpan? timeout = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Start a new client session.
