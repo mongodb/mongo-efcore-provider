@@ -30,7 +30,7 @@ internal static class Check
     {
         if (value is not null && value.Length == 0)
         {
-            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(parameterName), parameterName);
+            throw new ArgumentException($"The string argument '{nameof(parameterName)}' cannot be empty.", parameterName);
         }
 
         return value;
@@ -56,7 +56,7 @@ internal static class Check
     public static Guid? NotEmpty(Guid? argument, [CallerArgumentExpression(nameof(argument))] string? parameterName = null)
         => argument != Guid.Empty
             ? argument
-            : throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(parameterName));
+            : throw new ArgumentException($"The string argument '{nameof(parameterName)}' cannot be empty.", parameterName);
 
     public static T? IsDefinedOrNull<T>(T? argument,
         [CallerArgumentExpression(nameof(argument))]

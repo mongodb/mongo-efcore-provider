@@ -3,6 +3,12 @@
     <Configurations>Debug;Release;Debug EF9;Release EF9</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DefineConstants>EF8</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DefineConstants>EF8</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
     <DefineConstants>TRACE;DEBUG;EF9</DefineConstants>
   </PropertyGroup>

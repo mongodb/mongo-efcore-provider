@@ -3,7 +3,7 @@
 
 // Originally from EFCore 9's ListOfValueTypesComparer.cs
 
-#if !EF9
+#if EF8
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
