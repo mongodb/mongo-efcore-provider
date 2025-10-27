@@ -16,6 +16,11 @@
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DefineConstants>EF8</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DefineConstants>EF8</DefineConstants>
     <DocumentationFile>bin\Debug\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
   </PropertyGroup>
 
