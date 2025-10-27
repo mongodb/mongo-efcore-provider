@@ -196,7 +196,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         ValidateIndex("DoublesVectorIndex", collection, "Nested.Nested.Doubles", 2, "cosine", expectedFilterPaths: null);
     }
 
-#if EF9 // HasIndex with name on owned types was accidentally missing in EF8
+#if !EF8 // HasIndex with name on owned types was accidentally missing in EF8
 
     [AtlasTheory]
     [InlineData(false)]
@@ -311,7 +311,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         ValidateIndex("MyVI", collection, "Floats", 8, "euclidean", expectedFilterPaths: null);
     }
 
-#if EF9 // HasIndex with name on owned types was accidentally missing in EF8
+#if !EF8 // HasIndex with name on owned types was accidentally missing in EF8
 
     [AtlasTheory]
     [InlineData(false, true)]
@@ -490,7 +490,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         Assert.Equal(200, field["hnswOptions"]["numEdgeCandidates"].AsInt32);
     }
 
-#if EF9 // HasIndex with name on owned types was accidentally missing in EF8
+#if !EF8 // HasIndex with name on owned types was accidentally missing in EF8
 
     [AtlasTheory]
     [InlineData(false, true)]
@@ -575,7 +575,7 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         Assert.Equal(200, field["hnswOptions"]["numEdgeCandidates"].AsInt32);
     }
 
-#if EF9 // HasIndex with name on owned types was accidentally missing in EF8
+#if !EF8 // HasIndex with name on owned types was accidentally missing in EF8
 
     [AtlasTheory]
     [InlineData(false, true)]

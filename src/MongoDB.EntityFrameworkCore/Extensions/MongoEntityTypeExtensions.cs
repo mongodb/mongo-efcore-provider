@@ -130,7 +130,7 @@ public static class MongoEntityTypeExtensions
     public static void SetContainingElementName(this IMutableEntityType entityType, string? name)
     {
         if (name is not null && name.Trim().Length == 0)
-            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(nameof(name)));
+            throw new ArgumentException($"The string argument '{nameof(name)}' cannot be empty.", name);
 
         entityType.SetOrRemoveAnnotation(MongoAnnotationNames.ElementName, name);
     }
@@ -148,7 +148,7 @@ public static class MongoEntityTypeExtensions
         bool fromDataAnnotation = false)
     {
         if (name is not null && name.Trim().Length == 0)
-            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(nameof(name)));
+            throw new ArgumentException($"The string argument '{nameof(name)}' cannot be empty.");
 
         return (string?)entityType.SetOrRemoveAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation)?.Value;
     }

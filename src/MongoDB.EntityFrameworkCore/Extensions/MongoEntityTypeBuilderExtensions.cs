@@ -163,7 +163,7 @@ public static class MongoEntityTypeBuilderExtensions
         bool fromDataAnnotation = false)
     {
         if (name is not null && name.Trim().Length == 0)
-            throw new ArgumentException(AbstractionsStrings.ArgumentIsEmpty(nameof(name)));
+            throw new ArgumentException($"The string argument '{nameof(name)}' cannot be empty.", name);
 
         return entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
     }
