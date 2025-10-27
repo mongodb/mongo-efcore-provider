@@ -38,7 +38,7 @@ public static class MongoEntityTypeBuilderExtensions
         string? name)
     {
         if (name is {Length: 0})
-            throw new ArgumentException(ArgumentNameCannotBeEmptyExceptionMessage);
+            throw new ArgumentException(ArgumentNameCannotBeEmptyExceptionMessage, name);
 
         entityTypeBuilder.Metadata.SetCollectionName(name);
 
@@ -90,7 +90,7 @@ public static class MongoEntityTypeBuilderExtensions
         bool fromDataAnnotation = false)
     {
         if (name is {Length: 0})
-            throw new ArgumentException(ArgumentNameCannotBeEmptyExceptionMessage);
+            throw new ArgumentException(ArgumentNameCannotBeEmptyExceptionMessage, name);
 
         return entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.CollectionName, name, fromDataAnnotation);
     }
@@ -163,7 +163,7 @@ public static class MongoEntityTypeBuilderExtensions
         bool fromDataAnnotation = false)
     {
         if (name is not null && name.Trim().Length == 0)
-            throw new ArgumentException($"The string argument '{nameof(name)}' cannot be empty.", name);
+            throw new ArgumentException(ArgumentNameCannotBeEmptyExceptionMessage, name);
 
         return entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
     }

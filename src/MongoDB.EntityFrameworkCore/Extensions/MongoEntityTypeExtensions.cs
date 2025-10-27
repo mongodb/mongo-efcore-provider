@@ -35,7 +35,7 @@ public static class MongoEntityTypeExtensions
     public static void SetCollectionName(this IMutableEntityType entityType, string? name)
     {
         if (name is { Length: 0 })
-            throw new ArgumentException("The string argument 'name' cannot be empty.");
+            throw new ArgumentException("The string argument 'name' cannot be empty.", name);
 
         entityType.SetAnnotation(MongoAnnotationNames.CollectionName, name);
     }
@@ -53,7 +53,7 @@ public static class MongoEntityTypeExtensions
         bool fromDataAnnotation = false)
     {
         if (name is {Length: 0})
-            throw new ArgumentException("The string argument 'name' cannot be empty.");
+            throw new ArgumentException($"The string argument '{nameof(name)}' cannot be empty.", name);
 
         return (string?)entityType.SetAnnotation(
             MongoAnnotationNames.CollectionName,
@@ -148,7 +148,7 @@ public static class MongoEntityTypeExtensions
         bool fromDataAnnotation = false)
     {
         if (name is not null && name.Trim().Length == 0)
-            throw new ArgumentException($"The string argument '{nameof(name)}' cannot be empty.");
+            throw new ArgumentException($"The string argument '{nameof(name)}' cannot be empty.", name);
 
         return (string?)entityType.SetOrRemoveAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation)?.Value;
     }
