@@ -90,6 +90,8 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - `CamelCaseElementNameConvention` for helping map Pascal-cased C# properties to camel-cased BSON elements
 - Type discriminators including `OfType<T>` and `Where(e => e is T)`
 - Support for EF shadow properties and EF.Proxy for navigation traversal
+- MongoDB full text search
+- MongoDB vector search
 - [Client Side Field Level Encryption](https://www.mongodb.com/docs/manual/core/csfle/quick-start/) and [Queryable Encryption](https://www.mongodb.com/docs/manual/core/queryable-encryption/) compatibility
 
 ## Limitations
@@ -103,7 +105,6 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - GroupBy operations
 - Includes/joins
 - Geospatial
-- Atlas search
 - ExecuteUpdate & ExecuteDelete bulk operations (EF 9 only)
 
 ### Not supported, out-of-scope features
@@ -119,7 +120,7 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 ## Breaking changes
 
 This project's version-numbers are aligned with Entity Framework Core and as-such we can not use the semver convention of constraining breaking changes solely to major version numbers. Please keep an eye on our [Breaking Changes](/BREAKING-CHANGES.md) document before upgrading to a new version of this provider.
- 
+
 ## Documentation
 
 - [MongoDB](https://www.mongodb.com/docs)

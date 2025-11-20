@@ -15,10 +15,12 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Linq;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Metadata.Search;
+using MongoDB.EntityFrameworkCore.Metadata.Search.Definitions;
 
 namespace MongoDB.EntityFrameworkCore.Extensions;
 
@@ -216,4 +218,106 @@ public static class MongoEntityTypeExtensions
     /// <returns>The <see cref="IEntityType"/> mapped directly to the MongoDB document.</returns>
     public static IConventionEntityType GetDocumentRoot(this IConventionEntityType entityType)
         => (IConventionEntityType)GetDocumentRoot((IMutableEntityType)entityType);
+
+    /// <summary>
+    /// Returns all the <see cref="SearchIndexDefinition"/> for a given entity type.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <returns>The search index definitions, which may be empty if none are set.</returns>
+    public static IReadOnlyList<SearchIndexDefinition> GetSearchIndexDefinitions(this IReadOnlyEntityType entityType)
+        => (IReadOnlyList<SearchIndexDefinition>?)entityType[MongoAnnotationNames.SearchIndexDefinitions] ?? [];
+
+    /// <summary>
+    /// Returns the <see cref="SearchIndexDefinition"/> with the given name.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <param name="name">The index name.</param>
+    /// <returns>The search index definition, or <see langword="null" /> if none is set.</returns>
+    public static SearchIndexDefinition? GetSearchIndexDefinition(this IReadOnlyEntityType entityType, string name)
+        => entityType.GetSearchIndexDefinitions().FirstOrDefault(e => e.Name == name);
+
+    /// <summary>
+    /// Sets the <see cref="SearchIndexDefinition"/> with the given name for a given entity type.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <param name="indexDefinition">The <see cref="SearchIndexDefinition"/> to use.</param>
+    public static void SetSearchIndexDefinition(this IMutableEntityType entityType, SearchIndexDefinition indexDefinition)
+    {
+        var indexDefinitions = entityType.GetSearchIndexDefinitions().ToList();
+        for (var i = 0; i < indexDefinitions.Count; i++)
+        {
+            if (indexDefinitions[i].Name == indexDefinition.Name)
+            {
+                indexDefinitions[i] = indexDefinition;
+                goto done;
+            }
+        }
+
+        indexDefinitions.Add(indexDefinition);
+
+        done:
+
+        entityType.SetAnnotation(MongoAnnotationNames.SearchIndexDefinitions, indexDefinitions);
+    }
+
+    /// <summary>
+    /// Removes the <see cref="SearchIndexDefinition"/> for the given name for a given entity type.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <param name="indexName">The name of the index to remove.</param>
+    public static string? RemoveSearchIndexDefinition(this IMutableEntityType entityType, string indexName)
+    {
+        var indexDefinitions = entityType.GetSearchIndexDefinitions().ToList();
+        for (var i = 0; i < indexDefinitions.Count; i++)
+        {
+            if (indexDefinitions[i].Name == indexName)
+            {
+                indexDefinitions.Remove(indexDefinitions[i]);
+                entityType.SetAnnotation(MongoAnnotationNames.SearchIndexDefinitions, indexDefinitions);
+                return indexName;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Removes the <see cref="SearchIndexDefinition"/> for the given name for a given entity type.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <param name="indexName">The name of the index to remove.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The configured value.</returns>
+    public static string? RemoveSearchIndexDefinition(
+        this IConventionEntityType entityType,
+        string indexName,
+        bool fromDataAnnotation = false)
+        => (fromDataAnnotation
+                ? ConfigurationSource.Convention
+                : ConfigurationSource.DataAnnotation)
+            .Overrides(GetSearchIndexDefinitionConfigurationSource(entityType))
+                ? RemoveSearchIndexDefinition((IMutableEntityType)entityType, indexName)
+                : null;
+
+    /// <summary>
+    /// Sets all the <see cref="SearchIndexDefinition"/> for a given entity type.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <param name="indexDefinition">The <see cref="SearchIndexDefinition"/> to use.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The configured value.</returns>
+    public static IReadOnlyList<SearchIndexDefinition>? SetSearchIndexDefinition(
+        this IConventionEntityType entityType,
+        IReadOnlyList<SearchIndexDefinition>? indexDefinition,
+        bool fromDataAnnotation = false)
+        => (IReadOnlyList<SearchIndexDefinition>?)entityType.SetAnnotation(
+            MongoAnnotationNames.SearchIndexDefinitions, indexDefinition, fromDataAnnotation)?.Value;
+
+    /// <summary>
+    /// Returns the <see cref="ConfigurationSource" /> for <see cref="GetSearchIndexDefinitions" />.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <returns>The <see cref="ConfigurationSource" /> for <see cref="GetSearchIndexDefinitions" />.</returns>
+    public static ConfigurationSource? GetSearchIndexDefinitionConfigurationSource(this IConventionEntityType entityType)
+        => entityType.FindAnnotation(MongoAnnotationNames.SearchIndexDefinitions)?.GetConfigurationSource();
 }
