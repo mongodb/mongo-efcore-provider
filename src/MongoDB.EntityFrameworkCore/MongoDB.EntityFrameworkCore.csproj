@@ -16,12 +16,14 @@
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-    <DefineConstants>EF8</DefineConstants>
+    <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
+    <DocumentationFile>bin\Debug\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
+    <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
 
-  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-    <DefineConstants>EF8</DefineConstants>
-    <DocumentationFile>bin\Debug\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
+    <Optimize>true</Optimize>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
