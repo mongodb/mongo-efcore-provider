@@ -44,18 +44,31 @@ internal static class SingleEntityDbContext
     }
 
     public static SingleEntityDbContext<T> Create<T>(
+        TemporaryDatabaseFixtureBase fixture,
+        Action<ModelBuilder>? modelBuilderAction = null,
+        Action<ModelConfigurationBuilder>? configBuilderAction = null) where T : class
+    {
+        var collection = fixture.CreateCollection<T>();
+        return new(
+            GetOrCreateOptionsBuilder<T, T>(collection),
+            collection.CollectionNamespace,
+            modelBuilderAction,
+            configBuilderAction);
+    }
+
+    public static SingleEntityDbContext<T> Create<T>(
         IMongoCollection<T> collection,
         Action<ModelBuilder>? modelBuilderAction = null,
         Action<ModelConfigurationBuilder>? configBuilderAction = null,
         Action<DbContextOptionsBuilder>? optionsBuilderAction = null) where T : class =>
-        new(GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction, optionsBuilderAction);
+        new(GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace, modelBuilderAction, configBuilderAction);
 
     public static SingleEntityDbContext<T2> Create<T1, T2>(
         IMongoCollection<T1> collection,
         Action<ModelBuilder>? modelBuilderAction = null,
         Action<ModelConfigurationBuilder>? configBuilderAction = null,
         Action<DbContextOptionsBuilder>? optionsBuilderAction = null) where T1 : class where T2 : class
-        => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction, optionsBuilderAction);
+        => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace, modelBuilderAction, configBuilderAction);
 
     // New overloads for logging support in tests (no caching to ensure logger is applied)
     public static SingleEntityDbContext<T> Create<T>(
@@ -70,7 +83,7 @@ internal static class SingleEntityDbContext
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
-            collection.CollectionNamespace.CollectionName,
+            collection.CollectionNamespace,
             modelBuilderAction,
             configBuilderAction,
             optionsBuilderAction);
@@ -78,7 +91,7 @@ internal static class SingleEntityDbContext
 
 internal class SingleEntityDbContext<T>(
     DbContextOptions options,
-    string collectionName,
+    CollectionNamespace collectionNamespace,
     Action<ModelBuilder>? modelBuilderAction = null,
     Action<ModelConfigurationBuilder>? configBuilderAction = null,
     Action<DbContextOptionsBuilder>? optionsBuilderAction = null)
@@ -87,22 +100,17 @@ internal class SingleEntityDbContext<T>(
 {
     public DbSet<T> Entities { get; init; }
 
+    public CollectionNamespace CollectionNamespace { get; } = collectionNamespace;
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        base.OnModelCreating(modelBuilder);
-        modelBuilder.Entity<T>().ToCollection(collectionName);
+        modelBuilder.Entity<T>().ToCollection(CollectionNamespace.CollectionName);
         modelBuilderAction?.Invoke(modelBuilder);
     }
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
-    {
-        base.ConfigureConventions(configurationBuilder);
-        configBuilderAction?.Invoke(configurationBuilder);
-    }
+        => configBuilderAction?.Invoke(configurationBuilder);
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        base.OnConfiguring(optionsBuilder);
-        optionsBuilderAction?.Invoke(optionsBuilder);
-    }
+        => optionsBuilderAction?.Invoke(optionsBuilder);
 }

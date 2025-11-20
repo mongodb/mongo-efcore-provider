@@ -119,9 +119,19 @@ public class MongoDatabaseCreator(
             CreateMissingVectorIndexes();
         }
 
+        if (options.CreateMissingSearchIndexes)
+        {
+            CreateMissingSearchIndexes();
+        }
+
         if (options.WaitForVectorIndexes)
         {
             WaitForVectorIndexes(options.IndexCreationTimeout);
+        }
+
+        if (options.WaitForSearchIndexes)
+        {
+            WaitForSearchIndexes(options.IndexCreationTimeout);
         }
 
         return !existed;
@@ -170,9 +180,19 @@ public class MongoDatabaseCreator(
             await CreateMissingVectorIndexesAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        if (options.CreateMissingSearchIndexes)
+        {
+            await CreateMissingSearchIndexesAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         if (options.WaitForVectorIndexes)
         {
             await WaitForVectorIndexesAsync(options.IndexCreationTimeout, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (options.WaitForSearchIndexes)
+        {
+            await WaitForSearchIndexesAsync(options.IndexCreationTimeout, cancellationToken).ConfigureAwait(false);
         }
 
         return !existed;
@@ -269,6 +289,13 @@ public class MongoDatabaseCreator(
 
     /// <inheritdoc />
     public void CreateMissingVectorIndexes()
+        => CreateMissingAtlasIndexes(forVectors: true);
+
+    /// <inheritdoc />
+    public void CreateMissingSearchIndexes()
+        => CreateMissingAtlasIndexes(forVectors: false);
+
+    private void CreateMissingAtlasIndexes(bool forVectors)
     {
         var collectionNames = new List<string>();
         var existingIndexesMap = new Dictionary<string, List<string>?>();
@@ -276,7 +303,7 @@ public class MongoDatabaseCreator(
 
         foreach (var entityType in designTimeModel.Model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            // Don't try to access Atlas-specific features unless an Atlas vector index is defined.
+            // Don't try to access Atlas-specific features unless an search or vector index is defined.
             if (!HasAtlasIndexes(entityType))
             {
                 continue;
@@ -295,7 +322,7 @@ public class MongoDatabaseCreator(
                 existingIndexesMap[collectionName] = indexes;
             }
 
-            BuildVectorIndexes(entityType, collectionName, existingIndexesMap, indexModelsMap);
+            BuildAtlasIndexes(entityType, collectionName, existingIndexesMap, indexModelsMap, forVectors);
         }
 
         foreach (var collectionName in collectionNames)
@@ -310,6 +337,11 @@ public class MongoDatabaseCreator(
 
     private static bool HasAtlasIndexes(IEntityType entityType)
     {
+        if (entityType.GetSearchIndexDefinitions().Count > 0)
+        {
+            return true;
+        }
+
         if (entityType.GetIndexes().Any(i => i.GetVectorIndexOptions().HasValue))
         {
             return true;
@@ -351,6 +383,13 @@ public class MongoDatabaseCreator(
 
     /// <inheritdoc />
     public void WaitForVectorIndexes(TimeSpan? timeout = null)
+        => WaitForAtlasIndexes(timeout, forVectors: true);
+
+    /// <inheritdoc />
+    public void WaitForSearchIndexes(TimeSpan? timeout = null)
+        => WaitForAtlasIndexes(timeout, forVectors: false);
+
+    private void WaitForAtlasIndexes(TimeSpan? timeout, bool forVectors)
     {
         // Don't try to access Atlas-specific features unless an Atlas vector index is defined.
         if (designTimeModel.Model.GetEntityTypes().All(e => !HasAtlasIndexes(e)))
@@ -371,18 +410,31 @@ public class MongoDatabaseCreator(
 
                 foreach (var indexModel in cursor.ToList())
                 {
+                    var isVector = indexModel["latestDefinition"].AsBsonDocument.TryGetElement("fields", out _);
+                    if (isVector != forVectors)
+                    {
+                        continue;
+                    }
+
                     var status = indexModel["status"].AsString;
 
                     if (status == "FAILED")
                     {
                         throw new InvalidOperationException(
-                            $"Failed to build the vector index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'.");
+                            $"Failed to build the {(isVector ? "vector" : "search")} index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'.");
                     }
 
                     var remainingBeforeTimeout = failAfter - DateTime.UtcNow;
                     if (status != "READY" && remainingBeforeTimeout > TimeSpan.Zero)
                     {
-                        logger.WaitingForVectorIndex(remainingBeforeTimeout);
+                        if (isVector)
+                        {
+                            logger.WaitingForVectorIndex(remainingBeforeTimeout);
+                        }
+                        else
+                        {
+                            logger.WaitingForSearchIndex(remainingBeforeTimeout);
+                        }
 
                         isReady = false;
                         Thread.Sleep(delay *= 2);
@@ -443,7 +495,14 @@ public class MongoDatabaseCreator(
     }
 
     /// <inheritdoc />
-    public async Task CreateMissingVectorIndexesAsync(CancellationToken cancellationToken = default)
+    public Task CreateMissingVectorIndexesAsync(CancellationToken cancellationToken = default)
+        => CreateMissingAtlasIndexesAsync(forVectors: true, cancellationToken);
+
+    /// <inheritdoc />
+    public Task CreateMissingSearchIndexesAsync(CancellationToken cancellationToken = default)
+        => CreateMissingAtlasIndexesAsync(forVectors: false, cancellationToken);
+
+    private async Task CreateMissingAtlasIndexesAsync(bool forVectors, CancellationToken cancellationToken)
     {
         var collectionNames = new List<string>();
         var existingIndexesMap = new Dictionary<string, List<string>?>();
@@ -470,7 +529,7 @@ public class MongoDatabaseCreator(
                 existingIndexesMap[collectionName] = indexes;
             }
 
-            BuildVectorIndexes(entityType, collectionName, existingIndexesMap, indexModelsMap);
+            BuildAtlasIndexes(entityType, collectionName, existingIndexesMap, indexModelsMap, forVectors);
         }
 
         foreach (var collectionName in collectionNames)
@@ -484,7 +543,14 @@ public class MongoDatabaseCreator(
     }
 
     /// <inheritdoc />
-    public async Task WaitForVectorIndexesAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+    public Task WaitForVectorIndexesAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        => WaitForAtlasIndexesAsync(timeout, forVectors: true, cancellationToken);
+
+    /// <inheritdoc />
+    public Task WaitForSearchIndexesAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        => WaitForAtlasIndexesAsync(timeout, forVectors: false, cancellationToken);
+
+    private async Task WaitForAtlasIndexesAsync(TimeSpan? timeout, bool forVectors, CancellationToken cancellationToken)
     {
         // Don't try to access Atlas-specific features unless an Atlas vector index is defined.
         if (designTimeModel.Model.GetEntityTypes().All(e => !HasAtlasIndexes(e)))
@@ -505,18 +571,31 @@ public class MongoDatabaseCreator(
 
                 foreach (var indexModel in indexModels)
                 {
+                    var isVector = indexModel["latestDefinition"].AsBsonDocument.TryGetElement("fields", out _);
+                    if (isVector != forVectors)
+                    {
+                        continue;
+                    }
+
                     var status = indexModel["status"].AsString;
 
                     if (status == "FAILED")
                     {
                         throw new InvalidOperationException(
-                            $"Failed to build the vector index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'.");
+                            $"Failed to build the {(forVectors ? "vector" : "search")} index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'.");
                     }
 
                     var remainingBeforeTimeout = failAfter - DateTime.UtcNow;
                     if (status != "READY" && remainingBeforeTimeout > TimeSpan.Zero)
                     {
-                        logger.WaitingForVectorIndex(remainingBeforeTimeout);
+                        if (forVectors)
+                        {
+                            logger.WaitingForVectorIndex(remainingBeforeTimeout);
+                        }
+                        else
+                        {
+                            logger.WaitingForSearchIndex(remainingBeforeTimeout);
+                        }
 
                         isReady = false;
                         await Task.Delay(delay *= 2, cancellationToken).ConfigureAwait(false);
@@ -577,11 +656,12 @@ public class MongoDatabaseCreator(
         }
     }
 
-    private void BuildVectorIndexes(
+    private void BuildAtlasIndexes(
         IEntityType entityType,
         string collectionName,
         Dictionary<string, List<string>?> existingIndexesMap,
-        Dictionary<string, List<CreateSearchIndexModel>?> indexModelsMap)
+        Dictionary<string, List<CreateSearchIndexModel>?> indexModelsMap,
+        bool forVectorIndexes)
     {
         if (!existingIndexesMap.TryGetValue(collectionName, out var existingIndexes))
         {
@@ -594,24 +674,42 @@ public class MongoDatabaseCreator(
             indexModelsMap[collectionName] = indexModels;
         }
 
-        foreach (var index in entityType.GetIndexes().Where(i => i.GetVectorIndexOptions().HasValue))
+        if (forVectorIndexes)
         {
-            var name = index.Name;
-            Debug.Assert(name != null, "Index name should have been set by IndexNamingConvention.");
-
-            var options = index.GetVectorIndexOptions()!.Value;
-            if (!existingIndexes!.Contains(name))
+            foreach (var index in entityType.GetIndexes().Where(i => i.GetVectorIndexOptions().HasValue))
             {
-                indexModels!.Add(index.CreateVectorIndexDocument(options));
-                existingIndexes.Add(name);
+                var name = index.Name;
+                Debug.Assert(name != null, "Index name should have been set by IndexNamingConvention.");
+
+                var options = index.GetVectorIndexOptions()!.Value;
+                if (!existingIndexes!.Contains(name))
+                {
+                    indexModels!.Add(index.CreateVectorIndexDocument(options));
+                    existingIndexes.Add(name);
+                }
+            }
+
+            var ownedEntityTypes = designTimeModel.Model.GetEntityTypes()
+                .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
+
+            foreach (var ownedEntityType in ownedEntityTypes)
+            {
+                BuildAtlasIndexes(ownedEntityType, collectionName, existingIndexesMap, indexModelsMap, forVectorIndexes: true);
             }
         }
-
-        var ownedEntityTypes = designTimeModel.Model.GetEntityTypes().Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
-
-        foreach (var ownedEntityType in ownedEntityTypes)
+        else
         {
-            BuildVectorIndexes(ownedEntityType, collectionName, existingIndexesMap, indexModelsMap);
+            foreach (var index in entityType.GetSearchIndexDefinitions())
+            {
+                var name = index.Name;
+                Debug.Assert(name != null, "Index name should have been set on creation.");
+
+                if (!existingIndexes!.Contains(name))
+                {
+                    indexModels!.Add(new CreateSearchIndexModel(name, SearchIndexType.Search, index.ToBson().AsBsonDocument));
+                    existingIndexes.Add(name);
+                }
+            }
         }
     }
 
