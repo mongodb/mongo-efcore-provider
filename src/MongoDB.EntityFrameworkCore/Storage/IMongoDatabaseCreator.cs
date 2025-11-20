@@ -65,14 +65,16 @@ public interface IMongoDatabaseCreator : IDatabaseCreator
 
     /// <summary>
     /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
-    /// does not already exist and can therefore be created. The index may be an Atlas index or a normal MongoDB index.
+    /// does not already exist and can therefore be created. The index may be a MongoDB search or vector search index or a normal
+    /// MongoDB index.
     /// </summary>
     /// <param name="index">The <see cref="IIndex"/> definition.</param>
     void CreateIndex(IIndex index);
 
     /// <summary>
     /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
-    /// does not already exist and can therefore be created. The index may be an Atlas index or a normal MongoDB index.
+    /// does not already exist and can therefore be created. The index may be a MongoDB search or vector search index or a normal
+    /// MongoDB index.
     /// </summary>
     /// <param name="index">The <see cref="IIndex"/> definition.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
@@ -80,24 +82,24 @@ public interface IMongoDatabaseCreator : IDatabaseCreator
     Task CreateIndexAsync(IIndex index, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Creates any non-Atlas MongoDB indexes defined in the EF Core model that do not already exist.
+    /// Creates any non-search or non-vector search MongoDB indexes defined in the EF Core model that do not already exist.
     /// </summary>
     void CreateMissingIndexes();
 
     /// <summary>
-    /// Creates any non-Atlas MongoDB indexes defined in the EF Core model that do not already exist.
+    /// Creates any non-search or non-vector search MongoDB indexes defined in the EF Core model that do not already exist.
     /// </summary>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     Task CreateMissingIndexesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Creates any MongoDB Atlas vector indexes defined in the EF Core model that do not already exist.
+    /// Creates any MongoDB vector indexes defined in the EF Core model that do not already exist.
     /// </summary>
     void CreateMissingVectorIndexes();
 
     /// <summary>
-    /// Creates any MongoDB Atlas vector indexes defined in the EF Core model that do not already exist.
+    /// Creates any MongoDB vector indexes defined in the EF Core model that do not already exist.
     /// </summary>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
@@ -120,4 +122,34 @@ public interface IMongoDatabaseCreator : IDatabaseCreator
     /// <returns>A <see cref="Task"/> to track this async operation.</returns>
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
     Task WaitForVectorIndexesAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates any MongoDB search indexes defined in the EF Core model that do not already exist.
+    /// </summary>
+    void CreateMissingSearchIndexes();
+
+    /// <summary>
+    /// Creates any MongoDB search indexes defined in the EF Core model that do not already exist.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>A <see cref="Task"/> to track this async operation.</returns>
+    Task CreateMissingSearchIndexesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Blocks until all search indexes in the mapped collections are reporting the 'READY' state.
+    /// </summary>
+    /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
+    /// The default is 60 seconds. Zero seconds means no timeout.</param>
+    /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
+    void WaitForSearchIndexes(TimeSpan? timeout = null);
+
+    /// <summary>
+    /// Blocks until all search indexes in the mapped collections are reporting the 'READY' state.
+    /// </summary>
+    /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
+    /// The default is 60 seconds. Zero seconds means no timeout.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>A <see cref="Task"/> to track this async operation.</returns>
+    /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
+    Task WaitForSearchIndexesAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default);
 }
