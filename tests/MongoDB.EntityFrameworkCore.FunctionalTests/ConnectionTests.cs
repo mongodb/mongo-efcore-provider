@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests;
 
@@ -36,7 +37,7 @@ public class ConnectionTests : IClassFixture<TemporaryDatabaseFixture>
         var optionsBuilder = StartOptions()
             .UseMongoDB(Fixture.TestServer.ConnectionString, TestDatabaseNamer.GetUniqueDatabaseName());
 
-        using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_connection_string_with_database_name));
+        using var context = new TestContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_connection_string_with_database_name));
 
         context.Database.EnsureCreated();
     }
@@ -51,7 +52,7 @@ public class ConnectionTests : IClassFixture<TemporaryDatabaseFixture>
         var optionsBuilder = StartOptions()
             .UseMongoDB(mongoUrl.ToString());
 
-        using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, collectionName);
+        using var context = new TestContext<BasicEntity>(optionsBuilder.Options, collectionName);
 
         context.Database.EnsureCreated();
 
@@ -69,7 +70,7 @@ public class ConnectionTests : IClassFixture<TemporaryDatabaseFixture>
         var optionsBuilder = StartOptions()
             .UseMongoDB(clientSettings, TestDatabaseNamer.GetUniqueDatabaseName());
 
-        using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_mongo_client_settings));
+        using var context = new TestContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_mongo_client_settings));
 
         context.Database.EnsureCreated();
     }
@@ -82,18 +83,27 @@ public class ConnectionTests : IClassFixture<TemporaryDatabaseFixture>
         var optionsBuilder = StartOptions()
             .UseMongoDB(client, TestDatabaseNamer.GetUniqueDatabaseName());
 
-        using var context = new SingleEntityDbContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_mongo_client));
+        using var context = new TestContext<BasicEntity>(optionsBuilder.Options, nameof(Can_connect_using_mongo_client));
 
         context.Database.EnsureCreated();
     }
 
-    private static DbContextOptionsBuilder<SingleEntityDbContext<BasicEntity>> StartOptions()
-        => new DbContextOptionsBuilder<SingleEntityDbContext<BasicEntity>>()
+    private static DbContextOptionsBuilder<TestContext<BasicEntity>> StartOptions()
+        => new DbContextOptionsBuilder<TestContext<BasicEntity>>()
             .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
     private class BasicEntity
     {
         public ObjectId _id { get; set; }
+    }
+
+    private class TestContext<T>(DbContextOptions options, string collectionName) : DbContext(options)
+        where T : class
+    {
+        public DbSet<T> Entities { get; init; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+            => modelBuilder.Entity<T>().ToCollection(collectionName);
     }
 }

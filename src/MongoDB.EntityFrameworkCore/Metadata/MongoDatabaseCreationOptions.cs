@@ -25,9 +25,11 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 /// <see cref="MongoDB.EntityFrameworkCore.MongoDatabaseFacadeExtensions.EnsureCreatedAsync"/>
 /// </summary>
 /// <param name="CreateMissingCollections">Creates any MongoDB database collections that do not already exist. The default is true.</param>
-/// <param name="CreateMissingIndexes">Creates any non-Atlas MongoDB indexes that do not already exist. The default is true.</param>
-/// <param name="CreateMissingVectorIndexes">Creates any MongoDB Atlas vector indexes that do not already exist. The default is true.</param>
-/// <param name="WaitForVectorIndexes">Waits all MongoDB Atlas vector indexes to be 'READY' before continuing. The default is true.</param>
+/// <param name="CreateMissingIndexes">Creates any non-search and non-vector search MongoDB indexes that do not already exist. The default is true.</param>
+/// <param name="CreateMissingVectorIndexes">Creates any MongoDB vector indexes that do not already exist. The default is true.</param>
+/// <param name="WaitForVectorIndexes">Waits all MongoDB vector indexes to be 'READY' before continuing. The default is true.</param>
+/// <param name="CreateMissingSearchIndexes">Creates any MongoDB search indexes that do not already exist. The default is true.</param>
+/// <param name="WaitForSearchIndexes">Waits all MongoDB search indexes to be 'READY' before continuing. The default is true.</param>
 /// <param name="IndexCreationTimeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
 /// The default is 60 seconds. Zero seconds means no timeout.</param>
 /// <param name="CreateCollectionOptions">The options to use when creating the MongoDB database collections. The default is null.</param>
@@ -37,7 +39,9 @@ public readonly record struct MongoDatabaseCreationOptions(
     bool CreateMissingVectorIndexes = true,
     bool WaitForVectorIndexes = true,
     TimeSpan? IndexCreationTimeout = null,
-    CreateCollectionOptions? CreateCollectionOptions = null)
+    CreateCollectionOptions? CreateCollectionOptions = null,
+    bool CreateMissingSearchIndexes = true,
+    bool WaitForSearchIndexes = true)
 {
     /// <summary>
     /// Creates a <see cref="MongoDatabaseCreationOptions"/> with default values for all options.

@@ -66,7 +66,7 @@ public static class MongoIndexExtensions
         => (CreateIndexOptions?)index.FindAnnotation(MongoAnnotationNames.CreateIndexOptions)?.Value;
 
     /// <summary>
-    /// Returns the <see cref="VectorIndexOptions"/> for an Atlas Search Vector Index.
+    /// Returns the <see cref="VectorIndexOptions"/> for a MongoDB Search Vector Index.
     /// </summary>
     /// <param name="index">The index.</param>
     /// <returns>The index options, or <see langword="null" /> if none is set.</returns>
@@ -74,18 +74,18 @@ public static class MongoIndexExtensions
         => (VectorIndexOptions?)index[MongoAnnotationNames.VectorIndexOptions];
 
     /// <summary>
-    /// Sets the <see cref="VectorIndexOptions"/> for an Atlas Search Vector Index.
+    /// Sets the <see cref="VectorIndexOptions"/> for a MongoDB Search Vector Index.
     /// </summary>
     /// <param name="index">The index.</param>
-    /// <param name="indexOptions">The <see cref="VectorIndexOptions"/> options to use for the Atlas Search Vector Index.</param>
+    /// <param name="indexOptions">The <see cref="VectorIndexOptions"/> options to use for the MongoDB Search Vector Index.</param>
     public static void SetVectorIndexOptions(this IMutableIndex index, VectorIndexOptions? indexOptions)
         => index.SetAnnotation(MongoAnnotationNames.VectorIndexOptions, indexOptions);
 
     /// <summary>
-    /// Sets the vector index type to use an Atlas Search Vector Index.
+    /// Sets the vector index type to use a MongoDB Search Vector Index.
     /// </summary>
     /// <param name="index">The index.</param>
-    /// <param name="indexOptions">The <see cref="VectorIndexOptions"/> options to use for the Atlas Search Vector Index.</param>
+    /// <param name="indexOptions">The <see cref="VectorIndexOptions"/> options to use for the MongoDB Search Vector Index.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The configured value.</returns>
     public static VectorIndexOptions? SetVectorIndexOptions(
@@ -100,5 +100,5 @@ public static class MongoIndexExtensions
     /// <param name="property">The property.</param>
     /// <returns>The <see cref="ConfigurationSource" /> for <see cref="GetVectorIndexOptions" />.</returns>
     public static ConfigurationSource? GetVectorIndexOptionsConfigurationSource(this IConventionIndex property)
-        => property.FindAnnotation(MongoAnnotationNames.VectorIndexOptions)?.GetConfigurationSource();
+        => property.FindAnnotation(MongoAnnotationNames.SearchIndexDefinitions)?.GetConfigurationSource();
 }
