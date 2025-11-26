@@ -95,7 +95,7 @@ public class MongoDatabaseCreator(
                     collectionNames.Add(collectionName);
                     try
                     {
-                        clientWrapper.Database.CreateCollection(collectionName);
+                        clientWrapper.Database.CreateCollection(collectionName, options.CreateCollectionOptions);
                     }
                     catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                     {
@@ -146,7 +146,7 @@ public class MongoDatabaseCreator(
                     collectionNames.Add(collectionName);
                     try
                     {
-                        await clientWrapper.Database.CreateCollectionAsync(collectionName, null, cancellationToken).ConfigureAwait(false);
+                        await clientWrapper.Database.CreateCollectionAsync(collectionName, options.CreateCollectionOptions, cancellationToken).ConfigureAwait(false);
                     }
                     catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                     {

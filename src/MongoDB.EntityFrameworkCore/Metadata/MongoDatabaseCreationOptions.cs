@@ -15,6 +15,8 @@
 
 using System;
 
+using MongoDB.Driver;
+
 namespace MongoDB.EntityFrameworkCore.Metadata;
 
 /// <summary>
@@ -28,12 +30,14 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 /// <param name="WaitForVectorIndexes">Waits all MongoDB Atlas vector indexes to be 'READY' before continuing. The default is true.</param>
 /// <param name="IndexCreationTimeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
 /// The default is 60 seconds. Zero seconds means no timeout.</param>
+/// <param name="CreateCollectionOptions">The options to use when creating the MongoDB database collections. The default is null.</param>
 public readonly record struct MongoDatabaseCreationOptions(
     bool CreateMissingCollections = true,
     bool CreateMissingIndexes = true,
     bool CreateMissingVectorIndexes = true,
     bool WaitForVectorIndexes = true,
-    TimeSpan? IndexCreationTimeout = null)
+    TimeSpan? IndexCreationTimeout = null,
+    CreateCollectionOptions? CreateCollectionOptions = null)
 {
     /// <summary>
     /// Creates a <see cref="MongoDatabaseCreationOptions"/> with default values for all options.

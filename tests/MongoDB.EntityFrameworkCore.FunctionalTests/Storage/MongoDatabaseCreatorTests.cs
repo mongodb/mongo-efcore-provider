@@ -787,6 +787,87 @@ public class MongoDatabaseCreatorTests
         Assert.False(databaseCreator.DatabaseExists());
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_uses_create_collection_options_when_provided(bool async)
+    {
+        const int expectedMaxDocs = 512;
+        const int expectedMaxSize = 2048;
+
+        var database = await TemporaryDatabaseFixture.CreateInitializedAsync();
+
+        var collectionOptions = new CreateCollectionOptions
+        {
+            Capped = true,
+            MaxDocuments = expectedMaxDocs,
+            MaxSize = expectedMaxSize
+        };
+
+        var creationOptions = new MongoDatabaseCreationOptions(CreateCollectionOptions: collectionOptions);
+
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
+        var databaseCreator = context.GetService<IMongoDatabaseCreator>();
+
+        var didCreate = async
+            ? await databaseCreator.EnsureCreatedAsync(creationOptions)
+            : databaseCreator.EnsureCreated(creationOptions);
+
+        Assert.True(didCreate);
+
+        var collections = database.MongoDatabase.ListCollections().ToList();
+        var allNames = collections.Select(c => c["name"].AsString).ToArray();
+        Assert.Equal(3, allNames.Length);
+        Assert.Contains("Customers", allNames);
+        Assert.Contains("Orders", allNames);
+        Assert.Contains("Addresses", allNames);
+
+        // Verify that the collections were created with the specified options
+        var customerCollection = collections.Single(c => c["name"].AsString == "Customers");
+        Assert.True(customerCollection["options"]["capped"].AsBoolean);
+        Assert.Equal(expectedMaxDocs, customerCollection["options"]["max"].AsInt32);
+        Assert.Equal(expectedMaxSize, customerCollection["options"]["size"].AsInt32);
+
+        var ordersCollection = collections.Single(c => c["name"].AsString == "Orders");
+        Assert.True(ordersCollection["options"]["capped"].AsBoolean);
+        Assert.Equal(expectedMaxDocs, ordersCollection["options"]["max"].AsInt32);
+        Assert.Equal(expectedMaxSize, ordersCollection["options"]["size"].AsInt32);
+
+        var addressesCollection = collections.Single(c => c["name"].AsString == "Addresses");
+        Assert.True(addressesCollection["options"]["capped"].AsBoolean);
+        Assert.Equal(expectedMaxDocs, addressesCollection["options"]["max"].AsInt32);
+        Assert.Equal(expectedMaxSize, addressesCollection["options"]["size"].AsInt32);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateDatabase_creates_normal_collections_when_no_options_provided(bool async)
+    {
+        var database = await TemporaryDatabaseFixture.CreateInitializedAsync();
+
+        var creationOptions = new MongoDatabaseCreationOptions();
+
+        var context = MyContext.CreateCollectionOptions(database.MongoDatabase);
+        var databaseCreator = context.GetService<IMongoDatabaseCreator>();
+
+        var didCreate = async
+            ? await databaseCreator.EnsureCreatedAsync(creationOptions)
+            : databaseCreator.EnsureCreated(creationOptions);
+
+        Assert.True(didCreate);
+
+        var collections = database.MongoDatabase.ListCollections().ToList();
+        var allNames = collections.Select(c => c["name"].AsString).ToArray();
+        Assert.Equal(3, allNames.Length);
+
+        // Verify that the collections were created without capped options
+        foreach (var collection in collections)
+        {
+            var options = collection["options"];
+            Assert.False(options.AsBsonDocument.Contains("capped") && options["capped"].AsBoolean);
+        }
+    }
     class MyContext(
         DbContextOptions options,
         Action<ModelBuilder>? modelBuilderAction = null)
