@@ -46,21 +46,24 @@ internal static class SingleEntityDbContext
     public static SingleEntityDbContext<T> Create<T>(
         IMongoCollection<T> collection,
         Action<ModelBuilder>? modelBuilderAction = null,
-        Action<ModelConfigurationBuilder>? configBuilderAction = null) where T : class =>
-        new(GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction);
+        Action<ModelConfigurationBuilder>? configBuilderAction = null,
+        Action<DbContextOptionsBuilder>? optionsBuilderAction = null) where T : class =>
+        new(GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction, optionsBuilderAction);
 
     public static SingleEntityDbContext<T2> Create<T1, T2>(
         IMongoCollection<T1> collection,
         Action<ModelBuilder>? modelBuilderAction = null,
-        Action<ModelConfigurationBuilder>? configBuilderAction = null) where T1 : class where T2 : class
-        => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction);
+        Action<ModelConfigurationBuilder>? configBuilderAction = null,
+        Action<DbContextOptionsBuilder>? optionsBuilderAction = null) where T1 : class where T2 : class
+        => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace.CollectionName, modelBuilderAction, configBuilderAction, optionsBuilderAction);
 
     // New overloads for logging support in tests (no caching to ensure logger is applied)
     public static SingleEntityDbContext<T> Create<T>(
         IMongoCollection<T> collection,
         Microsoft.Extensions.Logging.LoggerFactory loggerFactory,
         Action<ModelBuilder>? modelBuilderAction = null,
-        Action<ModelConfigurationBuilder>? configBuilderAction = null) where T : class
+        Action<ModelConfigurationBuilder>? configBuilderAction = null,
+        Action<DbContextOptionsBuilder>? optionsBuilderAction = null) where T : class
         => new(new DbContextOptionsBuilder<SingleEntityDbContext<T>>()
                 .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
                 .UseLoggerFactory(loggerFactory)
@@ -69,14 +72,16 @@ internal static class SingleEntityDbContext
                 .Options,
             collection.CollectionNamespace.CollectionName,
             modelBuilderAction,
-            configBuilderAction);
+            configBuilderAction,
+            optionsBuilderAction);
 }
 
 internal class SingleEntityDbContext<T>(
     DbContextOptions options,
     string collectionName,
     Action<ModelBuilder>? modelBuilderAction = null,
-    Action<ModelConfigurationBuilder>? configBuilderAction = null)
+    Action<ModelConfigurationBuilder>? configBuilderAction = null,
+    Action<DbContextOptionsBuilder>? optionsBuilderAction = null)
     : DbContext(options)
     where T : class
 {
@@ -93,5 +98,11 @@ internal class SingleEntityDbContext<T>(
     {
         base.ConfigureConventions(configurationBuilder);
         configBuilderAction?.Invoke(configurationBuilder);
+    }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        base.OnConfiguring(optionsBuilder);
+        optionsBuilderAction?.Invoke(optionsBuilder);
     }
 }
