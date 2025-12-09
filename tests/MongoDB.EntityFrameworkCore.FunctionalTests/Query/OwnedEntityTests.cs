@@ -417,7 +417,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
     public void OwnedEntity_non_nullable_collection_is_empty_when_empty(QueryTrackingBehavior queryTrackingBehavior)
     {
-        var collection = database.CreateCollection<SimpleNonNullableCollection>();
+        var collection = database.CreateCollection<SimpleNonNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([
             new SimpleNonNullableCollection {children = []}
         ]);
@@ -435,7 +435,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
     public void OwnedEntity_nullable_collection_is_empty_when_empty(QueryTrackingBehavior queryTrackingBehavior)
     {
-        var collection = database.CreateCollection<SimpleNullableCollection>();
+        var collection = database.CreateCollection<SimpleNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([
             new SimpleNullableCollection {children = []}
         ]);
@@ -454,7 +454,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
     public void OwnedEntity_non_nullable_collection_is_null_when_null(QueryTrackingBehavior queryTrackingBehavior)
     {
-        var collection = database.CreateCollection<SimpleNonNullableCollection>();
+        var collection = database.CreateCollection<SimpleNonNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([
             new SimpleNonNullableCollection {children = null!}
         ]);
@@ -472,7 +472,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
     public void OwnedEntity_nullable_collection_is_null_when_null(QueryTrackingBehavior queryTrackingBehavior)
     {
-        var collection = database.CreateCollection<SimpleNullableCollection>();
+        var collection = database.CreateCollection<SimpleNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([
             new SimpleNullableCollection {children = null}
         ]);
@@ -490,7 +490,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
     public void OwnedEntity_non_nullable_collection_is_null_when_missing(QueryTrackingBehavior queryTrackingBehavior)
     {
-        var collection = database.CreateCollection<MissingNullableCollection>();
+        var collection = database.CreateCollection<MissingNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([new MissingNullableCollection()]);
         using var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNonNullableCollection>(
             collection,
@@ -506,7 +506,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
     public void OwnedEntity_nullable_collection_is_null_when_missing(QueryTrackingBehavior queryTrackingBehavior)
     {
-        var collection = database.CreateCollection<MissingNullableCollection>();
+        var collection = database.CreateCollection<MissingNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([new MissingNullableCollection()]);
         using var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNullableCollection>(
             collection,
