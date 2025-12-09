@@ -15,6 +15,8 @@
 
 using System.Security.Cryptography;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
 
@@ -31,7 +33,14 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
 
     static EncryptionTestsBase()
     {
-        MongoClientSettings.Extensions.AddAutoEncryption();
+        try
+        {
+            BsonSerializer.TryRegisterSerializer(typeof(Guid), GuidSerializer.StandardInstance);
+        }
+        finally
+        {
+            MongoClientSettings.Extensions.AddAutoEncryption();
+        }
     }
 
     protected static byte[] CreateMasterKey()
