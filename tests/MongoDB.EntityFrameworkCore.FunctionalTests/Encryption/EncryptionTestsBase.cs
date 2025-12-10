@@ -37,10 +37,10 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
         {
             BsonSerializer.TryRegisterSerializer(typeof(Guid), GuidSerializer.StandardInstance);
         }
-        finally
+        catch (BsonSerializationException)
         {
-            MongoClientSettings.Extensions.AddAutoEncryption();
         }
+        MongoClientSettings.Extensions.AddAutoEncryption();
     }
 
     protected static byte[] CreateMasterKey()

@@ -18,7 +18,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 public class DatabaseCleaner(TemporaryDatabaseFixture fixture)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    [Fact] // Uncomment this line to clean up the database by removing everything with Test in the name
+    //[Fact] // Uncomment this line to clean up the database by removing everything with Test in the name
     public async Task CleanDatabase()
     {
         var client = fixture.TestServer.Client;

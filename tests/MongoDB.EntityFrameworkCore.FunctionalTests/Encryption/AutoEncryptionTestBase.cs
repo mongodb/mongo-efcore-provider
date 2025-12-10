@@ -23,10 +23,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 public abstract class AutoEncryptionTestsBase(TemporaryDatabaseFixture database)
     : EncryptionTestsBase(database)
 {
-    static AutoEncryptionTestsBase()
-    {
-        MongoClientSettings.Extensions.AddAutoEncryption();
-    }
+    private readonly TemporaryDatabaseFixture _database = database;
 
     protected MongoClient CreateEncryptedClient(
         CollectionNamespace keyVaultNamespace,
@@ -39,7 +36,7 @@ public abstract class AutoEncryptionTestsBase(TemporaryDatabaseFixture database)
             ? GetExtraOptionsForMongocryptd()
             : GetExtraOptionsForCryptShared();
 
-        var clientSettings = database.Client.Settings.Clone();
+        var clientSettings = _database.Client.Settings.Clone();
         clientSettings.AutoEncryptionOptions = new AutoEncryptionOptions(
             keyVaultNamespace,
             kmsProviders,
@@ -70,7 +67,7 @@ public abstract class AutoEncryptionTestsBase(TemporaryDatabaseFixture database)
     protected Dictionary<string, BsonDocument> CreateEncryptedFieldsMap(string collectionName)
         => new()
         {
-            { database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptedFieldsMap() }
+            { _database.MongoDatabase.DatabaseNamespace.DatabaseName + "." + collectionName, CreatePatientEncryptedFieldsMap() }
         };
 
     private BsonDocument CreatePatientEncryptedFieldsMap()
