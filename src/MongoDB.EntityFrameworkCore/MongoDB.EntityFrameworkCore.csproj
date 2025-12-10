@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Description>Official MongoDB supported provider for Entity Framework Core. See https://www.mongodb.com/docs/entity-framework/ for more details.</Description>
     <IsPackable>true</IsPackable>
     <PackageId>MongoDB.EntityFrameworkCore</PackageId>
@@ -36,6 +36,18 @@
     <Optimize>true</Optimize>
   </PropertyGroup>
 
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF10' ">
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>TRACE;DEBUG;EF10</DefineConstants>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF10' ">
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>TRACE;RELEASE;EF10</DefineConstants>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.SpecificationTests" />
@@ -49,5 +61,9 @@
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF9Version)" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF10' Or '$(Configuration)' == 'Debug EF10' ">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF10Version)" />
   </ItemGroup>
 </Project>

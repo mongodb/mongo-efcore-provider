@@ -90,7 +90,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         var shaperBody = shapedQueryExpression.ShaperExpression;
         shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
+#if EF10
+        shaperBody = InjectStructuralTypeMaterializers(shaperBody);
+#else
         shaperBody = InjectEntityMaterializers(shaperBody);
+#endif
         shaperBody = new MongoProjectionBindingRemovingExpressionVisitor(
                 rootEntityType, mongoQueryExpression, bsonDocParameter, trackQueryResults)
             .Visit(shaperBody);

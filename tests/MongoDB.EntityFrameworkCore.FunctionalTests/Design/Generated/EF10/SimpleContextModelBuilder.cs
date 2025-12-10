@@ -10,6 +10,11 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
 {
     public partial class SimpleContextModel
     {
+        private SimpleContextModel()
+            : base(skipDetectChanges: false, modelId: new Guid("21148a1c-59c3-4dd8-96e5-cf1ba92c48c0"), entityTypeCount: 2)
+        {
+        }
+
         partial void Initialize()
         {
             var everyType = EveryTypeEntityType.Create(this);
@@ -20,7 +25,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
             EveryTypeEntityType.CreateAnnotations(everyType);
             OwnedEntityEntityType.CreateAnnotations(ownedEntity);
 
-            AddAnnotation("ProductVersion", "8.0.22");
+            AddAnnotation("ProductVersion", "10.0.1");
         }
     }
 }

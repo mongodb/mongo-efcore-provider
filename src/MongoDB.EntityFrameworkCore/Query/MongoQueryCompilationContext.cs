@@ -18,12 +18,24 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 
+#if !EF10
+using QueryParameterExpression = System.Linq.Expressions.ParameterExpression;
+#endif
+
 namespace MongoDB.EntityFrameworkCore.Query;
 
+#if EF10
+public class MongoQueryCompilationContext(QueryCompilationContextDependencies dependencies, bool async)
+    : QueryCompilationContext(dependencies, async)
+{
+}
+
+#else
 /// <inheritdoc />
 public class MongoQueryCompilationContext : QueryCompilationContext
 {
@@ -44,7 +56,7 @@ public class MongoQueryCompilationContext : QueryCompilationContext
     }
 
     /// <inheritdoc />
-    public override ParameterExpression RegisterRuntimeParameter(string name, LambdaExpression valueExtractor)
+    public override QueryParameterExpression RegisterRuntimeParameter(string name, LambdaExpression valueExtractor)
     {
         if (valueExtractor.Parameters.Count != 1
             || valueExtractor.Parameters[0] != QueryContextParameter)
@@ -53,7 +65,11 @@ public class MongoQueryCompilationContext : QueryCompilationContext
         }
 
         _runtimeParameters[name] = valueExtractor;
+#if EF10
+        return new QueryParameterExpression(name, valueExtractor.ReturnType);
+#else
         return Expression.Parameter(valueExtractor.ReturnType, name);
+#endif
     }
 
     /// <inheritdoc />
@@ -103,3 +119,4 @@ public class MongoQueryCompilationContext : QueryCompilationContext
                                 Expression.Convert(Expression.Invoke(kv.Value, QueryContextParameter), typeof(object))))
                     .Append(query));
 }
+#endif

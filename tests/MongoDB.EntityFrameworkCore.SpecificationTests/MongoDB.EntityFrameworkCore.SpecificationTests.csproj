@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
-    <Configurations>Debug;Release;Debug EF9;Release EF9</Configurations>
+    <Configurations>Debug;Release;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
@@ -15,6 +15,14 @@
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Release EF9' ">
     <DefineConstants>TRACE;RELEASE;EF9</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF10' ">
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>TRACE;DEBUG;EF10</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF10' ">
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>TRACE;RELEASE;EF10</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
@@ -33,6 +41,12 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF9Version)" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF9Version)" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="$(EF9Version)" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF10' Or '$(Configuration)' == 'Debug EF10' ">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF10Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF10Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="$(EF10Version)" />
   </ItemGroup>
 
   <ItemGroup>
