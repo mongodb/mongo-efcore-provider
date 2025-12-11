@@ -33,13 +33,6 @@ public abstract class EncryptionTestsBase(TemporaryDatabaseFixture database)
 
     static EncryptionTestsBase()
     {
-        try
-        {
-            BsonSerializer.TryRegisterSerializer(typeof(Guid), GuidSerializer.StandardInstance);
-        }
-        catch (BsonSerializationException)
-        {
-        }
         MongoClientSettings.Extensions.AddAutoEncryption();
     }
 
