@@ -239,18 +239,19 @@ public sealed class MongoTransaction(
 
             case TransactionState.Active:
                 Rollback();
-                return;
+                break;
 
             case TransactionState.Committed:
             case TransactionState.RolledBack:
             case TransactionState.Failed:
-                _transactionState = TransactionState.Disposed;
-                session.Dispose();
-                return;
+                break;
 
             default:
                 throw new InvalidOperationException($"Can not Dispose MongoTransaction {TransactionId} because it is {_transactionState}.");
         }
+
+        _transactionState = TransactionState.Disposed;
+        session.Dispose();
     }
 
     /// <inheritdoc />
@@ -263,18 +264,19 @@ public sealed class MongoTransaction(
 
             case TransactionState.Active:
                 await RollbackAsync();
-                return;
+                break;
 
             case TransactionState.Committed:
             case TransactionState.RolledBack:
             case TransactionState.Failed:
-                _transactionState = TransactionState.Disposed;
-                session.Dispose();
-                return;
+                break;
 
             default:
                 throw new InvalidOperationException($"Can not Dispose MongoTransaction {TransactionId} because it is {_transactionState}.");
         }
+
+        _transactionState = TransactionState.Disposed;
+        session.Dispose();
     }
 
     private void AssertCorrectState(string action, TransactionState validState)

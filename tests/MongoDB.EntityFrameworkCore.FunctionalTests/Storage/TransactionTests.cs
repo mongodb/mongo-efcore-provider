@@ -640,64 +640,76 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void Can_execute_transasction_via_execution_strategy(bool succeeds)
+    public void Can_execute_transaction_via_execution_strategy(bool succeeds)
     {
+        var expectedCount = succeeds ? 2 : 0;
         var collection = database.CreateCollection<SimpleEntity>(values: [succeeds]);
 
-        var db = SingleEntityDbContext.Create(collection);
-        var strategy = db.Database.CreateExecutionStrategy();
-        var expectedCount = succeeds ? 2 : 0;
-
-        try
+        using (var db = SingleEntityDbContext.Create(collection))
         {
-            strategy.ExecuteInTransaction(
-                db,
-                operation: context =>
-                {
-                    Assert.NotNull(context.Entities);
-                    context.Entities.Add(new SimpleEntity { name = "First" });
-                    context.Entities.Add(new SimpleEntity { name = "Second" });
-                    context.SaveChanges();
-                    if (!succeeds) throw new Exception("Expected failure");
-                },
-                verifySucceeded: _ => true);
-        }
-        catch (Exception ex) when (ex.Message == "Expected failure")
-        {
+            var strategy = db.Database.CreateExecutionStrategy();
+
+            try
+            {
+                strategy.ExecuteInTransaction(
+                    db,
+                    operation: context =>
+                    {
+                        Assert.NotNull(context.Entities);
+                        context.Entities.Add(new SimpleEntity { name = "First" });
+                        context.Entities.Add(new SimpleEntity { name = "Second" });
+                        context.SaveChanges();
+                        if (!succeeds) throw new Exception("Expected failure");
+                    },
+                    verifySucceeded: _ => true);
+            }
+            catch (Exception ex) when (ex.Message == "Expected failure")
+            {
+                // We expect this to fail
+            }
         }
 
-        Assert.Equal(expectedCount, db.Entities.Count());
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            Assert.Equal(expectedCount, db.Entities.Count());
+        }
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Can_execute_transasction_via_execution_strategy_async(bool succeeds)
+    public async Task Can_execute_transaction_via_execution_strategy_async(bool succeeds)
     {
+        var expectedCount = succeeds ? 2 : 0;
         var collection = database.CreateCollection<SimpleEntity>(values: [succeeds]);
 
-        var db = SingleEntityDbContext.Create(collection);
-        var strategy = db.Database.CreateExecutionStrategy();
-        var expectedCount = succeeds ? 2 : 0;
-
-        try
+        await using (var db = SingleEntityDbContext.Create(collection))
         {
-            await strategy.ExecuteInTransactionAsync(
-                db,
-                operation: async (context, cancellationToken) =>
-                {
-                    Assert.NotNull(context.Entities);
-                    context.Entities.Add(new SimpleEntity { name = "First" });
-                    context.Entities.Add(new SimpleEntity { name = "Second" });
-                    await context.SaveChangesAsync(cancellationToken);
-                    if (!succeeds) throw new Exception("Expected failure");
-                },
-                verifySucceeded: (_, _) => Task.FromResult(true));
-        }
-        catch (Exception ex) when (ex.Message == "Expected failure")
-        {
+            var strategy = db.Database.CreateExecutionStrategy();
+
+            try
+            {
+                await strategy.ExecuteInTransactionAsync(
+                    db,
+                    operation: async (context, cancellationToken) =>
+                    {
+                        Assert.NotNull(context.Entities);
+                        context.Entities.Add(new SimpleEntity { name = "First" });
+                        context.Entities.Add(new SimpleEntity { name = "Second" });
+                        await context.SaveChangesAsync(cancellationToken);
+                        if (!succeeds) throw new Exception("Expected failure");
+                    },
+                    verifySucceeded: (_, _) => Task.FromResult(true));
+            }
+            catch (Exception ex) when (ex.Message == "Expected failure")
+            {
+                // We expect this to fail
+            }
         }
 
-        Assert.Equal(expectedCount, db.Entities.Count());
+        await using (var db = SingleEntityDbContext.Create(collection))
+        {
+            Assert.Equal(expectedCount, db.Entities.Count());
+        }
     }
 }
