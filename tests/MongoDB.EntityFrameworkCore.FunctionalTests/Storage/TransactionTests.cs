@@ -274,27 +274,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Explicit_transaction_dispose_without_commit_or_rollback_throws_and_changes_not_visible()
-    {
-        var collection = database.CreateCollection<SimpleEntity>();
-
-        // Use `using` to force Dispose without commit/rollback
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-        {
-            using var db = SingleEntityDbContext.Create(collection);
-            using var transaction = db.Database.BeginTransaction();
-            db.Entities.Add(new SimpleEntity { name = "pending" });
-            db.SaveChanges();
-            // Intentionally not committing or rolling back; disposing transaction should throw
-        });
-
-        Assert.Contains("Dispose", ex.Message);
-
-        using var dbCheck = SingleEntityDbContext.Create(collection);
-        Assert.Empty(dbCheck.Entities); // nothing committed
-    }
-
-    [Fact]
     public void Ambient_TransactionScope_blocks_begin_explicit_transaction()
     {
         var collection = database.CreateCollection<SimpleEntity>();
@@ -526,39 +505,29 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Disposing_explicit_transaction_without_commit_or_rollback_throws_and_does_not_commit()
+    public void Disposing_explicit_transaction_without_commit_or_rollback_does_not_commit()
     {
         var collection = database.CreateCollection<SimpleEntity>();
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-        {
-            using var db = SingleEntityDbContext.Create(collection);
-            using var transaction = db.Database.BeginTransaction();
-            db.Entities.Add(new SimpleEntity { name = "pending" });
-            db.SaveChanges();
-            // Transaction goes out of scope without Commit/Rollback -> Dispose should throw
-        });
+        using var db = SingleEntityDbContext.Create(collection);
+        using var transaction = db.Database.BeginTransaction();
+        db.Entities.Add(new SimpleEntity { name = "pending" });
+        db.SaveChanges();
 
-        Assert.Contains("Dispose", ex.Message);
         using var check = SingleEntityDbContext.Create(collection);
         Assert.Empty(check.Entities);
     }
 
     [Fact]
-    public async Task Disposing_explicit_transaction_without_commit_or_rollback_throws_and_does_not_commit_async()
+    public async Task Disposing_explicit_transaction_without_commit_or_rollback_does_not_commit_async()
     {
         var collection = database.CreateCollection<SimpleEntity>();
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await using var db = SingleEntityDbContext.Create(collection);
-            await using var transaction = await db.Database.BeginTransactionAsync();
-            await db.Entities.AddAsync(new SimpleEntity { name = "pending" });
-            await db.SaveChangesAsync();
-            // Transaction goes out of scope without Commit/Rollback -> DisposeAsync should throw
-        });
+        await using var db = SingleEntityDbContext.Create(collection);
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        await db.Entities.AddAsync(new SimpleEntity { name = "pending" });
+        await db.SaveChangesAsync();
 
-        Assert.Contains("Dispose", ex.Message);
         await using var check = SingleEntityDbContext.Create(collection);
         Assert.Empty(await check.Entities.ToListAsync());
     }
@@ -666,5 +635,81 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         using var check = SingleEntityDbContext.Create(collection);
         var names = check.Entities.Select(e => e.name).OrderBy(n => n).ToList();
         Assert.Equal(["transaction2-committed"], names);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Can_execute_transaction_via_execution_strategy(bool succeeds)
+    {
+        var expectedCount = succeeds ? 2 : 0;
+        var collection = database.CreateCollection<SimpleEntity>(values: [succeeds]);
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var strategy = db.Database.CreateExecutionStrategy();
+
+            try
+            {
+                strategy.ExecuteInTransaction(
+                    db,
+                    operation: context =>
+                    {
+                        Assert.NotNull(context.Entities);
+                        context.Entities.Add(new SimpleEntity { name = "First" });
+                        context.Entities.Add(new SimpleEntity { name = "Second" });
+                        context.SaveChanges();
+                        if (!succeeds) throw new Exception("Expected failure");
+                    },
+                    verifySucceeded: _ => true);
+            }
+            catch (Exception ex) when (ex.Message == "Expected failure")
+            {
+                // We expect this to fail
+            }
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            Assert.Equal(expectedCount, db.Entities.Count());
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Can_execute_transaction_via_execution_strategy_async(bool succeeds)
+    {
+        var expectedCount = succeeds ? 2 : 0;
+        var collection = database.CreateCollection<SimpleEntity>(values: [succeeds]);
+
+        await using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var strategy = db.Database.CreateExecutionStrategy();
+
+            try
+            {
+                await strategy.ExecuteInTransactionAsync(
+                    db,
+                    operation: async (context, cancellationToken) =>
+                    {
+                        Assert.NotNull(context.Entities);
+                        context.Entities.Add(new SimpleEntity { name = "First" });
+                        context.Entities.Add(new SimpleEntity { name = "Second" });
+                        await context.SaveChangesAsync(cancellationToken);
+                        if (!succeeds) throw new Exception("Expected failure");
+                    },
+                    verifySucceeded: (_, _) => Task.FromResult(true));
+            }
+            catch (Exception ex) when (ex.Message == "Expected failure")
+            {
+                // We expect this to fail
+            }
+        }
+
+        await using (var db = SingleEntityDbContext.Create(collection))
+        {
+            Assert.Equal(expectedCount, db.Entities.Count());
+        }
     }
 }
