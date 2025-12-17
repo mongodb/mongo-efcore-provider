@@ -1,13 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
     <Configurations>Debug;Release;Debug EF9;Release EF9</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-    <DefineConstants>EF8</DefineConstants>
+    <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-    <DefineConstants>EF8</DefineConstants>
+    <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
     <DefineConstants>TRACE;DEBUG;EF9</DefineConstants>
