@@ -13,9 +13,7 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Reflection;
 
 // ReSharper disable once CheckNamespace

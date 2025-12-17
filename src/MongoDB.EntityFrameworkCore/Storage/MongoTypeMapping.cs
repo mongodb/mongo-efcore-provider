@@ -13,14 +13,11 @@
  * limitations under the License.
  */
 
-using System;
-using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Storage.Json;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Storage;
 

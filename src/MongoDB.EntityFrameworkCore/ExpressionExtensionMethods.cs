@@ -13,10 +13,7 @@
  * limitations under the License.
  */
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq.Expressions;
 using System.Reflection;
 
 namespace MongoDB.EntityFrameworkCore;

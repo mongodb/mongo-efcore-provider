@@ -15,7 +15,6 @@
 
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Storage.ValueConversion;
 

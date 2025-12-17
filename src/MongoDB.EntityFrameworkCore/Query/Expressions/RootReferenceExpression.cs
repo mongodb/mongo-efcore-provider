@@ -13,9 +13,6 @@
  * limitations under the License.
  */
 
-using System.Linq.Expressions;
-using Microsoft.EntityFrameworkCore.Metadata;
-
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>

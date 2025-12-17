@@ -13,11 +13,8 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
-using System.Linq;
-using Microsoft.EntityFrameworkCore.Metadata;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
+using VectorQuantization = MongoDB.Driver.VectorQuantization;
 
 namespace MongoDB.EntityFrameworkCore.Metadata;
 

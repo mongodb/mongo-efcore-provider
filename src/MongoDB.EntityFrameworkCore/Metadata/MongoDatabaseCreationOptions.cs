@@ -13,10 +13,6 @@
  * limitations under the License.
  */
 
-using System;
-
-using MongoDB.Driver;
-
 namespace MongoDB.EntityFrameworkCore.Metadata;
 
 /// <summary>

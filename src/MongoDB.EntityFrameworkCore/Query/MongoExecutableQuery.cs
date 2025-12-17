@@ -14,10 +14,7 @@
  */
 
 using System.Collections.ObjectModel;
-using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
-using MongoDB.Driver;
-using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 

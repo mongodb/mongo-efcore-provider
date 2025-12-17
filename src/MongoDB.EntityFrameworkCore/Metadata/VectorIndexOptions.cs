@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
-using MongoDB.Driver;
+using VectorQuantization = MongoDB.Driver.VectorQuantization;
+using VectorSimilarity = MongoDB.Driver.VectorSimilarity;
 
 namespace MongoDB.EntityFrameworkCore.Metadata;
 
@@ -23,7 +23,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 /// See <see href="https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-type">How to Index Fields for Vector Search</see>
 /// for more information.
 /// </summary>
-/// <param name="Similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
+/// <param name="Similarity">The <see cref="Driver.VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
 /// <param name="Dimensions">Number of vector dimensions that Atlas Vector Search enforces at index-time and query-time.</param>
 /// <param name="Quantization">Type of automatic vector quantization for your vectors.</param>
 /// <param name="HnswMaxEdges">Maximum number of edges (or connections) that a node can have in the Hierarchical Navigable Small Worlds graph.</param>

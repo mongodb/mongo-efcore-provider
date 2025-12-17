@@ -13,9 +13,7 @@
  * limitations under the License.
  */
 
-using System;
 using System.Diagnostics;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;

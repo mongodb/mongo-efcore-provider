@@ -13,9 +13,6 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
-using System.Linq;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Storage;

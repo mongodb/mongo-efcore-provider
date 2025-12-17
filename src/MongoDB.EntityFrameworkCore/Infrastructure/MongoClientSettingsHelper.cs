@@ -13,13 +13,6 @@
  * limitations under the License.
  */
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Microsoft.EntityFrameworkCore;
-using MongoDB.Bson;
-using MongoDB.Driver;
-
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
 internal static class MongoClientSettingsHelper

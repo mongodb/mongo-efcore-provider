@@ -13,8 +13,6 @@
  * limitations under the License.
  */
 
-using Microsoft.EntityFrameworkCore.Diagnostics;
-
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
 /// <summary>

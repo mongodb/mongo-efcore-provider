@@ -3,10 +3,6 @@
 
 // Originally from EFCore.Cosmos CollectionShaperExpression.
 
-using System;
-using System.Collections.Generic;
-using System.Linq.Expressions;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;

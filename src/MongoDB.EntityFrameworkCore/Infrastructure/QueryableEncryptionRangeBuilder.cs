@@ -13,10 +13,7 @@
  * limitations under the License.
  */
 
-using System;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 

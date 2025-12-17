@@ -13,9 +13,6 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
-using MongoDB.Bson;
-
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
 /// <summary>

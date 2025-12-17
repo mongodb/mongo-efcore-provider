@@ -13,15 +13,8 @@
  * limitations under the License.
  */
 
-using System;
 using System.Globalization;
-using System.Linq;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Logging;
-using MongoDB.Bson;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Storage;
 

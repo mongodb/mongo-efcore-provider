@@ -3,9 +3,6 @@
 
 // Derived from EFCore.Cosmos ObjectAccessExpression.
 
-using System;
-using System.Linq.Expressions;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Extensions;
 

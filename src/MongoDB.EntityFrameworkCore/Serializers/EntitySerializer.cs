@@ -13,10 +13,6 @@
  * limitations under the License.
  */
 
-using System;
-using System.Linq;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.EntityFrameworkCore.Extensions;

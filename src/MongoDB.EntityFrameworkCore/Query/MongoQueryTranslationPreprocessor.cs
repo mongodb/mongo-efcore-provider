@@ -13,9 +13,6 @@
  * limitations under the License.
  */
 
-using System.Linq;
-using System.Linq.Expressions;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Visitors;
 

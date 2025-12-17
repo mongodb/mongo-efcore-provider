@@ -13,12 +13,8 @@
  * limitations under the License.
  */
 
-using System;
-using System.Linq;
 using System.Runtime.CompilerServices;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Query.Internal;
-using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore;
 

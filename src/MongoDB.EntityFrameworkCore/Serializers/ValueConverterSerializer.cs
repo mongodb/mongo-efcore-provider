@@ -13,9 +13,7 @@
  * limitations under the License.
  */
 
-using System;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 

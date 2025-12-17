@@ -3,9 +3,6 @@
 
 // Derived from EFCore.Cosmos ProjectionExpression.
 
-using System;
-using System.Linq.Expressions;
-
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>

@@ -13,9 +13,7 @@
  * limitations under the License.
  */
 
-using System;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 

@@ -13,10 +13,6 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
-using Microsoft.EntityFrameworkCore.Metadata;
-using MongoDB.Bson;
-
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
 /// <inheritdoc />

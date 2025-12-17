@@ -15,8 +15,6 @@
 
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Diagnostics;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 namespace MongoDB.EntityFrameworkCore.Diagnostics;

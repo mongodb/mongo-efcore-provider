@@ -3,8 +3,6 @@
 
 // Originally from EFCore.Cosmos StringDictionaryComparer.cs
 
-using System;
-using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace MongoDB.EntityFrameworkCore.ChangeTracking;

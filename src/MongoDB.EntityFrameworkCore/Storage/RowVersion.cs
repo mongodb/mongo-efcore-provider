@@ -13,11 +13,8 @@
  * limitations under the License.
  */
 
-using System;
-using System.Linq;
 using System.Numerics;
 using System.Reflection;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Update;
 
 namespace MongoDB.EntityFrameworkCore.Storage;

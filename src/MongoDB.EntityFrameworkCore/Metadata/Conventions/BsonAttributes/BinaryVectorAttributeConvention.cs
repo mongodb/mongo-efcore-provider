@@ -14,11 +14,9 @@
  */
 
 using System.Reflection;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
-using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 

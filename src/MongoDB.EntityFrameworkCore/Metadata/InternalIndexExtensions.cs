@@ -13,13 +13,8 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
-using System.Linq;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
-using MongoDB.Bson;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
+using VectorSimilarity = MongoDB.Driver.VectorSimilarity;
 
 namespace MongoDB.EntityFrameworkCore.Metadata;
 

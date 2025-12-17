@@ -13,10 +13,9 @@
  * limitations under the License.
  */
 
-using System;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Metadata;
+using VectorSimilarity = MongoDB.Driver.VectorSimilarity;
 
 namespace MongoDB.EntityFrameworkCore.Extensions;
 
@@ -69,7 +68,7 @@ public static class MongoIndexBuilderExtensions
     /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
+    /// <param name="similarity">The <see cref="Driver.VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
     /// <param name="dimensions">Number of vector dimensions, between 1 and 8192.</param>
     /// <returns>A builder to further configure the vector index options.</returns>
     public static VectorIndexBuilder IsVectorIndex(

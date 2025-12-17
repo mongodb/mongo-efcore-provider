@@ -13,10 +13,7 @@
  * limitations under the License.
  */
 
-using System.Collections.Generic;
-using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
-using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;

@@ -13,10 +13,7 @@
  * limitations under the License.
  */
 
-using System;
-using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.Storage.ValueConversion;
 

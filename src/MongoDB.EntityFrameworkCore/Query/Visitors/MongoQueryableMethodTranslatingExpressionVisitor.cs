@@ -13,12 +13,9 @@
  * limitations under the License.
  */
 
-using System;
-using System.Linq;
-using System.Linq.Expressions;
+extern alias Driver;
+
 using System.Reflection;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -53,7 +50,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return base.Visit(expression);
     }
 
-    private static readonly Type[] AllowedQueryableExtensions = [ typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver.Linq.MongoQueryable) ];
+    private static readonly Type[] AllowedQueryableExtensions = [ typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver::MongoDB.Driver.Linq.MongoQueryable) ];
 
     /// <summary>
     /// Visit the <see cref="MethodCallExpression"/> to capture the cardinality and final expression

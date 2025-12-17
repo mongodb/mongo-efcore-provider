@@ -13,8 +13,6 @@
 * limitations under the License.
 */
 
-using Microsoft.EntityFrameworkCore;
-
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
 /// <summary>

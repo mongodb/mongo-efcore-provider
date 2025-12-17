@@ -3,8 +3,6 @@
 
 // Originally from EFCore.Cosmos NullableEqualityComparer.cs
 
-using System.Collections.Generic;
-
 namespace MongoDB.EntityFrameworkCore.ChangeTracking;
 
 /// <summary>

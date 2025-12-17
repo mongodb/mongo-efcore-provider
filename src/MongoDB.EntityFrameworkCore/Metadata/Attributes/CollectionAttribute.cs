@@ -13,8 +13,6 @@
 * limitations under the License.
 */
 
-using System;
-
 // ReSharper disable once CheckNamespace
 namespace MongoDB.EntityFrameworkCore;
 

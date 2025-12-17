@@ -13,13 +13,10 @@
  * limitations under the License.
  */
 
-using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
-using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
