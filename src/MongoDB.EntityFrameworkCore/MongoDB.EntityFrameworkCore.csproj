@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <Import Project="..\..\Versions.props" />
-
+ 
   <PropertyGroup>
     <NoWarn>EF1001</NoWarn>
     <Nullable>enable</Nullable>
