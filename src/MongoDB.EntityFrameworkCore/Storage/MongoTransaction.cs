@@ -44,9 +44,7 @@ public sealed class MongoTransaction(
     private enum TransactionState
     {
         Active,
-        Committing,
         Committed,
-        RollingBack,
         RolledBack,
         Failed,
         Disposed
@@ -117,7 +115,6 @@ public sealed class MongoTransaction(
     public void Commit()
     {
         AssertCorrectState("Commit", TransactionState.Active);
-        _transactionState = TransactionState.Committing;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
         stopwatch.Start();
@@ -143,7 +140,6 @@ public sealed class MongoTransaction(
     public async Task CommitAsync(CancellationToken cancellationToken = new())
     {
         AssertCorrectState("Commit", TransactionState.Active);
-        _transactionState = TransactionState.Committing;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
         stopwatch.Start();
@@ -172,7 +168,6 @@ public sealed class MongoTransaction(
     public void Rollback()
     {
         AssertCorrectState("Rollback", TransactionState.Active);
-        _transactionState = TransactionState.RollingBack;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
         stopwatch.Start();
@@ -198,7 +193,6 @@ public sealed class MongoTransaction(
     public async Task RollbackAsync(CancellationToken cancellationToken = new())
     {
         AssertCorrectState("Rollback", TransactionState.Active);
-        _transactionState = TransactionState.RollingBack;
         var startTime = DateTimeOffset.UtcNow;
         var stopwatch = new Stopwatch();
         stopwatch.Start();
@@ -245,9 +239,6 @@ public sealed class MongoTransaction(
             case TransactionState.RolledBack:
             case TransactionState.Failed:
                 break;
-
-            default:
-                throw new InvalidOperationException($"Can not Dispose MongoTransaction {TransactionId} because it is {_transactionState}.");
         }
 
         _transactionState = TransactionState.Disposed;
@@ -270,9 +261,6 @@ public sealed class MongoTransaction(
             case TransactionState.RolledBack:
             case TransactionState.Failed:
                 break;
-
-            default:
-                throw new InvalidOperationException($"Can not Dispose MongoTransaction {TransactionId} because it is {_transactionState}.");
         }
 
         _transactionState = TransactionState.Disposed;
