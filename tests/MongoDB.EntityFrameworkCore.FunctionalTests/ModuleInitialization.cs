@@ -32,6 +32,7 @@ public static class ModuleInitialization
         }
         catch (BsonSerializationException)
         {
+            // In case it runs twice for some reason
         }
     }
 }

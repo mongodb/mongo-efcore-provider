@@ -48,7 +48,7 @@ public sealed class ExplicitEncryptionTests : EncryptionTestsBase, IDisposable
     {
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName();
 
-        // Generate unecrypted cards and some data keys
+        // Generate unencrypted cards and some data keys
         var unencryptedCards = CreateUnencryptedCards();
         var cardNumberKey = CreateDataKey();
         var securityCodeKey = CreateDataKey();

@@ -18,7 +18,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 public class DatabaseCleaner(TemporaryDatabaseFixture fixture)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    //[Fact] // Uncomment this line to clean up the database by removing everything with Test in the name
+    [Fact(Skip = "Manually run to clean up the database")]
     public async Task CleanDatabase()
     {
         var client = fixture.TestServer.Client;
@@ -26,12 +26,9 @@ public class DatabaseCleaner(TemporaryDatabaseFixture fixture)
         var databaseNameCursor = await client.ListDatabaseNamesAsync();
         while (await databaseNameCursor.MoveNextAsync())
         {
-            foreach (var databaseName in databaseNameCursor.Current)
+            foreach (var databaseName in databaseNameCursor.Current.Where(d => !d.StartsWith("Test")))
             {
-                if (databaseName.Contains("Test", StringComparison.OrdinalIgnoreCase))
-                {
-                    await client.DropDatabaseAsync(databaseName);
-                }
+                await client.DropDatabaseAsync(databaseName);
             }
         }
     }
