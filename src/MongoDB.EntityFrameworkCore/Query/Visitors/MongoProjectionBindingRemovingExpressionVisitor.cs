@@ -602,13 +602,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                 while (enumerator.MoveNext())
                 {
                 }
-
-                // Ensure empty collections still initialize a new CLR object for them
-                if (!navigation.IsShadowProperty())
-                {
-                    navigation.GetCollectionAccessor()!.GetOrCreate(entity, forMaterialization: true);
-                }
             }
+        }
+
+        // Ensure empty collections still initialize a new CLR object for them
+        if (relatedEntities != null && !navigation.IsShadowProperty())
+        {
+            navigation.GetCollectionAccessor()!.GetOrCreate(entity, forMaterialization: true);
         }
     }
 
