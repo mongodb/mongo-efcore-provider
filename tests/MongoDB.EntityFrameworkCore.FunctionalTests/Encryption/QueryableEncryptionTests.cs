@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 
 [XUnitCollection("Encryption")]
 public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
-    : EncryptionTestsBase(database)
+    : AutoEncryptionTestsBase(database)
 {
     private readonly TemporaryDatabaseFixture _database = database;
 
@@ -1557,7 +1557,7 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             .WithKmsProviders(KmsProviders);
 
         // Remove me once mongocryptd is fixed for Windows on latest
-        if (cryptProvider == CryptProvider.Mongocryptd && EncryptionTests.IsBuggyMongocryptd)
+        if (cryptProvider == CryptProvider.Mongocryptd && AutoEncryptionTests.IsBuggyMongocryptd)
         {
             cryptProvider = CryptProvider.AutoEncryptSharedLibrary;
         }

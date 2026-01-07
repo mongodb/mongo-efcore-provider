@@ -20,8 +20,8 @@ using MongoDB.Driver.Encryption;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Encryption;
 
 [XUnitCollection("EncryptionTests")]
-public class EncryptionTests(TemporaryDatabaseFixture database)
-    : EncryptionTestsBase(database)
+public class AutoEncryptionTests(TemporaryDatabaseFixture database)
+    : AutoEncryptionTestsBase(database)
 {
     private readonly TemporaryDatabaseFixture _database = database;
 

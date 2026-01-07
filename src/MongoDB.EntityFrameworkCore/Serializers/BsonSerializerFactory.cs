@@ -139,7 +139,6 @@ public sealed class BsonSerializerFactory
             _ => BsonType.Document
         };
 
-
     internal static IBsonSerializer CreateTypeSerializer(IReadOnlyProperty property)
     {
         if (property.FindTypeMapping() is {Converter: { } converter})
