@@ -35,8 +35,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MongoDB.EntityFrameworkCore
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|Any CPU = Debug|Any CPU
-		Release|Any CPU = Release|Any CPU
+		Debug EF8|Any CPU = Debug EF8|Any CPU
+		Release EF8|Any CPU = Release EF8|Any CPU
 		Debug EF9|Any CPU = Debug EF9|Any CPU
 		Release EF9|Any CPU = Release EF9|Any CPU
 		Debug EF10|Any CPU = Debug EF10|Any CPU

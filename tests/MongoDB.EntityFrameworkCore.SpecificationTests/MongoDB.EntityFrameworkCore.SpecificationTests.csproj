@@ -1,14 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <Configurations>Debug;Release;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
+    <TargetFramework>net10.0</TargetFramework>
+    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-    <DefineConstants>EF8</DefineConstants>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF8' ">
+    <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-    <DefineConstants>EF8</DefineConstants>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF8' ">
+    <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
     <DefineConstants>TRACE;DEBUG;EF9</DefineConstants>
@@ -17,11 +17,9 @@
     <DefineConstants>TRACE;RELEASE;EF9</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF10' ">
-    <TargetFramework>net10.0</TargetFramework>
     <DefineConstants>TRACE;DEBUG;EF10</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Release EF10' ">
-    <TargetFramework>net10.0</TargetFramework>
     <DefineConstants>TRACE;RELEASE;EF10</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
@@ -31,7 +29,7 @@
 
   <Import Project="..\..\Versions.props" />
 
-  <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF8' Or '$(Configuration)' == 'Debug EF8' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF8Version)" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF8Version)" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="$(EF8Version)" />

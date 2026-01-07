@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configurations>Debug;Release;Debug EF9;Release EF9</Configurations>
+    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
 

@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configurations>Debug;Release;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
+    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-    <DefineConstants>EF8</DefineConstants>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF8' ">
+    <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-    <DefineConstants>EF8</DefineConstants>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF8' ">
+    <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
     <DefineConstants>TRACE;DEBUG;EF9</DefineConstants>
@@ -30,7 +30,7 @@
     <Compile Remove="Design\Generated\**" />
   </ItemGroup>
 
-  <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF8' Or '$(Configuration)' == 'Debug EF8' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF8Version)" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF8Version)" />
     <Compile Include="Design\Generated\EF8\**" />
