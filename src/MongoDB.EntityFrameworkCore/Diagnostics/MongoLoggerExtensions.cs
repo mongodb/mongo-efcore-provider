@@ -376,7 +376,6 @@ internal static class MongoLoggerExtensions
         "'DbContext.Database.WaitForVectorIndexes'.";
 
 
-
     public static void WaitingForVectorIndex(
         this IDiagnosticsLogger<DbLoggerCategory.Database> diagnostics,
         TimeSpan remainingBeforeTimeout)
@@ -423,5 +422,54 @@ internal static class MongoLoggerExtensions
 
     private const string WaitingForVectorIndexString =
         "EF Core is waiting for vector indexes to be ready. The time remaining before failing with a timeout is " +
+        "{secondsRemaining} seconds.";
+
+
+    public static void WaitingForSearchIndex(
+        this IDiagnosticsLogger<DbLoggerCategory.Database> diagnostics,
+        TimeSpan remainingBeforeTimeout)
+    {
+        var definition = LogWaitingForSearchIndex(diagnostics);
+
+        if (diagnostics.ShouldLog(definition))
+        {
+            definition.Log(diagnostics, remainingBeforeTimeout.TotalSeconds.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
+        {
+            var eventData = new TimeSpanEventData(
+                definition,
+                (d, p) => ((EventDefinition<string>)d).GenerateMessage(
+                    ((TimeSpanEventData)p).TimeSpan.TotalSeconds.ToString(CultureInfo.InvariantCulture)),
+                    remainingBeforeTimeout);
+            diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
+        }
+    }
+
+    private static EventDefinition<string> LogWaitingForSearchIndex(IDiagnosticsLogger logger)
+    {
+        var definition = ((MongoLoggingDefinitions)logger.Definitions).LogWaitingForSearchIndex;
+        if (definition == null)
+        {
+            definition = NonCapturingLazyInitializer.EnsureInitialized(
+                ref ((MongoLoggingDefinitions)logger.Definitions).LogWaitingForSearchIndex,
+                logger,
+                static logger => new EventDefinition<string>(
+                    logger.Options,
+                    MongoEventId.WaitingForSearchIndex,
+                    LogLevel.Information,
+                    "MongoEventId.WaitingForSearchIndex",
+                    level => LoggerMessage.Define<string>(
+                        level,
+                        MongoEventId.WaitingForSearchIndex,
+                        WaitingForSearchIndexString)));
+        }
+
+        return (EventDefinition<string>)definition;
+    }
+
+    private const string WaitingForSearchIndexString =
+        "EF Core is waiting for search indexes to be ready. The time remaining before failing with a timeout is " +
         "{secondsRemaining} seconds.";
 }
