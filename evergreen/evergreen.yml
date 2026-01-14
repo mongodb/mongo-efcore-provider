@@ -534,7 +534,7 @@ axes:
         display_name: "Windows 64-bit"
         variables:
           OS: "windows-64"
-        run_on: windows-64-vs2017-test
+        run_on: windows-2022-latest
       - id: "ubuntu-2004"
         display_name: "Ubuntu 20.04"
         variables:
