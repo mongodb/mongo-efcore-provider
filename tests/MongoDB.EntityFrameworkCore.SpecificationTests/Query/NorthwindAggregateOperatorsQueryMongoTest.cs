@@ -168,6 +168,8 @@ Orders.
             """);
     }
 
+#if EF8 || EF9
+
     public override async Task Average_after_default_if_empty_does_not_throw(bool async)
     {
         // Fails: Projections issue EF-76
@@ -209,6 +211,52 @@ Orders.
 Orders.
 """);
     }
+
+#else
+
+    public override async Task Average_after_DefaultIfEmpty_does_not_throw(bool async)
+    {
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
+                base.Average_after_DefaultIfEmpty_does_not_throw(async))).Message);
+
+        AssertMql(
+            """
+            Orders.
+            """);
+    }
+
+    public override async Task Max_after_DefaultIfEmpty_does_not_throw(bool async)
+    {
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
+                base.Max_after_DefaultIfEmpty_does_not_throw(async))).Message);
+
+        AssertMql(
+            """
+            Orders.
+            """);
+    }
+
+    public override async Task Min_after_DefaultIfEmpty_does_not_throw(bool async)
+    {
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
+                base.Min_after_DefaultIfEmpty_does_not_throw(async))).Message);
+
+        AssertMql(
+            """
+            Orders.
+            """);
+    }
+
+#endif
 
     public override async Task Sum_with_no_data_cast_to_nullable(bool async)
     {
@@ -703,7 +751,7 @@ Orders.
             """);
     }
 
-    #if EF9
+    #if !EF8
 
     public override async Task Sum_over_subquery(bool async)
     {
@@ -910,7 +958,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
             """);
     }
 
-    #if EF9
+    #if !EF8
 
     public override async Task Average_over_subquery(bool async)
     {
@@ -1044,7 +1092,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
             """);
     }
 
-    #if EF9
+    #if !EF8
 
     public override async Task Min_over_subquery(bool async)
     {
@@ -1152,7 +1200,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
             """);
     }
 
-    #if EF9
+    #if !EF8
 
     public override async Task Max_over_subquery(bool async)
     {

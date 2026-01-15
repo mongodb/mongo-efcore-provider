@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+#if EF8 || EF9
+
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
@@ -2473,3 +2475,5 @@ Customers.
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
 }
+
+#endif

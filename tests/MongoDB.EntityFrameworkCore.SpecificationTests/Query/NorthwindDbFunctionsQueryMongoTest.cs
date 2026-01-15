@@ -102,6 +102,8 @@ Customers.
 """);
     }
 
+#if EF8 || EF9
+
     public override async Task Random_return_less_than_1(bool async)
     {
         // Fails: translation of Random issue EF-234
@@ -127,6 +129,8 @@ Orders.
 Orders.
 """);
     }
+
+#endif
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

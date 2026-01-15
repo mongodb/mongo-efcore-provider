@@ -41,7 +41,7 @@ public class MongoTestStore : TestStore
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
         => builder.UseMongoDB(TestServer.Client, Name);
 
-#if EF9
+#if !EF8
     protected override async Task InitializeAsync(Func<DbContext> createContext, Func<DbContext, Task>? seed,
         Func<DbContext, Task>? clean)
     {
@@ -68,9 +68,7 @@ public class MongoTestStore : TestStore
             ((MongoDatabaseCreator)databaseCreator).SeedFromModel();
         }
     }
-#endif
 
-#if !EF9
     public override void Clean(DbContext context)
     {
     }

@@ -23,7 +23,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 
-#if !EF10
+#if EF8 || EF9
 using QueryParameterExpression = System.Linq.Expressions.ParameterExpression;
 #endif
 

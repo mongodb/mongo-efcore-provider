@@ -2109,7 +2109,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
     }
 #endif
 
-#if EF9
+#if !EF8
 
     public override async Task EF_Parameter(bool async)
     {
@@ -2236,6 +2236,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
     }
 #endif
 
+#if EF8 || EF9
+
     public override async Task Where_bitwise_or(bool async)
     {
         await base.Where_bitwise_or(async);
@@ -2268,6 +2270,10 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             Customers.
             """);
     }
+
+#endif
+
+#if EF8 || EF9
 
     public override async Task Where_equals_method_string(bool async)
     {
@@ -2651,6 +2657,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             Customers.
             """);
     }
+
+#endif
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

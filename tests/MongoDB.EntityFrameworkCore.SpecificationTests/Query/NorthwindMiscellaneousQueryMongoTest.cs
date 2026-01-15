@@ -301,6 +301,8 @@ OrderDetails.{ "$sort" : { "_id.OrderID" : -1, "_id.ProductID" : -1 } }
 );
     }
 
+#if EF8 || EF9
+
     public override async Task Default_if_empty_top_level(bool async)
     {
         // Fails: Navigations issue EF-216
@@ -361,6 +363,58 @@ Employees.
 Employees.
 """);
     }
+
+#else
+
+    public override async Task DefaultIfEmpty_top_level(bool async)
+    {
+        // Fails: Navigations issue EF-216
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_top_level(async))).Message);
+
+        AssertMql(
+            """
+            Employees.
+            """);
+    }
+
+    public override async Task Join_with_DefaultIfEmpty_on_both_sources(bool async)
+    {
+        // Fails: Cross-document navigation access issue EF-216
+        await AssertTranslationFailed(() => base.Join_with_DefaultIfEmpty_on_both_sources(async));
+
+        AssertMql(
+        );
+    }
+
+    public override async Task DefaultIfEmpty_top_level_positive(bool async)
+    {
+        // Fails: Navigations issue EF-216
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_top_level_positive(async))).Message);
+
+        AssertMql(
+            """
+            Employees.
+            """);
+    }
+
+    public override async Task DefaultIfEmpty_top_level_projection(bool async)
+    {
+        // Fails: Navigations issue EF-216
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_top_level_projection(async))).Message);
+
+        AssertMql(
+            """
+            Employees.
+            """);
+    }
+
+#endif
 
     public override async Task Where_query_composition(bool async)
     {
@@ -2031,6 +2085,7 @@ Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNu
 """);
     }
 
+#if EF8 || EF9
     public override async Task DateTime_parse_is_inlined(bool async)
     {
         await base.DateTime_parse_is_inlined(async);
@@ -2074,6 +2129,8 @@ Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z"
 Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T11:00:00Z" } } } }
 """);
     }
+
+#endif
 
     public override async Task Environment_newline_is_funcletized(bool async)
     {
@@ -2143,6 +2200,8 @@ Orders.{ "$project" : { "_v" : { "$concat" : ["-", { "$toString" : "$_id" }] }, 
         AssertMql(
 );
     }
+
+#if EF8 || EF9
 
     public override async Task Select_bitwise_or(bool async)
     {
@@ -2302,6 +2361,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
 """);
     }
+
+#endif
 
     public override async Task Handle_materialization_properly_when_more_than_two_query_sources_are_involved(bool async)
     {
@@ -4423,6 +4484,7 @@ Customers.
 """);
     }
 
+#if EF8 || EF9
     public override async Task Random_next_is_not_funcletized_1(bool async)
     {
         try
@@ -4502,6 +4564,8 @@ Orders.{ "$match" : { "_id" : { "$gt" : 2 } } }
 Orders.{ "$match" : { "_id" : { "$gt" : 5 } } }
 """);
     }
+
+#endif
 
     public override async Task SelectMany_after_client_method(bool async)
     {
@@ -4673,6 +4737,24 @@ Customers.
         AssertMql();
     }
 
+#if EF10
+
+    public override async Task DefaultIfEmpty_top_level_arg(bool async)
+    {
+        await base.DefaultIfEmpty_top_level_arg(async);
+
+        AssertMql();
+    }
+
+    public override async Task DefaultIfEmpty_top_level_arg_followed_by_projecting_constant(bool async)
+    {
+        await base.DefaultIfEmpty_top_level_arg_followed_by_projecting_constant(async);
+
+        AssertMql();
+    }
+
+#else
+
     public override async Task Default_if_empty_top_level_arg(bool async)
     {
         await base.Default_if_empty_top_level_arg(async);
@@ -4686,6 +4768,8 @@ Customers.
 
         AssertMql();
     }
+
+#endif
 
     public override async Task OrderBy_client_mixed(bool async)
     {

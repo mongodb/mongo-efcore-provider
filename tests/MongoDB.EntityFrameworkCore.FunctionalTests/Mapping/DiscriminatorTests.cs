@@ -310,7 +310,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         Assert.Equal(Status.Active, activeCustomer1.Status);
     }
 
-#if !EF9 // TPC/TPT methods were moved to relational in EF9
+#if EF8 // TPC/TPT methods were moved to relational in EF9
     [Fact]
     public void TablePerType_throws_NotSupportedException()
     {
