@@ -350,11 +350,7 @@ Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$
 
     public override async Task Average_no_data_nullable(bool async)
     {
-        // Fails: Average over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Average_no_data_nullable(async))).Message);
+        await base.Average_no_data_nullable(async);
 
         AssertMql(
             """
@@ -364,11 +360,7 @@ Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$
 
     public override async Task Average_no_data_cast_to_nullable(bool async)
     {
-        // Fails: Average over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Average_no_data_cast_to_nullable(async))).Message);
+        await base.Average_no_data_cast_to_nullable(async);
 
         AssertMql(
             """
@@ -1317,7 +1309,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$Country", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : "$$ROOT" } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
+            Customers.{ "$project" : { "_v" : "$Country", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "_v" : 1 } }
             """);
     }
 
