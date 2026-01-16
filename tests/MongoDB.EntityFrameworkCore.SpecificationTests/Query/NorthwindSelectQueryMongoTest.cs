@@ -496,7 +496,7 @@ Orders.
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", null] }, "then" : true, "else" : { "$lt" : ["$_id", 100] } } }, "_id" : 0 } }
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$or" : [{ "$eq" : ["$CustomerID", null] }, { "$lt" : ["$_id", 100] }] }, "_id" : 0 } }
 """);
     }
 
@@ -777,7 +777,7 @@ Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI
 
         AssertMql(
             """
-Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : true, "else" : false } }, "_id" : 0 } }
+Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 """);
     }
 

@@ -1307,7 +1307,7 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { 
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$cond" : { "if" : true, "then" : false, "else" : true } } } }
+            Products.{ "$match" : { "_id" : { "$type" : -1 } } }
             """);
     }
 
