@@ -3,6 +3,7 @@
 
 // Originally from EFCore.Cosmos NullableEqualityComparer.cs
 
+#if EF8 || EF9
 using System.Collections.Generic;
 
 namespace MongoDB.EntityFrameworkCore.ChangeTracking;
@@ -49,3 +50,4 @@ public class NullableEqualityComparer<T> : IEqualityComparer<T?>
     public virtual int GetHashCode(T? obj)
         => obj is null ? 0 : _underlyingComparer.GetHashCode(obj.Value);
 }
+#endif
