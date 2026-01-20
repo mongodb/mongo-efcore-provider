@@ -61,7 +61,7 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
     {
         var clrType = mappingInfo.ClrType!;
 
-        if (clrType is {IsValueType: true}
+        if (clrType is { IsValueType: true }
             || clrType == typeof(string)
             || clrType == typeof(BinaryVectorFloat32)
             || clrType == typeof(BinaryVectorInt8)
@@ -94,7 +94,7 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
             return CreateCollectionTypeMapping(clrType, elementType);
         }
 
-        if (clrType is {IsGenericType: true, IsGenericTypeDefinition: false})
+        if (clrType is { IsGenericType: true, IsGenericTypeDefinition: false })
         {
             if (clrType.HasInterface(SupportedDictionaryInterfaces))
             {
@@ -126,6 +126,12 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
     {
         var typeToInstantiate = FindCollectionTypeToInstantiate(collectionType, elementType);
 
+#if EF10
+        var comparer = elementMapping.Comparer.ComposeConversion(elementType);
+#else
+        var comparer = elementMapping.Comparer.ToNullableComparer(elementType);
+#endif
+
         return (ValueComparer?)Activator.CreateInstance(
             elementType.IsNullableValueType()
                 ? typeof(ListOfNullableValueTypesComparer<,>).MakeGenericType(typeToInstantiate,
@@ -133,7 +139,7 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
                 : elementType.IsValueType
                     ? typeof(ListOfValueTypesComparer<,>).MakeGenericType(typeToInstantiate, elementType)
                     : typeof(ListOfReferenceTypesComparer<,>).MakeGenericType(typeToInstantiate, elementType),
-            elementMapping.Comparer.ToNullableComparer(elementType)!);
+            comparer!);
     }
 
     private static Type FindCollectionTypeToInstantiate(Type collectionType, Type elementType)
@@ -189,13 +195,18 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
         Type dictType,
         bool readOnly = false)
     {
+#if EF10
+        return (ValueComparer)Activator.CreateInstance(
+            typeof(StringDictionaryComparer<,>).MakeGenericType(dictType, elementType),
+            elementMapping.Comparer.ComposeConversion(elementType))!;
+#else
         var unwrappedType = elementType.UnwrapNullableType();
-
         return (ValueComparer)Activator.CreateInstance(
             elementType == unwrappedType
                 ? typeof(StringDictionaryComparer<,>).MakeGenericType(elementType, dictType)
                 : typeof(NullableStringDictionaryComparer<,>).MakeGenericType(unwrappedType, dictType),
             elementMapping.Comparer,
             readOnly)!;
+#endif
     }
 }

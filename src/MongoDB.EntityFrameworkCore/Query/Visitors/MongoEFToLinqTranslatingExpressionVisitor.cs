@@ -119,14 +119,6 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
 #if EF10
             case QueryParameterExpression queryParameterExpression:
                 return ConvertIfRequired(Expression.Constant(_queryContext.Parameters[queryParameterExpression.Name]), expression.Type);
-
-            case ParameterExpression parameterExpression:
-                if (_queryContext.Parameters.TryGetValue(parameterExpression.Name, out var value))
-                {
-                    return ConvertIfRequired(Expression.Constant(value), expression.Type);
-                }
-
-                break;
 #else
             // Replace the QueryContext parameter values with constant values for this execution.
             case ParameterExpression parameterExpression:
