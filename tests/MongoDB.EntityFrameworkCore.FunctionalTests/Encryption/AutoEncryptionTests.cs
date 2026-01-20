@@ -55,7 +55,7 @@ public class AutoEncryptionTests(TemporaryDatabaseFixture database)
         Assert.Throws<FormatException>(() => db.Entities.First());
     }
 
-    [EncryptionTheory (Skip = "Failing only on Windows Latest in the C.I.")]
+    [Theory(Skip = "Failing only on Windows Latest in the CI")]
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_with_wrong_master_key(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
