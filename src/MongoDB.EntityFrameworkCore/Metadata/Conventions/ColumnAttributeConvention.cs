@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
 /// A convention that configures the element name for entity properties based on an applied
-/// <see cref="ColumnAttribute" /> for familiarity/compatibility with other EF providers.
+/// <see cref="ColumnAttribute" /> for familiarity/compatibility with other EF Core providers.
 /// </summary>
 public class ColumnAttributeConvention :
     PropertyAttributeConventionBase<ColumnAttribute>,

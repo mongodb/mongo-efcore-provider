@@ -119,12 +119,12 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 ## Breaking changes
 
 This project's version-numbers are aligned with Entity Framework Core and as-such we can not use the semver convention of constraining breaking changes solely to major version numbers. Please keep an eye on our [Breaking Changes](/BREAKING-CHANGES.md) document before upgrading to a new version of this provider.
- 
+
 ## Documentation
 
 - [MongoDB](https://www.mongodb.com/docs)
-- [EF Provider Guide](https://www.mongodb.com/docs/entity-framework/current/)
-- [EF Provider API Docs](https://mongodb.github.io/mongo-efcore-provider/8.2.0/api/index.html)
+- [EF Core Provider Guide](https://www.mongodb.com/docs/entity-framework/current/)
+- [EF Core Provider API Docs](https://mongodb.github.io/mongo-efcore-provider/8.2.0/api/index.html)
 
 ## Questions/Bug Reports
 

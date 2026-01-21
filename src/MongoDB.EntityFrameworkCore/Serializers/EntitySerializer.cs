@@ -39,7 +39,7 @@ internal class EntitySerializer<TValue> :
     /// <summary>
     /// Create a new instance of <see cref="EntitySerializer{TValue}"/>.
     /// </summary>
-    /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> this serializer relates to in EF.</param>
+    /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> this serializer relates to in EF Core.</param>
     /// <param name="bsonSerializerFactory">The <see cref="BsonSerializerFactory"/> to obtain additional sub-serializers from.</param>
     public EntitySerializer(
         IReadOnlyEntityType entityType,

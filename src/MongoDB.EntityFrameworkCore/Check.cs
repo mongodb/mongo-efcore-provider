@@ -47,10 +47,10 @@ internal static class Check
 
         if (source.Provider is IMongoQueryProvider)
         {
-            throw new ArgumentException($"The method '{memberName}' can only be called on an IQueryable that starts as a DbSet in EF. The IQueryable used came directly from the MongoDB driver and so cannot be used with EF-specific extensions.");
+            throw new ArgumentException($"The method '{memberName}' can only be called on an IQueryable that starts as a DbSet in EF Core. The IQueryable used came directly from the MongoDB driver and so cannot be used with EF Core-specific extensions.");
         }
 
-        throw new ArgumentException($"The method '{memberName}' can only be called on an IQueryable that starts as a DbSet in EF. The IQueryable came from a non-MongoDB LINQ implementation.");
+        throw new ArgumentException($"The method '{memberName}' can only be called on an IQueryable that starts as a DbSet in EF Core. The IQueryable came from a non-MongoDB LINQ implementation.");
     }
 
     public static Guid? NotEmpty(Guid? argument, [CallerArgumentExpression(nameof(argument))] string? parameterName = null)
