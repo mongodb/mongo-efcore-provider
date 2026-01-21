@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -38,9 +39,8 @@ public class MongoDiscriminatorNamingConvention : IModelFinalizingConvention
     /// <inheritdoc/>
     public void ProcessModelFinalizing(IConventionModelBuilder modelBuilder, IConventionContext<IConventionModelBuilder> context)
     {
-        foreach (var entityType in modelBuilder.Metadata.GetEntityTypes())
+        foreach (var discriminator in modelBuilder.Metadata.GetEntityTypes().Select(e => e.FindDiscriminatorProperty()))
         {
-            var discriminator = entityType.FindDiscriminatorProperty();
             if (discriminator != null)
             {
                 var oldAnnotation = discriminator.FindAnnotation(MongoAnnotationNames.ElementName);

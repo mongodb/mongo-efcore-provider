@@ -37,10 +37,7 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture databa
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
         protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
-        {
-            configurationBuilder.Conventions.Add(_ => new CamelCaseElementNameConvention());
-            configurationBuilder.Conventions.Add(_ => new CamelCaseElementNameConvention());
-        }
+            => configurationBuilder.Conventions.Add(_ => new CamelCaseElementNameConvention());
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
             => modelBuilder.Entity<T>().ToCollection(collection.CollectionNamespace.CollectionName);
@@ -253,10 +250,10 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(2, savedDocuments.Count);
 
-        savedDocuments[0].Contains("_id");
+        Assert.True(savedDocuments[0].Contains("_id"));
         Assert.Equal(jamValue, savedDocuments[0].GetValue(discriminatorName));
 
-        savedDocuments[1].Contains("_id");
+        Assert.True(savedDocuments[1].Contains("_id"));
         Assert.Equal(marmaladeValue, savedDocuments[1].GetValue(discriminatorName));
     }
 }
