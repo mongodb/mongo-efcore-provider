@@ -28,7 +28,7 @@ public class MongoTransactionEnlistmentManager : ITransactionEnlistmentManager
     /// <inheritdoc />
     public void EnlistTransaction(Transaction? transaction)
         => throw new NotSupportedException(
-            "The MongoDB EF Provider does not support ambient transactions. Consider explicit (Database.BeginTransaction) or implicit (DbContext.SaveChanges) transactions instead.");
+            "The MongoDB EF Core Provider does not support ambient transactions. Consider explicit (Database.BeginTransaction) or implicit (DbContext.SaveChanges) transactions instead.");
 
     /// <inheritdoc />
     public Transaction? EnlistedTransaction

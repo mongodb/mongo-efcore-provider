@@ -20,7 +20,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 
 /// <summary>
 /// Recognize <see cref="BsonDictionaryOptionsAttribute"/> when applied to properties of an entity
-/// to ensure the model will throw as the attribute is not supported in the EF provider.
+/// to ensure the model will throw as the attribute is not supported in the EF Core provider.
 /// </summary>
 /// <param name="dependencies">The <see cref="ProviderConventionSetBuilderDependencies"/> conventions depend upon.</param>
 public sealed class BsonDictionaryOptionsAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)

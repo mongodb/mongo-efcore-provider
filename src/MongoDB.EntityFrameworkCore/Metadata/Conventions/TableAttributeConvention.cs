@@ -24,7 +24,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 /// <summary>
 /// A convention that configures the collection name for entity types based on an applied <see cref="TableAttribute" /> for
-/// familiarity/compatibility with other EF providers.
+/// familiarity/compatibility with other EF Core providers.
 /// </summary>
 public class TableAttributeConvention : TypeAttributeConventionBase<TableAttribute>
 {

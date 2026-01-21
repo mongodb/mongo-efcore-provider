@@ -159,7 +159,7 @@ public sealed class BsonSerializerFactory
         {
             throw new NotSupportedException(
                 $"Unsupported ValueConverter for 'Nullable<{converter.ModelClrType.UnwrapNullableType().Name
-                }>' encountered. Null conversion must be left to EF. "
+                }>' encountered. Null conversion must be left to EF Core. "
                 + $"If using HasConversion with conversion expressions directly move them to constructor arguments of a ValueConverter instead. "
                 + $"For example: mb.Entity<{property.DeclaringType.DisplayName()}>().Property(e => e.{property.Name
                 }).HasConversion(x => x, y => y) becomes .HasConversion(new ValueConverter(x => x, y => y));");

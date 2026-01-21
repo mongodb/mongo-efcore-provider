@@ -50,10 +50,10 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
     }
 
     /// <summary>
-    /// Create a enumeration of <see cref="MongoUpdate"/> from an enumeration of EF-supplied
+    /// Create an enumeration of <see cref="MongoUpdate"/> from an enumeration of EF Core-supplied
     /// <see cref="IUpdateEntry"/>.
     /// </summary>
-    /// <param name="entries">The EF-supplied <see cref="IUpdateEntry"/> to process.</param>
+    /// <param name="entries">The EF Core-supplied <see cref="IUpdateEntry"/> to process.</param>
     /// <returns>An enumeration of <see cref="MongoUpdate"/> that corresponds to these updates.</returns>
     public static IEnumerable<MongoUpdate> CreateAll(IEnumerable<IUpdateEntry> entries)
         => entries.Select(Create).OfType<MongoUpdate>();

@@ -33,7 +33,7 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Provides EF database-level operations using the underlying <see cref="IMongoClientWrapper"/>.
+/// Provides EF Core database-level operations using the underlying <see cref="IMongoClientWrapper"/>.
 /// </summary>
 public class MongoDatabaseWrapper : Database
 {
