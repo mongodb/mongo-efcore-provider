@@ -39,7 +39,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.SpecificationTests" />
-    <PackageReference Remove="Microsoft.SourceLink.GitHub" />
     <PackageReference Include="MongoDB.Driver" Version="$(CSharpDriverVersion)" />
   </ItemGroup>
 
