@@ -16,8 +16,7 @@
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -29,26 +28,19 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    class CamelCaseDbContext(DbContextOptions options, string collectionName) : DbContext(options)
+    class CamelCaseDbContext<T>(IMongoCollection<T> collection) : DbContext where T : class
     {
-        public DbSet<RemappedEntity> Remapped { get; init; }
-
-        public static CamelCaseDbContext Create(IMongoCollection<RemappedEntity> collection) =>
-            new(new DbContextOptionsBuilder<CamelCaseDbContext>()
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            => optionsBuilder
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .UseMongoDB(collection.Database.Client, collection.Database.DatabaseNamespace.DatabaseName)
-                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
-                .Options, collection.CollectionNamespace.CollectionName);
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
         protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
-        {
-            configurationBuilder.Conventions.Add(_ => new CamelCaseElementNameConvention());
-        }
+            => configurationBuilder.Conventions.Add(_ => new CamelCaseElementNameConvention());
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
-        {
-            base.OnModelCreating(modelBuilder);
-            modelBuilder.Entity<RemappedEntity>().ToCollection(collectionName);
-        }
+            => modelBuilder.Entity<T>().ToCollection(collection.CollectionNamespace.CollectionName);
     }
 
     class IntendedStorageEntity
@@ -112,8 +104,8 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture databa
         const string subChangedText2 = "Changed2 as first word needs to be lower cased inside an owned entity";
 
         {
-            using var db = CamelCaseDbContext.Create(collection);
-            db.Remapped.Add(new RemappedEntity
+            using var db = new CamelCaseDbContext<RemappedEntity>(collection);
+            db.Add(new RemappedEntity
             {
                 _id = id,
                 unchanged = unchangedText,
@@ -147,5 +139,121 @@ public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture databa
             Assert.Equal(subUnchanged2, directFound.ownedEntity2.subUnchanged);
             Assert.Equal(subChangedText2, directFound.ownedEntity2.subChanged);
         }
+    }
+
+    private class DbPreserves(IMongoCollection<Preserves> collection)
+        : CamelCaseDbContext<Preserves>(collection)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<Marmalade>();
+            modelBuilder.Entity<Jam>();
+        }
+    }
+
+    private class DbPreservesExplicitTph(IMongoCollection<Preserves> collection)
+        : CamelCaseDbContext<Preserves>(collection)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<Preserves>()
+                .HasDiscriminator<string>("_t")
+                .HasValue<Marmalade>("Md")
+                .HasValue<Jam>("Jm");
+        }
+    }
+
+    private class DbPreservesExplicitElementName(IMongoCollection<Preserves> collection)
+        : CamelCaseDbContext<Preserves>(collection)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<Preserves>().Property<string>("Discriminator").HasElementName("D");
+            modelBuilder.Entity<Marmalade>();
+            modelBuilder.Entity<Jam>();
+        }
+    }
+
+    private abstract class Preserves
+    {
+        public ObjectId Id { get; set; }
+        public string Fruit { get; set; }
+    }
+
+    private class Marmalade : Preserves
+    {
+        public bool ThickCut { get; set; }
+    }
+
+    private class Jam : Preserves
+    {
+        public Seeds Seeds { get; set; }
+    }
+
+    private enum Seeds
+    {
+        None,
+        Some,
+        Lots
+    }
+
+    [Theory] // EF-285
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CamelCase_convention_ignores_special_names(bool async)
+    {
+        var collection = database.CreateCollection<Preserves>(values: async);
+
+        await using var db = new DbPreserves(collection);
+        await DiscriminatorTest(db, collection, async, "_t", "Jam", "Marmalade");
+    }
+
+    [Theory] // EF-285
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CamelCase_convention_ignores_special_names_when_inheritance_explicitly_configured(bool async)
+    {
+        var collection = database.CreateCollection<Preserves>(values: async);
+
+        await using var db = new DbPreservesExplicitTph(collection);
+        await DiscriminatorTest(db, collection, async, "_t", "Jm", "Md");
+    }
+
+    [Theory] // EF-285
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CamelCase_convention_ignores_explicitly_configured_special_names(bool async)
+    {
+        var collection = database.CreateCollection<Preserves>(values: async);
+
+        await using var db = new DbPreservesExplicitElementName(collection);
+        await DiscriminatorTest(db, collection, async, "D", "Jam", "Marmalade");
+    }
+
+    private static async Task DiscriminatorTest(
+        DbContext db, IMongoCollection<Preserves> collection, bool async,
+        string discriminatorName, BsonValue jamValue, BsonValue marmaladeValue)
+    {
+        db.AddRange(
+            new Jam { Fruit = "Strawberry", Seeds = Seeds.Some },
+            new Marmalade { Fruit = "Orange", ThickCut = true });
+
+        _ = async ? await db.SaveChangesAsync() : db.SaveChanges();
+
+        var savedDocuments = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName)
+            .AsQueryable().ToList()
+            .OrderBy(d => d[discriminatorName].AsString).ToList();
+
+        Assert.Equal(2, savedDocuments.Count);
+
+        Assert.True(savedDocuments[0].Contains("_id"));
+        Assert.Equal(jamValue, savedDocuments[0].GetValue(discriminatorName));
+
+        Assert.True(savedDocuments[1].Contains("_id"));
+        Assert.Equal(marmaladeValue, savedDocuments[1].GetValue(discriminatorName));
     }
 }
