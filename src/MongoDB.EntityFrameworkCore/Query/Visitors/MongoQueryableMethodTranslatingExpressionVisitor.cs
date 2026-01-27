@@ -18,6 +18,8 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -39,10 +41,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// Create a <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/>.
     /// </summary>
     /// <param name="dependencies">The <see cref="QueryableMethodTranslatingExpressionVisitorDependencies"/> this visitor depends upon.</param>
-    /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
+    /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
     public MongoQueryableMethodTranslatingExpressionVisitor(
         QueryableMethodTranslatingExpressionVisitorDependencies dependencies,
-        MongoQueryCompilationContext queryCompilationContext)
+        QueryCompilationContext queryCompilationContext)
         : base(dependencies, queryCompilationContext, subquery: false)
     {
     }
@@ -50,7 +52,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     public override Expression? Visit(Expression? expression)
     {
         _finalExpression ??= expression;
-        return base.Visit(expression);
+        var result = base.Visit(expression);
+
+        if (result == QueryCompilationContext.NotTranslatedExpression)
+        {
+            var originalExpression = ((MongoQueryCompilationContext)QueryCompilationContext).OriginalExpression;
+            throw new InvalidOperationException(
+                TranslationErrorDetails is null
+                    ? CoreStrings.TranslationFailed(originalExpression?.Print())
+                    : CoreStrings.TranslationFailedWithDetails(originalExpression?.Print(), TranslationErrorDetails));
+        }
+
+        return result;
     }
 
     private static readonly Type[] AllowedQueryableExtensions = [ typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver.Linq.MongoQueryable) ];

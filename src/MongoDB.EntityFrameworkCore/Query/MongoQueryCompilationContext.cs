@@ -14,109 +14,23 @@
  */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Linq.Expressions;
-using System.Reflection;
-
-using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
-
-#if EF8 || EF9
-using QueryParameterExpression = System.Linq.Expressions.ParameterExpression;
-#endif
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
-#if EF10
+/// <inheritdoc />
 public class MongoQueryCompilationContext(QueryCompilationContextDependencies dependencies, bool async)
     : QueryCompilationContext(dependencies, async)
 {
-}
-
-#else
-/// <inheritdoc />
-public class MongoQueryCompilationContext : QueryCompilationContext
-{
-    private readonly ExpressionPrinter _expressionPrinter;
-    private readonly Dictionary<string, LambdaExpression> _runtimeParameters = new();
-
     /// <summary>
-    /// Create a new <see cref="MongoQueryCompilationContext"/>.
+    /// The original expression that was passed to the query translator.
     /// </summary>
-    /// <param name="dependencies">The <see cref="QueryContextDependencies"/> required by this service.</param>
-    /// <param name="async">Whether this is an asynchronous query or not.</param>
-    public MongoQueryCompilationContext(
-        QueryCompilationContextDependencies dependencies,
-        bool async)
-        : base(dependencies, async)
+    public Expression? OriginalExpression { get; internal set; }
+
+    public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression query)
     {
-        _expressionPrinter = new ExpressionPrinter();
+        OriginalExpression = query;
+        return base.CreateQueryExecutor<TResult>(query);
     }
-
-    /// <inheritdoc />
-    public override QueryParameterExpression RegisterRuntimeParameter(string name, LambdaExpression valueExtractor)
-    {
-        if (valueExtractor.Parameters.Count != 1
-            || valueExtractor.Parameters[0] != QueryContextParameter)
-        {
-            throw new ArgumentException(CoreStrings.RuntimeParameterMissingParameter, nameof(valueExtractor));
-        }
-
-        _runtimeParameters[name] = valueExtractor;
-#if EF10
-        return new QueryParameterExpression(name, valueExtractor.ReturnType);
-#else
-        return Expression.Parameter(valueExtractor.ReturnType, name);
-#endif
-    }
-
-    /// <inheritdoc />
-    public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression originalQuery)
-    {
-        var query = Dependencies.QueryTranslationPreprocessorFactory.Create(this).Process(originalQuery);
-        query = Dependencies.QueryableMethodTranslatingExpressionVisitorFactory.Create(this).Visit(query);
-
-        if (query == NotTranslatedExpression)
-        {
-            throw new InvalidOperationException(CoreStrings.TranslationFailed(originalQuery.Print()));
-        }
-
-        query = Dependencies.QueryTranslationPostprocessorFactory.Create(this).Process(query);
-        query = Dependencies.ShapedQueryCompilingExpressionVisitorFactory.Create(this).Visit(query);
-
-        query = InsertRuntimeParameters(query);
-
-        var queryExecutorExpression = Expression.Lambda<Func<QueryContext, TResult>>(
-            query,
-            QueryContextParameter);
-
-        try
-        {
-            return queryExecutorExpression.Compile();
-        }
-        finally
-        {
-            Logger.QueryExecutionPlanned(Dependencies.Context, _expressionPrinter, queryExecutorExpression);
-        }
-    }
-
-    private static readonly MethodInfo QueryContextAddParameterMethodInfo
-        = typeof(QueryContext).GetTypeInfo().GetDeclaredMethod(nameof(QueryContext.AddParameter))!;
-
-    private Expression InsertRuntimeParameters(Expression query)
-        => _runtimeParameters.Count == 0
-            ? query
-            : Expression.Block(
-                _runtimeParameters
-                    .Select(
-                        kv =>
-                            Expression.Call(
-                                QueryContextParameter,
-                                QueryContextAddParameterMethodInfo,
-                                Expression.Constant(kv.Key),
-                                Expression.Convert(Expression.Invoke(kv.Value, QueryContextParameter), typeof(object))))
-                    .Append(query));
 }
-#endif
