@@ -144,6 +144,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return source;
         }
 
+        // Detect join patterns (LeftJoin, GroupJoin, etc.) which use TransparentIdentifier
+        var parameterType = selector.Parameters[0].Type;
+        if (parameterType.IsGenericType &&
+            parameterType.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+        {
+            throw new NotSupportedException(
+                "Join operations (Join, LeftJoin, GroupJoin) are not supported by the MongoDB EF Core Provider. " +
+                "Consider using navigation properties or restructuring your query.");
+        }
+
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
         var newSelectorBody =
             ReplacingExpressionVisitor.Replace(selector.Parameters.Single(), source.ShaperExpression, selector.Body);
