@@ -28,6 +28,7 @@ public class MongoQueryCompilationContext(QueryCompilationContextDependencies de
     /// </summary>
     public Expression? OriginalExpression { get; internal set; }
 
+    /// <inheritdoc/>
     public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression query)
     {
         OriginalExpression = query;
