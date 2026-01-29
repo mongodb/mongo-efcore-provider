@@ -38,6 +38,108 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
+    #if EF8 || EF9
+
+    public override async Task Intersect(bool async)
+    {
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect(async))).Message);
+
+        AssertMql(
+            """
+            Customers.
+            """);
+    }
+
+        public override async Task Intersect_non_entity(bool async)
+    {
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_non_entity(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
+
+    public override async Task Intersect_nested(bool async)
+    {
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_nested(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
+
+        public override async Task Union_Intersect(bool async)
+    {
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Union_Intersect(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
+
+    #else
+
+    public override async Task Union_Intersect(bool async)
+    {
+        // Fails: Projections issue EF-76
+        await AssertTranslationFailed(() => base.Union_Intersect(async));
+    }
+
+    public override async Task Intersect_non_entity(bool async)
+    {
+        // Fails: Projections issue EF-76
+        await AssertTranslationFailed(() => base.Intersect_non_entity(async));
+    }
+
+    public override async Task Intersect_nested(bool async)
+    {
+        // Fails: Projections issue EF-76
+        await AssertTranslationFailed(() => base.Intersect_nested(async));
+    }
+
+    public override async Task Intersect(bool async)
+    {
+        // Fails: Projections issue EF-76
+        await AssertTranslationFailed(() => base.Intersect(async));
+    }
+
+    public override async Task Intersect_on_distinct(bool async)
+    {
+        await AssertTranslationFailed(() => base.Intersect_on_distinct(async));
+    }
+
+    public override async Task Union_on_distinct(bool async)
+    {
+        await base.Union_on_distinct(async);
+
+        AssertMql(
+            """
+Customers.{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_v" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_v" : "$CompanyName", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
+    }
+
+    public override async Task Except_on_distinct(bool async)
+    {
+        await AssertTranslationFailed(() => base.Except_on_distinct(async));
+    }
+
+    #endif
+
     public override async Task Union(bool async)
     {
         await base.Union(async);
@@ -55,19 +157,6 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
         AssertMql(
             """
 Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }
-""");
-    }
-
-    public override async Task Intersect(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect(async))).Message);
-
-        AssertMql(
-            """
-Customers.
 """);
     }
 
@@ -120,18 +209,6 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
 """);
     }
 
-    public override async Task Union_Intersect(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Union_Intersect(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-    }
 
     public override async Task Union_inside_Concat(bool async)
     {
@@ -755,32 +832,6 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }, { "$unionWith" 
 
         AssertMql(
 );
-    }
-
-    public override async Task Intersect_non_entity(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_non_entity(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-    }
-
-    public override async Task Intersect_nested(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_nested(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
     }
 
     public override async Task Concat_nested(bool async)

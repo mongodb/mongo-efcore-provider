@@ -30,12 +30,25 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
+#if !EF8 && !EF9
+
+    public override async Task Include_collection_with_right_join_clause_with_filter(bool async)
+    {
+        await AssertTranslationFailed(() => base.Include_collection_with_right_join_clause_with_filter(async));
+
+        AssertMql(
+        );
+    }
+
+#endif
+
     public override async Task Include_collection_with_last_no_orderby(bool async)
     {
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_last_no_orderby(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_last_no_orderby(async)))
+            .Message);
 
         AssertMql();
     }
@@ -45,7 +58,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_filter_reordered(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_filter_reordered(async)))
+            .Message);
 
         AssertMql(
         );
@@ -56,7 +70,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_non_key_with_first_or_default(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Include_collection_order_by_non_key_with_first_or_default(async))).Message);
 
         AssertMql(
         );
@@ -65,7 +80,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
     public override async Task Include_with_cycle_does_not_throw_when_AsTracking_NoTrackingWithIdentityResolution(bool async)
     {
         // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Include_with_cycle_does_not_throw_when_AsTracking_NoTrackingWithIdentityResolution(async));
+        await AssertTranslationFailed(() =>
+            base.Include_with_cycle_does_not_throw_when_AsTracking_NoTrackingWithIdentityResolution(async));
 
         AssertMql(
         );
@@ -96,7 +112,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_collection_column(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_collection_column(async)))
+            .Message);
 
         AssertMql(
         );
@@ -118,7 +135,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_skip_take_no_order_by(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_skip_take_no_order_by(async)))
+            .Message);
         AssertMql(
         );
     }
@@ -182,7 +200,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_non_key_with_take(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_non_key_with_take(async)))
+            .Message);
 
         AssertMql(
         );
@@ -193,7 +212,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_then_include_collection_predicate(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Include_collection_then_include_collection_predicate(async))).Message);
 
         AssertMql(
         );
@@ -215,7 +235,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_principal_already_tracked(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_principal_already_tracked(async)))
+            .Message);
 
         AssertMql(
             """
@@ -257,7 +278,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_single_or_default_no_result(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_single_or_default_no_result(async)))
+            .Message);
 
         AssertMql(
         );
@@ -306,7 +328,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_then_include_collection_then_include_reference(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Include_collection_then_include_collection_then_include_reference(async))).Message);
 
         AssertMql(
         );
@@ -344,7 +367,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_list_does_not_contains(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Include_collection_OrderBy_list_does_not_contains(async))).Message);
 
         AssertMql(
         );
@@ -393,7 +417,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_non_key_with_skip(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_non_key_with_skip(async)))
+            .Message);
 
         AssertMql(
         );
@@ -471,7 +496,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_dependent_already_tracked(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_dependent_already_tracked(async)))
+            .Message);
 
         AssertMql(
             """
@@ -493,7 +519,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_multi_level_collection_and_then_include_reference_predicate(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Include_multi_level_collection_and_then_include_reference_predicate(async))).Message);
 
         AssertMql(
         );
@@ -513,7 +540,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_empty_list_contains(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_empty_list_contains(async)))
+            .Message);
 
         AssertMql(
         );
@@ -533,7 +561,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_force_alias_uniquefication(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_force_alias_uniquefication(async)))
+            .Message);
 
         AssertMql(
         );
@@ -571,7 +600,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_then_include_collection(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_then_include_collection(async)))
+            .Message);
 
         AssertMql(
         );
@@ -671,7 +701,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
     public override async Task Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join(bool async)
     {
         // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join(async));
+        await AssertTranslationFailed(() =>
+            base.Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join(async));
 
         AssertMql(
         );
@@ -700,7 +731,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_list_contains(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_list_contains(async)))
+            .Message);
 
         AssertMql(
         );
@@ -738,7 +770,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_distinct_is_server_evaluated(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_distinct_is_server_evaluated(async)))
+            .Message);
 
         AssertMql(
         );
@@ -922,7 +955,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_empty_list_does_not_contains(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Include_collection_OrderBy_empty_list_does_not_contains(async))).Message);
 
         AssertMql(
         );
@@ -949,7 +983,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
     public override async Task Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression(bool async)
     {
         // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression(async));
+        await AssertTranslationFailed(() =>
+            base.Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression(async));
 
         AssertMql(
         );
@@ -989,7 +1024,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Then_include_collection_order_by_collection_column(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Then_include_collection_order_by_collection_column(async))).Message);
 
         AssertMql(
         );
@@ -1096,7 +1132,8 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
         // Fails: Include issue EF-117
         Assert.Contains(
             "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_conditional_order_by(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_conditional_order_by(async)))
+            .Message);
 
         AssertMql(
         );

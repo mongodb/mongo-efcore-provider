@@ -48,6 +48,13 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
         return query;
     }
 
+#if !EF8
+
+    /// <inheritdoc />
+    protected override bool IsEfConstantSupported => true;
+
+#endif
+
     private sealed class VectorSearchExtractor : ExpressionVisitor
     {
         private MethodCallExpression? _removed;

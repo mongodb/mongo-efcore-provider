@@ -38,6 +38,40 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
+#if !EF8 && !EF9
+
+    public override async Task Where_ternary_boolean_condition_negated(bool async)
+    {
+        await base.Where_ternary_boolean_condition_negated(async);
+
+        AssertMql(
+            """
+Products.{ "$match" : { "$nor" : [{ "$expr" : { "$cond" : { "if" : { "$gte" : [{ "$toInt" : "$UnitsInStock" }, 20] }, "then" : false, "else" : true } } }] } }
+""");
+    }
+
+    public override async Task Two_parameters_with_same_name_get_uniquified(bool async)
+    {
+        await base.Two_parameters_with_same_name_get_uniquified(async);
+
+        AssertMql(
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
+""");
+    }
+
+    public override async Task Two_parameters_with_same_case_insensitive_name_get_uniquified(bool async)
+    {
+        await base.Two_parameters_with_same_case_insensitive_name_get_uniquified(async);
+
+        AssertMql(
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
+""");
+    }
+
+#endif
+
     public override async Task Where_simple(bool async)
     {
         await base.Where_simple(async);
@@ -351,8 +385,8 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "_v" : "$Title", "_id" : 0 } }
-""");
+            Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "_v" : "$Title", "_id" : 0 } }
+            """);
     }
 
     public override async Task Where_simple_shadow_subquery(bool async)
@@ -977,12 +1011,20 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { 
 #else
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
-            """);
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
+            //
+            """
+Customers.
+""");
 #endif
     }
 
@@ -1992,8 +2034,8 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { 
 
         AssertMql(
             """
-Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "e" : "$$ROOT", "Title" : "$Title", "_id" : 0 } }
-""");
+            Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "e" : "$$ROOT", "Title" : "$Title", "_id" : 0 } }
+            """);
     }
 
     public override async Task Where_primitive_tracked(bool async)
@@ -2070,15 +2112,17 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { 
 
         AssertMql();
     }
+
 #else
+
     public override async Task EF_Constant(bool async)
     {
         await base.EF_Constant(async);
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            """);
     }
 
     public override async Task EF_Constant_with_subtree(bool async)
@@ -2087,8 +2131,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            """);
     }
 
     public override async Task EF_Constant_does_not_parameterized_as_part_of_bigger_subtree(bool async)
@@ -2097,8 +2141,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            """);
     }
 
     public override async Task EF_Constant_with_non_evaluatable_argument_throws(bool async)
@@ -2237,7 +2281,6 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 #endif
 
 #if EF8 || EF9
-
     public override async Task Where_bitwise_or(bool async)
     {
         await base.Where_bitwise_or(async);
@@ -2274,7 +2317,6 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 #endif
 
 #if EF8 || EF9
-
     public override async Task Where_equals_method_string(bool async)
     {
         await base.Where_equals_method_string(async);

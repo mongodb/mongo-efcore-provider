@@ -44,8 +44,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task LastOrDefault_when_no_order_by(bool async)
@@ -54,8 +54,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_las
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task Contains_with_local_tuple_array_closure(bool async)
@@ -64,8 +64,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$group" : { "_id" : null, "_las
 
         AssertMql(
             """
-OrderDetails.{ "$match" : { "$expr" : { "$in" : [["$_id.OrderID", "$_id.ProductID"], [[1, 2], [10248, 11]]] } } }
-""");
+            OrderDetails.{ "$match" : { "$expr" : { "$in" : [["$_id.OrderID", "$_id.ProductID"], [[1, 2], [10248, 11]]] } } }
+            """);
     }
 
     public override async Task Array_cast_to_IEnumerable_Contains_with_constant(bool async)
@@ -83,17 +83,16 @@ OrderDetails.{ "$match" : { "$expr" : { "$in" : [["$_id.OrderID", "$_id.ProductI
         // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(
-                () => base.Contains_over_keyless_entity_throws(async))).Message);
+            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_over_keyless_entity_throws(async))).Message);
 
         AssertMql(
             """
-Customers.{ "$limit" : 1 }
-""",
+            Customers.{ "$limit" : 1 }
+            """,
             //
             """
-Customers.
-""");
+            Customers.
+            """);
     }
 
     public override async Task Enumerable_min_is_mapped_to_Queryable_1(bool async)
@@ -102,7 +101,7 @@ Customers.
         await AssertTranslationFailed(() => base.Enumerable_min_is_mapped_to_Queryable_1(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Enumerable_min_is_mapped_to_Queryable_2(bool async)
@@ -111,7 +110,7 @@ Customers.
         await AssertTranslationFailed(() => base.Enumerable_min_is_mapped_to_Queryable_2(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Average_with_unmapped_property_access_throws_meaningful_exception(bool async)
@@ -119,13 +118,13 @@ Customers.
         // Fails: Does not use translation failed message
         Assert.Contains(
             "Serializer for Microsoft.EntityFramework",
-            (await Assert.ThrowsAsync<ContainsException>(
-                () => base.Average_with_unmapped_property_access_throws_meaningful_exception(async))).Message);
+            (await Assert.ThrowsAsync<ContainsException>(() =>
+                base.Average_with_unmapped_property_access_throws_meaningful_exception(async))).Message);
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task Sum_over_empty_returns_zero(bool async)
@@ -169,7 +168,6 @@ Orders.
     }
 
 #if EF8 || EF9
-
     public override async Task Average_after_default_if_empty_does_not_throw(bool async)
     {
         // Fails: Projections issue EF-76
@@ -216,44 +214,26 @@ Orders.
 
     public override async Task Average_after_DefaultIfEmpty_does_not_throw(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Average_after_DefaultIfEmpty_does_not_throw(async))).Message);
+        await AssertTranslationFailed(async () => await base.Average_after_DefaultIfEmpty_does_not_throw(async));
 
         AssertMql(
-            """
-            Orders.
-            """);
+        );
     }
 
     public override async Task Max_after_DefaultIfEmpty_does_not_throw(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Max_after_DefaultIfEmpty_does_not_throw(async))).Message);
+        await AssertTranslationFailed(async () => await base.Max_after_DefaultIfEmpty_does_not_throw(async));
 
         AssertMql(
-            """
-            Orders.
-            """);
+        );
     }
 
     public override async Task Min_after_DefaultIfEmpty_does_not_throw(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Min_after_DefaultIfEmpty_does_not_throw(async))).Message);
+        await AssertTranslationFailed(async () => await base.Min_after_DefaultIfEmpty_does_not_throw(async));
 
         AssertMql(
-            """
-            Orders.
-            """);
+        );
     }
 
 #endif
@@ -268,8 +248,8 @@ Orders.
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$lt" : 0 } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-""");
+            Orders.{ "$match" : { "_id" : { "$lt" : 0 } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_v" } } }, { "$project" : { "_id" : 0 } }
+            """);
     }
 
     public override async Task Sum_with_no_data_nullable(bool async)
@@ -312,8 +292,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 0 } } }, { "$project" : { "_v" : "$_id",
 
         AssertMql(
             """
-Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
-""");
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            """);
     }
 
     public override async Task Min_no_data_cast_to_nullable(bool async)
@@ -326,8 +306,8 @@ Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_mi
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
-""");
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            """);
     }
 
     public override async Task Min_no_data_subquery(bool async)
@@ -336,7 +316,7 @@ Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$
         await AssertTranslationFailed(() => base.Min_no_data_subquery(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Max_no_data(bool async)
@@ -359,8 +339,8 @@ Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$
 
         AssertMql(
             """
-Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-""");
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            """);
     }
 
     public override async Task Max_no_data_cast_to_nullable(bool async)
@@ -373,8 +353,8 @@ Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_ma
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-""");
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            """);
     }
 
     public override async Task Max_no_data_subquery(bool async)
@@ -383,7 +363,7 @@ Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$
         await AssertTranslationFailed(() => base.Max_no_data_subquery(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Average_no_data(bool async)
@@ -463,8 +443,8 @@ Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task OrderBy_Where_Count_client_eval(bool async)
@@ -477,8 +457,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task OrderBy_Where_Count_client_eval_mixed(bool async)
@@ -491,8 +471,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task OrderBy_Count_with_predicate_client_eval(bool async)
@@ -505,8 +485,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task OrderBy_Count_with_predicate_client_eval_mixed(bool async)
@@ -519,8 +499,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task OrderBy_Where_Count_with_predicate_client_eval(bool async)
@@ -533,8 +513,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task OrderBy_Where_Count_with_predicate_client_eval_mixed(bool async)
@@ -547,8 +527,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task OrderBy_client_Take(bool async)
@@ -751,7 +731,7 @@ Orders.
             """);
     }
 
-    #if !EF8
+#if !EF8
 
     public override async Task Sum_over_subquery(bool async)
     {
@@ -762,7 +742,7 @@ Orders.
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Sum_over_nested_subquery(bool async)
@@ -774,7 +754,7 @@ Orders.
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Sum_over_min_subquery(bool async)
@@ -786,7 +766,7 @@ Orders.
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Sum_over_scalar_returning_subquery(bool async)
@@ -798,7 +778,7 @@ Orders.
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Sum_over_Any_subquery(bool async)
@@ -810,7 +790,7 @@ Orders.
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Sum_over_uncorrelated_subquery(bool async)
@@ -822,11 +802,10 @@ Orders.
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
-    #else
-
+#else
     public override async Task Sum_over_subquery_is_client_eval(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -863,20 +842,19 @@ Orders.
 );
     }
 
-    #endif
+#endif
 
     public override async Task Sum_on_float_column(bool async)
     {
         // Fails: Truncation data loss issue EF-228
         Assert.Contains(
             "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(
-                () => base.Sum_on_float_column(async))).Message);
+            (await Assert.ThrowsAsync<TruncationException>(() => base.Sum_on_float_column(async))).Message);
 
         AssertMql(
             """
-OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
-""");
+            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
+            """);
     }
 
     public override async Task Sum_on_float_column_in_subquery(bool async)
@@ -885,7 +863,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
         await AssertTranslationFailed(() => base.Sum_on_float_column_in_subquery(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Average_with_no_arg(bool async)
@@ -958,15 +936,14 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
             """);
     }
 
-    #if !EF8
+#if !EF8
 
     public override async Task Average_over_subquery(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Average_over_subquery(async))).Message);
+            (await Assert.ThrowsAsync<ArgumentException>(() => base.Average_over_subquery(async))).Message);
 
         AssertMql();
     }
@@ -976,8 +953,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
         // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Average_over_nested_subquery(async))).Message);
+            (await Assert.ThrowsAsync<ArgumentException>(() => base.Average_over_nested_subquery(async))).Message);
 
         AssertMql();
     }
@@ -987,14 +963,12 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
         // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Average_over_max_subquery(async))).Message);
+            (await Assert.ThrowsAsync<ArgumentException>(() => base.Average_over_max_subquery(async))).Message);
 
         AssertMql();
     }
 
-    #else
-
+#else
     public override async Task Average_over_subquery_is_client_eval(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -1028,20 +1002,19 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
         AssertMql();
     }
 
-    #endif
+#endif
 
     public override async Task Average_on_float_column(bool async)
     {
         // Fails: Truncation data loss issue EF-228
         Assert.Contains(
             "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(
-                () => base.Average_on_float_column(async))).Message);
+            (await Assert.ThrowsAsync<TruncationException>(() => base.Average_on_float_column(async))).Message);
 
         AssertMql(
             """
-OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
-""");
+            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
+            """);
     }
 
     public override async Task Average_on_float_column_in_subquery(bool async)
@@ -1092,7 +1065,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
             """);
     }
 
-    #if !EF8
+#if !EF8
 
     public override async Task Min_over_subquery(bool async)
     {
@@ -1103,7 +1076,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Min_over_nested_subquery(bool async)
@@ -1115,7 +1088,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Min_over_max_subquery(bool async)
@@ -1127,11 +1100,10 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
-    #else
-
+#else
     public override async Task Min_over_subquery_is_client_eval(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -1168,7 +1140,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
         );
     }
 
-    #endif
+#endif
 
     public override async Task Max_with_no_arg(bool async)
     {
@@ -1200,7 +1172,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
             """);
     }
 
-    #if !EF8
+#if !EF8
 
     public override async Task Max_over_subquery(bool async)
     {
@@ -1211,7 +1183,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Max_over_nested_subquery(bool async)
@@ -1223,7 +1195,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
     public override async Task Max_over_sum_subquery(bool async)
@@ -1235,11 +1207,10 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
         AssertMql(
-);
+        );
     }
 
-    #else
-
+#else
     public override async Task Max_over_subquery_is_client_eval(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -1276,7 +1247,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 );
     }
 
-    #endif
+#endif
 
     public override async Task Count_with_predicate(bool async)
     {
@@ -1424,10 +1395,11 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
         // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.FirstOrDefault_inside_subquery_gets_server_evaluated(async))).Message);
+            (await Assert.ThrowsAsync<ArgumentException>(() => base.FirstOrDefault_inside_subquery_gets_server_evaluated(async)))
+            .Message);
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Multiple_collection_navigation_with_FirstOrDefault_chained(bool async)
@@ -1436,16 +1408,17 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
         await AssertTranslationFailed(() => base.Multiple_collection_navigation_with_FirstOrDefault_chained(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(bool async)
     {
         // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(async));
+        await AssertTranslationFailed(() =>
+            base.Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task First_inside_subquery_gets_client_evaluated(bool async)
@@ -1456,17 +1429,17 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
             (await Assert.ThrowsAsync<ArgumentException>(() => base.First_inside_subquery_gets_client_evaluated(async))).Message);
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Last(bool async)
     {
-            await base.Last(async);
+        await base.Last(async);
 
-AssertMql(
-    """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+        AssertMql(
+            """
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task Last_Predicate(bool async)
@@ -1475,8 +1448,8 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_la
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task Where_Last(bool async)
@@ -1485,19 +1458,18 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" 
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task LastOrDefault(bool async)
     {
-
         await base.LastOrDefault(async);
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task LastOrDefault_Predicate(bool async)
@@ -1506,8 +1478,8 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_la
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task Where_LastOrDefault(bool async)
@@ -1516,8 +1488,8 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" 
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task Contains_with_subquery(bool async)
@@ -1528,7 +1500,7 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" 
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Contains_with_subquery(async))).Message);
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Contains_with_local_array_closure(bool async)
@@ -1555,8 +1527,8 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" 
 
         AssertMql(
             """
-Customers.
-""");
+            Customers.
+            """);
     }
 
     public override async Task Contains_with_local_uint_array_closure(bool async)
@@ -1622,8 +1594,8 @@ Customers.
         await base.Contains_with_local_list_closure_all_null(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$in" : [null, null] } } }
-""");
+            Customers.{ "$match" : { "_id" : { "$in" : [null, null] } } }
+            """);
     }
 
     public override async Task Contains_with_local_list_inline(bool async)
@@ -1704,8 +1676,8 @@ Customers.{ "$match" : { "_id" : { "$in" : [null, null] } } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ALFKI"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
-""");
+            Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ALFKI"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
+            """);
     }
 
     public override async Task Contains_with_local_enumerable_inline_closure_mix(bool async)
@@ -1714,12 +1686,12 @@ Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ALFKI"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
-""",
+            Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ALFKI"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
+            """,
             //
             """
-Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ANATR"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
-""");
+            Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ANATR"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
+            """);
     }
 
     public override async Task Contains_with_local_ordered_enumerable_closure(bool async)
@@ -1931,8 +1903,8 @@ Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : 
 
         AssertMql(
             """
-Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$match" : { "_v" : { "_v" : "ALFKI" } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
-""");
+            Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$match" : { "_v" : { "_v" : "ALFKI" } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            """);
     }
 
     public override async Task Contains_with_local_anonymous_type_array_closure(bool async)
@@ -1941,8 +1913,8 @@ Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$match" : { "_v" : {
 
         AssertMql(
             """
-OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2" : "$_id.ProductID" }, [{ "Id1" : 1, "Id2" : 2 }, { "Id1" : 10248, "Id2" : 11 }]] } } }
-""");
+            OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2" : "$_id.ProductID" }, [{ "Id1" : 1, "Id2" : 2 }, { "Id1" : 10248, "Id2" : 11 }]] } } }
+            """);
     }
 
     public override async Task OfType_Select(bool async)
@@ -1951,7 +1923,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2"
         await AssertTranslationFailed(() => base.OfType_Select(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task OfType_Select_OfType_Select(bool async)
@@ -1960,7 +1932,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2"
         await AssertTranslationFailed(() => base.OfType_Select_OfType_Select(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Average_with_non_matching_types_in_projection_doesnt_produce_second_explicit_cast(bool async)
@@ -1999,8 +1971,8 @@ OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2"
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 20 }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 20 }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task OrderBy_Skip_Last_gives_correct_result(bool async)
@@ -2009,8 +1981,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 20 }, { "$group" : { "_id" :
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 20 }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 20 }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task Contains_over_entityType_should_rewrite_to_identity_equality(bool async)
@@ -2018,17 +1990,17 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 20 }, { "$group" : { "_id" : 
         // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(
-                () => base.Contains_over_entityType_should_rewrite_to_identity_equality(async))).Message);
+            (await Assert.ThrowsAsync<NotSupportedException>(() =>
+                base.Contains_over_entityType_should_rewrite_to_identity_equality(async))).Message);
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }
-""",
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }
+            """,
             //
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task List_Contains_over_entityType_should_rewrite_to_identity_equality(bool async)
@@ -2036,10 +2008,11 @@ Orders.
         // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.List_Contains_over_entityType_should_rewrite_to_identity_equality(async))).Message);
+            (await Assert.ThrowsAsync<ArgumentException>(() =>
+                base.List_Contains_over_entityType_should_rewrite_to_identity_equality(async))).Message);
 
         AssertMql(
-);
+        );
     }
 
     public override async Task List_Contains_with_constant_list(bool async)
@@ -2047,12 +2020,11 @@ Orders.
         // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(
-                () => base.List_Contains_with_constant_list(async))).Message);
-AssertMql(
-    """
-Customers.
-""");
+            (await Assert.ThrowsAsync<NotSupportedException>(() => base.List_Contains_with_constant_list(async))).Message);
+        AssertMql(
+            """
+            Customers.
+            """);
     }
 
     public override async Task List_Contains_with_parameter_list(bool async)
@@ -2060,13 +2032,12 @@ Customers.
         // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(
-                () => base.List_Contains_with_parameter_list(async))).Message);
+            (await Assert.ThrowsAsync<NotSupportedException>(() => base.List_Contains_with_parameter_list(async))).Message);
 
         AssertMql(
             """
-Customers.
-""");
+            Customers.
+            """);
     }
 
     public override async Task Contains_with_parameter_list_value_type_id(bool async)
@@ -2074,13 +2045,13 @@ Customers.
         // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(
-                () => base.Contains_with_parameter_list_value_type_id(async))).Message);
+            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_with_parameter_list_value_type_id(async)))
+            .Message);
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task Contains_with_constant_list_value_type_id(bool async)
@@ -2088,17 +2059,16 @@ Orders.
         // Fails: Entity equality issue EF-202
         Assert.Contains(
             "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(
-                () => base.Contains_over_keyless_entity_throws(async))).Message);
+            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_over_keyless_entity_throws(async))).Message);
 
         AssertMql(
             """
-Customers.{ "$limit" : 1 }
-""",
+            Customers.{ "$limit" : 1 }
+            """,
             //
             """
-Customers.
-""");
+            Customers.
+            """);
     }
 
     public override async Task IImmutableSet_Contains_with_parameter(bool async)
@@ -2161,8 +2131,8 @@ Customers.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task Contains_over_entityType_with_null_in_projection(bool async)
@@ -2172,10 +2142,10 @@ Orders.
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Contains_over_entityType_with_null_in_projection(async))).Message);
-AssertMql(
-    """
-Orders.
-""");
+        AssertMql(
+            """
+            Orders.
+            """);
     }
 
     public override async Task Contains_over_scalar_with_null_should_rewrite_to_identity_equality_subquery(bool async)
@@ -2188,8 +2158,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_negated(bool async)
@@ -2202,8 +2172,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_complex(bool async)
@@ -2216,8 +2186,8 @@ Orders.
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task Contains_over_nullable_scalar_with_null_in_subquery_translated_correctly(bool async)
@@ -2226,16 +2196,17 @@ Orders.
         await AssertTranslationFailed(() => base.Contains_over_nullable_scalar_with_null_in_subquery_translated_correctly(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Contains_over_non_nullable_scalar_with_null_in_subquery_simplifies_to_false(bool async)
     {
         // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Contains_over_non_nullable_scalar_with_null_in_subquery_simplifies_to_false(async));
+        await AssertTranslationFailed(() =>
+            base.Contains_over_non_nullable_scalar_with_null_in_subquery_simplifies_to_false(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Contains_over_entityType_should_materialize_when_composite(bool async)
@@ -2248,8 +2219,8 @@ Orders.
 
         AssertMql(
             """
-OrderDetails.
-""");
+            OrderDetails.
+            """);
     }
 
     public override async Task Contains_over_entityType_should_materialize_when_composite2(bool async)
@@ -2262,8 +2233,8 @@ OrderDetails.
 
         AssertMql(
             """
-OrderDetails.
-""");
+            OrderDetails.
+            """);
     }
 
     public override async Task String_FirstOrDefault_in_projection_does_not_do_client_eval(bool async)
@@ -2276,8 +2247,8 @@ OrderDetails.
 
         AssertMql(
             """
-Customers.
-""");
+            Customers.
+            """);
     }
 
     public override async Task Project_constant_Sum(bool async)
@@ -2394,21 +2365,7 @@ Customers.
         await AssertTranslationFailed(() => base.Cast_before_aggregate_is_preserved(async));
 
         AssertMql(
-);
-    }
-
-    public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.DefaultIfEmpty_selects_only_required_columns(async))).Message);
-
-        AssertMql(
-            """
-Products.
-""");
+        );
     }
 
     public override async Task Collection_Last_member_access_in_projection_translated(bool async)
@@ -2416,8 +2373,8 @@ Products.
         // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Collection_Last_member_access_in_projection_translated(async))).Message);
+            (await Assert.ThrowsAsync<ArgumentException>(() => base.Collection_Last_member_access_in_projection_translated(async)))
+            .Message);
 
         AssertMql();
     }
@@ -2427,8 +2384,8 @@ Products.
         // Fails: Cross-document navigation access issue EF-216
         Assert.Contains(
             "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Collection_LastOrDefault_member_access_in_projection_translated(async))).Message);
+            (await Assert.ThrowsAsync<ArgumentException>(() =>
+                base.Collection_LastOrDefault_member_access_in_projection_translated(async))).Message);
 
         AssertMql();
     }
@@ -2498,7 +2455,7 @@ Products.
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Not_Any_false(async))).Message);
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Contains_inside_aggregate_function_with_GroupBy(bool async)
@@ -2507,7 +2464,7 @@ Products.
         await AssertTranslationFailed(() => base.Contains_inside_aggregate_function_with_GroupBy(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Contains_inside_Average_without_GroupBy(bool async)
@@ -2516,8 +2473,8 @@ Products.
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1.0, "else" : 0.0 } } } } }, { "$project" : { "_id" : 0 } }
-""");
+            Customers.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1.0, "else" : 0.0 } } } } }, { "$project" : { "_id" : 0 } }
+            """);
     }
 
     public override async Task Contains_inside_Sum_without_GroupBy(bool async)
@@ -2570,36 +2527,63 @@ Customers.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$cond" : { "if" : { 
             """);
     }
 
-    #if EF9
+#if EF8 || EF9
+    public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
+    {
+        // Fails: Projections issue EF-76
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
+                base.DefaultIfEmpty_selects_only_required_columns(async))).Message);
 
+        AssertMql(
+            """
+            Products.
+            """);
+    }
+
+#else
+
+    public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
+    {
+        // Fails: Projections issue EF-76
+        await AssertTranslationFailed(() => base.DefaultIfEmpty_selects_only_required_columns(async));
+
+        AssertMql(
+        );
+    }
+
+#endif
+
+#if !EF8
     public override async Task Return_type_of_singular_operator_is_preserved(bool async)
     {
         await base.Return_type_of_singular_operator_is_preserved(async);
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 1 }
-""",
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 1 }
+            """,
             //
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 1 }
-""",
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 1 }
+            """,
             //
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 2 }
-""",
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 2 }
+            """,
             //
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 2 }
-""",
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 2 }
+            """,
             //
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""",
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """,
             //
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-""");
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+            """);
     }
 
     public override async Task Type_casting_inside_sum(bool async)
@@ -2612,11 +2596,11 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$toDecimal" : "$Discount" } } } }, { "$project" : { "_id" : 0 } }
-""");
+            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$toDecimal" : "$Discount" } } } }, { "$project" : { "_id" : 0 } }
+            """);
     }
 
-    #endif
+#endif
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

@@ -38,13 +38,18 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
         Assert.Contains(" could not be translated", ex.Message);
     }
 
-#if EF10
+#if !EF8 && !EF9
+
     [Fact]
     public void LeftJoin_throws_not_supported_exception()
     {
-        Assert.Throws<NotSupportedException>(
+        var ex = Assert.Throws<InvalidOperationException>(
             () => _db.Planets.LeftJoin(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList());
+
+        Assert.Contains(".LeftJoin(", ex.Message);
+        Assert.Contains(" could not be translated", ex.Message);
     }
+
 #endif
 
     [Fact]

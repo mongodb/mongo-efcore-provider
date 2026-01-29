@@ -213,11 +213,9 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
 
 #if EF10
         var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF10");
-#endif
-#if EF9
+#elif EF9
         var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF9");
-#endif
-#if EF8
+#elif EF8
         var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF8");
 #endif
 

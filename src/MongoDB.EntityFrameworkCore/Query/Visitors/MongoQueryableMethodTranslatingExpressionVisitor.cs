@@ -66,7 +66,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return result;
     }
 
-    private static readonly Type[] AllowedQueryableExtensions = [ typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver.Linq.MongoQueryable) ];
+    private static readonly Type[] AllowedQueryableExtensions =
+        [typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver.Linq.MongoQueryable)];
 
     /// <summary>
     /// Visit the <see cref="MethodCallExpression"/> to capture the cardinality and final expression
@@ -80,7 +81,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var method = methodCallExpression.Method;
         if (!AllowedQueryableExtensions.Contains(method.DeclaringType))
             return QueryCompilationContext.NotTranslatedExpression;
-
 
         var source = Visit(methodCallExpression.Arguments[0]);
         if (source is ShapedQueryExpression shapedQueryExpression)
@@ -108,11 +108,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                                                 || methodDefinition == QueryableMethods.MaxWithSelector:
 
                 // Operations not supported, but we want to bubble through for better error messages
+#if EF10
+                case nameof(Queryable.LeftJoin) when methodDefinition == QueryableMethods.LeftJoin:
+                case nameof(Queryable.RightJoin) when methodDefinition == QueryableMethods.RightJoin:
+#endif
                 case nameof(Queryable.GroupBy) when methodDefinition == QueryableMethods.GroupByWithKeySelector
                                                     || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector:
                 case nameof(Queryable.Contains) when methodDefinition == QueryableMethods.Contains:
                 case nameof(Queryable.Except) when methodDefinition == QueryableMethods.Except:
                 case nameof(Queryable.Join) when methodDefinition == QueryableMethods.Join:
+                case nameof(Queryable.DefaultIfEmpty) when methodDefinition == QueryableMethods.DefaultIfEmptyWithArgument
+                                                           || methodDefinition == QueryableMethods.DefaultIfEmptyWithoutArgument:
+                case nameof(Queryable.Intersect) when methodDefinition == QueryableMethods.Intersect:
                 case nameof(Queryable.SelectMany) when methodDefinition == QueryableMethods.SelectManyWithCollectionSelector:
                     {
                         if (base.VisitMethodCall(methodCallExpression) is not ShapedQueryExpression visitedShapedQueryExpression)
