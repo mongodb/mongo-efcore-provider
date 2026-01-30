@@ -38,62 +38,6 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
-    #if EF8 || EF9
-
-    public override async Task Intersect(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
-
-        public override async Task Intersect_non_entity(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_non_entity(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-    }
-
-    public override async Task Intersect_nested(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Intersect_nested(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-    }
-
-        public override async Task Union_Intersect(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Union_Intersect(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-    }
-
-    #else
-
     public override async Task Union_Intersect(bool async)
     {
         // Fails: Projections issue EF-76
@@ -117,6 +61,8 @@ Customers.
         // Fails: Projections issue EF-76
         await AssertTranslationFailed(() => base.Intersect(async));
     }
+
+#if !EF8 && !EF9
 
     public override async Task Intersect_on_distinct(bool async)
     {
@@ -284,22 +230,12 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
     public override async Task Select_Union_unrelated(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_Union_unrelated(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Select_Union_unrelated(async));
     }
 
     public override async Task Select_Union_different_fields_in_anonymous_with_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Select_Union_different_fields_in_anonymous_with_subquery(async));
-
-        AssertMql(
-);
     }
 
     public override async Task Union_Include(bool async)
@@ -413,13 +349,7 @@ Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" 
 
     public override async Task Union_over_column_scalarsubquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Union_over_column_scalarsubquery(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_column_scalarsubquery(async));
     }
 
     public override async Task Union_over_function_column(bool async)
@@ -527,13 +457,7 @@ Orders.{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }, { "$unionWith"
 
     public override async Task Union_over_constant_scalarsubquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Union_over_constant_scalarsubquery(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_constant_scalarsubquery(async));
     }
 
     public override async Task Union_over_unary_column(bool async)
@@ -588,13 +512,7 @@ Orders.{ "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }, { "
 
     public override async Task Union_over_unary_scalarsubquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Union_over_unary_scalarsubquery(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_unary_scalarsubquery(async));
     }
 
     public override async Task Union_over_binary_column(bool async)
@@ -649,40 +567,22 @@ Orders.{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }, { "$unio
 
     public override async Task Union_over_binary_scalarsubquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Union_over_binary_scalarsubquery(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_binary_scalarsubquery(async));
     }
 
     public override async Task Union_over_scalarsubquery_column(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Union_over_scalarsubquery_column(async));
-
-        AssertMql(
-);
     }
 
     public override async Task Union_over_scalarsubquery_function(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Union_over_scalarsubquery_function(async));
-
-        AssertMql(
-);
     }
 
     public override async Task Union_over_scalarsubquery_constant(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Union_over_scalarsubquery_constant(async));
-
-        AssertMql(
-);
     }
 
     public override async Task Union_over_scalarsubquery_unary(bool async)
@@ -1006,4 +906,9 @@ Customers.
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    // Fails: Cross-document navigation access issue EF-216
+    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        =>  Assert.Contains("Unsupported cross-DbSet query between",
+            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }

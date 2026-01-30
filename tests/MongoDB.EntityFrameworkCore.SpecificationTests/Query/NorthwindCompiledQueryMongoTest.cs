@@ -223,13 +223,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 
     public override void Multiple_queries()
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            Assert.Throws<ArgumentException>(() => base.Multiple_queries()).Message);
-
-        AssertMql(
-);
+        AssertNoMultiCollectionQuerySupport(() => base.Multiple_queries());
     }
 
     public override void Compiled_query_when_using_member_on_context()
@@ -453,4 +447,9 @@ Customers.
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
+
+    // Fails: Cross-document navigation access issue EF-216
+    private static void AssertNoMultiCollectionQuerySupport(Action query)
+        => Assert.Contains("Unsupported cross-DbSet query between",
+            Assert.Throws<InvalidOperationException>(query).Message);
 }

@@ -46,8 +46,8 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-Products.{ "$match" : { "$nor" : [{ "$expr" : { "$cond" : { "if" : { "$gte" : [{ "$toInt" : "$UnitsInStock" }, 20] }, "then" : false, "else" : true } } }] } }
-""");
+            Products.{ "$match" : { "$nor" : [{ "$expr" : { "$cond" : { "if" : { "$gte" : [{ "$toInt" : "$UnitsInStock" }, 20] }, "then" : false, "else" : true } } }] } }
+            """);
     }
 
     public override async Task Two_parameters_with_same_name_get_uniquified(bool async)
@@ -56,8 +56,8 @@ Products.{ "$match" : { "$nor" : [{ "$expr" : { "$cond" : { "if" : { "$gte" : [{
 
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
-""");
+            Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
+            """);
     }
 
     public override async Task Two_parameters_with_same_case_insensitive_name_get_uniquified(bool async)
@@ -66,8 +66,8 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
-""");
+            Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
+            """);
     }
 
 #endif
@@ -84,13 +84,7 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
 
     public override async Task Where_as_queryable_expression(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(async () =>
-                await base.Where_as_queryable_expression(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_as_queryable_expression(async));
     }
 
     public override async Task<string> Where_simple_closure(bool async)
@@ -361,12 +355,7 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ANATR" }, { "_id" : "ALFKI" }] } }
 
     public override async Task Where_subquery_closure_via_query_cache(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_subquery_closure_via_query_cache(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_subquery_closure_via_query_cache(async));
     }
 
     public override async Task Where_simple_shadow(bool async)
@@ -1016,14 +1005,6 @@ Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
             //
             """
 Customers.{ "$match" : { "_id" : "ALFKI" } }
-""",
-            //
-            """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""",
-            //
-            """
-Customers.
 """);
 #endif
     }
@@ -1273,54 +1254,37 @@ Customers.
 
     public override async Task Where_multiple_contains_in_subquery_with_or(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_multiple_contains_in_subquery_with_or(async))).Message);
-
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_multiple_contains_in_subquery_with_or(async));
         AssertMql(
         );
     }
 
     public override async Task Where_multiple_contains_in_subquery_with_and(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_multiple_contains_in_subquery_with_and(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_multiple_contains_in_subquery_with_and(async));
+        AssertMql(
+        );
     }
 
     public override async Task Where_contains_on_navigation(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_contains_on_navigation(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_contains_on_navigation(async));
+        AssertMql(
+        );
     }
 
     public override async Task Where_subquery_FirstOrDefault_is_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_subquery_FirstOrDefault_is_null(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_subquery_FirstOrDefault_is_null(async));
+        AssertMql(
+        );
     }
 
     public override async Task Where_subquery_FirstOrDefault_compared_to_entity(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_subquery_FirstOrDefault_compared_to_entity(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_subquery_FirstOrDefault_compared_to_entity(async));
+        AssertMql(
+        );
     }
 
     public override async Task TypeBinary_short_circuit(bool async)
@@ -1355,13 +1319,7 @@ Customers.
 
     public override async Task Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(async));
     }
 
     public override async Task Using_same_parameter_twice_in_query_generates_one_sql_parameter(bool async)
@@ -1552,176 +1510,82 @@ Customers.
 
     public override async Task FirstOrDefault_over_scalar_projection_compared_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.FirstOrDefault_over_scalar_projection_compared_to_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_over_scalar_projection_compared_to_null(async));
     }
 
     public override async Task FirstOrDefault_over_scalar_projection_compared_to_not_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.FirstOrDefault_over_scalar_projection_compared_to_not_null(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_over_scalar_projection_compared_to_not_null(async));
     }
 
     public override async Task FirstOrDefault_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.FirstOrDefault_over_custom_projection_compared_to_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_over_custom_projection_compared_to_null(async));
     }
 
     public override async Task FirstOrDefault_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.FirstOrDefault_over_custom_projection_compared_to_not_null(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_over_custom_projection_compared_to_not_null(async));
     }
 
     public override async Task SingleOrDefault_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.SingleOrDefault_over_custom_projection_compared_to_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.SingleOrDefault_over_custom_projection_compared_to_null(async));
     }
 
     public override async Task SingleOrDefault_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.SingleOrDefault_over_custom_projection_compared_to_not_null(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.SingleOrDefault_over_custom_projection_compared_to_not_null(async));
     }
 
     public override async Task LastOrDefault_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.LastOrDefault_over_custom_projection_compared_to_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.LastOrDefault_over_custom_projection_compared_to_null(async));
     }
 
     public override async Task LastOrDefault_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.LastOrDefault_over_custom_projection_compared_to_not_null(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.LastOrDefault_over_custom_projection_compared_to_not_null(async));
     }
 
     public override async Task First_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.First_over_custom_projection_compared_to_null(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.First_over_custom_projection_compared_to_null(async));
     }
 
     public override async Task First_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.First_over_custom_projection_compared_to_not_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.First_over_custom_projection_compared_to_not_null(async));
     }
 
     public override async Task ElementAt_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.ElementAt_over_custom_projection_compared_to_not_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.ElementAt_over_custom_projection_compared_to_not_null(async));
     }
 
     public override async Task ElementAtOrDefault_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.ElementAtOrDefault_over_custom_projection_compared_to_null(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.ElementAtOrDefault_over_custom_projection_compared_to_null(async));
     }
 
     public override async Task Single_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Single_over_custom_projection_compared_to_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Single_over_custom_projection_compared_to_null(async));
     }
 
     public override async Task Single_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Single_over_custom_projection_compared_to_not_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Single_over_custom_projection_compared_to_not_null(async));
     }
 
     public override async Task Last_over_custom_projection_compared_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Last_over_custom_projection_compared_to_null(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Last_over_custom_projection_compared_to_null(async));
     }
 
     public override async Task Last_over_custom_projection_compared_to_not_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Last_over_custom_projection_compared_to_not_null(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Last_over_custom_projection_compared_to_not_null(async));
     }
 
     public override async Task Where_Contains_and_comparison(bool async)
@@ -2707,4 +2571,13 @@ Customers.
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    // Fails: Projections issue EF-76
+    private static async Task AssertNoProjectionSupport(Func<Task> query)
+        => await Assert.ThrowsAsync<InvalidOperationException>(query);
+
+    // Fails: Cross-document navigation access issue EF-216
+    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => Assert.Contains("Unsupported cross-DbSet query between",
+            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }

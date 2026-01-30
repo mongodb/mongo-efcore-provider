@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
@@ -43,34 +44,15 @@ public class NorthwindMiscellaneousQueryMongoTest
 #if EF8 || EF9
     public override async Task DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(bool async)
     {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
+        await AssertTranslationFailed(() => base.DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(async));
     }
 
     public override async Task DefaultIfEmpty_without_group_join(bool async)
     {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_without_group_join(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
+        await AssertTranslationFailed(() => base.DefaultIfEmpty_without_group_join(async));
     }
 
 #else
-
     public override async Task DefaultIfEmpty_without_group_join(bool async)
     {
         await AssertTranslationFailed(() => base.DefaultIfEmpty_without_group_join(async));
@@ -152,23 +134,19 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : ["$
 
     public override async Task Any_on_distinct(bool async)
     {
-        await base.Any_on_distinct(async);
-
-        AssertMql();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Any_on_distinct(async));
     }
 
     public override async Task Contains_on_distinct(bool async)
     {
-        await base.Contains_on_distinct(async);
-
-        AssertMql();
+         // Fails: Cross-document navigation access issue EF-216
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Contains_on_distinct(async));
     }
 
     public override async Task All_on_distinct(bool async)
     {
-        await base.All_on_distinct(async);
-
-        AssertMql();
+         // Fails: Cross-document navigation access issue EF-216
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.All_on_distinct(async));
     }
 
     public override async Task SelectMany_correlated_with_DefaultIfEmpty_and_Select_value_type_in_selector_throws(bool async)
@@ -200,21 +178,14 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_v" : "$_id", "_id" : 
 
     public override async Task Where_Order_First(bool async)
     {
-        await base.Where_Order_First(async);
-
-        AssertMql();
+         // Fails: Cross-document navigation access issue EF-216
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_Order_First(async));
     }
 
     public override async Task IQueryable_captured_variable()
     {
-        // Fails: No subquery support
-        await AssertTranslationFailed(() => base.IQueryable_captured_variable());
-    }
-
-    public override async Task Subquery_DefaultIfEmpty_Any(bool async)
-    {
-        // Fails: No subquery support
-        await AssertTranslationFailed(() => base.Subquery_DefaultIfEmpty_Any(async));
+         // Fails: Cross-document navigation access issue EF-216
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.IQueryable_captured_variable());
     }
 
     public override async Task Skip_1_Take_0_works_when_constant(bool async)
@@ -295,10 +266,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$inde
 
     public override async Task Column_access_inside_subquery_predicate(bool async)
     {
-        // Fail: Subquery unsupported
-        await base.Column_access_inside_subquery_predicate(async);
-
-        AssertMql();
+         // Fails: Cross-document navigation access issue EF-216
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Column_access_inside_subquery_predicate(async));
     }
 
     public override async Task Cast_to_object_over_parameter_directly_in_lambda(bool async)
@@ -312,6 +281,12 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
     }
 
 #endif
+
+    public override async Task Subquery_DefaultIfEmpty_Any(bool async)
+    {
+        // Fails: No subquery support
+        await AssertTranslationFailed(() => base.Subquery_DefaultIfEmpty_Any(async));
+    }
 
     public override async Task Shaper_command_caching_when_parameter_names_different(bool async)
     {
@@ -514,13 +489,7 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
 
     public override async Task Entity_equality_through_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Entity_equality_through_subquery(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Entity_equality_through_subquery(async));
     }
 
     public override async Task Entity_equality_through_include(bool async)
@@ -555,89 +524,45 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
 
     public override async Task Entity_equality_orderby_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Entity_equality_orderby_subquery(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Entity_equality_orderby_subquery(async));
     }
 
     public override async Task Entity_equality_orderby_descending_subquery_composite_key(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Entity_equality_orderby_descending_subquery_composite_key(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Entity_equality_orderby_descending_subquery_composite_key(async));
     }
 
 #if EF8 || EF9
     public override async Task Default_if_empty_top_level(bool async)
     {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Default_if_empty_top_level(async))).Message);
+        // Fails: Cross-document navigation access issue EF-216
+        await AssertTranslationFailed(() => base.Default_if_empty_top_level(async));
 
         AssertMql(
-            """
-Employees.
-""");
+        );
     }
 
     public override async Task Join_with_default_if_empty_on_both_sources(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Join_with_default_if_empty_on_both_sources(async));
-
-        AssertMql(
-);
     }
 
     public override async Task Default_if_empty_top_level_followed_by_projecting_constant(bool async)
     {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Default_if_empty_top_level_followed_by_projecting_constant(async))).Message);
-
-        AssertMql(
-            """
-Employees.
-""");
+        await AssertTranslationFailed(() => base.Default_if_empty_top_level_followed_by_projecting_constant(async));
     }
 
     public override async Task Default_if_empty_top_level_positive(bool async)
     {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Default_if_empty_top_level_positive(async))).Message);
-
-        AssertMql(
-            """
-Employees.
-""");
+        await AssertTranslationFailed(() => base.Default_if_empty_top_level_positive(async));
     }
 
     public override async Task Default_if_empty_top_level_projection(bool async)
     {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Default_if_empty_top_level_projection(async))).Message);
-
-        AssertMql(
-            """
-Employees.
-""");
+        await AssertTranslationFailed(() => base.Default_if_empty_top_level_projection(async));
     }
 
+#if !EF8
     public override async Task DefaultIfEmpty_top_level(bool async)
     {
         // Fails: Navigations issue EF-216
@@ -650,9 +575,9 @@ Employees.
             Employees.
             """);
     }
+#endif
 
 #else
-
     public override async Task DefaultIfEmpty_top_level(bool async)
     {
         // Fails: Navigations issue EF-216
@@ -942,35 +867,17 @@ Employees.
 
     public override async Task Select_Where_Subquery_Deep_Single(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_Where_Subquery_Deep_Single(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Select_Where_Subquery_Deep_Single(async));
     }
 
     public override async Task Select_Where_Subquery_Deep_First(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_Where_Subquery_Deep_First(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Select_Where_Subquery_Deep_First(async));
     }
 
     public override async Task Select_Where_Subquery_Equality(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_Where_Subquery_Equality(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Select_Where_Subquery_Equality(async));
     }
 
     public override async Task Where_subquery_anon(bool async)
@@ -1044,13 +951,7 @@ Employees.
 
     public override async Task OrderBy_any(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.OrderBy_any(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.OrderBy_any(async));
     }
 
     public override async Task Skip(bool async)
@@ -1338,79 +1239,37 @@ Employees.
 
     public override async Task Any_nested_negated(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Any_nested_negated(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_nested_negated(async));
     }
 
     public override async Task Any_nested_negated2(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Any_nested_negated2(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_nested_negated2(async));
     }
 
     public override async Task Any_nested_negated3(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Any_nested_negated3(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_nested_negated3(async));
     }
 
     public override async Task Any_nested(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Any_nested(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_nested(async));
     }
 
     public override async Task Any_nested2(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Any_nested2(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_nested2(async));
     }
 
     public override async Task Any_nested3(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Any_nested3(async))).Message);
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_nested3(async));
     }
 
     public override async Task Any_with_multiple_conditions_still_uses_exists(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Any_with_multiple_conditions_still_uses_exists(async)))
-            .Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_with_multiple_conditions_still_uses_exists(async));
     }
 
 #if EF9
@@ -1499,176 +1358,108 @@ Employees.
 
     public override async Task Where_select_many_or(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_select_many_or(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task Where_select_many_or2(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_select_many_or2(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task Where_select_many_or3(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_select_many_or3(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task Where_select_many_or4(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_select_many_or4(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task Where_select_many_or_with_parameter(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Where_select_many_or_with_parameter(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task SelectMany_simple_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.SelectMany_simple_subquery(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task SelectMany_simple1(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.SelectMany_simple1(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task SelectMany_simple2(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.SelectMany_simple2(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task SelectMany_entity_deep(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.DTO_subquery_orderby(async));
-
-        AssertMql(
-        );
+        await AssertTranslationFailed(() => base.SelectMany_entity_deep(async));
     }
 
     public override async Task SelectMany_projection1(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.SelectMany_projection1(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task SelectMany_projection2(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.SelectMany_projection2(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task SelectMany_Count(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.DTO_subquery_orderby(async));
-
-        AssertMql(
-        );
+        await AssertTranslationFailed(() => base.SelectMany_Count(async));
     }
 
     public override async Task SelectMany_LongCount(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.DTO_subquery_orderby(async));
-
-        AssertMql(
-        );
+        await AssertTranslationFailed(() => base.SelectMany_LongCount(async));
     }
 
     public override async Task SelectMany_OrderBy_ThenBy_Any(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.SelectMany_OrderBy_ThenBy_Any(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task Join_Where_Count(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Join_Where_Count(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task Where_Join_Any(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_Join_Any(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_Join_Any(async));
     }
 
     public override async Task Where_Join_Exists(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws
-        Assert.Contains(
-            "Actual:   typeof(System.ArgumentException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_Join_Exists(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
+            async,
+            ss => ss.Set<Customer>().Where(c =>
+                c.CustomerID == "ALFKI" && c.Orders.Exists(o => o.OrderDate == new DateTime(2008, 10, 24)))));
     }
 
     public override async Task Where_Join_Exists_Inequality(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws
-        Assert.Contains(
-            "Actual:   typeof(System.ArgumentException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_Join_Exists_Inequality(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
+            async,
+            ss => ss.Set<Customer>().Where(c =>
+                c.CustomerID == "ALFKI" && c.Orders.Exists(o => o.OrderDate != new DateTime(2008, 10, 24)))));
     }
 
     public override async Task Where_Join_Exists_Constant(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws
-        Assert.Contains(
-            "Actual:   typeof(System.ArgumentException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_Join_Exists_Constant(async))).Message);
+        await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
+            async,
+            ss => ss.Set<Customer>().Where(c => c.CustomerID == "ALFKI" && c.Orders.Exists(o => false))));
 
         AssertMql();
     }
@@ -1676,9 +1467,9 @@ Employees.
     public override async Task Where_Join_Not_Exists(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws
-        Assert.Contains(
-            "Actual:   typeof(System.ArgumentException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_Join_Not_Exists(async))).Message);
+        await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
+            async,
+            ss => ss.Set<Customer>().Where(c => c.CustomerID == "ALFKI" && !c.Orders.Exists(o => false))));
 
         AssertMql();
     }
@@ -2028,13 +1819,7 @@ Employees.
 
     public override async Task OrderBy_correlated_subquery2(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.OrderBy_correlated_subquery2(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.OrderBy_correlated_subquery2(async));
     }
 
     public override async Task Where_subquery_recursive_trivial(bool async)
@@ -2180,13 +1965,7 @@ Employees.
 
     public override async Task Where_subquery_on_collection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_subquery_on_collection(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_subquery_on_collection(async));
     }
 
     public override async Task Select_many_cross_join_same_collection(bool async)
@@ -2298,7 +2077,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$ContactName", "$C
 #else
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$ContactName", "$CompanyName"] }, "Liz Nixon"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$CompanyName", "$ContactName"] }, "The Big Cheese"] } } }
             """);
 #endif
     }
@@ -2376,8 +2155,8 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$ContactName", "$C
 
         AssertMql(
             """
-Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z" } } } }
-""");
+            Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z" } } } }
+            """);
     }
 
     public override async Task DateTime_parse_is_parameterized_when_from_closure(bool async)
@@ -2386,8 +2165,8 @@ Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z"
 
         AssertMql(
             """
-Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z" } } } }
-""");
+            Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z" } } } }
+            """);
     }
 
     public override async Task New_DateTime_is_inlined(bool async)
@@ -2396,8 +2175,8 @@ Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z"
 
         AssertMql(
             """
-Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z" } } } }
-""");
+            Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z" } } } }
+            """);
     }
 
     public override async Task New_DateTime_is_parameterized_when_from_closure(bool async)
@@ -2406,12 +2185,12 @@ Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z"
 
         AssertMql(
             """
-Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z" } } } }
-""",
+            Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T12:00:00Z" } } } }
+            """,
             //
             """
-Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T11:00:00Z" } } } }
-""");
+            Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T11:00:00Z" } } } }
+            """);
     }
 
 #endif
@@ -2492,8 +2271,8 @@ Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T11:00:00Z"
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_bitwise_or_multiple(bool async)
@@ -2502,8 +2281,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_bitwise_and(bool async)
@@ -2512,8 +2291,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_bitwise_and_or(bool async)
@@ -2522,8 +2301,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Where_bitwise_or_with_logical_or(bool async)
@@ -2532,8 +2311,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }] } }
-""");
+            Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }] } }
+            """);
     }
 
     public override async Task Where_bitwise_and_with_logical_and(bool async)
@@ -2542,8 +2321,8 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_
 
         AssertMql(
             """
-Customers.{ "$match" : { "$and" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }] } }
-""");
+            Customers.{ "$match" : { "$and" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }] } }
+            """);
     }
 
     public override async Task Where_bitwise_or_with_logical_and(bool async)
@@ -2552,8 +2331,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "
 
         AssertMql(
             """
-Customers.{ "$match" : { "$and" : [{ "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] }, { "Country" : "Germany" }] } }
-""");
+            Customers.{ "$match" : { "$and" : [{ "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] }, { "Country" : "Germany" }] } }
+            """);
     }
 
     public override async Task Where_bitwise_and_with_logical_or(bool async)
@@ -2562,8 +2341,8 @@ Customers.{ "$match" : { "$and" : [{ "$or" : [{ "_id" : "ALFKI" }, { "_id" : "AN
 
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "$and" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] }, { "_id" : "ANTON" }] } }
-""");
+            Customers.{ "$match" : { "$or" : [{ "$and" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] }, { "_id" : "ANTON" }] } }
+            """);
     }
 
     public override async Task Where_bitwise_binary_not(bool async)
@@ -2577,8 +2356,8 @@ Customers.{ "$match" : { "$or" : [{ "$and" : [{ "_id" : "ALFKI" }, { "_id" : "AN
 
         AssertMql(
             """
-Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitNot" : "$_id" }, -10249] } } }
-""");
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitNot" : "$_id" }, -10249] } } }
+            """);
     }
 
     public override async Task Where_bitwise_binary_and(bool async)
@@ -2587,8 +2366,8 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitNot" : "$_id" }, -10249] } } }
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$bitsAllSet" : 10248 } } }
-""");
+            Orders.{ "$match" : { "_id" : { "$bitsAllSet" : 10248 } } }
+            """);
     }
 
     public override async Task Where_bitwise_binary_or(bool async)
@@ -2602,12 +2381,11 @@ Orders.{ "$match" : { "_id" : { "$bitsAllSet" : 10248 } } }
 
         AssertMql(
             """
-Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitOr" : ["$_id", 10248] }, 10248] } } }
-""");
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitOr" : ["$_id", 10248] }, 10248] } } }
+            """);
     }
 
-    #if EF9
-
+#if EF9
     public override async Task Where_bitwise_binary_xor(bool async)
     {
         if (!TestServer.SupportsBitwiseOperators)
@@ -2623,7 +2401,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 """);
     }
 
-    #endif
+#endif
 
     public override async Task Select_bitwise_or_with_logical_or(bool async)
     {
@@ -2631,8 +2409,8 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_bitwise_and_with_logical_and(bool async)
@@ -2641,8 +2419,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
+            """);
     }
 
 #endif
@@ -3092,14 +2870,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
     public override async Task Contains_with_subquery_involving_join_binds_to_correct_table(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Contains_with_subquery_involving_join_binds_to_correct_table(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Contains_with_subquery_involving_join_binds_to_correct_table(async));
     }
 
     public override async Task Complex_query_with_repeated_query_model_compiles_correctly(bool async)
@@ -3312,24 +3083,12 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
     public override async Task Subquery_is_null_translated_correctly(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Subquery_is_null_translated_correctly(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Subquery_is_null_translated_correctly(async));
     }
 
     public override async Task Subquery_is_not_null_translated_correctly(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Subquery_is_not_null_translated_correctly(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Subquery_is_not_null_translated_correctly(async));
     }
 
     public override async Task Select_take_average(bool async)
@@ -3631,13 +3390,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
     public override async Task Comparing_collection_navigation_to_null(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Comparing_collection_navigation_to_null(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Comparing_collection_navigation_to_null(async));
     }
 
     public override async Task Comparing_collection_navigation_to_null_complex(bool async)
@@ -3807,49 +3560,28 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
     public override async Task Collection_navigation_equal_to_null_for_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Collection_navigation_equal_to_null_for_subquery(async)))
-            .Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Collection_navigation_equal_to_null_for_subquery(async));
     }
 
     public override async Task Dependent_to_principal_navigation_equal_to_null_for_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Dependent_to_principal_navigation_equal_to_null_for_subquery(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Dependent_to_principal_navigation_equal_to_null_for_subquery(async));
     }
 
     public override async Task Collection_navigation_equality_rewrite_for_subquery(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
-        Assert.Contains(
-            "Actual:   typeof(System.ArgumentException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Collection_navigation_equality_rewrite_for_subquery(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
+            async,
+            ss => ss.Set<Customer>().Where(c => c.CustomerID.StartsWith("A")
+                                                && ss.Set<Order>().Where(o => o.OrderID < 10300).OrderBy(o => o.OrderID)
+                                                    .FirstOrDefault().OrderDetails
+                                                == ss.Set<Order>().Where(o => o.OrderID > 10500).OrderBy(o => o.OrderID)
+                                                    .FirstOrDefault().OrderDetails)));
     }
 
     public override async Task Inner_parameter_in_nested_lambdas_gets_preserved(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Inner_parameter_in_nested_lambdas_gets_preserved(async)))
-            .Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Inner_parameter_in_nested_lambdas_gets_preserved(async));
     }
 
     public override async Task Convert_to_nullable_on_nullable_value_is_ignored(bool async)
@@ -4389,13 +4121,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
     public override async Task Query_when_evaluatable_queryable_method_call_with_repository(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Entity_equality_through_subquery(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Query_when_evaluatable_queryable_method_call_with_repository(async));
     }
 
     public override async Task Max_on_empty_sequence_throws(bool async)
@@ -4829,8 +4555,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$gt" : 2 } } }
-""");
+            Orders.{ "$match" : { "_id" : { "$gt" : 2 } } }
+            """);
     }
 
     public override async Task Random_next_is_not_funcletized_6(bool async)
@@ -4839,8 +4565,8 @@ Orders.{ "$match" : { "_id" : { "$gt" : 2 } } }
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$gt" : 5 } } }
-""");
+            Orders.{ "$match" : { "_id" : { "$gt" : 5 } } }
+            """);
     }
 
 #endif
@@ -5017,8 +4743,7 @@ Orders.{ "$match" : { "_id" : { "$gt" : 5 } } }
         AssertMql();
     }
 
-#if EF10
-
+#if !EF8 && !EF9
     public override async Task DefaultIfEmpty_top_level_arg(bool async)
     {
         await base.DefaultIfEmpty_top_level_arg(async);
@@ -5034,6 +4759,7 @@ Orders.{ "$match" : { "_id" : { "$gt" : 5 } } }
     }
 
 #else
+
     public override async Task Default_if_empty_top_level_arg(bool async)
     {
         await base.Default_if_empty_top_level_arg(async);
@@ -5234,59 +4960,30 @@ Orders.{ "$match" : { "_id" : { "$gt" : 5 } } }
 
     public override async Task Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_constant_zero(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_constant_zero(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() =>
+            base.Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_constant_zero(async));
     }
 
     public override async Task Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_constant_one(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_constant_one(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() =>
+            base.Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_constant_one(async));
     }
 
     public override async Task Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_parameter(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_parameter(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() =>
+            base.Collection_navigation_equal_to_null_for_subquery_using_ElementAtOrDefault_parameter(async));
     }
 
     public override async Task Subquery_with_navigation_inside_inline_collection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Subquery_with_navigation_inside_inline_collection(async)))
-            .Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Subquery_with_navigation_inside_inline_collection(async));
     }
 
     public override async Task Parameter_collection_Contains_with_projection_and_ordering(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Parameter_collection_Contains_with_projection_and_ordering(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task Contains_over_concatenated_columns_with_different_sizes(bool async)
@@ -5421,4 +5118,13 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    // Fails: Projections issue EF-76
+    private static async Task AssertNoProjectionSupport(Func<Task> query)
+        => await Assert.ThrowsAsync<InvalidOperationException>(query);
+
+    // Fails: Cross-document navigation access issue EF-216
+    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => Assert.Contains("Unsupported cross-DbSet query between",
+            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }

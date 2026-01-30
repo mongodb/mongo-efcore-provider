@@ -117,16 +117,13 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }, { "$limit" : 3 }
 
     public override async Task Entity_passed_to_DTO_constructor_works(bool async)
     {
-        await base.Entity_passed_to_DTO_constructor_works(async);
-
-        AssertMql();
+        // Fails: Projections issue EF-76
+        await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Entity_passed_to_DTO_constructor_works(async));
     }
 
     public override async Task Set_operation_in_pending_collection(bool async)
     {
-        await base.Set_operation_in_pending_collection(async);
-
-        AssertMql();
+        await AssertTranslationFailed(() => base.Set_operation_in_pending_collection(async));
     }
 
 #endif
@@ -1124,7 +1121,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 #else
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$Region", ""] }, "_id" : 0 } }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$ContactName", ""] }, "_id" : 0 } }
 """);
 #endif
     }
@@ -1473,13 +1470,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projecting_count_of_navigation_which_is_generic_collection_using_convert(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression of type 'System.Linq.IQueryable`1[Microsoft.EntityFrameworkCore.TestModels.Northwind.Customer]' cannot be used for parameter ",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Projecting_count_of_navigation_which_is_generic_collection_using_convert(async))).Message);
-
-        AssertMql();
+        await AssertNoProjectionSupport(() => base.Projecting_count_of_navigation_which_is_generic_collection_using_convert(async));
     }
 
     public override async Task Projection_take_projection_doesnt_project_intermittent_column(bool async)
@@ -1957,4 +1948,8 @@ Customers.
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    // Fails: Projections issue EF-76
+    private static async Task AssertNoProjectionSupport(Func<Task> query)
+        => await Assert.ThrowsAsync<InvalidOperationException>(query);
 }

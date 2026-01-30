@@ -2117,14 +2117,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_scalar_aggregate_in_set_operation(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        Assert.Contains(
-            "Expression of type 'System.Linq.IQueryable",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.GroupBy_scalar_aggregate_in_set_operation(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.GroupBy_scalar_aggregate_in_set_operation(async));
     }
 
     public override async Task Select_uncorrelated_collection_with_groupby_when_outer_is_distinct(bool async)
@@ -2351,11 +2344,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_complex_key_without_aggregate(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_complex_key_without_aggregate(async));
-
-        AssertMql(
-        );
+        await AssertGroupByUnsupported(() => base.GroupBy_complex_key_without_aggregate(async));
     }
 
     private void AssertMql(params string[] expected)
@@ -2363,4 +2352,12 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        =>  Assert.Contains("Unsupported cross-DbSet query between",
+            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+
+    // Fails: GroupBy issue EF-149
+    private static async Task AssertGroupByUnsupported(Func<Task> query)
+        => await AssertTranslationFailed(query);
 }

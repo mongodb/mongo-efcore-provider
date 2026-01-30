@@ -139,13 +139,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task Collection_correlated_with_keyless_entity_in_predicate_works(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Collection_correlated_with_keyless_entity_in_predicate_works(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Collection_correlated_with_keyless_entity_in_predicate_works(async));
     }
 
     public override async Task Auto_initialized_view_set(bool async)
@@ -193,4 +187,9 @@ Customers.{ "$limit" : 10 }, { "$count" : "_v" }
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    // Fails: Cross-document navigation access issue EF-216
+    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        =>  Assert.Contains("Unsupported cross-DbSet query between",
+            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }

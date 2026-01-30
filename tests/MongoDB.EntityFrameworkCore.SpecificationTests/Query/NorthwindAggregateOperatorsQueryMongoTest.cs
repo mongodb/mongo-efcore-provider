@@ -167,76 +167,20 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-#if EF8 || EF9
     public override async Task Average_after_default_if_empty_does_not_throw(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Average_after_default_if_empty_does_not_throw(async))).Message);
-
-        AssertMql(
-            """
-            Orders.
-            """);
+        await AssertTranslationFailed(() => base.Average_after_default_if_empty_does_not_throw(async));
     }
 
     public override async Task Max_after_default_if_empty_does_not_throw(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Max_after_default_if_empty_does_not_throw(async))).Message);
-
-        AssertMql(
-            """
-Orders.
-""");
+        await AssertNoProjectionSupport(() => base.Max_after_default_if_empty_does_not_throw(async));
     }
 
     public override async Task Min_after_default_if_empty_does_not_throw(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Min_after_default_if_empty_does_not_throw(async))).Message);
-
-        AssertMql(
-            """
-Orders.
-""");
+        await AssertNoProjectionSupport(() => base.Min_after_default_if_empty_does_not_throw(async));
     }
-
-#else
-
-    public override async Task Average_after_DefaultIfEmpty_does_not_throw(bool async)
-    {
-        await AssertTranslationFailed(async () => await base.Average_after_DefaultIfEmpty_does_not_throw(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Max_after_DefaultIfEmpty_does_not_throw(bool async)
-    {
-        await AssertTranslationFailed(async () => await base.Max_after_DefaultIfEmpty_does_not_throw(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Min_after_DefaultIfEmpty_does_not_throw(bool async)
-    {
-        await AssertTranslationFailed(async () => await base.Min_after_DefaultIfEmpty_does_not_throw(async));
-
-        AssertMql(
-        );
-    }
-
-#endif
 
     public override async Task Sum_with_no_data_cast_to_nullable(bool async)
     {
@@ -735,111 +679,49 @@ Orders.
 
     public override async Task Sum_over_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_subquery(async));
     }
 
     public override async Task Sum_over_nested_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_nested_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_nested_subquery(async));
     }
 
     public override async Task Sum_over_min_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_min_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_min_subquery(async));
     }
 
     public override async Task Sum_over_scalar_returning_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_scalar_returning_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_scalar_returning_subquery(async));
     }
 
     public override async Task Sum_over_Any_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_Any_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_Any_subquery(async));
     }
 
     public override async Task Sum_over_uncorrelated_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_uncorrelated_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_uncorrelated_subquery(async));
     }
 
 #else
+
     public override async Task Sum_over_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_subquery_is_client_eval(async));
     }
 
     public override async Task Sum_over_nested_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_nested_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_nested_subquery_is_client_eval(async));
     }
 
     public override async Task Sum_over_min_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Sum_over_min_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_min_subquery_is_client_eval(async));
     }
 
 #endif
@@ -940,66 +822,33 @@ Orders.
 
     public override async Task Average_over_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Average_over_subquery(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_subquery(async));
     }
 
     public override async Task Average_over_nested_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Average_over_nested_subquery(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_nested_subquery(async));
     }
 
     public override async Task Average_over_max_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Average_over_max_subquery(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_max_subquery(async));
     }
 
 #else
     public override async Task Average_over_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Average_over_subquery_is_client_eval(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_subquery_is_client_eval(async));
     }
 
     public override async Task Average_over_nested_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Average_over_nested_subquery_is_client_eval(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_nested_subquery_is_client_eval(async));
     }
 
     public override async Task Average_over_max_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Average_over_max_subquery_is_client_eval(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_max_subquery_is_client_eval(async));
     }
 
 #endif
@@ -1069,75 +918,34 @@ Orders.
 
     public override async Task Min_over_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Min_over_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_subquery(async));
     }
 
     public override async Task Min_over_nested_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Min_over_nested_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_nested_subquery(async));
     }
 
     public override async Task Min_over_max_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Min_over_max_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_max_subquery(async));
     }
 
 #else
+
     public override async Task Min_over_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Min_over_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_subquery_is_client_eval(async));
     }
 
     public override async Task Min_over_nested_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Min_over_nested_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_nested_subquery_is_client_eval(async));
     }
 
     public override async Task Min_over_max_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Min_over_max_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_max_subquery_is_client_eval(async));
     }
 
 #endif
@@ -1176,75 +984,33 @@ Orders.
 
     public override async Task Max_over_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Max_over_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_subquery(async));
     }
 
     public override async Task Max_over_nested_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Max_over_nested_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_nested_subquery(async));
     }
 
     public override async Task Max_over_sum_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Max_over_sum_subquery(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_sum_subquery(async));
     }
 
 #else
     public override async Task Max_over_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Max_over_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_subquery_is_client_eval(async));
     }
 
     public override async Task Max_over_nested_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Max_over_nested_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_nested_subquery_is_client_eval(async));
     }
 
     public override async Task Max_over_sum_subquery_is_client_eval(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Max_over_sum_subquery_is_client_eval(async))).Message);
-
-        // #34256: rewrite query to avoid "Cannot perform an aggregate function on an expression containing an aggregate or a subquery"
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_sum_subquery_is_client_eval(async));
     }
 
 #endif
@@ -1392,44 +1158,22 @@ Orders.
 
     public override async Task FirstOrDefault_inside_subquery_gets_server_evaluated(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.FirstOrDefault_inside_subquery_gets_server_evaluated(async)))
-            .Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_inside_subquery_gets_server_evaluated(async));
     }
 
     public override async Task Multiple_collection_navigation_with_FirstOrDefault_chained(bool async)
     {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Multiple_collection_navigation_with_FirstOrDefault_chained(async));
-
-        AssertMql(
-        );
+        await AssertNoProjectionSupport(() => base.Multiple_collection_navigation_with_FirstOrDefault_chained(async));
     }
 
     public override async Task Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(bool async)
     {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() =>
-            base.Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(async));
-
-        AssertMql(
-        );
+        await AssertNoProjectionSupport(() => base.Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(async));
     }
 
     public override async Task First_inside_subquery_gets_client_evaluated(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.First_inside_subquery_gets_client_evaluated(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.First_inside_subquery_gets_client_evaluated(async));
     }
 
     public override async Task Last(bool async)
@@ -1494,13 +1238,7 @@ Orders.
 
     public override async Task Contains_with_subquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Contains_with_subquery(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoProjectionSupport(() => base.Contains_with_subquery(async));
     }
 
     public override async Task Contains_with_local_array_closure(bool async)
@@ -2005,14 +1743,7 @@ Orders.
 
     public override async Task List_Contains_over_entityType_should_rewrite_to_identity_equality(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.List_Contains_over_entityType_should_rewrite_to_identity_equality(async))).Message);
-
-        AssertMql(
-        );
+       await AssertNoMultiCollectionQuerySupport(() => base.List_Contains_over_entityType_should_rewrite_to_identity_equality(async));
     }
 
     public override async Task List_Contains_with_constant_list(bool async)
@@ -2370,24 +2101,12 @@ Orders.
 
     public override async Task Collection_Last_member_access_in_projection_translated(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Collection_Last_member_access_in_projection_translated(async)))
-            .Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Collection_Last_member_access_in_projection_translated(async));
     }
 
     public override async Task Collection_LastOrDefault_member_access_in_projection_translated(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Collection_LastOrDefault_member_access_in_projection_translated(async))).Message);
-
-        AssertMql();
+        await AssertNoMultiCollectionQuerySupport(() => base.Collection_LastOrDefault_member_access_in_projection_translated(async));
     }
 
     public override async Task Sum_over_explicit_cast_over_column(bool async)
@@ -2449,22 +2168,12 @@ Orders.
 
     public override async Task Not_Any_false(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Not_Any_false(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Not_Any_false(async));
     }
 
     public override async Task Contains_inside_aggregate_function_with_GroupBy(bool async)
     {
-        // Fails: Projections issue EF-76
         await AssertTranslationFailed(() => base.Contains_inside_aggregate_function_with_GroupBy(async));
-
-        AssertMql(
-        );
     }
 
     public override async Task Contains_inside_Average_without_GroupBy(bool async)
@@ -2528,18 +2237,10 @@ Orders.
     }
 
 #if EF8 || EF9
+
     public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.DefaultIfEmpty_selects_only_required_columns(async))).Message);
-
-        AssertMql(
-            """
-            Products.
-            """);
+        await AssertNoProjectionSupport(() => base.DefaultIfEmpty_selects_only_required_columns(async));
     }
 
 #else
@@ -2556,6 +2257,7 @@ Orders.
 #endif
 
 #if !EF8
+
     public override async Task Return_type_of_singular_operator_is_preserved(bool async)
     {
         await base.Return_type_of_singular_operator_is_preserved(async);
@@ -2607,4 +2309,13 @@ Orders.
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    // Fails: Projections issue EF-76
+    private static Task AssertNoProjectionSupport(Func<Task> query)
+        => Assert.ThrowsAsync<InvalidOperationException>(() => query());
+
+    // Fails: Cross-document navigation access issue EF-216
+    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        =>  Assert.Contains("Unsupported cross-DbSet query between",
+            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }
