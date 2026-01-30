@@ -46,6 +46,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
+    private EntityQueryRootExpression? _foundEntityQueryRootExpression;
 
     internal MongoEFToLinqTranslatingExpressionVisitor(
         QueryContext queryContext,
@@ -116,10 +117,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
 
                 return subQuery;
 
-#if EF10
-            case QueryParameterExpression queryParameterExpression:
-                return ConvertIfRequired(Expression.Constant(_queryContext.Parameters[queryParameterExpression.Name]), expression.Type);
-#else
+#if EF8 || EF9
             // Replace the QueryContext parameter values with constant values for this execution.
             case ParameterExpression parameterExpression:
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
@@ -132,6 +130,9 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
                 }
 
                 break;
+#else
+            case QueryParameterExpression queryParameterExpression:
+                return ConvertIfRequired(Expression.Constant(_queryContext.Parameters[queryParameterExpression.Name]), expression.Type);
 #endif
 
             // Wrap OfType<T> with As(serializer) to re-attach the custom serializer in LINQ3
@@ -246,8 +247,21 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
                 return Visit(includeExpression.EntityExpression);
 
             // Replace the root with the MongoDB LINQ V3 provider source.
-            case EntityQueryRootExpression:
-                return _source;
+            case EntityQueryRootExpression entityQueryRootExpression:
+                if (_foundEntityQueryRootExpression == null)
+                {
+                    _foundEntityQueryRootExpression = entityQueryRootExpression;
+                    return _source;
+                }
+
+                if (_foundEntityQueryRootExpression.EntityType == entityQueryRootExpression.EntityType)
+                {
+                    return _source;
+                }
+
+                throw new InvalidOperationException($"Unsupported cross-DbSet query between '{_foundEntityQueryRootExpression.EntityType.Name}' " +
+                                                    $"and '{entityQueryRootExpression.EntityType.Name}'. " +
+                                                    "The MongoDB EF Core Provider does not support Join, Include or navigation property access across collections.");
         }
 
         return base.Visit(expression);
@@ -379,12 +393,12 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
                     $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because {reason}");
             }
 
-#if EF10
-            TValue? ParamValue<TValue>(int index)
-                => (TValue?)_queryContext.Parameters[((ParameterExpression)methodCallExpression.Arguments[index]).Name!];
-#else
+#if EF8 || EF9
             TValue? ParamValue<TValue>(int index)
                 => (TValue?)_queryContext.ParameterValues[((ParameterExpression)methodCallExpression.Arguments[index]).Name!];
+#else
+            TValue? ParamValue<TValue>(int index)
+                => (TValue?)_queryContext.Parameters[((ParameterExpression)methodCallExpression.Arguments[index]).Name!];
 #endif
         }
     }

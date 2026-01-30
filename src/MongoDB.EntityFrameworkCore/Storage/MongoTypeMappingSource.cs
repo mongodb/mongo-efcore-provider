@@ -126,10 +126,10 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
     {
         var typeToInstantiate = FindCollectionTypeToInstantiate(collectionType, elementType);
 
-#if EF10
-        var comparer = elementMapping.Comparer.ComposeConversion(elementType);
-#else
+#if EF8 || EF9
         var comparer = elementMapping.Comparer.ToNullableComparer(elementType);
+#else
+        var comparer = elementMapping.Comparer.ComposeConversion(elementType);
 #endif
 
         return (ValueComparer?)Activator.CreateInstance(
@@ -195,11 +195,7 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
         Type dictType,
         bool readOnly = false)
     {
-#if EF10
-        return (ValueComparer)Activator.CreateInstance(
-            typeof(StringDictionaryComparer<,>).MakeGenericType(dictType, elementType),
-            elementMapping.Comparer.ComposeConversion(elementType))!;
-#else
+#if EF8 || EF9
         var unwrappedType = elementType.UnwrapNullableType();
         return (ValueComparer)Activator.CreateInstance(
             elementType == unwrappedType
@@ -207,6 +203,10 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
                 : typeof(NullableStringDictionaryComparer<,>).MakeGenericType(unwrappedType, dictType),
             elementMapping.Comparer,
             readOnly)!;
+#else
+        return (ValueComparer)Activator.CreateInstance(
+            typeof(StringDictionaryComparer<,>).MakeGenericType(dictType, elementType),
+            elementMapping.Comparer.ComposeConversion(elementType))!;
 #endif
     }
 }

@@ -108,7 +108,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                                                 || methodDefinition == QueryableMethods.MaxWithSelector:
 
                 // Operations not supported, but we want to bubble through for better error messages
-#if EF10
+#if !EF8 && !EF9
                 case nameof(Queryable.LeftJoin) when methodDefinition == QueryableMethods.LeftJoin:
                 case nameof(Queryable.RightJoin) when methodDefinition == QueryableMethods.RightJoin:
 #endif
@@ -345,7 +345,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
         => null;
 
-#if EF10
+#if !EF8 && !EF9
     protected override ShapedQueryExpression? TranslateRightJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector) =>
         null;
