@@ -42,6 +42,7 @@ public class NorthwindMiscellaneousQueryMongoTest
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
 #if EF8 || EF9
+
     public override async Task DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(bool async)
     {
         await AssertTranslationFailed(() => base.DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(async));
@@ -53,6 +54,12 @@ public class NorthwindMiscellaneousQueryMongoTest
     }
 
 #else
+
+    public override async Task DefaultIfEmpty_top_level(bool async)
+    {
+        await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level(async));
+    }
+
     public override async Task DefaultIfEmpty_without_group_join(bool async)
     {
         await AssertTranslationFailed(() => base.DefaultIfEmpty_without_group_join(async));
@@ -128,8 +135,8 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : ["$Region", "no region specified"] }, "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : ["$Region", "no region specified"] }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Any_on_distinct(bool async)
@@ -139,13 +146,13 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : ["$
 
     public override async Task Contains_on_distinct(bool async)
     {
-         // Fails: Cross-document navigation access issue EF-216
+        // Fails: Cross-document navigation access issue EF-216
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Contains_on_distinct(async));
     }
 
     public override async Task All_on_distinct(bool async)
     {
-         // Fails: Cross-document navigation access issue EF-216
+        // Fails: Cross-document navigation access issue EF-216
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.All_on_distinct(async));
     }
 
@@ -162,8 +169,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : ["$
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_OrderDescending(bool async)
@@ -172,19 +179,19 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-""");
+            Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+            """);
     }
 
     public override async Task Where_Order_First(bool async)
     {
-         // Fails: Cross-document navigation access issue EF-216
+        // Fails: Cross-document navigation access issue EF-216
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_Order_First(async));
     }
 
     public override async Task IQueryable_captured_variable()
     {
-         // Fails: Cross-document navigation access issue EF-216
+        // Fails: Cross-document navigation access issue EF-216
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.IQueryable_captured_variable());
     }
 
@@ -210,8 +217,8 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_v" : "$_id", "_id" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI", "City" : "Berlin" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI", "City" : "Berlin" } }
+            """);
     }
 
     public override async Task Static_member_access_gets_parameterized_within_larger_evaluatable(bool async)
@@ -220,8 +227,8 @@ Customers.{ "$match" : { "_id" : "ALFKI", "City" : "Berlin" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            """);
     }
 
     public override async Task Ternary_Not_Null_Contains(bool async)
@@ -230,8 +237,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : [{ "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$toString" : "$_id" }, ""] }, "else" : null } }, "1"] }, 0] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$toString" : "$_id" }, ""] }, "else" : null } }, "_id" : 0 } }, { "$limit" : 1 }
-""");
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : [{ "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$toString" : "$_id" }, ""] }, "else" : null } }, "1"] }, 0] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$toString" : "$_id" }, ""] }, "else" : null } }, "_id" : 0 } }, { "$limit" : 1 }
+            """);
     }
 
     public override async Task Ternary_Not_Null_endsWith_Non_Numeric_First_Part(bool async)
@@ -240,8 +247,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$gte" : [{ "$ind
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$let" : { "vars" : { "string" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : ["", { "$toString" : "$_id" }, ""] }, "else" : null } } }, "in" : { "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$$string" }, 1] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$$string", "1", "$$start"] }, "$$start"] }] } } } } } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : ["", { "$toString" : "$_id" }, ""] }, "else" : null } }, "_id" : 0 } }, { "$limit" : 1 }
-""");
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$let" : { "vars" : { "string" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : ["", { "$toString" : "$_id" }, ""] }, "else" : null } } }, "in" : { "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$$string" }, 1] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$$string", "1", "$$start"] }, "$$start"] }] } } } } } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : ["", { "$toString" : "$_id" }, ""] }, "else" : null } }, "_id" : 0 } }, { "$limit" : 1 }
+            """);
     }
 
     public override async Task Ternary_Null_Equals_Non_Numeric_First_Part(bool async)
@@ -250,8 +257,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$let" : { "vars"
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : ["", { "$toString" : "$_id" }, ""] } } }, "1"] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : ["", { "$toString" : "$_id" }, ""] } } }, "_id" : 0 } }, { "$limit" : 1 }
-""");
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : ["", { "$toString" : "$_id" }, ""] } } }, "1"] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : ["", { "$toString" : "$_id" }, ""] } } }, "_id" : 0 } }, { "$limit" : 1 }
+            """);
     }
 
     public override async Task Ternary_Null_StartsWith(bool async)
@@ -260,13 +267,13 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$cond
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : [{ "$toString" : "$_id" }, ""] } } }, "1"] }, 0] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : [{ "$toString" : "$_id" }, ""] } } }, "_id" : 0 } }, { "$limit" : 1 }
-""");
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : [{ "$toString" : "$_id" }, ""] } } }, "1"] }, 0] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : [{ "$toString" : "$_id" }, ""] } } }, "_id" : 0 } }, { "$limit" : 1 }
+            """);
     }
 
     public override async Task Column_access_inside_subquery_predicate(bool async)
     {
-         // Fails: Cross-document navigation access issue EF-216
+        // Fails: Cross-document navigation access issue EF-216
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Column_access_inside_subquery_predicate(async));
     }
 
@@ -276,8 +283,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$inde
 
         AssertMql(
             """
-Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
-""");
+            Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
+            """);
     }
 
 #endif
@@ -532,8 +539,29 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
         await AssertNoMultiCollectionQuerySupport(() => base.Entity_equality_orderby_descending_subquery_composite_key(async));
     }
 
-#if EF8 || EF9
+#if EF9
+        public override async Task DefaultIfEmpty_top_level(bool async)
+    {
+        // Fails: Navigations issue EF-216
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_top_level(async))).Message);
 
+        AssertMql(
+            """
+            Employees.
+            """);
+    }
+
+    public override async Task DefaultIfEmpty_top_level(bool async)
+    {
+        // Fails: Navigations issue EF-216
+        await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level(async));
+    }
+
+#endif
+
+#if EF8 || EF9
     public override async Task Default_if_empty_top_level(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -565,25 +593,6 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
 
 #else
 
-    public override async Task DefaultIfEmpty_top_level(bool async)
-    {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_top_level(async))).Message);
-
-        AssertMql(
-            """
-            Employees.
-            """);
-    }
-
-    public override async Task DefaultIfEmpty_top_level(bool async)
-    {
-        // Fails: Navigations issue EF-216
-        await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level(async));
-    }
-
     public override async Task Join_with_DefaultIfEmpty_on_both_sources(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -596,13 +605,13 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
     public override async Task DefaultIfEmpty_top_level_positive(bool async)
     {
         // Fails: Navigations issue EF-216
-        await AssertTranslationFailed(() =>  base.DefaultIfEmpty_top_level_positive(async));
+        await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level_positive(async));
     }
 
     public override async Task DefaultIfEmpty_top_level_projection(bool async)
     {
         // Fails: Navigations issue EF-216
-        await AssertTranslationFailed(() =>  base.DefaultIfEmpty_top_level_projection(async));
+        await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level_projection(async));
     }
 
 #endif
@@ -1273,7 +1282,6 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
     }
 
 #if EF9
-
     public override async Task Any_on_distinct(bool async)
     {
         await AssertNoMultiCollectionQuerySupport(() => base.Any_on_distinct(async));
@@ -2052,15 +2060,15 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
     {
         await base.Filter_coalesce_operator(async);
 
-#if EF9
-        AssertMql(
-            """
-Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$ContactName", "$CompanyName"] }, "Liz Nixon"] } } }
-""");
-#else
+#if EF8
         AssertMql(
             """
             Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$CompanyName", "$ContactName"] }, "The Big Cheese"] } } }
+            """);
+#else
+        AssertMql(
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$ContactName", "$CompanyName"] }, "Liz Nixon"] } } }
             """);
 #endif
     }
@@ -4742,7 +4750,6 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
     }
 
 #else
-
     public override async Task Default_if_empty_top_level_arg(bool async)
     {
         await base.Default_if_empty_top_level_arg(async);
@@ -4787,7 +4794,6 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
     }
 
 #if EF9
-
     public override async Task IQueryable_captured_variable()
     {
         await AssertNoMultiCollectionQuerySupport(() => base.IQueryable_captured_variable());
@@ -5084,10 +5090,6 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
-
-    // Fails: Projections issue EF-76
-    private static async Task AssertNoProjectionSupport(Func<Task> query)
-        => await Assert.ThrowsAsync<InvalidOperationException>(query);
 
     // Fails: Cross-document navigation access issue EF-216
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)

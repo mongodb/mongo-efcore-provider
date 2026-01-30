@@ -59,7 +59,8 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
     public override async Task Project_single_element_from_collection_with_OrderBy_Take_OrderBy_and_FirstOrDefault(bool async)
     {
-        await AssertTranslationFailed(() => base.Project_single_element_from_collection_with_OrderBy_Take_OrderBy_and_FirstOrDefault(async));
+        await AssertTranslationFailed(() =>
+            base.Project_single_element_from_collection_with_OrderBy_Take_OrderBy_and_FirstOrDefault(async));
 
         AssertMql(
         );
@@ -71,8 +72,8 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_conditional_terminates_at_true(bool async)
@@ -81,8 +82,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : 0 } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : 0 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_conditional_flatten_nested_results(bool async)
@@ -91,8 +92,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 5] }, 0] }, "then" : { "$subtract" : [0, "$_id"] }, "else" : "$_id" } }, "else" : "$_id" } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 5] }, 0] }, "then" : { "$subtract" : [0, "$_id"] }, "else" : "$_id" } }, "else" : "$_id" } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_conditional_flatten_nested_tests(bool async)
@@ -101,8 +102,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : false, "else" : true } }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : false, "else" : true } }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_with_multiple_Take(bool async)
@@ -111,8 +112,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq"
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }, { "$limit" : 3 }
-""");
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }, { "$limit" : 3 }
+            """);
     }
 
     public override async Task Entity_passed_to_DTO_constructor_works(bool async)
@@ -1113,7 +1114,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq"
         await base.Select_with_complex_expression_that_can_be_funcletized(async);
 
         // Test changed between EF8 and EF9
-#if EF9
+#if EF8
         AssertMql(
             """
 Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$Region", ""] }, "_id" : 0 } }
@@ -1121,8 +1122,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 #else
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$ContactName", ""] }, "_id" : 0 } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$Region", ""] }, "_id" : 0 } }
+            """);
 #endif
     }
 

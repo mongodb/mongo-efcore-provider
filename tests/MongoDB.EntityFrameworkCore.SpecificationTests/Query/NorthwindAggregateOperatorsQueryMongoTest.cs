@@ -167,6 +167,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
+#if EF8 || EF9
+
     public override async Task Average_after_default_if_empty_does_not_throw(bool async)
     {
         await AssertTranslationFailed(() => base.Average_after_default_if_empty_does_not_throw(async));
@@ -181,6 +183,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     {
         await AssertNoProjectionSupport(() => base.Min_after_default_if_empty_does_not_throw(async));
     }
+
+#endif
 
     public override async Task Sum_with_no_data_cast_to_nullable(bool async)
     {
@@ -708,7 +712,6 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     }
 
 #else
-
     public override async Task Sum_over_subquery_is_client_eval(bool async)
     {
         await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_subquery_is_client_eval(async));
@@ -932,7 +935,6 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     }
 
 #else
-
     public override async Task Min_over_subquery_is_client_eval(bool async)
     {
         await AssertNoMultiCollectionQuerySupport(() => base.Min_over_subquery_is_client_eval(async));
@@ -1168,7 +1170,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(bool async)
     {
-        await AssertNoProjectionSupport(() => base.Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(async));
+        await AssertNoProjectionSupport(() =>
+            base.Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(async));
     }
 
     public override async Task First_inside_subquery_gets_client_evaluated(bool async)
@@ -1743,7 +1746,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task List_Contains_over_entityType_should_rewrite_to_identity_equality(bool async)
     {
-       await AssertNoMultiCollectionQuerySupport(() => base.List_Contains_over_entityType_should_rewrite_to_identity_equality(async));
+        await AssertNoMultiCollectionQuerySupport(() =>
+            base.List_Contains_over_entityType_should_rewrite_to_identity_equality(async));
     }
 
     public override async Task List_Contains_with_constant_list(bool async)
@@ -2106,7 +2110,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Collection_LastOrDefault_member_access_in_projection_translated(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_LastOrDefault_member_access_in_projection_translated(async));
+        await AssertNoMultiCollectionQuerySupport(() =>
+            base.Collection_LastOrDefault_member_access_in_projection_translated(async));
     }
 
     public override async Task Sum_over_explicit_cast_over_column(bool async)
@@ -2237,13 +2242,27 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     }
 
 #if EF8 || EF9
-
     public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
     {
         await AssertNoProjectionSupport(() => base.DefaultIfEmpty_selects_only_required_columns(async));
     }
 
 #else
+
+    public override async Task Average_after_DefaultIfEmpty_does_not_throw(bool async)
+    {
+        await AssertTranslationFailed(() => base.Average_after_DefaultIfEmpty_does_not_throw(async));
+    }
+
+    public override async Task Max_after_DefaultIfEmpty_does_not_throw(bool async)
+    {
+        await AssertTranslationFailed(() => base.Max_after_DefaultIfEmpty_does_not_throw(async));
+    }
+
+    public override async Task Min_after_DefaultIfEmpty_does_not_throw(bool async)
+    {
+        await AssertTranslationFailed(() => base.Min_after_DefaultIfEmpty_does_not_throw(async));
+    }
 
     public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
     {
@@ -2316,6 +2335,6 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     // Fails: Cross-document navigation access issue EF-216
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        =>  Assert.Contains("Unsupported cross-DbSet query between",
+        => Assert.Contains("Unsupported cross-DbSet query between",
             (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }

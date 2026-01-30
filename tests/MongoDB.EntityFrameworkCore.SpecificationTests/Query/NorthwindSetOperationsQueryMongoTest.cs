@@ -63,28 +63,6 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
         await AssertTranslationFailed(() => base.Intersect(async));
     }
 
-#if !EF8 && !EF9
-    public override async Task Intersect_on_distinct(bool async)
-    {
-        await AssertTranslationFailed(() => base.Intersect_on_distinct(async));
-    }
-
-    public override async Task Union_on_distinct(bool async)
-    {
-        await base.Union_on_distinct(async);
-
-        AssertMql(
-            """
-Customers.{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_v" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_v" : "$CompanyName", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-""");
-    }
-
-    public override async Task Except_on_distinct(bool async)
-    {
-        await AssertTranslationFailed(() => base.Except_on_distinct(async));
-    }
-
-#endif
 
     public override async Task Union(bool async)
     {

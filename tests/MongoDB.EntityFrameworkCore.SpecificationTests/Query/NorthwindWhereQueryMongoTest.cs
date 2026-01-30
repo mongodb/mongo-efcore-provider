@@ -980,7 +980,16 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
     {
         await base.Where_bool_closure(async);
 
-#if EF9
+#if EF8
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""");
+#else
         AssertMql(
             """
             Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
@@ -997,15 +1006,6 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
             """
             Customers.
             """);
-#else
-        AssertMql(
-            """
-Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
-""",
-            //
-            """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""");
 #endif
     }
 
@@ -1319,7 +1319,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(async));
+        await AssertNoMultiCollectionQuerySupport(() =>
+            base.Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(async));
     }
 
     public override async Task Using_same_parameter_twice_in_query_generates_one_sql_parameter(bool async)
@@ -1945,8 +1946,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
         await base.EF_Constant(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            """);
     }
 
     public override async Task EF_Constant_with_subtree(bool async)
@@ -1954,8 +1955,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
         await base.EF_Constant_with_subtree(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            """);
     }
 
     public override async Task EF_Constant_does_not_parameterized_as_part_of_bigger_subtree(bool async)
@@ -1964,8 +1965,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            """);
     }
 
     public override async Task EF_Constant_with_non_evaluatable_argument_throws(bool async)
@@ -1976,7 +1977,6 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
     }
 
 #else
-
     public override async Task EF_Constant(bool async)
     {
         await base.EF_Constant(async);
