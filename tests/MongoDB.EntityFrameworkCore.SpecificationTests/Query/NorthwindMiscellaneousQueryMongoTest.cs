@@ -533,6 +533,7 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
     }
 
 #if EF8 || EF9
+
     public override async Task Default_if_empty_top_level(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -562,7 +563,8 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
         await AssertTranslationFailed(() => base.Default_if_empty_top_level_projection(async));
     }
 
-#if !EF8
+#else
+
     public override async Task DefaultIfEmpty_top_level(bool async)
     {
         // Fails: Navigations issue EF-216
@@ -575,9 +577,7 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
             Employees.
             """);
     }
-#endif
 
-#else
     public override async Task DefaultIfEmpty_top_level(bool async)
     {
         // Fails: Navigations issue EF-216
@@ -1273,37 +1273,20 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
     }
 
 #if EF9
+
     public override async Task Any_on_distinct(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Any_on_distinct(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_on_distinct(async));
     }
 
     public override async Task Contains_on_distinct(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Contains_on_distinct(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Contains_on_distinct(async));
     }
 
     public override async Task All_on_distinct(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.All_on_distinct(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.All_on_distinct(async));
     }
 
 #endif
@@ -4804,15 +4787,10 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
     }
 
 #if EF9
+
     public override async Task IQueryable_captured_variable()
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.IQueryable_captured_variable())).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.IQueryable_captured_variable());
     }
 
 #endif
@@ -5078,24 +5056,12 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_v" : "$_id", "_id" : 
 
     public override async Task Where_Order_First(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Where_Order_First(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_Order_First(async));
     }
 
     public override async Task Column_access_inside_subquery_predicate(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "cannot be used for parameter",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Column_access_inside_subquery_predicate(async))).Message);
-
-        AssertMql(
-);
+        await AssertNoMultiCollectionQuerySupport(() => base.Column_access_inside_subquery_predicate(async));
     }
 
     public override async Task Cast_to_object_over_parameter_directly_in_lambda(bool async)

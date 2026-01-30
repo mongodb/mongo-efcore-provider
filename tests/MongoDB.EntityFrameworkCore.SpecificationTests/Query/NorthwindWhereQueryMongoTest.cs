@@ -1938,36 +1938,34 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-#if EF9
+#if !EF8
+
     public override async Task EF_Constant(bool async)
     {
-        // Fails: EF.Constant not supported on Mongo
-        Assert.Equal(
-            CoreStrings.EFConstantNotSupported,
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.EF_Constant(async))).Message);
-
-        AssertMql();
+        await base.EF_Constant(async);
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""");
     }
 
     public override async Task EF_Constant_with_subtree(bool async)
     {
-        // Fails: EF.Constant not supported on Mongo
-        Assert.Equal(
-            CoreStrings.EFConstantNotSupported,
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.EF_Constant_with_subtree(async))).Message);
-
-        AssertMql();
+        await base.EF_Constant_with_subtree(async);
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""");
     }
 
     public override async Task EF_Constant_does_not_parameterized_as_part_of_bigger_subtree(bool async)
     {
-        // Fails: EF.Constant not supported on Mongo
-        Assert.Equal(
-            CoreStrings.EFConstantNotSupported,
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.EF_Constant_does_not_parameterized_as_part_of_bigger_subtree(async))).Message);
+        await base.EF_Constant_does_not_parameterized_as_part_of_bigger_subtree(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""");
     }
 
     public override async Task EF_Constant_with_non_evaluatable_argument_throws(bool async)

@@ -2312,7 +2312,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     // Fails: Projections issue EF-76
     private static Task AssertNoProjectionSupport(Func<Task> query)
-        => Assert.ThrowsAsync<InvalidOperationException>(() => query());
+        => Assert.ThrowsAsync<InvalidOperationException>(query);
 
     // Fails: Cross-document navigation access issue EF-216
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
