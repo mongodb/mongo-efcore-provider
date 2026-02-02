@@ -46,8 +46,8 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-            Products.{ "$match" : { "$nor" : [{ "$expr" : { "$cond" : { "if" : { "$gte" : [{ "$toInt" : "$UnitsInStock" }, 20] }, "then" : false, "else" : true } } }] } }
-            """);
+Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
+""");
     }
 
     public override async Task Two_parameters_with_same_name_get_uniquified(bool async)
