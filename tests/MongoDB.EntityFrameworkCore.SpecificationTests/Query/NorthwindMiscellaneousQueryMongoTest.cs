@@ -539,28 +539,6 @@ public class NorthwindMiscellaneousQueryMongoTest
         await AssertNoMultiCollectionQuerySupport(() => base.Entity_equality_orderby_descending_subquery_composite_key(async));
     }
 
-#if EF9
-        public override async Task DefaultIfEmpty_top_level(bool async)
-    {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.DefaultIfEmpty_top_level(async))).Message);
-
-        AssertMql(
-            """
-            Employees.
-            """);
-    }
-
-    public override async Task DefaultIfEmpty_top_level(bool async)
-    {
-        // Fails: Navigations issue EF-216
-        await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level(async));
-    }
-
-#endif
-
 #if EF8 || EF9
     public override async Task Default_if_empty_top_level(bool async)
     {
