@@ -10,7 +10,7 @@ In order to evolve the provider as we introduce new features, we will be using t
 
 #### Old behavior
 
-Discriminator properties not explicitly configured with an element name may not be mapped to `_t`. For example `modelBuilder.Entity<Foo>().HasDiscriminator<string>("_t")` when used withe the camel case naming conventions would result in an a discriminator field called `T` in BSON documents. This means that you may get exceptions because EF Core assumes the discriminator is mapped to `_t`.
+Discriminator properties not explicitly configured with an element name may not be mapped to `_t`. For example, `modelBuilder.Entity<Foo>().HasDiscriminator<string>("_t")` when used with `CamelCaseElementNameConvention` would result in an a discriminator field called `T` in BSON documents. This means that you may get exceptions because EF Core assumes the discriminator is mapped to `_t`.
 
 #### New behavior
 
