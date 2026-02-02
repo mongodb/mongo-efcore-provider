@@ -19,7 +19,7 @@ using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 
-// ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
+// ReSharper disable once CheckNamespace (extensions should be in the EF Core namespace for discovery)
 namespace Microsoft.EntityFrameworkCore;
 
 /// <summary>

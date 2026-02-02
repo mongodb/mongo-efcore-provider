@@ -28,7 +28,7 @@ public static class MongoModelExtensions
     /// <summary>
     /// Returns all the MongoDB collections that entity types in the model are mapped to.
     /// </summary>
-    /// <param name="model">The EF <see cref="IModel"/></param>
+    /// <param name="model">The EF Core <see cref="IModel"/></param>
     /// <returns>All the MongoDB collections that are mapped in the given model.</returns>
     public static IReadOnlyList<string> GetCollectionNames(this IModel model)
     {

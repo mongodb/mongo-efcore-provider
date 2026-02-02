@@ -14,7 +14,7 @@ If it is not critical you use the alternative BSON representation you can do thi
 
 or
 
-### Update affected elements to new representation 
+### Update affected elements to new representation
 
 As part of your upgrade process you can use the [updateMany](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateMany/) method per affected MongoDB collection to rewrite any affected nullable properties/elements into the desired BSON representation using the `$convert`  operation.
 
@@ -59,7 +59,7 @@ Please see the following sections for more details.
 
 The MongoDB EF Core Provider 8.1.0 introduces optimistic concurrency support and automatic transactions inside `SaveChanges` and `SaveChangesAsync` to ensure all changes commit together or rollback together as part of the "unit of work" philosophy of Entity Framework Core.
 
-To ensure data integrity transactions are enabled by default in 8.1.0 which means a MongoDB server configuration that supports transactions is required. 
+To ensure data integrity transactions are enabled by default in 8.1.0 which means a MongoDB server configuration that supports transactions is required.
 
 If you are already running MongoDB 5.0 or above in load balanced, sharded, or replica set configurations you should be unaffected by this change.
 
@@ -77,7 +77,7 @@ Alternatively, if you are absolutely sure you do not wish to use transactions, (
 
 The default version for Guid storage in the MongoDB .NET/C# Driver and in prior versions of EF Core Provider is the `CSharpLegacy` binary format which has a number of issues when being read by different drivers. To alleviate this problem we are switching to the `Standard` format which does not suffer from these problems.
 
-If your database exists specifically for your EF provider application and has data already in use we recommend you write a script to convert the Guids from the `CSharpLegacy` to `Standard` format. If your database is already using Guids and is shared with other non-EF Provider applications we recommend you switch them all to the `Standard` Guid format and not rely on any other kind of binary serialization format to avoid such incompatibilities.
+If your database exists specifically for your EF Core provider application and has data already in use we recommend you write a script to convert the Guids from the `CSharpLegacy` to `Standard` format. If your database is already using Guids and is shared with other non-EF Core Provider applications we recommend you switch them all to the `Standard` Guid format and not rely on any other kind of binary serialization format to avoid such incompatibilities.
 
 Please also note that because the EF Core Provider relies on the MongoDB .NET/C# Driver to perform the low-level operations that the `BsonDefaults.GuidRepresentationMode` will be set to `GuidRepresentationMode.V3` when using the new 8.1.0 or later versions of this provider. Using the MongoDB C# Driver in your application at the same time must also use this mode.
 

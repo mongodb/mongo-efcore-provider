@@ -33,7 +33,7 @@ using MongoDB.EntityFrameworkCore.Storage;
 using MongoDB.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.EntityFrameworkCore.ValueGeneration;
 
-// ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
+// ReSharper disable once CheckNamespace (extensions should be in the EF Core namespace for discovery)
 namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>
@@ -42,7 +42,7 @@ namespace Microsoft.Extensions.DependencyInjection;
 public static class MongoServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
+    /// Registers the given Entity Framework Core <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
     /// and configures it to connect to a MongoDB database.
     /// </summary>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
@@ -67,7 +67,7 @@ public static class MongoServiceCollectionExtensions
             });
 
     /// <summary>
-    /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
+    /// Registers the given Entity Framework Core <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
     /// and configures it to connect to a MongoDB database.
     /// </summary>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
@@ -90,7 +90,7 @@ public static class MongoServiceCollectionExtensions
             });
 
     /// <summary>
-    /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
+    /// Registers the given Entity Framework Core <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
     /// and configures it to connect to a MongoDB database.
     /// </summary>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
@@ -120,7 +120,7 @@ public static class MongoServiceCollectionExtensions
             });
 
     /// <summary>
-    /// Registers the given Entity Framework <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
+    /// Registers the given Entity Framework Core <see cref="DbContext" /> as a service in the <see cref="IServiceCollection" />
     /// and configures it to connect to a MongoDB database.
     /// </summary>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
@@ -145,7 +145,7 @@ public static class MongoServiceCollectionExtensions
             });
 
     /// <summary>
-    /// Adds the services required by the MongoDB provider for Entity Framework to an <see cref="IServiceCollection" />.
+    /// Adds the services required by the MongoDB provider for Entity Framework Core to an <see cref="IServiceCollection" />.
     /// </summary>
     /// <remarks>You probably meant to use <see cref="AddMongoDB{TContext}(Microsoft.Extensions.DependencyInjection.IServiceCollection,string,string,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder}?,System.Action{Microsoft.EntityFrameworkCore.DbContextOptionsBuilder}?)" /> instead.</remarks>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>

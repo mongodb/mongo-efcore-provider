@@ -46,29 +46,12 @@ public class NorthwindFunctionsQueryMongoTest : NorthwindFunctionsQueryTestBase<
 
         if (compareTo)
         {
-            await AssertQuery(
-                async,
-                ss => ss.Set<Order>().Where(c => c.OrderDate!.Value.CompareTo(myDatetime) == 0));
-
-            await AssertQuery(
-                async,
-                ss => ss.Set<Order>().Where(c => 0 != c.OrderDate!.Value.CompareTo(myDatetime)));
-
-            await AssertQuery(
-                async,
-                ss => ss.Set<Order>().Where(c => c.OrderDate!.Value.CompareTo(myDatetime) > 0));
-
-            await AssertQuery(
-                async,
-                ss => ss.Set<Order>().Where(c => 0 >= c.OrderDate!.Value.CompareTo(myDatetime)));
-
-            await AssertQuery(
-                async,
-                ss => ss.Set<Order>().Where(c => 0 < c.OrderDate!.Value.CompareTo(myDatetime)));
-
-            await AssertQuery(
-                async,
-                ss => ss.Set<Order>().Where(c => c.OrderDate!.Value.CompareTo(myDatetime) <= 0));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => c.OrderDate!.Value.CompareTo(myDatetime) == 0));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 != c.OrderDate!.Value.CompareTo(myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => c.OrderDate!.Value.CompareTo(myDatetime) > 0));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 >= c.OrderDate!.Value.CompareTo(myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 < c.OrderDate!.Value.CompareTo(myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => c.OrderDate!.Value.CompareTo(myDatetime) <= 0));
 
             AssertMql(
                 """
@@ -97,71 +80,36 @@ public class NorthwindFunctionsQueryMongoTest : NorthwindFunctionsQueryTestBase<
         }
         else
         {
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) == 0)))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => 0 != DateTime.Compare(c.OrderDate!.Value, myDatetime))))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) > 0)))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => 0 >= DateTime.Compare(c.OrderDate!.Value, myDatetime))))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => 0 < DateTime.Compare(c.OrderDate!.Value, myDatetime))))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) <= 0)))).Message);
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) == 0));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 != DateTime.Compare(c.OrderDate!.Value, myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) > 0));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 >= DateTime.Compare(c.OrderDate!.Value, myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 < DateTime.Compare(c.OrderDate!.Value, myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) <= 0));
 
             AssertMql(
                 """
-                Orders.
+                Orders.{ "$match" : { "OrderDate" : { "$date" : "1998-05-04T00:00:00Z" } } }
                 """,
                 //
                 """
-                Orders.
+                Orders.{ "$match" : { "OrderDate" : { "$ne" : { "$date" : "1998-05-04T00:00:00Z" } } } }
                 """,
                 //
                 """
-                Orders.
+                Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-05-04T00:00:00Z" } } } }
                 """,
                 //
                 """
-                Orders.
+                Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z" } } } }
                 """,
                 //
                 """
-                Orders.
+                Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-05-04T00:00:00Z" } } } }
                 """,
                 //
                 """
-                Orders.
+                Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z" } } } }
                 """);
         }
     }
@@ -557,57 +505,109 @@ Customers.
 
     public override async Task String_Compare_simple_zero(bool async)
     {
-        // Fails: String.Compare issue EF-244
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Compare_simple_zero(async))).Message);
+        await base.String_Compare_simple_zero(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : "AROUT" } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$ne" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$gt" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$gt" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
             """);
     }
 
     public override async Task String_Compare_simple_one(bool async)
     {
-        // Fails: String.Compare issue EF-244
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Compare_simple_one(async))).Message);
+       await base.String_Compare_simple_one(async);
 
-        AssertMql(
-            """
-            Customers.
-            """);
+       AssertMql(
+           """
+           Customers.{ "$match" : { "_id" : { "$gt" : "AROUT" } } }
+           """,
+           //
+           """
+           Customers.{ "$match" : { "_id" : { "$lt" : "AROUT" } } }
+           """,
+           //
+           """
+           Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+           """,
+           //
+           """
+           Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+           """,
+           //
+           """
+           Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+           """,
+           //
+           """
+           Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+           """);
     }
 
     public override async Task String_compare_with_parameter(bool async)
     {
-        // Fails: String.Compare issue EF-244
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_compare_with_parameter(async))).Message);
+        await base.String_compare_with_parameter(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : { "$gt" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$lt" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
             """);
     }
 
     public override async Task String_Compare_simple_more_than_one(bool async)
     {
-        // Fails: String.Compare issue EF-244
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Compare_simple_more_than_one(async))).Message);
+        await base.String_Compare_simple_more_than_one(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", "ALFKI"] }, 42] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", "ALFKI"] }, 42] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$gt" : [42, { "$cmp" : ["$_id", "ALFKI"] }] } } }
             """);
     }
 
@@ -621,21 +621,29 @@ Customers.
 
         AssertMql(
             """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", { "$concat" : ["M", "$_id"] }] }, 0] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$ne" : [0, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
+            """,
+            //
+            """
             Customers.
             """);
     }
 
     public override async Task String_Compare_multi_predicate(bool async)
     {
-        // Fails: String.Compare issue EF-244
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Compare_multi_predicate(async))).Message);
+        await base.String_Compare_multi_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : { "$gte" : "ALFKI" } } }, { "$match" : { "_id" : { "$lt" : "CACTU" } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$match" : { "Country" : { "$ne" : "USA" } } }
             """);
     }
 
@@ -675,28 +683,28 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", "AROUT"] }, 1] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$gt" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [-1, { "$cmp" : ["$_id", "AROUT"] }] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$lt" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : ["$_id", "AROUT"] }, 1] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [1, { "$cmp" : ["$_id", "AROUT"] }] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", "AROUT"] }, -1] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$lt" : [-1, { "$cmp" : ["$_id", "AROUT"] }] } } }
-            """);
+Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+""");
     }
 
     public override async Task String_compare_to_with_parameter(bool async)
@@ -705,28 +713,28 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", "AROUT"] }, 1] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$gt" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [-1, { "$cmp" : ["$_id", "AROUT"] }] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$lt" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : ["$_id", "AROUT"] }, 1] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [1, { "$cmp" : ["$_id", "AROUT"] }] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", "AROUT"] }, -1] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$lt" : [-1, { "$cmp" : ["$_id", "AROUT"] }] } } }
-            """);
+Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+""");
     }
 
     public override async Task String_Compare_to_simple_more_than_one(bool async)
@@ -774,8 +782,8 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", "ALFKI"] }, -1] } } }, { "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", "CACTU"] }, -1] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$gte" : "ALFKI" } } }, { "$match" : { "_id" : { "$lt" : "CACTU" } } }
+""",
             //
             """
             Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$match" : { "Country" : { "$ne" : "USA" } } }
@@ -840,72 +848,37 @@ Customers.
         }
         else
         {
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported: Compare(",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) == 0)))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported: Compare(",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => 0 != DateTime.Compare(c.OrderDate!.Value, myDatetime))))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported: Compare(",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) > 0)))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported: Compare(",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => 0 >= DateTime.Compare(c.OrderDate!.Value, myDatetime))))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported: Compare(",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => 0 < DateTime.Compare(c.OrderDate!.Value, myDatetime))))).Message);
-
-            // Fails: Translate DateTime.Compare issue EF-236
-            Assert.Contains(
-                "Expression not supported: Compare(",
-                (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => AssertQuery(
-                    async,
-                    ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) <= 0)))).Message);
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) == 0));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 != DateTime.Compare(c.OrderDate!.Value, myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) > 0));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 >= DateTime.Compare(c.OrderDate!.Value, myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => 0 < DateTime.Compare(c.OrderDate!.Value, myDatetime)));
+            await AssertQuery(async, ss => ss.Set<Order>().Where(c => DateTime.Compare(c.OrderDate!.Value, myDatetime) <= 0));
 
             AssertMql(
                 """
-                Orders.
-                """,
+Orders.{ "$match" : { "OrderDate" : { "$date" : "1998-05-04T00:00:00Z" } } }
+""",
                 //
                 """
-                Orders.
-                """,
+Orders.{ "$match" : { "OrderDate" : { "$ne" : { "$date" : "1998-05-04T00:00:00Z" } } } }
+""",
                 //
                 """
-                Orders.
-                """,
+Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-05-04T00:00:00Z" } } } }
+""",
                 //
                 """
-                Orders.
-                """,
+Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z" } } } }
+""",
                 //
                 """
-                Orders.
-                """,
+Orders.{ "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-05-04T00:00:00Z" } } } }
+""",
                 //
                 """
-                Orders.
-                """);
+Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z" } } } }
+""");
         }
     }
 

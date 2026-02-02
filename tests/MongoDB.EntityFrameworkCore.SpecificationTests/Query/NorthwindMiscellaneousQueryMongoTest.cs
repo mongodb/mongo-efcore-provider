@@ -3845,16 +3845,12 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Distinct_followed_by_ordering_on_condition(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "ommand aggregate failed",
-            (await Assert.ThrowsAsync<MongoCommandException>(() => base.Distinct_followed_by_ordering_on_condition(async)))
-            .Message);
+        await base.Distinct_followed_by_ordering_on_condition(async);
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$indexOfCP" : ["$$ROOT", "c"] }, "_key2" : "$$ROOT" } }, { "$sort" : { "_key1" : 1, "_key2" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 5 }
-            """);
+Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$indexOfCP" : ["$_v", "c"] } } }, { "$sort" : { "_key1" : 1, "_document._v" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 5 }
+""");
     }
 
     public override async Task DefaultIfEmpty_Sum_over_collection_navigation(bool async)

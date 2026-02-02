@@ -1104,7 +1104,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$nor" : [{ "$expr" : { "$cond" : { "if" : { "$gte" : [{ "$toInt" : "$UnitsInStock" }, 20] }, "then" : false, "else" : true } } }] } }
+            Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
             """);
     }
 #endif
@@ -1313,7 +1313,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$cond" : { "if" : true, "then" : false, "else" : true } } } }
+            Products.{ "$match" : { "_id" : { "$type" : -1 } } }
             """);
     }
 

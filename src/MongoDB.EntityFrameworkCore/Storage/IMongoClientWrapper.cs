@@ -24,7 +24,7 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
 /// For internal use only. Interface may change between minor versions.
-/// Provides the interface between the MongoDB Entity Framework provider
+/// Provides the interface between the MongoDB Entity Framework Core provider
 /// and the underlying <see cref="IMongoClient"/> for a given database.
 /// </summary>
 public interface IMongoClientWrapper

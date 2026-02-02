@@ -23,7 +23,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions.BsonAttributes;
 
 /// <summary>
 /// Recognized <see cref="BsonSerializationOptionsAttribute"/> applied to properties of an entity
-/// to ensure the model throw later as it is not supported in the EF provider.
+/// to ensure the model throws later as it is not supported in the EF Core provider.
 /// </summary>
 /// <param name="dependencies">The <see cref="ProviderConventionSetBuilderDependencies"/> conventions depend upon.</param>
 public sealed class BsonSerializationOptionsAttributeConvention(ProviderConventionSetBuilderDependencies dependencies)

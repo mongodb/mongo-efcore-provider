@@ -587,8 +587,8 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", null] }, "then" : true, "else" : { "$lt" : ["$_id", 100] } } }, "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$or" : [{ "$eq" : ["$CustomerID", null] }, { "$lt" : ["$_id", 100] }] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_over_10_nested_ternary_condition(bool isAsync)
@@ -638,7 +638,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : false, "else" : true } }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
+Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
 """);
     }
 
@@ -886,8 +886,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq"
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : true, "else" : false } }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Anonymous_projection_AsNoTracking_Selector(bool async)

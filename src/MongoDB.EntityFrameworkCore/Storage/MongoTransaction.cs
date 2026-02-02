@@ -26,11 +26,11 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 namespace MongoDB.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Provides an EF-friendly wrapper around a MongoDB transaction.
+/// Provides an EF Core-friendly wrapper around a MongoDB transaction.
 /// </summary>
 /// <param name="session">A <see cref="IClientSession"/> for handling the transaction in MongoDB.</param>
 /// <param name="context">The <see cref="DbContext"/> this transaction is being used with.</param>
-/// <param name="transactionId">The unique identifier from EF for this transaction.</param>
+/// <param name="transactionId">The unique identifier from EF Core for this transaction.</param>
 /// <param name="transactionManager">The <see cref="IMongoTransactionManager"/> this transaction is started from or <see langword="null"/> if it is implicit.</param>
 /// <param name="transactionLogger">A <see cref="IDiagnosticsLogger"/> for logging the <see cref="DbLoggerCategory.Database.Transaction"/> messages.</param>
 public sealed class MongoTransaction(

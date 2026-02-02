@@ -1,8 +1,8 @@
 ﻿<Project>
   <PropertyGroup>
-    <EF8Version>8.0.22</EF8Version>
-    <EF9Version>9.0.11</EF9Version>
-    <EF10Version>10.0.1</EF10Version>
-    <CSharpDriverVersion>3.5.2</CSharpDriverVersion>
+    <EF8Version>8.0.23</EF8Version>
+    <EF9Version>9.0.12</EF9Version>
+    <EF10Version>10.0.2</EF10Version>
+    <CSharpDriverVersion>3.6.0</CSharpDriverVersion>
   </PropertyGroup>
 </Project>
