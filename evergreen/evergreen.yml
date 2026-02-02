@@ -162,7 +162,7 @@ functions:
           ATLAS_URI="${ATLAS_URI}" \
           MONGODB_VERSION="${version}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
-          BUILD_CONFIGURATION="Debug" \
+          BUILD_CONFIGURATION="Debug EF8" \
             ./evergreen/run-tests.sh
     - command: shell.exec
       type: test
@@ -177,6 +177,20 @@ functions:
           MONGODB_VERSION="${version}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF9" \
+            ./evergreen/run-tests.sh
+    - command: shell.exec
+      type: test
+      params:
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          DRIVER_VERSION=${DRIVER_VERSION} \
+          OS=${OS} \
+          MONGODB_URI="${MONGODB_URI}" \
+          ATLAS_URI="${ATLAS_URI}" \
+          MONGODB_VERSION="${version}" \
+          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
+          BUILD_CONFIGURATION="Debug EF10" \
             ./evergreen/run-tests.sh
 
   cleanup:
