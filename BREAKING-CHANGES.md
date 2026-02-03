@@ -4,6 +4,36 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
+
+### The element name for discriminators may have changed
+
+#### Old behavior
+
+Discriminator properties not explicitly configured with an element name may not be mapped to `_t`. For example, `modelBuilder.Entity<Foo>().HasDiscriminator<string>("_t")` when used with `CamelCaseElementNameConvention` would result in an a discriminator field called `T` in BSON documents. This means that you may get exceptions because EF Core assumes the discriminator is mapped to `_t`.
+
+#### New behavior
+
+Discriminator properties are always mapped to `_t` unless an explicit element name is provided.
+
+#### Why
+
+By convention, discriminators in MongoDB document should be called `_t` to ensure interoperability between different tools, etc. This is similar to how the document ID is always in `_id`.
+
+#### Mitigations
+
+Consider updating discriminators in all documents to `_t` to conform with convention. If this is not possible, then the element name for a discriminator property can be explicitly configured. For example:
+
+```c#
+modelBuilder.Entity<Foo>().Property<string>("_t").HasElementName("T");
+```
+
+Note that, by default, discriminator properties in shadow state are called "Discriminator", so you may need to do this:
+
+```c#
+modelBuilder.Entity<Foo>().Property<string>("Discriminator").HasElementName("discriminator");
+```
+
 ## Breaking changes in 8.3.0 / 9.0.0
 
 Nullable properties configured with an alternative BSON representation either by the `[BsonRepresentation]` attribute or `HasBsonRepresentation()` fluent API were not being applied in previous versions. This has been fixed but you will remedy the discrepancy one of two ways:
