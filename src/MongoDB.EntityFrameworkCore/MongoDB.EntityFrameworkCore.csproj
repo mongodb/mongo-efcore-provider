@@ -17,7 +17,7 @@
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF8' ">
     <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
-    <DocumentationFile>bin\Debug\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
+    <DocumentationFile>bin\Debug EF8\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
 
@@ -28,6 +28,7 @@
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
     <DefineConstants>TRACE;DEBUG;EF9</DefineConstants>
+    <DocumentationFile>bin\Debug EF9\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
 
@@ -39,6 +40,7 @@
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF10' ">
     <TargetFramework>net10.0</TargetFramework>
     <DefineConstants>TRACE;DEBUG;EF10</DefineConstants>
+    <DocumentationFile>bin\Debug EF10\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
 

@@ -3,9 +3,8 @@
         {
             "src": [
                 {
-                    "files": ["**/*.csproj"],
-                    "exclude": ["**/bin/**", "**/obj/**"],
-                    "src": "../src"
+                    "files": ["MongoDB.EntityFrameworkCore.dll"],
+                    "src": "../src/MongoDB.EntityFrameworkCore/bin/Debug EF10/net10.0"
                 }
             ],
             "dest": "api",
