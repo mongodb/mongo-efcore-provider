@@ -178,8 +178,7 @@ public class MongoTypeMappingSource(TypeMappingSourceDependencies dependencies)
 
         var elementType = genericArguments[1];
         var elementMappingInfo = new TypeMappingInfo(elementType);
-        var elementMapping = FindPrimitiveMapping(elementMappingInfo)
-                             ?? FindCollectionMapping(elementMappingInfo);
+        var elementMapping = FindMapping(elementMappingInfo);
 
         var isReadOnly = dictionaryType.GetGenericTypeDefinition() == typeof(ReadOnlyDictionary<,>);
 

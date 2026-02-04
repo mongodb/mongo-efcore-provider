@@ -138,8 +138,7 @@ public abstract class TestServer : IAsyncLifetime
     }
 
     public static bool SupportsEncryption
-        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CRYPT_SHARED_LIB_PATH")) ||
-           !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MONGODB_BINARIES"));
+        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CRYPT_SHARED_LIB_PATH"));
 
     public static bool SkipForAtlas(ITestOutputHelper testOutputHelper, string caller)
     {

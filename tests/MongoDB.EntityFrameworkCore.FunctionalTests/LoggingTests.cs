@@ -39,12 +39,11 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         });
 
         var year = 1900;
-        var items = db.Moons.Where(m => m.yearOfDiscovery > year).ToArray();
+        var items = db.Moons.Where(m => m.yearOfDiscovery > year && m.yearOfDiscovery < 2099).ToArray();
 
         Assert.NotEmpty(items);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs,
-            l => l.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])"));
+        Assert.Contains(logs, l => l.Contains(".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900, \"$lt\" : 2099 } } }]"));
     }
 
     [Fact]
@@ -58,13 +57,13 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         });
 
         var year = 1900;
-        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > year);
+        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > year && m.yearOfDiscovery != 1202);
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs,
-            l => l.Contains(_dbName
-                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : 1 }])"));
+        Assert.Contains(logs, l =>
+            l.Contains(_dbName +
+                       ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900, \"$ne\" : 1202 } } }, { \"$limit\" : 1 }])"));
     }
 
     [Fact]
@@ -78,13 +77,13 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         });
 
         var year = 1949;
-        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery == year);
+        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery == year && m.yearOfDiscovery != 1202);
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs,
-            l => l.Contains(_dbName
-                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])"));
+        Assert.Contains(logs, l =>
+            l.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"$and\" : [{ \"yearOfDiscovery\" : 1949 }, " +
+                       "{ \"yearOfDiscovery\" : { \"$ne\" : 1202 } }] } }, { \"$limit\" : 2 }]"));
     }
 
     [Fact]
@@ -308,7 +307,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var newPlanetId = fail
             ? ObjectId.Parse("621ff30d2a3e781873fcb661")
             : ObjectId.GenerateNewId();
-        db.Planets.Add(new Planet {_id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1});
+        db.Planets.Add(new Planet { _id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1 });
 
         if (!fail)
         {
@@ -389,7 +388,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var newPlanetId = fail
             ? ObjectId.Parse("621ff30d2a3e781873fcb661")
             : ObjectId.GenerateNewId();
-        db.Planets.Add(new Planet {_id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1});
+        db.Planets.Add(new Planet { _id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1 });
 
         if (!fail)
         {
