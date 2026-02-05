@@ -2,9 +2,9 @@
 set -o errexit  # Exit the script with error if any of the commands fail
 
 MONGODB_URI=${MONGODB_URI:=mongodb://localhost:27017/}
-BUILD_CONFIGURATION=${BUILD_CONFIGURATION:=Debug}
-
 EFCORE_PROVIDER_PROJECT_PATH="./src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj"
+BUILD_CONFIGURATION=$(sh ./evergreen/get-build-debug-config.sh)
+
 if [ -n "$DRIVER_VERSION" ]
 then
   ## Update Driver's package reference if specified

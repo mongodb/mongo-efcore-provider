@@ -6,10 +6,7 @@ if [ -z "$PACKAGE_VERSION" ]; then
   echo Calculated PACKAGE_VERSION value: "$PACKAGE_VERSION"
 fi
 
-BUILD_CONFIGURATION="Release"
-if [[ "${PACKAGE_VERSION}" == "9."* ]]; then
-    BUILD_CONFIGURATION="Release EF9"
-fi
+BUILD_CONFIGURATION=$(sh ./evergreen/get-build-release-config.sh)
 
 echo Creating nuget package $PACKAGE_VERSION using $BUILD_CONFIGURATION build configuration...
 
