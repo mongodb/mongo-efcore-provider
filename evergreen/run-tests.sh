@@ -2,7 +2,7 @@
 set -o errexit  # Exit the script with error if any of the commands fail
 
 MONGODB_URI=${MONGODB_URI:=mongodb://localhost:27017/}
-BUILD_CONFIGURATION=${BUILD_CONFIGURATION:=Debug}
+BUILD_CONFIGURATION=${BUILD_CONFIGURATION:=Debug EF10}
 
 EFCORE_PROVIDER_PROJECT_PATH="./src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj"
 if [ -n "$DRIVER_VERSION" ]
@@ -22,4 +22,4 @@ fi
 
 echo "Running EF Core tests for '${BUILD_CONFIGURATION}' configuration"
 dotnet clean "./MongoDB.EFCoreProvider.sln"
-dotnet test "./MongoDB.EFCoreProvider.sln" -e MONGODB_URI="${MONGODB_URI}" -c "${BUILD_CONFIGURATION}" --results-directory ./artifacts/test-results/${BUILD_CONFIGURATION// /} --logger "junit;LogFileName=TEST_{assembly}.xml;FailureBodyFormat=Verbose" --logger "console;verbosity=detailed"
+dotnet test "./MongoDB.EFCoreProvider.sln" -e MONGODB_URI="${MONGODB_URI}" -c "${BUILD_CONFIGURATION}" --results-directory ./artifacts/test-results/${BUILD_CONFIGURATION} /} --logger "junit;LogFileName=TEST_{assembly}.xml;FailureBodyFormat=Verbose" --logger "console;verbosity=detailed"
