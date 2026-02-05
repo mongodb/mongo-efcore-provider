@@ -13,9 +13,6 @@ echo "Installing docfx tool"
 dotnet tool install docfx --version "2.78.4" --local --verbosity q
 
 echo "Building the api-docs"
-
-BUILD_CONFIGURATION=$(sh ./evergreen/get-build-release-config.sh)
-
-dotnet build ./MongoDB.EFCoreProvider.csproj -o ./artifacts/apidocs/"$PACKAGE_VERSION"c "$BUILD_CONFIGURATION" -p:ContinuousIntegrationBuild=true
-dotnet tool run docfx metadata ./apidocs/docfx.json --property ProduceReferenceAssembly=true
+dotnet restore src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj -p:Configuration="${BUILD_CONFIGURATION}"
+dotnet tool run docfx metadata ./apidocs/docfx.json --property "Configuration=${BUILD_CONFIGURATION};ProduceReferenceAssembly=true"
 dotnet tool run docfx build ./apidocs/docfx.json -o:./artifacts/apidocs/"$PACKAGE_VERSION"

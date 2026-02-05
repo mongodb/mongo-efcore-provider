@@ -3,15 +3,21 @@
         {
             "src": [
                 {
-                    "files": ["MongoDB.EntityFrameworkCore.dll"],
-                    "src": "../src/MongoDB.EntityFrameworkCore/bin/Debug EF10/net10.0"
+                    "files": [
+                        "**/*.csproj"
+                    ],
+                    "exclude": [
+                        "**/bin/**",
+                        "**/obj/**"
+                    ],
+                    "src": "../src"
                 }
             ],
             "dest": "api",
             "includePrivateMembers": false,
             "disableGitFeatures": false,
             "disableDefaultFilter": false,
-            "noRestore": false,
+            "noRestore": true,
             "namespaceLayout": "flattened",
             "memberLayout": "separatePages",
             "EnumSortOrder": "declaringOrder",
@@ -21,20 +27,32 @@
     "build": {
         "content": [
             {
-                "files": ["api/**.yml", "api/index.md", "api/MongoDB.md"]
+                "files": [
+                    "api/**.yml",
+                    "api/index.md",
+                    "api/MongoDB.md"
+                ]
             },
             {
-                "files": ["*.md"]
+                "files": [
+                    "*.md"
+                ]
             }
         ],
         "resource": [
             {
-                "files": ["images/**"]
+                "files": [
+                    "images/**"
+                ]
             }
         ],
         "globalMetadataFiles": [],
         "fileMetadataFiles": [],
-        "template": ["default", "modern", "mongo-apidocs"],
+        "template": [
+            "default",
+            "modern",
+            "mongo-apidocs"
+        ],
         "postProcessors": [],
         "keepFileLink": false,
         "disableGitFeatures": false,

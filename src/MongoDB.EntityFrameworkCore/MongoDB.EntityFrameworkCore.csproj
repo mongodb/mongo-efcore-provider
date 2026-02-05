@@ -6,6 +6,7 @@
     <PackageId>MongoDB.EntityFrameworkCore</PackageId>
     <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
     <Platforms>AnyCPU</Platforms>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <Import Project="..\..\Versions.props" />
@@ -23,6 +24,7 @@
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Release EF8' ">
     <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
+    <DocumentationFile>bin\Release EF8\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
@@ -34,6 +36,7 @@
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Release EF9' ">
     <DefineConstants>TRACE;RELEASE;EF9</DefineConstants>
+    <DocumentationFile>bin\Release EF9\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
@@ -47,6 +50,7 @@
   <PropertyGroup Condition=" '$(Configuration)' == 'Release EF10' ">
     <TargetFramework>net10.0</TargetFramework>
     <DefineConstants>TRACE;RELEASE;EF10</DefineConstants>
+    <DocumentationFile>bin\Release EF10\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
