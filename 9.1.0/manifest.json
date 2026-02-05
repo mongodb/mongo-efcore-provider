@@ -1,0 +1,51 @@
+{
+  "source_base_path": "/data/mci/6d2fae00b1f629d25c4ae3691b3e84e1/mongo-efcore-provider/apidocs",
+  "xrefmap": "xrefmap.yml",
+  "files": [
+    {
+      "type": "Redirection",
+      "source_relative_path": "api/MongoDB.md",
+      "output": {
+        ".html": {
+          "relative_path": "api/MongoDB.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "Conceptual",
+      "source_relative_path": "api/index.md",
+      "output": {
+        ".html": {
+          "relative_path": "api/index.html"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "Resource",
+      "source_relative_path": "images/mongodb-logo.svg",
+      "output": {
+        "resource": {
+          "relative_path": "images/mongodb-logo.svg"
+        }
+      },
+      "version": ""
+    },
+    {
+      "type": "Redirection",
+      "source_relative_path": "index.md",
+      "output": {
+        ".html": {
+          "relative_path": "index.html"
+        }
+      },
+      "version": ""
+    }
+  ],
+  "groups": [
+    {
+      "xrefmap": "xrefmap.yml"
+    }
+  ]
+}
