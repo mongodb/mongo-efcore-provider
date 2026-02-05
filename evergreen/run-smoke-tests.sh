@@ -2,9 +2,26 @@
 set -o errexit  # Exit the script with error if any of the commands fail
 
 MONGODB_URI=${MONGODB_URI:=mongodb://localhost:27017/}
+
 EFCORE_PROVIDER_PROJECT="./src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj"
 TESTS_PROJECT="./tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj"
-BUILD_CONFIGURATION=$(sh ./evergreen/get-build-release-config.sh)
+
+BUILD_CONFIGURATION=""
+if [[ "${PACKAGE_VERSION}" == "8."* ]]; then
+    BUILD_CONFIGURATION="Release EF8"
+fi
+if [[ "${PACKAGE_VERSION}" == "9."* ]]; then
+    BUILD_CONFIGURATION="Release EF9"
+fi
+if [[ "${PACKAGE_VERSION}" == "10."* ]]; then
+    BUILD_CONFIGURATION="Release EF10"
+fi
+
+# Check if BUILD_CONFIGURATION is set
+if [ -z "$BUILD_CONFIGURATION" ]; then
+  echo "Error: Unknown PACKAGE_VERSION $PACKAGE_VERSION found. Update get-build-release-config.sh to handle this version."
+  exit 1
+fi
 
 echo Retargeting API tests to use generated package instead of project dependency...
 dotnet nuget add source "./artifacts/nuget" -n local --configfile "./nuget.config"
