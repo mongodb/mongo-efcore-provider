@@ -1,7 +1,25 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configurations>Debug;Release;Debug EF9;Release EF9</Configurations>
+    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
     <Platforms>AnyCPU</Platforms>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF8' ">
+    <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF8' ">
+    <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
+    <DefineConstants>TRACE;DEBUG;EF9</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF9' ">
+    <DefineConstants>TRACE;RELEASE;EF9</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF10' ">
+    <DefineConstants>TRACE;DEBUG;EF10</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF10' ">
+    <DefineConstants>TRACE;RELEASE;EF10</DefineConstants>
   </PropertyGroup>
 
   <Import Project="..\..\Versions.props" />

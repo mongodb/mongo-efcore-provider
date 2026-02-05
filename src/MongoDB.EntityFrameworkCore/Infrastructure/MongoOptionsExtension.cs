@@ -218,7 +218,6 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
     public virtual MongoOptionsExtension WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode queryableEncryptionSchemaMode)
     {
-        ArgumentNullException.ThrowIfNull(queryableEncryptionSchemaMode);
         Check.IsDefinedOrNull<QueryableEncryptionSchemaMode>(queryableEncryptionSchemaMode);
 
         var clone = Clone();

@@ -30,6 +30,17 @@ public class NorthwindEFPropertyIncludeQueryMongoTest : NorthwindEFPropertyInclu
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
+    #if !EF8 && !EF9
+
+    public override async Task Include_collection_with_right_join_clause_with_filter(bool async)
+    {
+        await AssertTranslationFailed(() => base.Include_collection_with_right_join_clause_with_filter(async));
+
+        AssertMql();
+    }
+
+    #endif
+
     public override async Task Include_collection_with_last_no_orderby(bool async)
     {
         // Fails: Include issue EF-117

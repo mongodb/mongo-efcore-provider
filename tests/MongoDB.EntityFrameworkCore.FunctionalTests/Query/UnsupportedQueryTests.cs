@@ -32,18 +32,25 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     [Fact]
     public void Join_cannot_be_translated()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => _db.Planets.Join(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList());
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            _db.Planets.Join(_db.Moons, p => p._id, m => m.planetId, (p, m) => new { p, m }).ToList());
         Assert.Contains(".Join(", ex.Message);
         Assert.Contains(" could not be translated", ex.Message);
     }
 
+#if !EF8 && !EF9
+
     [Fact]
     public void LeftJoin_throws_not_supported_exception()
     {
-        Assert.Throws<NotSupportedException>(
+        var ex = Assert.Throws<InvalidOperationException>(
             () => _db.Planets.LeftJoin(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList());
+
+        Assert.Contains(".LeftJoin(", ex.Message);
+        Assert.Contains(" could not be translated", ex.Message);
     }
+
+#endif
 
     [Fact]
     public void SelectMany_throws_because_target_is_not_primitive()
@@ -79,7 +86,7 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     [Fact]
     public void Except_can_not_be_translated()
     {
-        var closerThanEarth = new List<Planet>([ new Planet { _id = ObjectId.GenerateNewId(), name = "Earth" } ]);
+        var closerThanEarth = new List<Planet>([new Planet { _id = ObjectId.GenerateNewId(), name = "Earth" }]);
 
         var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.Except(closerThanEarth).ToList());
 
@@ -90,7 +97,7 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     [Fact]
     public void Intersect_cannot_be_translated()
     {
-        var closerThanEarth = new List<Planet>([ new Planet { _id = ObjectId.GenerateNewId(), name = "Earth" } ]);
+        var closerThanEarth = new List<Planet>([new Planet { _id = ObjectId.GenerateNewId(), name = "Earth" }]);
 
         var ex = Assert.Throws<InvalidOperationException>(() => _db.Planets.Intersect(closerThanEarth).ToList());
 

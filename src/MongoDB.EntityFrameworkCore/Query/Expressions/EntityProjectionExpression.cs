@@ -119,8 +119,6 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         Type? entityClrType,
         out IPropertyBase? propertyBase)
     {
-        ArgumentNullException.ThrowIfNull(member);
-
         var entityType = EntityType;
         if (entityClrType != null
             && !entityClrType.IsAssignableFrom(entityType.ClrType))

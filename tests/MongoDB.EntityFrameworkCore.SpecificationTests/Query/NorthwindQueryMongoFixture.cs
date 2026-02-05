@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
 public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtureBase<TModelCustomizer>
     where TModelCustomizer :
-#if EF9
+#if !EF8
     ITestModelCustomizer,
 #else
     IModelCustomizer,
@@ -60,7 +60,7 @@ public class NorthwindQueryMongoFixture<TModelCustomizer> : NorthwindQueryFixtur
     protected override bool ShouldLogCategory(string logCategory)
         => logCategory == DbLoggerCategory.Query.Name;
 
-#if !EF9
+#if EF8
     protected override void Seed(NorthwindContext context)
     {
         AddEntities(context);

@@ -44,11 +44,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// </summary>
     /// <param name="dependencies">The <see cref="ShapedQueryCompilingExpressionVisitorDependencies"/> used by this visitor.</param>
     /// <param name="mongoDependencies">MongoDB-specific dependencies used by this visitor.</param>
-    /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> for this specific query.</param>
+    /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> for this specific query.</param>
     public MongoShapedQueryCompilingExpressionVisitor(
         ShapedQueryCompilingExpressionVisitorDependencies dependencies,
         MongoShapedQueryCompilingExpressionVisitorDependencies mongoDependencies,
-        MongoQueryCompilationContext queryCompilationContext)
+        QueryCompilationContext queryCompilationContext)
         : base(dependencies, queryCompilationContext)
     {
         _contextType = queryCompilationContext.ContextType;
@@ -90,7 +90,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         var shaperBody = shapedQueryExpression.ShaperExpression;
         shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
+#if EF8 || EF9
         shaperBody = InjectEntityMaterializers(shaperBody);
+#else
+        shaperBody = InjectStructuralTypeMaterializers(shaperBody);
+#endif
         shaperBody = new MongoProjectionBindingRemovingExpressionVisitor(
                 rootEntityType, mongoQueryExpression, bsonDocParameter, trackQueryResults)
             .Visit(shaperBody);

@@ -211,11 +211,14 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
         var callerDirectory = Path.GetDirectoryName(callerFilePath);
         Assert.NotNull(callerDirectory);
 
-#if EF9
+#if EF10
+        var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF10");
+#elif EF9
         var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF9");
-#else
+#elif EF8
         var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF8");
 #endif
+
         Directory.CreateDirectory(generatedCodePath);
 
         var fileName = Path.Combine(generatedCodePath, file.Path);

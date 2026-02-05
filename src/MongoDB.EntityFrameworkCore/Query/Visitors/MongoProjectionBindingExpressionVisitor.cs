@@ -81,12 +81,12 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             case MaterializeCollectionNavigationExpression:
                 return base.Visit(expression);
 
+#if EF8 || EF9
             case ParameterExpression parameterExpression:
                 if (_collectionShaperMapping.ContainsKey(parameterExpression))
                 {
                     return parameterExpression;
                 }
-
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
                     == true)
                 {
@@ -97,6 +97,18 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 }
 
                 throw new InvalidOperationException(CoreStrings.TranslationFailed(parameterExpression.Print()));
+#else
+            case QueryParameterExpression queryParameter:
+                return Expression.Call(
+                    GetParameterValueMethodInfo.MakeGenericMethod(queryParameter.Type),
+                    QueryCompilationContext.QueryContextParameter,
+                    Expression.Constant(queryParameter.Name));
+
+            case ParameterExpression parameterExpression:
+                return _collectionShaperMapping.ContainsKey(parameterExpression)
+                    ? parameterExpression
+                    : throw new InvalidOperationException(CoreStrings.TranslationFailed(parameterExpression.Print()));
+#endif
 
             case ConstantExpression:
                 return expression;
@@ -524,8 +536,15 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         = typeof(MongoProjectionBindingExpressionVisitor)
             .GetTypeInfo().GetDeclaredMethod(nameof(GetParameterValue));
 
+#if EF8 || EF9
     private static T GetParameterValue<T>(
         QueryContext queryContext,
         string parameterName)
         => (T)queryContext.ParameterValues[parameterName];
+#else
+    private static T GetParameterValue<T>(
+        QueryContext queryContext,
+        string parameterName)
+        => (T)queryContext.Parameters[parameterName];
+#endif
 }

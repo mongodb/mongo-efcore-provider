@@ -4,7 +4,7 @@
     <Description>Official MongoDB supported provider for Entity Framework Core. See https://www.mongodb.com/docs/entity-framework/ for more details.</Description>
     <IsPackable>true</IsPackable>
     <PackageId>MongoDB.EntityFrameworkCore</PackageId>
-    <Configurations>Debug;Release;Debug EF9;Release EF9</Configurations>
+    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
 
@@ -15,24 +15,38 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF8' ">
     <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
-    <DocumentationFile>bin\Debug\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
+    <DocumentationFile>bin\Debug EF8\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
 
-  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF8' ">
     <DefineConstants>TRACE;RELEASE;EF8</DefineConstants>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF9' ">
     <DefineConstants>TRACE;DEBUG;EF9</DefineConstants>
+    <DocumentationFile>bin\Debug EF9\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Release EF9' ">
     <DefineConstants>TRACE;RELEASE;EF9</DefineConstants>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF10' ">
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>TRACE;DEBUG;EF10</DefineConstants>
+    <DocumentationFile>bin\Debug EF10\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF10' ">
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>TRACE;RELEASE;EF10</DefineConstants>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
@@ -43,11 +57,15 @@
     <PackageReference Include="MongoDB.Driver" Version="$(CSharpDriverVersion)" />
   </ItemGroup>
 
-  <ItemGroup Condition=" '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug' ">
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF8' Or '$(Configuration)' == 'Debug EF8' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF8Version)" />
   </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF9' Or '$(Configuration)' == 'Debug EF9' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF9Version)" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF10' Or '$(Configuration)' == 'Debug EF10' ">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF10Version)" />
   </ItemGroup>
 </Project>

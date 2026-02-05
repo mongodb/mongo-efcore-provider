@@ -38,7 +38,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// <summary>
 /// Visits the tree resolving any query context parameter bindings and EF references so the query can be used with the MongoDB V3 LINQ provider.
 /// </summary>
-internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.Expressions.ExpressionVisitor
+internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Expressions.ExpressionVisitor
 {
     private static readonly MethodInfo MqlFieldMethodInfo =
         typeof(Mql).GetMethod(nameof(Mql.Field), BindingFlags.Public | BindingFlags.Static)!;
@@ -46,6 +46,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
+    private EntityQueryRootExpression? _foundEntityQueryRootExpression;
 
     internal MongoEFToLinqTranslatingExpressionVisitor(
         QueryContext queryContext,
@@ -116,6 +117,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
 
                 return subQuery;
 
+#if EF8 || EF9
             // Replace the QueryContext parameter values with constant values for this execution.
             case ParameterExpression parameterExpression:
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
@@ -128,6 +130,10 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                 }
 
                 break;
+#else
+            case QueryParameterExpression queryParameterExpression:
+                return ConvertIfRequired(Expression.Constant(_queryContext.Parameters[queryParameterExpression.Name]), expression.Type);
+#endif
 
             // Wrap OfType<T> with As(serializer) to re-attach the custom serializer in LINQ3
             case MethodCallExpression
@@ -241,8 +247,21 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                 return Visit(includeExpression.EntityExpression);
 
             // Replace the root with the MongoDB LINQ V3 provider source.
-            case EntityQueryRootExpression:
-                return _source;
+            case EntityQueryRootExpression entityQueryRootExpression:
+                if (_foundEntityQueryRootExpression == null)
+                {
+                    _foundEntityQueryRootExpression = entityQueryRootExpression;
+                    return _source;
+                }
+
+                if (_foundEntityQueryRootExpression.EntityType == entityQueryRootExpression.EntityType)
+                {
+                    return _source;
+                }
+
+                throw new InvalidOperationException($"Unsupported cross-DbSet query between '{_foundEntityQueryRootExpression.EntityType.Name}' " +
+                                                    $"and '{entityQueryRootExpression.EntityType.Name}'. " +
+                                                    "The MongoDB EF Core Provider does not support Join, Include or navigation property access across collections.");
         }
 
         return base.Visit(expression);
@@ -290,8 +309,9 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                 // Index to use was not specified in the query. Throw or warn if there is anything but one index in the model.
                 if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
                 {
-                    ThrowForBadOptions("the vector index for this query could not be found. Use 'HasIndex' on the EF model builder to specify the index, or " +
-                                       "specify the index name in the call to 'VectorQuery' if indexes are being managed outside of EF Core.");
+                    ThrowForBadOptions(
+                        "the vector index for this query could not be found. Use 'HasIndex' on the EF model builder to specify the index, or " +
+                        "specify the index name in the call to 'VectorQuery' if indexes are being managed outside of EF Core.");
                 }
 
                 if (vectorIndexesInModel!.Count > 1)
@@ -318,9 +338,12 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
             var searchOptionsType = typeof(VectorSearchOptions<>).MakeGenericType(entityType!.ClrType);
             var searchOptions = Activator.CreateInstance(searchOptionsType)!;
 
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.IndexName))!.SetValue(searchOptions, concreteOptions.IndexName);
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.NumberOfCandidates))!.SetValue(searchOptions, concreteOptions.NumberOfCandidates);
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.Exact))!.SetValue(searchOptions, concreteOptions.Exact);
+            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.IndexName))!.SetValue(searchOptions,
+                concreteOptions.IndexName);
+            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.NumberOfCandidates))!.SetValue(searchOptions,
+                concreteOptions.NumberOfCandidates);
+            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.Exact))!.SetValue(searchOptions,
+                concreteOptions.Exact);
 
             if (preFilterExpression != null)
             {
@@ -328,7 +351,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                     typeof(ExpressionFilterDefinition<>).MakeGenericType(entityType.ClrType),
                     Visit(preFilterExpression));
 
-                searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.Filter))!.SetValue(searchOptions, convertedExpression);
+                searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.Filter))!.SetValue(searchOptions,
+                    convertedExpression);
             }
 
             var vectorSearchPipelineStage = typeof(PipelineStageDefinitionBuilder)
@@ -337,7 +361,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                     mi.GetParameters()[0].ParameterType.IsGenericType
                     && mi.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(Expression<>))
                 .MakeGenericMethod(entityType.ClrType, memberMetadata!.ClrType)
-                .Invoke(null, [ propertyExpression, queryVector, limit, searchOptions ] );
+                .Invoke(null, [propertyExpression, queryVector, limit, searchOptions]);
 
             var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
                 .MakeGenericMethod(entityType.ClrType, entityType.ClrType);
@@ -369,24 +393,29 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor :  System.Linq.E
                     $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because {reason}");
             }
 
+#if EF8 || EF9
             TValue? ParamValue<TValue>(int index)
                 => (TValue?)_queryContext.ParameterValues[((ParameterExpression)methodCallExpression.Arguments[index]).Name!];
+#else
+            TValue? ParamValue<TValue>(int index)
+                => (TValue?)_queryContext.Parameters[((QueryParameterExpression)methodCallExpression.Arguments[index]).Name!];
+#endif
         }
     }
 
     private static readonly BsonDocument AddScoreField =
-        new("$addFields", new BsonDocument {{"__score", new BsonDocument("$meta", "vectorSearchScore")}});
+        new("$addFields", new BsonDocument { { "__score", new BsonDocument("$meta", "vectorSearchScore") } });
 
     private static Expression ConvertIfRequired(Expression expression, Type targetType) =>
         expression.Type == targetType ? expression : Expression.Convert(expression, targetType);
 
     private static Expression RemoveObjectConvert(Expression expression)
-        => expression is UnaryExpression {NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked} unaryExpression
+        => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
            && unaryExpression.Type == typeof(object)
             ? unaryExpression.Operand
             : expression;
 
     private static readonly MethodInfo AsMethodInfo = typeof(MongoQueryable)
         .GetMethods()
-        .First(mi => mi is {Name: nameof(MongoQueryable.As), IsPublic: true, IsStatic: true} && mi.GetParameters().Length == 2);
+        .First(mi => mi is { Name: nameof(MongoQueryable.As), IsPublic: true, IsStatic: true } && mi.GetParameters().Length == 2);
 }

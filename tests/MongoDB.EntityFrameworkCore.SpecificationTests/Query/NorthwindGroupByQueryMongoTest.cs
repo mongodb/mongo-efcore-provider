@@ -37,13 +37,22 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
+#if !EF8 && !EF9
+
+    public override async Task Final_GroupBy_TagWith(bool async)
+    {
+        await AssertTranslationFailed(() => base.Final_GroupBy_TagWith(async));
+    }
+
+#endif
+
     public override async Task GroupBy_Property_Select_Average(bool async)
     {
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Average(async));
 
         AssertMql(
-);
+        );
 
         // Validating that we don't generate warning when translating GroupBy. See Issue#11157
         Assert.DoesNotContain(
@@ -64,7 +73,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Count(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_LongCount(bool async)
@@ -73,15 +82,15 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_LongCount(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Count_with_nulls(bool async)
     {
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Count_with_nulls(async));
-AssertMql(
-);
+        AssertMql(
+        );
     }
 
     public override async Task GroupBy_Property_Select_LongCount_with_nulls(bool async)
@@ -90,7 +99,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_LongCount_with_nulls(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Max(bool async)
@@ -99,7 +108,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Max(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Min(bool async)
@@ -108,7 +117,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Min(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Sum(bool async)
@@ -117,7 +126,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Sum(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Sum_Min_Max_Avg(bool async)
@@ -126,7 +135,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Sum_Min_Max_Avg(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Key_Average(bool async)
@@ -135,7 +144,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Key_Average(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Key_Count(bool async)
@@ -144,7 +153,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Key_Count(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Key_LongCount(bool async)
@@ -153,7 +162,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Key_LongCount(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Key_Max(bool async)
@@ -162,7 +171,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Key_Max(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Key_Min(bool async)
@@ -171,7 +180,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Key_Min(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Key_Sum(bool async)
@@ -180,7 +189,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Key_Sum(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Key_Sum_Min_Max_Avg(bool async)
@@ -189,15 +198,15 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Key_Sum_Min_Max_Avg(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Sum_Min_Key_Max_Avg(bool async)
     {
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Sum_Min_Key_Max_Avg(async));
-AssertMql(
-);
+        AssertMql(
+        );
     }
 
     public override async Task GroupBy_Property_Select_key_multiple_times_and_aggregate(bool async)
@@ -206,7 +215,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_key_multiple_times_and_aggregate(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_Property_Select_Key_with_constant(bool async)
@@ -215,7 +224,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_Property_Select_Key_with_constant(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_aggregate_projecting_conditional_expression(bool async)
@@ -224,7 +233,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_aggregate_projecting_conditional_expression(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_aggregate_projecting_conditional_expression_based_on_group_key(bool async)
@@ -233,7 +242,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_aggregate_projecting_conditional_expression_based_on_group_key(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_anonymous_Select_Average(bool async)
@@ -242,7 +251,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Average(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_anonymous_Select_Count(bool async)
@@ -251,7 +260,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Count(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_anonymous_Select_LongCount(bool async)
@@ -260,7 +269,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_LongCount(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_anonymous_Select_Max(bool async)
@@ -269,7 +278,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Max(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_anonymous_Select_Min(bool async)
@@ -278,7 +287,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Min(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_anonymous_Select_Sum(bool async)
@@ -287,7 +296,7 @@ AssertMql(
         await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Sum(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_anonymous_Select_Sum_Min_Max_Avg(bool async)
@@ -770,7 +779,8 @@ AssertMql(
     public override async Task Element_selector_with_case_block_repeated_inside_another_case_block_in_projection(bool async)
     {
         // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Element_selector_with_case_block_repeated_inside_another_case_block_in_projection(async));
+        await AssertTranslationFailed(() =>
+            base.Element_selector_with_case_block_repeated_inside_another_case_block_in_projection(async));
 
         AssertMql(
         );
@@ -1007,7 +1017,8 @@ AssertMql(
     public override async Task GroupBy_after_anonymous_projection_and_distinct_followed_by_another_anonymous_projection(bool async)
     {
         // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_after_anonymous_projection_and_distinct_followed_by_another_anonymous_projection(async));
+        await AssertTranslationFailed(() =>
+            base.GroupBy_after_anonymous_projection_and_distinct_followed_by_another_anonymous_projection(async));
 
         AssertMql(
         );
@@ -1077,8 +1088,8 @@ AssertMql(
 
         AssertMql(
             """
-Orders.
-""");
+            Orders.
+            """);
     }
 
     public override async Task GroupBy_aggregate_Pushdown(bool async)
@@ -1601,7 +1612,7 @@ Orders.
         await AssertTranslationFailed(() => base.All_after_GroupBy_aggregate(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task All_after_GroupBy_aggregate2(bool async)
@@ -1610,7 +1621,7 @@ Orders.
         await AssertTranslationFailed(() => base.All_after_GroupBy_aggregate2(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task Any_after_GroupBy_aggregate(bool async)
@@ -1682,7 +1693,7 @@ Orders.
         await AssertTranslationFailed(() => base.All_with_predicate_after_GroupBy_without_aggregate(async));
 
         AssertMql(
-);
+        );
     }
 
     public override async Task GroupBy_aggregate_followed_by_another_GroupBy_aggregate(bool async)
@@ -2106,14 +2117,7 @@ Orders.
 
     public override async Task GroupBy_scalar_aggregate_in_set_operation(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        Assert.Contains(
-            "Expression of type 'System.Linq.IQueryable",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.GroupBy_scalar_aggregate_in_set_operation(async))).Message);
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.GroupBy_scalar_aggregate_in_set_operation(async));
     }
 
     public override async Task Select_uncorrelated_collection_with_groupby_when_outer_is_distinct(bool async)
@@ -2128,7 +2132,8 @@ Orders.
     public override async Task Select_correlated_collection_after_GroupBy_aggregate_when_identifier_does_not_change(bool async)
     {
         // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Select_correlated_collection_after_GroupBy_aggregate_when_identifier_does_not_change(async));
+        await AssertTranslationFailed(() =>
+            base.Select_correlated_collection_after_GroupBy_aggregate_when_identifier_does_not_change(async));
 
         AssertMql(
         );
@@ -2137,7 +2142,8 @@ Orders.
     public override async Task Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes(bool async)
     {
         // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes(async));
+        await AssertTranslationFailed(() =>
+            base.Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes(async));
 
         AssertMql(
         );
@@ -2146,7 +2152,8 @@ Orders.
     public override async Task Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes_to_complex(bool async)
     {
         // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes_to_complex(async));
+        await AssertTranslationFailed(() =>
+            base.Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes_to_complex(async));
 
         AssertMql(
         );
@@ -2337,11 +2344,7 @@ Orders.
 
     public override async Task GroupBy_complex_key_without_aggregate(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_complex_key_without_aggregate(async));
-
-        AssertMql(
-        );
+        await AssertGroupByUnsupported(() => base.GroupBy_complex_key_without_aggregate(async));
     }
 
     private void AssertMql(params string[] expected)
@@ -2349,4 +2352,12 @@ Orders.
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        =>  Assert.Contains("Unsupported cross-DbSet query between",
+            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+
+    // Fails: GroupBy issue EF-149
+    private static async Task AssertGroupByUnsupported(Func<Task> query)
+        => await AssertTranslationFailed(query);
 }

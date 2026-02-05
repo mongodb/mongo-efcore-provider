@@ -18,6 +18,8 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -39,10 +41,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// Create a <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/>.
     /// </summary>
     /// <param name="dependencies">The <see cref="QueryableMethodTranslatingExpressionVisitorDependencies"/> this visitor depends upon.</param>
-    /// <param name="queryCompilationContext">The <see cref="MongoQueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
+    /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
     public MongoQueryableMethodTranslatingExpressionVisitor(
         QueryableMethodTranslatingExpressionVisitorDependencies dependencies,
-        MongoQueryCompilationContext queryCompilationContext)
+        QueryCompilationContext queryCompilationContext)
         : base(dependencies, queryCompilationContext, subquery: false)
     {
     }
@@ -50,10 +52,22 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     public override Expression? Visit(Expression? expression)
     {
         _finalExpression ??= expression;
-        return base.Visit(expression);
+        var result = base.Visit(expression);
+
+        if (result == QueryCompilationContext.NotTranslatedExpression)
+        {
+            var originalExpression = ((MongoQueryCompilationContext)QueryCompilationContext).OriginalExpression;
+            throw new InvalidOperationException(
+                TranslationErrorDetails is null
+                    ? CoreStrings.TranslationFailed(originalExpression?.Print())
+                    : CoreStrings.TranslationFailedWithDetails(originalExpression?.Print(), TranslationErrorDetails));
+        }
+
+        return result;
     }
 
-    private static readonly Type[] AllowedQueryableExtensions = [ typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver.Linq.MongoQueryable) ];
+    private static readonly Type[] AllowedQueryableExtensions =
+        [typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver.Linq.MongoQueryable)];
 
     /// <summary>
     /// Visit the <see cref="MethodCallExpression"/> to capture the cardinality and final expression
@@ -67,7 +81,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var method = methodCallExpression.Method;
         if (!AllowedQueryableExtensions.Contains(method.DeclaringType))
             return QueryCompilationContext.NotTranslatedExpression;
-
 
         var source = Visit(methodCallExpression.Arguments[0]);
         if (source is ShapedQueryExpression shapedQueryExpression)
@@ -95,11 +108,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                                                 || methodDefinition == QueryableMethods.MaxWithSelector:
 
                 // Operations not supported, but we want to bubble through for better error messages
+#if !EF8 && !EF9
+                case nameof(Queryable.LeftJoin) when methodDefinition == QueryableMethods.LeftJoin:
+                case nameof(Queryable.RightJoin) when methodDefinition == QueryableMethods.RightJoin:
+#endif
                 case nameof(Queryable.GroupBy) when methodDefinition == QueryableMethods.GroupByWithKeySelector
                                                     || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector:
                 case nameof(Queryable.Contains) when methodDefinition == QueryableMethods.Contains:
                 case nameof(Queryable.Except) when methodDefinition == QueryableMethods.Except:
                 case nameof(Queryable.Join) when methodDefinition == QueryableMethods.Join:
+                case nameof(Queryable.DefaultIfEmpty) when methodDefinition == QueryableMethods.DefaultIfEmptyWithArgument
+                                                           || methodDefinition == QueryableMethods.DefaultIfEmptyWithoutArgument:
+                case nameof(Queryable.Intersect) when methodDefinition == QueryableMethods.Intersect:
                 case nameof(Queryable.SelectMany) when methodDefinition == QueryableMethods.SelectManyWithCollectionSelector:
                     {
                         if (base.VisitMethodCall(methodCallExpression) is not ShapedQueryExpression visitedShapedQueryExpression)
@@ -129,6 +149,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         if (selector.Body == selector.Parameters[0])
         {
             return source;
+        }
+
+        // Detect join patterns (LeftJoin, GroupJoin, etc.) which use TransparentIdentifier
+        var parameterType = selector.Parameters[0].Type;
+        if (parameterType.IsGenericType &&
+            parameterType.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Join operations (Join, LeftJoin, GroupJoin) are not supported by the MongoDB EF Core Provider. " +
+                "Consider using navigation properties or restructuring your query.");
         }
 
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
@@ -314,6 +344,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override ShapedQueryExpression? TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
         => null;
+
+#if !EF8 && !EF9
+    protected override ShapedQueryExpression? TranslateRightJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
+        LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector) =>
+        null;
+#endif
 
     protected override ShapedQueryExpression? TranslateJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)

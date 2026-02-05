@@ -816,7 +816,7 @@ public abstract class VectorSearchMongoTestBase
                     .IsVectorIndex(VectorSimilarity.Cosine, 2);
             });
 
-#if EF9
+#if !EF8
         protected override Task SeedAsync(PoolableDbContext context)
             => TrackSeedEntities(context).SaveChangesAsync();
 #else

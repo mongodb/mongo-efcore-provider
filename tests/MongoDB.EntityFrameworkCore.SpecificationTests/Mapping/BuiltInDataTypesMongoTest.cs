@@ -39,7 +39,7 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
             "Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[",
             (await Assert.ThrowsAsync<Exception>(() => base.Can_filter_projection_with_inline_enum_variable(async))).Message);
 
-    #if EF9
+    #if !EF8
     // Fails: Include issue EF-117
     public override async Task Can_insert_and_read_back_with_string_key()
         => Assert.Contains(

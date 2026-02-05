@@ -38,12 +38,12 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             testOutputHelper.WriteLine(s);
         });
 
-        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+        var year = 1900;
+        var items = db.Moons.Where(m => m.yearOfDiscovery > year && m.yearOfDiscovery < 2099).ToArray();
 
         Assert.NotEmpty(items);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs,
-            l => l.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }])"));
+        Assert.Contains(logs, l => l.Contains(".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900, \"$lt\" : 2099 } } }]"));
     }
 
     [Fact]
@@ -56,13 +56,14 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             testOutputHelper.WriteLine(s);
         });
 
-        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > 1900);
+        var year = 1900;
+        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > year && m.yearOfDiscovery != 1202);
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs,
-            l => l.Contains(_dbName
-                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900 } } }, { \"$limit\" : 1 }])"));
+        Assert.Contains(logs, l =>
+            l.Contains(_dbName +
+                       ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$gt\" : 1900, \"$ne\" : 1202 } } }, { \"$limit\" : 1 }])"));
     }
 
     [Fact]
@@ -75,13 +76,14 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             testOutputHelper.WriteLine(s);
         });
 
-        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery == 1949);
+        var year = 1949;
+        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery == year && m.yearOfDiscovery != 1202);
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains(logs,
-            l => l.Contains(_dbName
-                            + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])"));
+        Assert.Contains(logs, l =>
+            l.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"$and\" : [{ \"yearOfDiscovery\" : 1949 }, " +
+                       "{ \"yearOfDiscovery\" : { \"$ne\" : 1202 } }] } }, { \"$limit\" : 2 }]"));
     }
 
     [Fact]
@@ -94,12 +96,13 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             testOutputHelper.WriteLine(s);
         }, sensitiveDataLogging: false);
 
-        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+        var year = 1900;
+        var items = db.Moons.Where(m => m.yearOfDiscovery > year).ToArray();
 
         Assert.NotEmpty(items);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
-        Assert.DoesNotContain(logs, l => l.Contains("yearOfDiscovery"));
+        Assert.DoesNotContain(logs, l => l.Contains(year.ToString()));
     }
 
     [Fact]
@@ -112,12 +115,13 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             testOutputHelper.WriteLine(s);
         }, sensitiveDataLogging: false);
 
-        var item = db.Moons.First(m => m.yearOfDiscovery > 1900);
+        var year = 1901;
+        var item = db.Moons.First(m => m.yearOfDiscovery > year);
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
-        Assert.DoesNotContain(logs, l => l.Contains("yearOfDiscovery"));
+        Assert.DoesNotContain(logs, l => l.Contains("1901"));
     }
 
     [Fact]
@@ -130,12 +134,13 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
             testOutputHelper.WriteLine(s);
         }, sensitiveDataLogging: false);
 
-        var item = db.Moons.Single(m => m.yearOfDiscovery == 1949);
+        var year = 1949;
+        var item = db.Moons.Single(m => m.yearOfDiscovery == year);
 
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
-        Assert.DoesNotContain(logs, l => l.Contains("yearOfDiscovery"));
+        Assert.DoesNotContain(logs, l => l.Contains("1949"));
     }
 
     [Fact]
@@ -144,7 +149,8 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
 
-        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+        var year = 1900;
+        var items = db.Moons.Where(m => m.yearOfDiscovery > year).ToArray();
 
         Assert.NotEmpty(items);
 
@@ -160,7 +166,8 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
 
-        var item = db.Moons.First(m => m.yearOfDiscovery > 1900);
+        var year = 1900;
+        var item = db.Moons.First(m => m.yearOfDiscovery > year);
 
         Assert.NotNull(item);
 
@@ -178,7 +185,8 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory);
 
-        var item = db.Moons.Single(m => m.yearOfDiscovery == 1949);
+        var year = 1949;
+        var item = db.Moons.Single(m => m.yearOfDiscovery == year);
 
         Assert.NotNull(item);
 
@@ -195,14 +203,15 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
-        var items = db.Moons.Where(m => m.yearOfDiscovery > 1900).ToArray();
+        var year = 1901;
+        var items = db.Moons.Where(m => m.yearOfDiscovery > year).ToArray();
 
         Assert.NotEmpty(items);
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
-        Assert.DoesNotContain("yearOfDiscovery", message);
+        Assert.DoesNotContain("1901", message);
     }
 
     [Fact]
@@ -211,14 +220,15 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
-        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > 1900);
+        var year = 1901;
+        var item = db.Moons.FirstOrDefault(m => m.yearOfDiscovery > year);
 
         Assert.NotNull(item);
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
-        Assert.DoesNotContain("yearOfDiscovery", message);
+        Assert.DoesNotContain("1901", message);
     }
 
     [Fact]
@@ -227,14 +237,15 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         using var db = GuidesDbContext.Create(fixture.MongoDatabase, null, loggerFactory, sensitiveDataLogging: false);
 
-        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery > 1900);
+        var year = 1901;
+        var item = db.Moons.SingleOrDefault(m => m.yearOfDiscovery > year);
 
         Assert.NotNull(item);
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains($"{_dbName}.moons.aggregate([?])", message);
-        Assert.DoesNotContain("yearOfDiscovery", message);
+        Assert.DoesNotContain("1901", message);
     }
 
     [Fact]
@@ -244,7 +255,8 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var brokenDatabase = TestServer.BrokenClient.GetDatabase("na");
         using var db = GuidesDbContext.Create(brokenDatabase, null, loggerFactory, sensitiveDataLogging: true);
 
-        Assert.Throws<TimeoutException>(() => db.Moons.SingleOrDefault(m => m.yearOfDiscovery == 1949));
+        var year = 1949;
+        Assert.Throws<TimeoutException>(() => db.Moons.SingleOrDefault(m => m.yearOfDiscovery == year));
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
@@ -259,7 +271,8 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var brokenDatabase = TestServer.BrokenClient.GetDatabase("na");
         using var db = GuidesDbContext.Create(brokenDatabase, null, loggerFactory, sensitiveDataLogging: true);
 
-        Assert.Throws<TimeoutException>(() => db.Moons.Where(m => m.yearOfDiscovery == 1949).ToList());
+        var year = 1949;
+        Assert.Throws<TimeoutException>(() => db.Moons.Where(m => m.yearOfDiscovery == year).ToList());
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
@@ -294,7 +307,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var newPlanetId = fail
             ? ObjectId.Parse("621ff30d2a3e781873fcb661")
             : ObjectId.GenerateNewId();
-        db.Planets.Add(new Planet {_id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1});
+        db.Planets.Add(new Planet { _id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1 });
 
         if (!fail)
         {
@@ -375,7 +388,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var newPlanetId = fail
             ? ObjectId.Parse("621ff30d2a3e781873fcb661")
             : ObjectId.GenerateNewId();
-        db.Planets.Add(new Planet {_id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1});
+        db.Planets.Add(new Planet { _id = newPlanetId, name = "Proxima Centauri d", hasRings = false, orderFromSun = -1 });
 
         if (!fail)
         {

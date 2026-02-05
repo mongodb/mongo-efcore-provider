@@ -155,7 +155,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
             if (_enumerator == null)
             {
-#if EF9
+#if !EF8
 #pragma warning disable EF9101
                 EntityFrameworkMetricsData.ReportQueryExecuting();
 #pragma warning restore EF9101
