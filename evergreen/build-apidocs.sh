@@ -12,7 +12,9 @@ dotnet new tool-manifest --force
 echo "Installing docfx tool"
 dotnet tool install docfx --version "2.78.4" --local --verbosity q
 
-echo "Building the api-docs"
+BUILD_CONFIGURATION=$(sh ./evergreen/get-build-release-config.sh)
+
+echo "Building the api-docs for '${PACKAGE_VERSION} using '${BUILD_CONFIGURATION}'"
 dotnet restore src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj -p:Configuration="${BUILD_CONFIGURATION}"
 dotnet tool run docfx metadata ./apidocs/docfx.json --property "Configuration=${BUILD_CONFIGURATION};ProduceReferenceAssembly=true"
 dotnet tool run docfx build ./apidocs/docfx.json -o:./artifacts/apidocs/"$PACKAGE_VERSION"
