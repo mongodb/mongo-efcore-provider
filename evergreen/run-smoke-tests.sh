@@ -8,13 +8,13 @@ TESTS_PROJECT="./tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.Entit
 
 BUILD_CONFIGURATION=""
 if [[ "${PACKAGE_VERSION}" == "8."* ]]; then
-    BUILD_CONFIGURATION="Release EF8"
+    BUILD_CONFIGURATION="Debug EF8"
 fi
 if [[ "${PACKAGE_VERSION}" == "9."* ]]; then
-    BUILD_CONFIGURATION="Release EF9"
+    BUILD_CONFIGURATION="Debug EF9"
 fi
 if [[ "${PACKAGE_VERSION}" == "10."* ]]; then
-    BUILD_CONFIGURATION="Release EF10"
+    BUILD_CONFIGURATION="Debug EF10"
 fi
 
 # Check if BUILD_CONFIGURATION is set
