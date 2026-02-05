@@ -96,6 +96,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                         Expression.Constant(parameterExpression.Name));
                 }
 
+                throw new InvalidOperationException(CoreStrings.TranslationFailed(parameterExpression.Print()));
 #else
             case QueryParameterExpression queryParameter:
                 return Expression.Call(
@@ -107,10 +108,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 return _collectionShaperMapping.ContainsKey(parameterExpression)
                     ? parameterExpression
                     : throw new InvalidOperationException(CoreStrings.TranslationFailed(parameterExpression.Print()));
-
 #endif
-
-                throw new InvalidOperationException(CoreStrings.TranslationFailed(parameterExpression.Print()));
 
             case ConstantExpression:
                 return expression;

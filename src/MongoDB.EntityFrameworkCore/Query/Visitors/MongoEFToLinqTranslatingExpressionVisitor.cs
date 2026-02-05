@@ -398,7 +398,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
                 => (TValue?)_queryContext.ParameterValues[((ParameterExpression)methodCallExpression.Arguments[index]).Name!];
 #else
             TValue? ParamValue<TValue>(int index)
-                => (TValue?)_queryContext.Parameters[((ParameterExpression)methodCallExpression.Arguments[index]).Name!];
+                => (TValue?)_queryContext.Parameters[((QueryParameterExpression)methodCallExpression.Arguments[index]).Name!];
 #endif
         }
     }

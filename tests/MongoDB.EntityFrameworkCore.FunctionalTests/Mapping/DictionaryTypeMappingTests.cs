@@ -42,7 +42,7 @@ public class DictionaryTypeMappingTests(AtlasTemporaryDatabaseFixture database)
     class EntityWithDictionaryOfDictionaryOfStrings
     {
         public ObjectId _id { get; set; }
-        public Dictionary<string, Dictionary<string, string>>? aNestedDictionary { get; set; }
+        public Dictionary<string, Dictionary<string, string>>? aDictionaryOfLists { get; set; }
     }
 
     class Address
@@ -67,6 +67,12 @@ public class DictionaryTypeMappingTests(AtlasTemporaryDatabaseFixture database)
     {
         public ObjectId _id { get; set; }
         public Dictionary<string, Point>? Points { get; set; }
+    }
+
+    class EntityWithDictionaryOfDictionaryOfStructs
+    {
+        public ObjectId _id { get; set; }
+        public Dictionary<string, Dictionary<string, Point>>? aDictionaryOfLists { get; set; }
     }
 
     [Fact]
@@ -168,7 +174,7 @@ public class DictionaryTypeMappingTests(AtlasTemporaryDatabaseFixture database)
         }
     }
 
-#if !EF8 && !EF10 // Broken support for dictionary of lists prior to EF10
+#if !EF8 && !EF9 // Broken support for dictionary of lists prior to EF10
     [Fact]
     public void Dictionary_list_strings_write_read_with_items()
     {
@@ -208,19 +214,48 @@ public class DictionaryTypeMappingTests(AtlasTemporaryDatabaseFixture database)
         {
             var item = new EntityWithDictionaryOfDictionaryOfStrings
             {
-                _id = ObjectId.GenerateNewId(), aNestedDictionary = expected
+                _id = ObjectId.GenerateNewId(), aDictionaryOfLists = expected
             };
             using var db = SingleEntityDbContext.Create(collection);
             db.Entities.Add(item);
             db.SaveChanges();
-            Assert.Equal(expected, item.aNestedDictionary);
+            Assert.Equal(expected, item.aDictionaryOfLists);
         }
 
         {
             using var db = SingleEntityDbContext.Create(collection);
             var actual = db.Entities.FirstOrDefault();
             Assert.NotNull(actual);
-            Assert.Equal(expected, actual.aNestedDictionary);
+            Assert.Equal(expected, actual.aDictionaryOfLists);
+        }
+    }
+
+    [Fact]
+    public void Dictionary_dictionary_structs_write_read_with_items()
+    {
+        var collection = database.CreateCollection<EntityWithDictionaryOfDictionaryOfStructs>();
+        var expected = new Dictionary<string, Dictionary<string, Point>>
+        {
+            { "set1", new Dictionary<string, Point> { { "p1", new Point { X = 1, Y = 1 } }, { "p2", new Point { X = 2, Y = 2 } } } },
+            { "set2", new Dictionary<string, Point> { { "p3", new Point { X = 3, Y = 3 } } } }
+        };
+
+        {
+            var item = new EntityWithDictionaryOfDictionaryOfStructs
+            {
+                _id = ObjectId.GenerateNewId(), aDictionaryOfLists = expected
+            };
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(item);
+            db.SaveChanges();
+            Assert.Equal(expected, item.aDictionaryOfLists);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var actual = db.Entities.FirstOrDefault();
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual.aDictionaryOfLists);
         }
     }
 

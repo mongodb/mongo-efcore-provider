@@ -156,7 +156,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         if (parameterType.IsGenericType &&
             parameterType.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
         {
-            throw new NotSupportedException(
+            throw new InvalidOperationException(
                 "Join operations (Join, LeftJoin, GroupJoin) are not supported by the MongoDB EF Core Provider. " +
                 "Consider using navigation properties or restructuring your query.");
         }
