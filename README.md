@@ -2,7 +2,7 @@
 
 [![MongoDB.EntityFrameworkCore](https://img.shields.io/nuget/v/MongoDB.EntityFrameworkCore.svg)](https://www.nuget.org/packages/MongoDB.EntityFrameworkCore/)
 
-The MongoDB EF Core Provider enabled MongoDB interaction with Entity Framework Core 8 or 9 on .NET 8.0 or later and Entity Framework Core 10 on .NET 10.0 or later.
+The MongoDB EF Core Provider enables MongoDB interaction with Entity Framework Core 8 or 9 on .NET 8.0 or later, and Entity Framework Core 10 on .NET 10.0 or later.
 
 It supports MongoDB database server 5.0 or later, preferably in a transaction-enabled configuration.
 
