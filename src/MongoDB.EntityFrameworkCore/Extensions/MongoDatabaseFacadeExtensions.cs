@@ -21,6 +21,8 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Metadata.Search;
+using MongoDB.EntityFrameworkCore.Metadata.Search.Definitions;
 using MongoDB.EntityFrameworkCore.Storage;
 
 // ReSharper disable once CheckNamespace
@@ -34,7 +36,8 @@ public static class MongoDatabaseFacadeExtensions
 {
     /// <summary>
     /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
-    /// does not already exist and can therefore be created. The index may be an Atlas index or a normal MongoDB index.
+    /// does not already exist and can therefore be created. The index may be a MongoDB search index, MongoDB vector search index,
+    /// or a normal MongoDB index.
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="index">The <see cref="IIndex"/> definition.</param>
@@ -47,7 +50,8 @@ public static class MongoDatabaseFacadeExtensions
 
     /// <summary>
     /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
-    /// does not already exist and can therefore be created. The index may be an Atlas index or a normal MongoDB index.
+    /// does not already exist and can therefore be created. The index may be a MongoDB search index, MongoDB vector index, or a
+    /// normal MongoDB index.
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="index">The <see cref="IIndex"/> definition.</param>
@@ -62,14 +66,14 @@ public static class MongoDatabaseFacadeExtensions
 
     /// <summary>
     /// Creates indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for which there
-    /// is not already an index in the database. This method only creates regular, non-Atlas indexes.
+    /// is not already an index in the database. This method only creates regular, non-search and non-vector search indexes.
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     public static void CreateMissingIndexes(this DatabaseFacade databaseFacade)
         => GetDatabaseCreator(databaseFacade).CreateMissingIndexes();
 
     /// <summary>
-    /// Creates missing Atlas vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
+    /// Creates missing MongoDB vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
     /// which there is not already an index in the database.
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
@@ -78,7 +82,7 @@ public static class MongoDatabaseFacadeExtensions
 
     /// <summary>
     /// Creates indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for which there
-    /// is not already an index in the database. This method only creates regular, non-Atlas indexes.
+    /// is not already an index in the database. This method only creates regular, non-search and non-vector search indexes.
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
@@ -87,7 +91,7 @@ public static class MongoDatabaseFacadeExtensions
         => GetDatabaseCreator(databaseFacade).CreateMissingIndexesAsync(cancellationToken);
 
     /// <summary>
-    /// Creates missing Atlas vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
+    /// Creates missing MongoDB vector indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
     /// which there is not already an index in the database.
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
@@ -117,6 +121,46 @@ public static class MongoDatabaseFacadeExtensions
     /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
     public static Task WaitForVectorIndexesAsync(this DatabaseFacade databaseFacade, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
         => GetDatabaseCreator(databaseFacade).WaitForVectorIndexesAsync(timeout, cancellationToken);
+
+    /// <summary>
+    /// Creates missing MongoDB search indexes in the MongoDB database for all <see cref="IIndex"/> definitions in the EF Core model for
+    /// which there is not already an index in the database.
+    /// </summary>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    public static void CreateMissingSearchIndexes(this DatabaseFacade databaseFacade)
+        => GetDatabaseCreator(databaseFacade).CreateMissingSearchIndexes();
+
+    /// <summary>
+    /// Creates missing MongoDB search indexes in the MongoDB database for all <see cref="SearchIndexDefinition"/> definitions in
+    /// the EF Core model for which there is not already an index in the database.
+    /// </summary>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>A <see cref="Task"/> to track this async operation.</returns>
+    public static Task CreateMissingSearchIndexesAsync(this DatabaseFacade databaseFacade, CancellationToken cancellationToken = default)
+        => GetDatabaseCreator(databaseFacade).CreateMissingSearchIndexesAsync(cancellationToken);
+
+    /// <summary>
+    /// Blocks until all search indexes in the mapped collections are reporting the 'READY' state.
+    /// </summary>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
+    /// The default is 60 seconds. Zero seconds means no timeout.</param>
+    /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
+    public static void WaitForSearchIndexes(this DatabaseFacade databaseFacade, TimeSpan? timeout = null)
+        => GetDatabaseCreator(databaseFacade).WaitForSearchIndexes(timeout);
+
+    /// <summary>
+    /// Blocks until all search indexes in the mapped collections are reporting the 'READY' state.
+    /// </summary>
+    /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
+    /// <param name="timeout">The minimum amount of time to wait for all indexes to be 'READY' before aborting.
+    /// The default is 60 seconds. Zero seconds means no timeout.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel this asynchronous request.</param>
+    /// <returns>A <see cref="Task"/> to track this async operation.</returns>
+    /// <exception cref="InvalidOperationException">if the timeout expires before all indexes are 'READY'.</exception>
+    public static Task WaitForSearchIndexesAsync(this DatabaseFacade databaseFacade, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        => GetDatabaseCreator(databaseFacade).WaitForSearchIndexesAsync(timeout, cancellationToken);
 
     /// <summary>
     /// Ensures that the database for the context exists. If it exists, no action is taken. If it does not

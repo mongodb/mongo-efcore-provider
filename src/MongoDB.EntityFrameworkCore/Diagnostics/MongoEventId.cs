@@ -50,6 +50,7 @@ public static class MongoEventId
         VectorSearchNeedsIndex,
         VectorSearchReturnedZeroResults,
         WaitingForVectorIndex,
+        WaitingForSearchIndex,
     }
 
     private static EventId MakeDatabaseCommandId(Id id)
@@ -226,4 +227,13 @@ public static class MongoEventId
     ///     <para>This event uses the <see cref="TimeSpanEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
     /// </remarks>
     public static readonly EventId WaitingForVectorIndex = MakeDatabaseId(Id.WaitingForVectorIndex);
+
+    /// <summary>
+    /// EF Core is waiting for search indexes to be ready.
+    /// </summary>
+    /// <remarks>
+    ///     <para>This event is in the <see cref="DbLoggerCategory.Database" /> category.</para>
+    ///     <para>This event uses the <see cref="TimeSpanEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
+    /// </remarks>
+    public static readonly EventId WaitingForSearchIndex = MakeDatabaseId(Id.WaitingForSearchIndex);
 }

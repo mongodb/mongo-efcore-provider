@@ -16,7 +16,7 @@
 namespace MongoDB.EntityFrameworkCore.Metadata;
 
 /// <summary>
-/// Query options for running an Atlas Vector Search with <see cref="Microsoft.EntityFrameworkCore.MongoQueryableExtensions.VectorSearch{TSource,TProperty}(System.Linq.IQueryable{TSource},System.Linq.Expressions.Expression{System.Func{TSource,TProperty}},System.Linq.Expressions.Expression{System.Func{TSource,bool}},MongoDB.Driver.QueryVector,int,System.Nullable{VectorQueryOptions})"/>.
+/// Query options for running an MongoDB Vector Search with <see cref="Microsoft.EntityFrameworkCore.MongoQueryableExtensions.VectorSearch{TSource,TProperty}(System.Linq.IQueryable{TSource},System.Linq.Expressions.Expression{System.Func{TSource,TProperty}},System.Linq.Expressions.Expression{System.Func{TSource,bool}},MongoDB.Driver.QueryVector,int,System.Nullable{VectorQueryOptions})"/>.
 /// </summary>
 /// <param name="IndexName">The name of the vector search index to use.</param>
 /// <param name="NumberOfCandidates">Number of nearest neighbors to use during the search. Value must be less than or equal to 10000, and greater than or equal to the document limit. We recommend that you specify a number at least 20 times higher than the number of documents to return (limit) to increase accuracy.</param>
