@@ -6,9 +6,21 @@ MONGODB_URI=${MONGODB_URI:=mongodb://localhost:27017/}
 EFCORE_PROVIDER_PROJECT="./src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj"
 TESTS_PROJECT="./tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj"
 
-BUILD_CONFIGURATION="Debug"
+BUILD_CONFIGURATION=""
+if [[ "${PACKAGE_VERSION}" == "8."* ]]; then
+    BUILD_CONFIGURATION="Debug EF8"
+fi
 if [[ "${PACKAGE_VERSION}" == "9."* ]]; then
     BUILD_CONFIGURATION="Debug EF9"
+fi
+if [[ "${PACKAGE_VERSION}" == "10."* ]]; then
+    BUILD_CONFIGURATION="Debug EF10"
+fi
+
+# Check if BUILD_CONFIGURATION is set
+if [ -z "$BUILD_CONFIGURATION" ]; then
+  echo "Error: Unknown PACKAGE_VERSION $PACKAGE_VERSION found. Update get-build-release-config.sh to handle this version."
+  exit 1
 fi
 
 echo Retargeting API tests to use generated package instead of project dependency...

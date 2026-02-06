@@ -6,9 +6,21 @@ if [ -z "$PACKAGE_VERSION" ]; then
   echo Calculated PACKAGE_VERSION value: "$PACKAGE_VERSION"
 fi
 
-BUILD_CONFIGURATION="Release"
+BUILD_CONFIGURATION=""
+if [[ "${PACKAGE_VERSION}" == "8."* ]]; then
+    BUILD_CONFIGURATION="Release EF8"
+fi
 if [[ "${PACKAGE_VERSION}" == "9."* ]]; then
     BUILD_CONFIGURATION="Release EF9"
+fi
+if [[ "${PACKAGE_VERSION}" == "10."* ]]; then
+    BUILD_CONFIGURATION="Release EF10"
+fi
+
+# Check if BUILD_CONFIGURATION is set
+if [ -z "$BUILD_CONFIGURATION" ]; then
+  echo "Error: Unknown PACKAGE_VERSION $PACKAGE_VERSION found. Update get-build-release-config.sh to handle this version."
+  exit 1
 fi
 
 echo Creating nuget package $PACKAGE_VERSION using $BUILD_CONFIGURATION build configuration...
