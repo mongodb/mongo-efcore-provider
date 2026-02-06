@@ -13,7 +13,7 @@ stepback: true
 command_type: system
 
 # Protect ourself against rogue test case, or curl gone wild, that runs forever
-exec_timeout_secs: 900
+exec_timeout_secs: 1200
 
 # What to do when evergreen hits the timeout (`post:` tasks are run automatically)
 timeout:
