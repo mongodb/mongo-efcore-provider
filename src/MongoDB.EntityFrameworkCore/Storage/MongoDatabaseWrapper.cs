@@ -77,8 +77,29 @@ public class MongoDatabaseWrapper : Database
     public override int SaveChanges(IList<IUpdateEntry> entries)
     {
         var rootEntries = GetAllChangedRootEntries(entries);
+
+        // roots need to be marked as modified, however after SaveChanges completes, there should be no pending changes
+        var rootsToManipulate = rootEntries.Where(it => it.EntityState == EntityState.Unchanged).ToList();
+        foreach (var entry in rootsToManipulate)
+        {
+            entry.EntityState = EntityState.Modified;
+        }
+
         var updates = MongoUpdate.CreateAll(rootEntries);
 
+        var result = SaveChangesTransactionally(rootEntries.Count, updates);
+
+        // reset state back, to keep ChangeTracker happy
+        foreach (var item in rootsToManipulate)
+        {
+            item.EntityState = EntityState.Unchanged;
+        }
+
+        return result;
+    }
+
+    private int SaveChangesTransactionally(int impactedRootEnties, IEnumerable<MongoUpdate> updates)
+    {
         // Explicit transaction mode
         if (_transactionManager.CurrentTransaction is MongoTransaction mongoTransaction)
         {
@@ -88,7 +109,7 @@ public class MongoDatabaseWrapper : Database
         using var session = _mongoClient.StartSession();
 
         // No transaction mode
-        if (!ShouldUseImplicitTransaction(rootEntries.Count))
+        if (!ShouldUseImplicitTransaction(impactedRootEnties))
         {
             return WriteBatches(updates, session);
         }
@@ -109,6 +130,7 @@ public class MongoDatabaseWrapper : Database
         }
 
         transaction.Commit();
+        
         return result;
     }
 
@@ -121,8 +143,29 @@ public class MongoDatabaseWrapper : Database
     public override async Task<int> SaveChangesAsync(IList<IUpdateEntry> entries, CancellationToken cancellationToken = default)
     {
         var rootEntries = GetAllChangedRootEntries(entries);
+
+        // roots need to be marked as modified, however after SaveChanges completes, there should be no pending changes
+        var rootsToManipulate = rootEntries.Where(it => it.EntityState == EntityState.Unchanged).ToList();
+        foreach (var entry in rootsToManipulate)
+        {
+            entry.EntityState = EntityState.Modified;
+        }
+
         var updates = MongoUpdate.CreateAll(rootEntries);
 
+        var result = await SaveChangesAsyncTransactionally(rootEntries.Count, updates, cancellationToken).ConfigureAwait(false);
+
+        // reset state back, to keep ChangeTracker happy
+        foreach (var item in rootsToManipulate)
+        {
+            item.EntityState = EntityState.Unchanged;
+        }
+
+        return result;
+    }
+
+    private async Task<int> SaveChangesAsyncTransactionally(int impactedRootEnties, IEnumerable<MongoUpdate> updates, CancellationToken cancellationToken)
+    { 
         // Explicit transaction mode
         if (_transactionManager.CurrentTransaction is MongoTransaction mongoTransaction)
         {
@@ -132,7 +175,7 @@ public class MongoDatabaseWrapper : Database
         using var session = await _mongoClient.StartSessionAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
         // No transaction mode
-        if (!ShouldUseImplicitTransaction(rootEntries.Count))
+        if (!ShouldUseImplicitTransaction(impactedRootEnties))
         {
             return await WriteBatchesAsync(updates, session, cancellationToken).ConfigureAwait(false);
         }
@@ -153,6 +196,7 @@ public class MongoDatabaseWrapper : Database
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        
         return result;
     }
 
@@ -252,7 +296,7 @@ public class MongoDatabaseWrapper : Database
 
     /// <summary>
     /// We only care about updating root entities as non-root/owned entities must be contained within one.
-    /// Convert the list of entries modified by EF Core into a list of modified root entries that were either
+    /// Convert the list of entries modified by EF Core into a list of root entries that were either
     /// directly modified themselves or indirectly modified by one of the entries they own.
     /// </summary>
     /// <param name="entries">The list of modified <see cref="IUpdateEntry"/> as determined by EF Core.</param>
@@ -265,17 +309,13 @@ public class MongoDatabaseWrapper : Database
             if (!entry.EntityType.IsDocumentRoot())
             {
                 var root = GetRootEntry((InternalEntityEntry)entry);
-                if (root.EntityState == EntityState.Unchanged)
-                {
-                    root.EntityState = EntityState.Modified;
-                }
 
                 changedRootEntries.Remove(entry);
                 changedRootEntries.Add(root);
             }
         }
 
-        return changedRootEntries;
+        return (changedRootEntries);
     }
 
     private static IUpdateEntry GetRootEntry(InternalEntityEntry entry)

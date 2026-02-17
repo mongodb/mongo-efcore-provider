@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -664,6 +665,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
 
             original.locations.Add(new() {latitude = 3.3m, longitude = 4.4m});
             db.SaveChanges();
+            Assert.False(db.ChangeTracker.HasChanges());
 
             Assert.Equal(2, original.locations.Count);
         }
@@ -676,21 +678,21 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
 
             found.locations.RemoveAt(0);
             db.SaveChanges();
+            Assert.False(db.ChangeTracker.HasChanges());
 
             Assert.Single(found.locations, l => l.longitude == 4.4m);
 
-            // Known limitation of EF is you can't remove last item after a change in collection
-            // EF Issue #19135 would address that or moving entirely from owned entities to complex types in EF9
-            // found.locations.Clear();
-            // db.SaveChanges();
+            found.locations.Clear();
+            db.SaveChanges();
+            Assert.False(db.ChangeTracker.HasChanges());
         }
 
-        // {
-        //     using var db = SingleEntityDbContext.Create(collection);
-        //     var found = db.Entities.Single();
-        //
-        //     Assert.Empty(found.locations);
-        // }
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var found = db.Entities.Single();
+        
+            Assert.Empty(found.locations);
+        }
     }
 
     [Fact]

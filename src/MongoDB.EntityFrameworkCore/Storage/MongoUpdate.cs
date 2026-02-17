@@ -232,26 +232,44 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
             {
                 if (navigation.IsCollection)
                 {
-                    // Set temporary ordinals if existing ones are invalid
-                    SetTemporaryOrdinals(entry, fk, embeddedValue);
-
                     writer.WriteStartArray();
-                    var ordinal = 1;
+
+                    // find the max of the non-temp key used
+                    var ordinal = 0;
                     foreach (var dependent in (IEnumerable)embeddedValue)
                     {
                         var embeddedEntry =
                             ((InternalEntityEntry)entry).StateManager.TryGetEntry(dependent,
                                 navigation.ForeignKey.DeclaringEntityType)!;
 
-                        // Owned entities have a synthetic key based on order, apply that here
+                        var ordinalKeyProperty = FindOrdinalKeyProperty(embeddedEntry.EntityType);
+                        if (ordinalKeyProperty != null && !embeddedEntry.HasTemporaryValue(ordinalKeyProperty))
+                        {
+                            var recordValue = (int)embeddedEntry.GetCurrentValue(ordinalKeyProperty)!;
+                            ordinal = Math.Max(ordinal, recordValue);
+                        }
+                    }
+
+                    // Apply ordinal to entries still having a TemporaryValue, taking
+                    // into account the max value in use by existing entries.
+                    // Existing entries keep their key.
+                    // This means that keys can shift in order.
+                    // eg, initial list 1,2,3
+                    // Can change into 3,2,1,4 when items are moved in order and a new item added
+                    foreach (var dependent in (IEnumerable)embeddedValue)
+                    {
+                        var embeddedEntry =
+                            ((InternalEntityEntry)entry).StateManager.TryGetEntry(dependent,
+                                navigation.ForeignKey.DeclaringEntityType)!;
+
                         var ordinalKeyProperty = FindOrdinalKeyProperty(embeddedEntry.EntityType);
                         if (ordinalKeyProperty != null && embeddedEntry.HasTemporaryValue(ordinalKeyProperty))
                         {
-                            embeddedEntry.SetStoreGeneratedValue(ordinalKeyProperty, ordinal);
+                            ordinal++;
+                            embeddedEntry.SetStoreGeneratedValue(ordinalKeyProperty, ordinal, false);
                         }
 
                         WriteEntity(writer, embeddedEntry, _ => true);
-                        ordinal++;
                     }
 
                     writer.WriteEndArray();
@@ -263,43 +281,6 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
                             navigation.ForeignKey.DeclaringEntityType)!;
                     WriteEntity(writer, embeddedEntry, _ => true);
                 }
-            }
-        }
-    }
-
-    private static void SetTemporaryOrdinals(IUpdateEntry entry, IForeignKey fk, object embeddedValue)
-    {
-        var embeddedOrdinal = 1;
-        var ordinalKeyProperty = FindOrdinalKeyProperty(fk.DeclaringEntityType);
-        if (ordinalKeyProperty == null) return;
-
-        var stateManager = ((InternalEntityEntry)entry).StateManager;
-        var shouldSetTemporaryKeys = false;
-        foreach (var dependent in (IEnumerable)embeddedValue)
-        {
-            var embeddedEntry = stateManager.TryGetEntry(dependent, fk.DeclaringEntityType)!;
-
-            if ((int)embeddedEntry.GetCurrentValue(ordinalKeyProperty)! != embeddedOrdinal
-                && !embeddedEntry.HasTemporaryValue(ordinalKeyProperty))
-            {
-                // We have old persisted ordinals that are no longer valid
-                // Set temporary ones to avoid key conflicts when creating new
-                // non-temporary keys.
-                shouldSetTemporaryKeys = true;
-                break;
-            }
-
-            embeddedOrdinal++;
-        }
-
-        if (shouldSetTemporaryKeys)
-        {
-            var temporaryOrdinal = -1;
-            foreach (var dependent in (IEnumerable)embeddedValue)
-            {
-                var embeddedEntry = stateManager.TryGetEntry(dependent, fk.DeclaringEntityType)!;
-                embeddedEntry.SetTemporaryValue(ordinalKeyProperty, temporaryOrdinal, setModified: false);
-                temporaryOrdinal--;
             }
         }
     }
