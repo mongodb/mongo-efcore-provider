@@ -699,6 +699,49 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task OwnedEntity_collection_modification_does_not_write_unmodified_root_properties(bool async)
+    {
+        var collection = database.CreateCollection<PersonWithMultipleLocations>(values: [async]);
+
+        await using var db = SingleEntityDbContext.Create(collection);
+
+        var entity = new PersonWithMultipleLocations
+        {
+            _id = ObjectId.GenerateNewId(),
+            name = "Original",
+            locations =
+            [
+                new Location {latitude = 1.1m, longitude = 2.2m},
+                new Location {latitude = 3.3m, longitude = 4.4m}
+            ]
+        };
+
+        db.Entities.Add(entity);
+        await SaveChanges(db, async);
+
+        // Use a second context to modify only the name field externally
+        {
+            await using var secondDb = SingleEntityDbContext.Create(collection);
+            var found = db.Entities.Single();
+            found.name = "Externally modified";
+            await SaveChanges(secondDb, async);
+        }
+
+        entity.locations.RemoveAt(0);
+        await SaveChanges(db, async);
+
+        {
+            await using var thirdDb = SingleEntityDbContext.Create(collection);
+
+            var found = db.Entities.Single();
+            Assert.Equal("Externally modified", found.name);
+            Assert.Single(found.locations);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task OwnedEntity_with_nested_collection_adjusted_correctly(bool async)
     {
         var collection = database.CreateCollection<FirstLevel>(values: [async]);
