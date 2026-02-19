@@ -193,6 +193,22 @@ functions:
           BUILD_CONFIGURATION="Debug EF10" \
             ./evergreen/run-tests.sh
 
+  run-tests-macos:
+    - command: shell.exec
+      type: test
+      params:
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          DRIVER_VERSION=${DRIVER_VERSION} \
+          OS=${OS} \
+          MONGODB_URI="${MONGODB_URI}" \
+          ATLAS_URI="${ATLAS_URI}" \
+          MONGODB_VERSION="${version}" \
+          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
+          BUILD_CONFIGURATION="Debug EF10" \
+            ./evergreen/run-tests.sh
+
   cleanup:
     - command: shell.exec
       params:
@@ -431,6 +447,11 @@ tasks:
       - func: bootstrap-mongo-orchestration
       - func: run-tests
 
+  - name: main-tests-macos
+    commands:
+      - func: bootstrap-mongo-orchestration
+      - func: run-tests-macos
+
   - name: pack-packages
     commands:
       - func: pack-packages
@@ -566,13 +587,24 @@ buildvariants:
 - matrix_name: main-tests
   matrix_spec:
     version: ["5.0", "6.0", "7.0", "latest"]
-    os: "*"
+    os: ["windows-64", "ubuntu-2004"]
     driver: "*"
     topology: "replicaset"
   display_name: "${driver} Driver on ${os} with ${version} ${topology} Server"
   tags: ["tests-variant"]
   tasks:
     - name: main-tests
+
+- matrix_name: main-tests-macos
+  matrix_spec:
+    version: ["5.0", "6.0", "7.0", "latest"]
+    os: "macos-14"
+    driver: "*"
+    topology: "replicaset"
+  display_name: "${driver} Driver on ${os} with ${version} ${topology} Server"
+  tags: ["tests-variant"]
+  tasks:
+    - name: main-tests-macos
 
 - matrix_name: validate-apidocs
   matrix_spec:

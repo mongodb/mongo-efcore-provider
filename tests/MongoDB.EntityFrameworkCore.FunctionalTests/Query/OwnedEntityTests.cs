@@ -640,13 +640,15 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Contains(entity.locations.GetType().ShortDisplayName(), ex.Message);
     }
 
-    [Fact]
-    public void OwnedEntity_with_collection_adjusted_correctly()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OwnedEntity_with_collection_adjusted_correctly(bool async)
     {
-        var collection = database.CreateCollection<PersonWithMultipleLocations>();
+        var collection = database.CreateCollection<PersonWithMultipleLocations>(values: [async]);
 
         {
-            using var db = SingleEntityDbContext.Create(collection);
+            await using var db = SingleEntityDbContext.Create(collection);
 
             var original = new PersonWithMultipleLocations
             {
@@ -659,39 +661,173 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             };
 
             db.Add(original);
-            db.SaveChanges();
+            await SaveChanges(db, async);
             Assert.Single(original.locations, l => l.latitude == 1.1m);
 
             original.locations.Add(new() {latitude = 3.3m, longitude = 4.4m});
-            db.SaveChanges();
+            await SaveChanges(db, async);
 
             Assert.Equal(2, original.locations.Count);
         }
 
         {
-            using var db = SingleEntityDbContext.Create(collection);
+            await using var db = SingleEntityDbContext.Create(collection);
 
             var found = db.Entities.Single();
             Assert.Equal(2, found.locations.Count);
 
             found.locations.RemoveAt(0);
-            db.SaveChanges();
-
+            await SaveChanges(db, async);
+            AssertAllEntriesAreUnchanged(db);
             Assert.Single(found.locations, l => l.longitude == 4.4m);
 
-            // Known limitation of EF is you can't remove last item after a change in collection
-            // EF Issue #19135 would address that or moving entirely from owned entities to complex types in EF9
-            // found.locations.Clear();
-            // db.SaveChanges();
+            await SaveChanges(db, async);
+            AssertAllEntriesAreUnchanged(db);
+
+            found.locations.Clear();
+            await SaveChanges(db, async);
         }
 
-        // {
-        //     using var db = SingleEntityDbContext.Create(collection);
-        //     var found = db.Entities.Single();
-        //
-        //     Assert.Empty(found.locations);
-        // }
+        {
+            await using var db = SingleEntityDbContext.Create(collection);
+            var found = db.Entities.Single();
+
+            Assert.Empty(found.locations);
+        }
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OwnedEntity_collection_modification_does_not_write_unmodified_root_properties(bool async)
+    {
+        var collection = database.CreateCollection<PersonWithMultipleLocations>(values: [async]);
+
+        await using var db = SingleEntityDbContext.Create(collection);
+
+        var entity = new PersonWithMultipleLocations
+        {
+            _id = ObjectId.GenerateNewId(),
+            name = "Original",
+            locations =
+            [
+                new Location {latitude = 1.1m, longitude = 2.2m},
+                new Location {latitude = 3.3m, longitude = 4.4m}
+            ]
+        };
+
+        db.Entities.Add(entity);
+        await SaveChanges(db, async);
+
+        // Use a second context to modify only the name field externally
+        {
+            await using var secondDb = SingleEntityDbContext.Create(collection);
+            var found = db.Entities.Single();
+            found.name = "Externally modified";
+            await SaveChanges(secondDb, async);
+        }
+
+        entity.locations.RemoveAt(0);
+        await SaveChanges(db, async);
+
+        {
+            await using var thirdDb = SingleEntityDbContext.Create(collection);
+
+            var found = db.Entities.Single();
+            Assert.Equal("Externally modified", found.name);
+            Assert.Single(found.locations);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OwnedEntity_with_nested_collection_adjusted_correctly(bool async)
+    {
+        var collection = database.CreateCollection<FirstLevel>(values: [async]);
+
+        {
+            await using var db = SingleEntityDbContext.Create(collection);
+
+            var original = new FirstLevel
+            {
+                _id = Guid.NewGuid(),
+                day = DayOfWeek.Monday,
+                reference = new() { name = "ref", day = DayOfWeek.Friday },
+                children =
+                [
+                    new SecondLevel
+                    {
+                        day = DayOfWeek.Tuesday,
+                        children =
+                        [
+                            new ThirdLevel { name = "A", day = DayOfWeek.Wednesday, reference = new() { name = "refA", day = DayOfWeek.Thursday } },
+                            new ThirdLevel { name = "B", day = DayOfWeek.Thursday, reference = new() { name = "refB", day = DayOfWeek.Friday } }
+                        ]
+                    }
+                ]
+            };
+
+            db.Entities.Add(original);
+            await SaveChanges(db, async);
+            AssertAllEntriesAreUnchanged(db);
+
+            // Add a second SecondLevel with its own children
+            original.children.Add(new SecondLevel
+            {
+                day = DayOfWeek.Saturday,
+                children = [new ThirdLevel { name = "C", day = DayOfWeek.Sunday, reference = new() { name = "refC", day = DayOfWeek.Monday } }]
+            });
+            await SaveChanges(db, async);
+            AssertAllEntriesAreUnchanged(db);
+
+            Assert.Equal(2, original.children.Count);
+        }
+
+        {
+            await using var db = SingleEntityDbContext.Create(collection);
+
+            var found = db.Entities.Single();
+            Assert.Equal(2, found.children.Count);
+            Assert.Equal(2, found.children[0].children.Count);
+            Assert.Single(found.children[1].children);
+
+            // Remove first child from nested collection
+            found.children[0].children.RemoveAt(0);
+            await SaveChanges(db, async);
+            AssertAllEntriesAreUnchanged(db);
+            Assert.Single(found.children[0].children, c => c.name == "B");
+
+            // Remove first SecondLevel entirely
+            found.children.RemoveAt(0);
+            await SaveChanges(db, async);
+            AssertAllEntriesAreUnchanged(db);
+            Assert.Single(found.children, c => c.day == DayOfWeek.Saturday);
+
+            // Verify no spurious changes on subsequent save
+            await SaveChanges(db, async);
+            AssertAllEntriesAreUnchanged(db);
+        }
+
+        {
+            await using var db = SingleEntityDbContext.Create(collection);
+            var found = db.Entities.Single();
+
+            Assert.Single(found.children);
+            Assert.Single(found.children[0].children, c => c.name == "C");
+        }
+    }
+
+    private static async Task SaveChanges(DbContext db, bool async)
+    {
+        if (async)
+            await db.SaveChangesAsync();
+        else
+            db.SaveChanges();
+    }
+
+    private static void AssertAllEntriesAreUnchanged<T>(SingleEntityDbContext<T> db) where T : class
+        => Assert.All(db.ChangeTracker.Entries(), e => Assert.Equal(EntityState.Unchanged, e.State));
 
     [Fact]
     public void OwnedEntity_with_two_owned_entities_materializes()

@@ -247,7 +247,7 @@ internal class MongoUpdate(IUpdateEntry entry, WriteModel<BsonDocument> model)
                         var ordinalKeyProperty = FindOrdinalKeyProperty(embeddedEntry.EntityType);
                         if (ordinalKeyProperty != null && embeddedEntry.HasTemporaryValue(ordinalKeyProperty))
                         {
-                            embeddedEntry.SetStoreGeneratedValue(ordinalKeyProperty, ordinal);
+                            embeddedEntry.SetStoreGeneratedValue(ordinalKeyProperty, ordinal, setModified: false);
                         }
 
                         WriteEntity(writer, embeddedEntry, _ => true);
