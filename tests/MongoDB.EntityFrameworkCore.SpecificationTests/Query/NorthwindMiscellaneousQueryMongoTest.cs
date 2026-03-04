@@ -14,6 +14,7 @@
  */
 
 using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
@@ -197,7 +198,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Skip_1_Take_0_works_when_constant(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subqueries not supported
         await AssertTranslationFailed(() => base.Skip_1_Take_0_works_when_constant(async));
 
         AssertMql();
@@ -205,7 +206,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Take_0_works_when_constant(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subqueries not supported
         await AssertTranslationFailed(() => base.Take_0_works_when_constant(async));
 
         AssertMql();
@@ -1100,14 +1101,11 @@ Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$subt
 
     public override async Task Queryable_simple_anonymous(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing",
-            (await Assert.ThrowsAsync<FormatException>(() => base.Queryable_simple_anonymous(async))).Message);
+        await base.Queryable_simple_anonymous(async);
 
         AssertMql(
             """
-            Customers.{ "$project" : { "c" : "$$ROOT", "_id" : 0 } }
+            Customers.
             """);
     }
 
@@ -1296,7 +1294,7 @@ Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$subt
 
     public override async Task All_top_level_subquery(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subqueries not supported
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1310,7 +1308,7 @@ Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$subt
 
     public override async Task All_top_level_subquery_ef_property(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subqueries not supported
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1709,14 +1707,11 @@ Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$subt
 
     public override async Task OrderBy_anon2(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing",
-            (await Assert.ThrowsAsync<FormatException>(() => base.OrderBy_anon2(async))).Message);
+        await base.OrderBy_anon2(async);
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "c" : "$$ROOT", "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }
             """);
     }
 
@@ -1980,14 +1975,11 @@ Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$subt
 
     public override async Task Null_Coalesce_Short_Circuit(bool async)
     {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "An error occurred while deserializing",
-            (await Assert.ThrowsAsync<FormatException>(() => base.Null_Coalesce_Short_Circuit(async))).Message);
+        await base.Null_Coalesce_Short_Circuit(async);
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "Customer" : "$$ROOT", "Test" : { "$literal" : false }, "_id" : 0 } }
+            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -2518,7 +2510,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_date_add_year(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "DateTime",
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_date_add_year(async))).Message);
@@ -2529,7 +2521,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_datetime_add_month(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "DateTime",
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_month(async))).Message);
@@ -2540,7 +2532,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_datetime_add_hour(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "DateTime",
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_hour(async))).Message);
@@ -2551,7 +2543,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_datetime_add_minute(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "DateTime",
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_minute(async))).Message);
@@ -2562,7 +2554,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_datetime_add_second(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "DateTime",
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_second(async))).Message);
@@ -2573,7 +2565,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_date_add_milliseconds_above_the_range(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "DateTime",
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_date_add_milliseconds_above_the_range(async)))
@@ -2585,7 +2577,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_date_add_milliseconds_below_the_range(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "DateTime",
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_date_add_milliseconds_below_the_range(async)))
@@ -2597,7 +2589,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_date_add_milliseconds_large_number_divided(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "Rewriting child expression",
             (await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -2939,7 +2931,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Anonymous_subquery_orderby(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Anonymous_projection_skip_take_empty_collection_FirstOrDefault(async));
 
         AssertMql(
@@ -3672,7 +3664,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Anonymous_projection_skip_empty_collection_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Anonymous_projection_skip_empty_collection_FirstOrDefault(async));
 
         AssertMql(
@@ -3681,7 +3673,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Anonymous_projection_take_empty_collection_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Anonymous_projection_take_empty_collection_FirstOrDefault(async));
 
         AssertMql(
@@ -3690,7 +3682,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Anonymous_projection_skip_take_empty_collection_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Anonymous_projection_skip_take_empty_collection_FirstOrDefault(async));
 
         AssertMql(
@@ -4041,15 +4033,16 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
     public override async Task Context_based_client_method(bool async)
     {
-        // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported: value",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Context_based_client_method(async))).Message);
+        await base.Context_based_client_method(async);
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.
+""",
+            //
+            """
+Customers.
+""");
     }
 
     public override async Task Select_nested_collection_in_anonymous_type(bool async)
@@ -4315,7 +4308,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
     public override async Task Select_expression_datetime_add_ticks(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "DateTime",
             (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_ticks(async))).Message);
@@ -4550,43 +4543,31 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
     public override async Task Client_code_using_instance_method_throws(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Client_code_using_instance_method_throws(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
+        Assert.Equal(
+            CoreStrings.ClientProjectionCapturingConstantInMethodInstance(
+                "MongoDB.EntityFrameworkCore.SpecificationTests.Query.NorthwindMiscellaneousQueryMongoTest",
+                "InstanceMethod"),
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                () => base.Client_code_using_instance_method_throws(async))).Message);
     }
 
     public override async Task Client_code_using_instance_in_static_method(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Client_code_using_instance_in_static_method(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
+        Assert.Equal(
+            CoreStrings.ClientProjectionCapturingConstantInMethodArgument(
+                "MongoDB.EntityFrameworkCore.SpecificationTests.Query.NorthwindMiscellaneousQueryMongoTest",
+                "StaticMethod"),
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                () => base.Client_code_using_instance_in_static_method(async))).Message);
     }
 
     public override async Task Client_code_using_instance_in_anonymous_type(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expected item:",
-            (await Assert.ThrowsAsync<TrueException>(() => base.Client_code_using_instance_in_anonymous_type(async))).Message);
-
-        AssertMql(
-            """
-            Customers.{ "$project" : { "_v" : { "$literal" : { "A" : { "_t" : "NorthwindMiscellaneousQueryMongoTest" } } }, "_id" : 0 } }
-            """);
+        Assert.Equal(
+            CoreStrings.ClientProjectionCapturingConstantInTree(
+                "MongoDB.EntityFrameworkCore.SpecificationTests.Query.NorthwindMiscellaneousQueryMongoTest"),
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                () => base.Client_code_using_instance_in_anonymous_type(async))).Message);
     }
 
     public override async Task Client_code_unknown_method(bool async)

@@ -119,6 +119,13 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
                 return new ProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
 
+            case MethodCallExpression methodCallExpression
+                when IsScalarMethodPropertyAccess(methodCallExpression):
+                var projMember = GetCurrentProjectionMember();
+                _projectionMapping[projMember] = methodCallExpression;
+
+                return new ProjectionBindingExpression(_queryExpression, projMember, expression.Type);
+
             default:
                 return base.Visit(expression);
         }
@@ -522,6 +529,35 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
     private void ExitProjectionMember()
         => _projectionMembers.Pop();
+
+    /// <summary>
+    /// Checks whether a method call expression represents a scalar property access that should
+    /// be stored in the projection mapping (like <see cref="MemberExpression"/>), rather than
+    /// being fully visited. This covers <c>EF.Property</c> (for non-navigation properties) and
+    /// <c>Mql.Field</c> calls.
+    /// </summary>
+    private static bool IsScalarMethodPropertyAccess(MethodCallExpression methodCallExpression)
+    {
+        if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))
+        {
+            if (source is StructuralTypeShaperExpression { StructuralType: IEntityType entityType })
+            {
+                var navigation = entityType.FindNavigation(memberName);
+                // Embedded navigations should be handled by VisitMethodCall
+                return navigation == null || !navigation.IsEmbedded();
+            }
+
+            return false;
+        }
+
+        // Mql.Field<TDoc, TField>() is always a scalar field extraction
+        if (methodCallExpression.Method is { Name: "Field", DeclaringType.FullName: "MongoDB.Driver.Mql" })
+        {
+            return true;
+        }
+
+        return false;
+    }
 
     private static Expression MatchTypes(
         Expression expression,

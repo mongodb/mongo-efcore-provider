@@ -330,7 +330,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         return base.VisitMethodCall(methodCallExpression);
     }
 
-    private Expression CreateGetValueExpression(
+    protected Expression CreateGetValueExpression(
         Expression docExpression,
         IProperty property,
         Type type)

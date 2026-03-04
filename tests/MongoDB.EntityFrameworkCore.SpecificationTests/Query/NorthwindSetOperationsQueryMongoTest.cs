@@ -41,25 +41,25 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_Intersect(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Union_Intersect(async));
     }
 
     public override async Task Intersect_non_entity(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Intersect_non_entity(async));
     }
 
     public override async Task Intersect_nested(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Intersect_nested(async));
     }
 
     public override async Task Intersect(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Intersect(async));
     }
 
@@ -642,7 +642,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Collection_projection_after_set_operation(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Collection_projection_after_set_operation(async));
 
         AssertMql(
@@ -651,7 +651,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Concat_with_one_side_being_GroupBy_aggregate(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Concat_with_one_side_being_GroupBy_aggregate(async));
 
         AssertMql(
@@ -660,7 +660,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_on_entity_with_correlated_collection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Union_on_entity_with_correlated_collection(async));
 
         AssertMql(
@@ -669,7 +669,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_on_entity_plus_other_column_with_correlated_collection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Union_on_entity_plus_other_column_with_correlated_collection(async));
 
         AssertMql(
@@ -752,7 +752,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Collection_projection_after_set_operation_fails_if_distinct(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Collection_projection_after_set_operation_fails_if_distinct(async));
 
         AssertMql();
@@ -760,7 +760,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Collection_projection_before_set_operation_fails(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Collection_projection_before_set_operation_fails(async));
 
         AssertMql();
@@ -770,7 +770,8 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Intersect_on_distinct(bool async)
     {
-        await AssertNoProjectionSupport(() => base.Intersect_on_distinct(async));
+        // Fails: Subquery selection
+        await AssertTranslationFailed(() => base.Intersect_on_distinct(async));
     }
 
     public override async Task Union_on_distinct(bool async)
@@ -877,10 +878,6 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
-
-    // Fails: Projections issue EF-76
-    private static Task AssertNoProjectionSupport(Func<Task> query)
-        => Assert.ThrowsAsync<InvalidOperationException>(() => query());
 
     // Fails: Cross-document navigation access issue EF-216
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
