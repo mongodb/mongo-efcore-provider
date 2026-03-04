@@ -11,7 +11,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
     public partial class SimpleContextModel
     {
         private SimpleContextModel()
-            : base(skipDetectChanges: false, modelId: new Guid("436c97bc-761b-453c-a4f6-30ed2976f3ea"), entityTypeCount: 2)
+            : base(skipDetectChanges: false, modelId: new Guid("b39f9399-86f2-4732-9a2c-6aa528cafcae"), entityTypeCount: 2)
         {
         }
 
