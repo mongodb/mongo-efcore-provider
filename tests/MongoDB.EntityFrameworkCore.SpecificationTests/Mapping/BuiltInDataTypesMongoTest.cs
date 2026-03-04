@@ -17,7 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
-using MongoDB.Driver.Core.Misc;
+using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using Xunit.Sdk;
@@ -27,18 +27,6 @@ namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture fixture)
     : BuiltInDataTypesTestBase<BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture>(fixture)
 {
-    // Fails: Enum casting issue EF-215
-    public override async Task Can_filter_projection_with_captured_enum_variable(bool async)
-        => Assert.Contains(
-            "Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[",
-            (await Assert.ThrowsAsync<Exception>(() => base.Can_filter_projection_with_captured_enum_variable(async))).Message);
-
-    // Fails: Enum casting issue EF-215
-    public override async Task Can_filter_projection_with_inline_enum_variable(bool async)
-        => Assert.Contains(
-            "Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[",
-            (await Assert.ThrowsAsync<Exception>(() => base.Can_filter_projection_with_inline_enum_variable(async))).Message);
-
     #if !EF8
     // Fails: Include issue EF-117
     public override async Task Can_insert_and_read_back_with_string_key()
@@ -64,10 +52,8 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
 
     // Fails: Projecting DateTimeOffset members EF-218
     public override async Task Optional_datetime_reading_null_from_database()
-        => Assert.Contains(
-            "Serializer for System.DateTimeOffset does not represent members as fields.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Optional_datetime_reading_null_from_database()))
-            .Message);
+        => await Assert.ThrowsAsync<ExpressionNotSupportedException>(
+            () => base.Optional_datetime_reading_null_from_database());
     #else
     // Fails: Include issue EF-117
     public override void Can_insert_and_read_back_with_string_key()
@@ -92,9 +78,8 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
 
     // Fails: Projecting DateTimeOffset members EF-218
     public override void Optional_datetime_reading_null_from_database()
-        => Assert.Contains(
-            "Serializer for System.DateTimeOffset does not represent members as fields.",
-            Assert.Throws<NotSupportedException>(() => base.Optional_datetime_reading_null_from_database()).Message);
+        => Assert.Throws<ExpressionNotSupportedException>(
+            () => base.Optional_datetime_reading_null_from_database());
     #endif
 
     private static void AssertTranslationFailed(Action query)

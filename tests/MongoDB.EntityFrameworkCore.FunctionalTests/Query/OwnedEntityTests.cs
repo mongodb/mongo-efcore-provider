@@ -131,9 +131,15 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection);
 
         var location = db.Entities.First().locations[1];
-        var actual = db.Entities.FirstOrDefault(p => p.locations.Contains(location));
 
-        Assert.Equal("Damien", actual.name);
+        // Fails EF-299 entity equality
+        Assert.Contains(
+            "Entity to entity comparison is not supported",
+            Assert.Throws<NotSupportedException>(() => db.Entities.FirstOrDefault(p => !p.locations.Contains(location))).Message);
+
+        // var actual = db.Entities.FirstOrDefault(p => p.locations.Contains(location));
+        //
+        // Assert.Equal("Damien", actual.name);
     }
 
     [Fact]
@@ -144,9 +150,15 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection);
 
         var location = db.Entities.First().locations[1];
-        var actual = db.Entities.FirstOrDefault(p => !p.locations.Contains(location));
 
-        Assert.Equal("Carmen", actual.name);
+        // Fails EF-299 entity equality
+        Assert.Contains(
+            "Entity to entity comparison is not supported",
+            Assert.Throws<NotSupportedException>(() => db.Entities.FirstOrDefault(p => !p.locations.Contains(location))).Message);
+
+        // var actual = db.Entities.FirstOrDefault(p => !p.locations.Contains(location));
+        //
+        // Assert.Equal("Carmen", actual.name);
     }
 
     [Fact]

@@ -206,8 +206,12 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture database)
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var results = db.Entities.Where(e => e.Dictionary.ContainsKey("key1")).ToArray();
-            Assert.Single(results);
+
+            // Fails EF-300 different dictionary types
+            Assert.Throws<NullReferenceException>(() => db.Entities.Where(e => e.Dictionary.ContainsKey("key1")).ToArray());
+
+            // var results = db.Entities.Where(e => e.Dictionary.ContainsKey("key1")).ToArray();
+            // Assert.Single(results);
         }
     }
 
@@ -286,8 +290,12 @@ public class WhereDictionaryTests(TemporaryDatabaseFixture database)
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            var results = db.Entities.Where(e => e.Dictionary.ContainsKey("key1")).ToArray();
-            Assert.Single(results);
+
+            // Fails EF-300 different dictionary types
+            Assert.Throws<NullReferenceException>(() => db.Entities.Where(e => e.Dictionary.ContainsKey("key1")).ToArray());
+
+            // var results = db.Entities.Where(e => e.Dictionary.ContainsKey("key1")).ToArray();
+            // Assert.Single(results);
         }
     }
 

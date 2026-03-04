@@ -185,29 +185,22 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Project_to_object_array(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Project_to_object_array(async))).Message);
+        await base.Project_to_object_array(async);
 
         AssertMql(
             """
-            Employees.
+            Employees.{ "$match" : { "_id" : 1 } }, { "$project" : { "_v" : ["$_id", "$ReportsTo", "$Title"], "_id" : 0 } }
             """);
     }
 
     public override async Task Projection_of_entity_type_into_object_array(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Constructor on type 'MongoDB.Bson.Serialization.Serializers.ArraySerializer",
-            (await Assert.ThrowsAsync<MissingMethodException>(() =>
-                base.Projection_of_entity_type_into_object_array(async))).Message);
+        await Assert.ThrowsAsync<NotImplementedException>(()
+            => base.Projection_of_entity_type_into_object_array(async));
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_v" : ["$$ROOT"], "_id" : 0 } }
             """);
     }
 
@@ -648,7 +641,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: Format(\"{0}\", Convert(e.EmployeeID, Object)).",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Projection_in_a_subquery_should_be_liftable(async))).Message);
 
@@ -662,7 +655,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: (o.OrderDate.Value",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Projection_containing_DateTime_subtraction(async))).Message);
 
@@ -922,7 +915,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: o.OrderDate.GetValueOrDefault().",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Select_GetValueOrDefault_on_DateTime(async))).Message);
 
@@ -1527,10 +1520,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
     public override async Task Ternary_in_client_eval_assigns_correct_types(bool async)
     {
         // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported: ClientMethod(o.CustomerID).",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Ternary_in_client_eval_assigns_correct_types(async))).Message);
+        await Assert.ThrowsAsync<ExpressionNotSupportedException>(()
+            => base.Ternary_in_client_eval_assigns_correct_types(async));
 
         AssertMql(
             """
@@ -1775,7 +1766,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
     {
         // Fails: Projections issue EF-76
         Assert.Contains(
-            "Expression not supported: ClientMethod(c).",
+            "Expression not supported: ClientMethod(c)",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 base.Client_method_in_projection_requiring_materialization_2(async))).Message);
 

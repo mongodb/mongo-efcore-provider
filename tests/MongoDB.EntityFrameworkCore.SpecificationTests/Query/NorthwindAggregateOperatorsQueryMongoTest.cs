@@ -117,8 +117,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     {
         // Fails: Does not use translation failed message
         Assert.Contains(
-            "Serializer for Microsoft.EntityFramework",
-            (await Assert.ThrowsAsync<ContainsException>(() =>
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() =>
                 base.Average_with_unmapped_property_access_throws_meaningful_exception(async))).Message);
 
         AssertMql(

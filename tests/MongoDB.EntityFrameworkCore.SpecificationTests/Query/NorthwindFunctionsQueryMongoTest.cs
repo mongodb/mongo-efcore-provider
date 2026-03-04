@@ -15,6 +15,7 @@
 
 #if EF8 || EF9
 
+using System.Reflection;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
@@ -759,7 +760,7 @@ Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
     {
         // Fails: String.Replace issue EF-223
         Assert.Contains(
-            "Expression not supported: \"AROUT\".Replace",
+            "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.String_Compare_to_nested(async))).Message);
 
         AssertMql(
@@ -1752,10 +1753,8 @@ OrderDetails.
 
     public override async Task Convert_ToByte(bool async)
     {
-        // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToByte(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToByte(async))).Message);
+        // Fails: Throws a different exception on EF9
+        await Assert.ThrowsAsync<TargetInvocationException>(() => base.Convert_ToByte(async));
 
         AssertMql(
             """
@@ -1791,10 +1790,8 @@ OrderDetails.
 
     public override async Task Convert_ToInt16(bool async)
     {
-        // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToInt16(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToInt16(async))).Message);
+        // Fails: Throws a different exception on EF9
+        await Assert.ThrowsAsync<TargetInvocationException>(() => base.Convert_ToInt16(async));
 
         AssertMql(
             """

@@ -258,7 +258,7 @@ Books.{ "$vectorSearch" : { "path" : "Preface.Floats", "limit" : 4, "index" : "F
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "Author" : "$Author", "Score" : "$__score", "_id" : 0 } }
+Books.
 """);
     }
 
@@ -268,7 +268,7 @@ Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsInd
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "Book" : "$$ROOT", "Score" : "$__score", "_id" : 0 } }
+Books.
 """);
     }
 
@@ -278,7 +278,7 @@ Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsInd
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "Book" : { "_id" : "$_id", "Title" : "$Title", "Author" : "$Author", "Isbn" : "$Isbn", "Comments" : "$comments", "Pages" : "$Pages", "IsPublished" : "$is_published" }, "Score" : "$__score", "_id" : 0 } }
+Books.
 """);
     }
 

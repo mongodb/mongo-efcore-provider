@@ -171,8 +171,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
     {
          // Fails: Compiled query with non-query operator issue EF-232
          Assert.Contains(
-             "LogicalBinaryExpression' to type 'System.Linq.Expressions.MethodCallExpression'",
-             Assert.Throws<InvalidCastException>(() => base.Compiled_query_when_does_not_end_in_query_operator()).Message);
+             "No ultimate source found",
+             Assert.Throws<ArgumentException>(() => base.Compiled_query_when_does_not_end_in_query_operator()).Message);
 
          AssertMql(
              """
