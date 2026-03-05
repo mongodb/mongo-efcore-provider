@@ -77,7 +77,8 @@ public class MongoDatabaseWrapper : Database
     public override int SaveChanges(IList<IUpdateEntry> entries)
     {
         var rootEntries = GetAllChangedRootEntries(entries);
-        var updates = MongoUpdate.CreateAll(rootEntries);
+        var updates = MongoUpdate.CreateAll(rootEntries).ToList();
+        AddEntriesPromotedDuringSave(entries);
 
         // Explicit transaction mode
         if (_transactionManager.CurrentTransaction is MongoTransaction mongoTransaction)
@@ -121,7 +122,8 @@ public class MongoDatabaseWrapper : Database
     public override async Task<int> SaveChangesAsync(IList<IUpdateEntry> entries, CancellationToken cancellationToken = default)
     {
         var rootEntries = GetAllChangedRootEntries(entries);
-        var updates = MongoUpdate.CreateAll(rootEntries);
+        var updates = MongoUpdate.CreateAll(rootEntries).ToList();
+        AddEntriesPromotedDuringSave(entries);
 
         // Explicit transaction mode
         if (_transactionManager.CurrentTransaction is MongoTransaction mongoTransaction)
@@ -260,6 +262,7 @@ public class MongoDatabaseWrapper : Database
     private static HashSet<IUpdateEntry> GetAllChangedRootEntries(IList<IUpdateEntry> entries)
     {
         var changedRootEntries = new HashSet<IUpdateEntry>(entries);
+        List<IUpdateEntry>? promotedRoots = null;
         foreach (var entry in entries)
         {
             if (!entry.EntityType.IsDocumentRoot())
@@ -268,6 +271,7 @@ public class MongoDatabaseWrapper : Database
                 if (root.EntityState == EntityState.Unchanged)
                 {
                     root.EntityState = EntityState.Modified;
+                    (promotedRoots ??= []).Add(root);
                 }
 
                 changedRootEntries.Remove(entry);
@@ -275,7 +279,38 @@ public class MongoDatabaseWrapper : Database
             }
         }
 
+        // Add roots we promoted to Modified into the entries list so that
+        // EF Core's AcceptAllChanges will reset them to Unchanged after save.
+        if (promotedRoots != null)
+        {
+            foreach (var root in promotedRoots)
+            {
+                entries.Add(root);
+            }
+        }
+
         return changedRootEntries;
+    }
+
+    /// <summary>
+    /// Adds any entries that were promoted to Modified during save preparation
+    /// (root entity promotion and FK cascade from ordinal key reassignment)
+    /// into the entries list so EF Core's AcceptAllChanges will reset them after save.
+    /// </summary>
+    private static void AddEntriesPromotedDuringSave(IList<IUpdateEntry> entries)
+    {
+        if (entries.Count == 0) return;
+
+        var existingEntries = new HashSet<IUpdateEntry>(entries);
+        var stateManager = ((InternalEntityEntry)entries[0]).StateManager;
+
+        foreach (var entry in stateManager.GetEntriesForState(modified: true))
+        {
+            if (!existingEntries.Contains(entry) && !entry.EntityType.IsDocumentRoot())
+            {
+                entries.Add(entry);
+            }
+        }
     }
 
     private static IUpdateEntry GetRootEntry(InternalEntityEntry entry)

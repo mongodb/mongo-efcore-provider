@@ -13,7 +13,7 @@ stepback: true
 command_type: system
 
 # Protect ourself against rogue test case, or curl gone wild, that runs forever
-exec_timeout_secs: 900
+exec_timeout_secs: 1200
 
 # What to do when evergreen hits the timeout (`post:` tasks are run automatically)
 timeout:
@@ -178,6 +178,22 @@ functions:
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF9" \
             ./evergreen/run-tests.sh
+    - command: shell.exec
+      type: test
+      params:
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          DRIVER_VERSION=${DRIVER_VERSION} \
+          OS=${OS} \
+          MONGODB_URI="${MONGODB_URI}" \
+          ATLAS_URI="${ATLAS_URI}" \
+          MONGODB_VERSION="${version}" \
+          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
+          BUILD_CONFIGURATION="Debug EF10" \
+            ./evergreen/run-tests.sh
+
+  run-tests-macos:
     - command: shell.exec
       type: test
       params:
@@ -431,6 +447,11 @@ tasks:
       - func: bootstrap-mongo-orchestration
       - func: run-tests
 
+  - name: main-tests-macos
+    commands:
+      - func: bootstrap-mongo-orchestration
+      - func: run-tests-macos
+
   - name: pack-packages
     commands:
       - func: pack-packages
@@ -554,25 +575,26 @@ axes:
           OS: "macos-14"
         run_on: macos-14
 
-  - id: driver
-    display_name: MongoDB.Driver Version
-    values:
-      - id: "latest"
-        display_name: "Latest"
-        variables:
-          DRIVER_VERSION: "latest"
-
 buildvariants:
 - matrix_name: main-tests
   matrix_spec:
     version: ["5.0", "6.0", "7.0", "latest"]
-    os: "*"
-    driver: "*"
+    os: ["windows-64", "ubuntu-2004"]
     topology: "replicaset"
-  display_name: "${driver} Driver on ${os} with ${version} ${topology} Server"
+  display_name: "${version} ${topology} Server on ${os}"
   tags: ["tests-variant"]
   tasks:
     - name: main-tests
+
+- matrix_name: main-tests-macos
+  matrix_spec:
+    version: ["5.0", "6.0", "7.0", "latest"]
+    os: "macos-14"
+    topology: "replicaset"
+  display_name: "${version} ${topology} Server on ${os}"
+  tags: ["tests-variant"]
+  tasks:
+    - name: main-tests-macos
 
 - matrix_name: validate-apidocs
   matrix_spec:
@@ -594,7 +616,6 @@ buildvariants:
   matrix_spec:
     version: "latest"
     os: "*"
-    driver: "latest"
     topology: "replicaset"
   display_name: "Smoke tests on ${os}"
   tags: ["package-tests", "release_tag"]

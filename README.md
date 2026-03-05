@@ -2,7 +2,9 @@
 
 [![MongoDB.EntityFrameworkCore](https://img.shields.io/nuget/v/MongoDB.EntityFrameworkCore.svg)](https://www.nuget.org/packages/MongoDB.EntityFrameworkCore/)
 
-The MongoDB EF Core Provider requires Entity Framework Core 8 or 9 on .NET 8 or later and a MongoDB database server 5.0 or later, preferably in a transaction-enabled configuration.
+The MongoDB EF Core Provider enables MongoDB interaction with Entity Framework Core 8 or 9 on .NET 8.0 or later, and Entity Framework Core 10 on .NET 10.0 or later.
+
+It supports MongoDB database server 5.0 or later, preferably in a transaction-enabled configuration.
 
 ## Getting Started
 
@@ -105,7 +107,8 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 - GroupBy operations
 - Includes/joins
 - Geospatial
-- ExecuteUpdate & ExecuteDelete bulk operations (EF 9 only)
+- Atlas search
+- ExecuteUpdate & ExecuteDelete bulk operations (EF 9+)
 
 ### Not supported, out-of-scope features
 
@@ -125,7 +128,7 @@ This project's version-numbers are aligned with Entity Framework Core and as-suc
 
 - [MongoDB](https://www.mongodb.com/docs)
 - [EF Core Provider Guide](https://www.mongodb.com/docs/entity-framework/current/)
-- [EF Core Provider API Docs](https://mongodb.github.io/mongo-efcore-provider/8.2.0/api/index.html)
+- [EF Core Provider API Docs](https://mongodb.github.io/mongo-efcore-provider/10.0.0/api/index.html)
 
 ## Questions/Bug Reports
 
