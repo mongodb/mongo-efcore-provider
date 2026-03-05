@@ -616,7 +616,6 @@ buildvariants:
   matrix_spec:
     version: "latest"
     os: "*"
-    driver: "latest"
     topology: "replicaset"
   display_name: "Smoke tests on ${os}"
   tags: ["package-tests", "release_tag"]
