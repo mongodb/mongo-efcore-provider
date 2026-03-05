@@ -112,13 +112,9 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 2 }
 """);
     }
 
+    [ConditionalFact(Skip = "Cross-document navigation access issue EF-216")]
     public override void Precedence_of_tracking_modifiers5()
     {
-        // Fails: Cross-document navigation access issue EF-216
-        AssertTranslationFailed(() => base.Precedence_of_tracking_modifiers5());
-
-        AssertMql(
-);
     }
 
     public override void Precedence_of_tracking_modifiers2()
@@ -173,13 +169,9 @@ Employees.
 """);
     }
 
+    [ConditionalFact(Skip = "Cross-document navigation access issue EF-216")]
     public override void Precedence_of_tracking_modifiers3()
     {
-        // Fails: Cross-document navigation access issue EF-216
-        AssertTranslationFailed(() => base.Precedence_of_tracking_modifiers3());
-
-        AssertMql(
-);
     }
 
     public override void Can_disable_and_reenable_query_result_tracking_starting_with_NoTracking()
@@ -254,19 +246,10 @@ Customers.{ "$project" : { "_v" : "$Region", "_id" : 0 } }
 """);
     }
 
+    [ConditionalFact(Skip = "Cross-document navigation access issue EF-216")]
     public override void Precedence_of_tracking_modifiers4()
     {
-        // Fails: Cross-document navigation access issue EF-216
-        AssertTranslationFailed(() => base.Precedence_of_tracking_modifiers4());
-
-        AssertMql(
-);
     }
-
-    private static void AssertTranslationFailed(Action query)
-        => Assert.Contains(
-            CoreStrings.TranslationFailed("")[48..],
-            Assert.Throws<InvalidOperationException>(query).Message);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

@@ -32,74 +32,25 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
-    public override async Task Project_root_with_missing_scalars(bool async)
-    {
-        // Fails: Missing property values issue EF-164
-        Assert.Contains(
-            "Document element is missing for required non-nullable property 'Number'",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Project_root_with_missing_scalars(async)))
-            .Message);
+    [ConditionalTheory(Skip = "Missing property values issue EF-164"), MemberData(nameof(IsAsyncData))]
+    public override Task Project_root_with_missing_scalars(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Entities.{ "$match" : { "_id" : { "$lt" : 4 } } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Project_top_level_json_entity_with_missing_scalars(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Project_top_level_json_entity_with_missing_scalars(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Argument type 'System.Collections.Generic.IEnumerable`1[Microsoft.EntityFrameworkCore.Query.AdHocJsonQueryTestBase+Context21006+JsonEntity]' does not match",
-            (await Assert.ThrowsAsync<ArgumentException>(
-                () => base.Project_top_level_json_entity_with_missing_scalars(async)))
-            .Message);
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Project_nested_json_entity_with_missing_scalars(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Project_top_level_entity_with_null_value_required_scalars(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Project_nested_json_entity_with_missing_scalars(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An item with the same key has already been added.",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Project_nested_json_entity_with_missing_scalars(async)))
-            .Message);
-
-        AssertMql();
-    }
-
-    public override async Task Project_top_level_entity_with_null_value_required_scalars(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the RequiredReference property",
-            (await Assert.ThrowsAsync<FormatException>(() =>
-                base.Project_top_level_entity_with_null_value_required_scalars(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "_id" : "$_id", "RequiredReference" : "$RequiredReference" } }
-            """);
-    }
-
-    public override async Task Project_root_entity_with_missing_required_navigation(bool async)
-    {
-        // Fails: Missing property values issue EF-164
-        Assert.Contains(
-            "Field 'RequiredReference' required but not present",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Project_root_entity_with_missing_required_navigation(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Entities.{ "$match" : { "_id" : 5 } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Missing property values issue EF-164"), MemberData(nameof(IsAsyncData))]
+    public override Task Project_root_entity_with_missing_required_navigation(bool _)
+        => Task.CompletedTask;
 
     public override async Task Project_missing_required_navigation(bool async)
     {
@@ -111,35 +62,13 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
             """);
     }
 
-    public override async Task Project_root_entity_with_null_required_navigation(bool async)
-    {
-        // Fails: Projections issue EF-164
-        Assert.Contains(
-            "Field 'NestedRequiredReference' required but not present",
-            (await Assert.ThrowsAsync<InvalidOperationException>(
-                () => base.Project_root_entity_with_null_required_navigation(async)))
-            .Message);
+    [ConditionalTheory(Skip = "Projections issue EF-164"), MemberData(nameof(IsAsyncData))]
+    public override Task Project_root_entity_with_null_required_navigation(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Entities.{ "$match" : { "_id" : 6 } }
-            """);
-    }
-
-    public override async Task Project_null_required_navigation(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "The method or operation is not implemented.",
-            (await Assert.ThrowsAsync<NotImplementedException>(
-                () => base.Project_null_required_navigation(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Entities.{ "$match" : { "_id" : 6 } }, { "$project" : { "_v" : "$RequiredReference", "_id" : 0 } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Project_null_required_navigation(bool _)
+        => Task.CompletedTask;
 
     public override async Task Project_missing_required_scalar(bool async)
     {

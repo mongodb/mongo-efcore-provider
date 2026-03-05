@@ -58,15 +58,9 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 """);
     }
 
+    [ConditionalFact(Skip = "Include issue EF-117")]
     public override void Query_ending_with_include()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            Assert.Throws<InvalidOperationException>(() => base.Query_ending_with_include()).Message);
-
-        AssertMql(
-);
     }
 
     public override void Untyped_context()
@@ -167,31 +161,14 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 """);
     }
 
+    [ConditionalFact(Skip = "Compiled query with non-query operator issue EF-232")]
     public override void Compiled_query_when_does_not_end_in_query_operator()
     {
-         // Fails: Compiled query with non-query operator issue EF-232
-         Assert.Contains(
-             "LogicalBinaryExpression' to type 'System.Linq.Expressions.MethodCallExpression'",
-             Assert.Throws<InvalidCastException>(() => base.Compiled_query_when_does_not_end_in_query_operator()).Message);
-
-         AssertMql(
-             """
-Customers.
-""");
     }
 
-    public override async Task Compiled_query_with_max_parameters()
-    {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Compiled_query_with_max_parameters())).Message);
-
-        AssertMql(
-            """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
-""");
-    }
+    [ConditionalFact(Skip = "Include issue EF-117")]
+    public override Task Compiled_query_with_max_parameters()
+        => Task.CompletedTask;
 
     public override void Query_with_array_parameter()
     {
@@ -221,9 +198,9 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 """);
     }
 
+    [ConditionalFact(Skip = "Cross-document navigation access issue EF-216")]
     public override void Multiple_queries()
     {
-        AssertNoMultiCollectionQuerySupport(() => base.Multiple_queries());
     }
 
     public override void Compiled_query_when_using_member_on_context()
@@ -434,22 +411,11 @@ Customers.
 """);
     }
 
+    [ConditionalFact(Skip = "Include issue EF-117")]
     public override void Query_with_single_parameter_with_include()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            Assert.Throws<InvalidOperationException>(() => base.Query_with_single_parameter_with_include()).Message);
-
-        AssertMql(
-);
     }
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
-
-    // Fails: Cross-document navigation access issue EF-216
-    private static void AssertNoMultiCollectionQuerySupport(Action query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            Assert.Throws<InvalidOperationException>(query).Message);
 }

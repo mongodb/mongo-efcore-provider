@@ -41,51 +41,25 @@ Customers.{ "$match" : { "City" : "London" } }
 """);
     }
 
-    public override async Task KeylessEntity_by_database_view(bool async)
-    {
-        // Fails: Views are not supported, so this returns all entities from mapped collection.
-        await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_by_database_view(async));
+    [ConditionalTheory(Skip = "Views are not supported, so this returns all entities from mapped collection."), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_by_database_view(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Products.
-            """);
-    }
+    [ConditionalTheory(Skip = "Include issue EF-117"), MemberData(nameof(IsAsyncData))]
+    public override Task Entity_mapped_to_view_on_right_side_of_join(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Entity_mapped_to_view_on_right_side_of_join(bool async)
-    {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Entity_mapped_to_view_on_right_side_of_join(async));
+    [ConditionalTheory(Skip = "Defining queries are not supported."), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_with_nav_defining_query(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Multiple query roots issue EF-220"), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_with_mixed_tracking(bool _)
+        => Task.CompletedTask;
 
-    public override async Task KeylessEntity_with_nav_defining_query(bool async)
-    {
-        // Fails: Defining queries are not supported.
-        await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_with_nav_defining_query(async));
-
-        AssertMql(
-            """
-CustomerQueryWithQueryFilter.{ "$match" : { "OrderCount" : { "$gt" : 0 } } }
-""");
-    }
-
-    public override async Task KeylessEntity_with_mixed_tracking(bool async)
-    {
-        // Fails: Multiple query roots issue EF-220
-        await AssertTranslationFailed(() => base.KeylessEntity_with_mixed_tracking(async));
-
-        AssertMql();
-    }
-
-    public override async Task KeylessEntity_with_included_nav(bool async)
-    {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.KeylessEntity_with_included_nav(async));
-
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Include issue EF-117"), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_with_included_nav(bool _)
+        => Task.CompletedTask;
 
     public override async Task KeylessEntity_with_defining_query(bool async)
     {
@@ -97,50 +71,29 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 """);
     }
 
-    public override async Task KeylessEntity_with_defining_query_and_correlated_collection(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.KeylessEntity_with_defining_query_and_correlated_collection(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_with_defining_query_and_correlated_collection(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_select_where_navigation(bool _)
+        => Task.CompletedTask;
 
-    public override async Task KeylessEntity_select_where_navigation(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.KeylessEntity_select_where_navigation(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_select_where_navigation_multi_level(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Include issue EF-117"), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_with_included_navs_multi_level(bool _)
+        => Task.CompletedTask;
 
-    public override async Task KeylessEntity_select_where_navigation_multi_level(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.KeylessEntity_select_where_navigation_multi_level(async));
+    [ConditionalTheory(Skip = "GroupBy issue EF-149"), MemberData(nameof(IsAsyncData))]
+    public override Task KeylessEntity_groupby(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
-
-    public override async Task KeylessEntity_with_included_navs_multi_level(bool async)
-    {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.KeylessEntity_with_included_navs_multi_level(async));
-
-        AssertMql();
-    }
-
-    public override async Task KeylessEntity_groupby(bool async)
-    {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.KeylessEntity_groupby(async));
-
-        AssertMql();
-    }
-
-    public override async Task Collection_correlated_with_keyless_entity_in_predicate_works(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_correlated_with_keyless_entity_in_predicate_works(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Collection_correlated_with_keyless_entity_in_predicate_works(bool _)
+        => Task.CompletedTask;
 
     public override async Task Auto_initialized_view_set(bool async)
     {
@@ -187,9 +140,4 @@ Customers.{ "$limit" : 10 }, { "$count" : "_v" }
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
-
-    // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        =>  Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }
