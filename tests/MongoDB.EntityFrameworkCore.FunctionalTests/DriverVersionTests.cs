@@ -16,8 +16,10 @@ public class DriverVersionTests
 
         var driverAssembly = typeof(IMongoClient).Assembly;
         var versionAttribute = driverAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+
+        Assert.NotNull(versionAttribute);
         var driverVersion = versionAttribute.InformationalVersion;
-        var hashIndex = versionAttribute.InformationalVersion.IndexOf('+');
+        var hashIndex = driverVersion.IndexOf('+');
         if (hashIndex != -1)
         {
             driverVersion = versionAttribute.InformationalVersion.Substring(0, hashIndex);

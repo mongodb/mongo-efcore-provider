@@ -3,7 +3,7 @@
     <EF8Version>8.0.23</EF8Version>
     <EF9Version>9.0.12</EF9Version>
     <EF10Version>10.0.2</EF10Version>
-    <!-- DRIVER_VERSION env variable could be set by the CI to test EF Provider compatibility with different (newer) version of the MongoDB.Driver -->
+    <!-- DRIVER_VERSION env variable could be set by the CI to test EF Provider compatibility with different (newer) versions of the MongoDB.Driver -->
     <CSharpDriverVersion Condition="'$(DRIVER_VERSION)' == ''">3.6.0</CSharpDriverVersion>
     <CSharpDriverVersion Condition="'$(DRIVER_VERSION)' != ''">$(DRIVER_VERSION)</CSharpDriverVersion>
   </PropertyGroup>
