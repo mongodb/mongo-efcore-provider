@@ -575,22 +575,13 @@ axes:
           OS: "macos-14"
         run_on: macos-14
 
-  - id: driver
-    display_name: MongoDB.Driver Version
-    values:
-      - id: "latest"
-        display_name: "Latest"
-        variables:
-          DRIVER_VERSION: "latest"
-
 buildvariants:
 - matrix_name: main-tests
   matrix_spec:
     version: ["5.0", "6.0", "7.0", "latest"]
     os: ["windows-64", "ubuntu-2004"]
-    driver: "*"
     topology: "replicaset"
-  display_name: "${driver} Driver on ${os} with ${version} ${topology} Server"
+  display_name: "${version} ${topology} Server on ${os}"
   tags: ["tests-variant"]
   tasks:
     - name: main-tests
@@ -599,9 +590,8 @@ buildvariants:
   matrix_spec:
     version: ["5.0", "6.0", "7.0", "latest"]
     os: "macos-14"
-    driver: "*"
     topology: "replicaset"
-  display_name: "${driver} Driver on ${os} with ${version} ${topology} Server"
+  display_name: "${version} ${topology} Server on ${os}"
   tags: ["tests-variant"]
   tasks:
     - name: main-tests-macos
@@ -626,7 +616,6 @@ buildvariants:
   matrix_spec:
     version: "latest"
     os: "*"
-    driver: "latest"
     topology: "replicaset"
   display_name: "Smoke tests on ${os}"
   tags: ["package-tests", "release_tag"]
