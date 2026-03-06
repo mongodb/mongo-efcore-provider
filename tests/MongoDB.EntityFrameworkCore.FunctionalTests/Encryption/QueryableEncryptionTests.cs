@@ -1556,12 +1556,6 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
             .WithKeyVaultNamespace(KeyVaultNamespace)
             .WithKmsProviders(KmsProviders);
 
-        // Remove me once mongocryptd is fixed for Windows on latest
-        if (cryptProvider == CryptProvider.Mongocryptd && AutoEncryptionTests.IsBuggyMongocryptd)
-        {
-            cryptProvider = CryptProvider.AutoEncryptSharedLibrary;
-        }
-
         mongoOptions = cryptProvider switch
         {
             CryptProvider.AutoEncryptSharedLibrary => mongoOptions.WithCryptProvider(CryptProvider.AutoEncryptSharedLibrary,
