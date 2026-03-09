@@ -14,14 +14,13 @@
  */
 
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Metadata;
-using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
@@ -436,7 +435,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
-            .Select(e => new { e.Author, Score = Mql.Field<Book, double>(e, "__score", null) });
+            .Select(e => new { e.Author, Score = Mql.Field(e, "__score", DoubleSerializer.Instance) });
 
         var results = async ? await queryable.ToListAsync() : queryable.ToList();
 
@@ -480,7 +479,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
-            .Select(e => new { Book = e, Score = Mql.Field<Book, double>(e, "__score", null) });
+            .Select(e => new { Book = e, Score = Mql.Field(e, "__score", DoubleSerializer.Instance) });
 
         // Fails: Projections issue EF-76
         Assert.Contains(
@@ -513,7 +512,7 @@ public abstract class VectorSearchMongoTestBase
                     Pages = e.Pages,
                     IsPublished = e.IsPublished
                 },
-                Score = Mql.Field<Book, double>(e, "__score", null)
+                Score = Mql.Field(e, "__score", DoubleSerializer.Instance)
             });
 
         var results = async ? await queryable.ToListAsync() : queryable.ToList();
