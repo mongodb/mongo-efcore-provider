@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Globalization;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Storage.ValueConversion;
 
@@ -28,7 +29,7 @@ public class DecimalToDecimal128ConverterTests
     public void Can_convert_decimal_to_Decimal128(string value)
     {
         var converter = new DecimalToDecimal128Converter();
-        var input = decimal.Parse(value);
+        var input = decimal.Parse(value, CultureInfo.InvariantCulture);
 
         var result = converter.ConvertToProvider(input);
 
@@ -42,7 +43,7 @@ public class DecimalToDecimal128ConverterTests
     public void Can_convert_Decimal128_to_decimal(string value)
     {
         var converter = new DecimalToDecimal128Converter();
-        var expected = decimal.Parse(value);
+        var expected = decimal.Parse(value, CultureInfo.InvariantCulture);
 
         var result = converter.ConvertFromProvider(new Decimal128(expected));
 

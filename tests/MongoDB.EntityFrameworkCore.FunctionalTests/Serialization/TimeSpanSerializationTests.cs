@@ -22,10 +22,10 @@ public class TimeSpanSerializationTests(TemporaryDatabaseFixture database)
     [InlineData(0)]
     [InlineData(1000)]
     [InlineData(-5000)]
-    public void TimeSpan_round_trips(long ticks)
+    public void TimeSpan_round_trips(long ms)
     {
-        var expected = TimeSpan.FromTicks(ticks * TimeSpan.TicksPerMillisecond);
-        var collection = Database.CreateCollection<TimeSpanEntity>(values: ticks);
+        var expected = TimeSpan.FromTicks(ms * TimeSpan.TicksPerMillisecond);
+        var collection = Database.CreateCollection<TimeSpanEntity>(values: ms);
         using var db = SingleEntityDbContext.Create(collection);
         db.Entities.Add(new TimeSpanEntity { aTimeSpan = expected });
         db.SaveChanges();
