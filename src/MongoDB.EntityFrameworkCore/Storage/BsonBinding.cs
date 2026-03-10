@@ -132,7 +132,7 @@ internal static class BsonBinding
         CreateGetPropertyValue(Expression bsonDocExpression, Expression propertyExpression, Type resultType) =>
         Expression.Call(null, GetPropertyValueMethodInfo.MakeGenericMethod(resultType), bsonDocExpression, propertyExpression);
 
-    private static MethodCallExpression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
+    internal static MethodCallExpression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
         Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
     private static readonly MethodInfo GetPropertyValueMethodInfo

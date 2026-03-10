@@ -1892,14 +1892,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_simple_shadow_projection_mixed(bool async)
     {
-        // Fails: Projected entity issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the e property ",
-            (await Assert.ThrowsAsync<FormatException>(() => base.Where_simple_shadow_projection_mixed(async))).Message);
+        await base.Where_simple_shadow_projection_mixed(async);
 
         AssertMql(
             """
-            Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "e" : "$$ROOT", "Title" : "$Title", "_id" : 0 } }
+            Employees.{ "$match" : { "Title" : "Sales Representative" } }
             """);
     }
 
@@ -1915,14 +1912,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_primitive_tracked2(bool async)
     {
-        // Fails: Projected entity issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the e property ",
-            (await Assert.ThrowsAsync<FormatException>(() => base.Where_primitive_tracked2(async))).Message);
+        await base.Where_primitive_tracked2(async);
 
         AssertMql(
             """
-            Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "e" : "$$ROOT", "_id" : 0 } }
+            Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }
             """);
     }
 
@@ -2569,10 +2563,6 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
-
-    // Fails: Projections issue EF-76
-    private static async Task AssertNoProjectionSupport(Func<Task> query)
-        => await Assert.ThrowsAsync<InvalidOperationException>(query);
 
     // Fails: Cross-document navigation access issue EF-216
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)

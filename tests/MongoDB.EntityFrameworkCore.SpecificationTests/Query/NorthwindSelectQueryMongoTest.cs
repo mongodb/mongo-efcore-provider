@@ -40,7 +40,6 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
 #if !EF8 && !EF9
-
     public override async Task SelectMany_with_nested_DefaultIfEmpty(bool async)
     {
         await AssertTranslationFailed(() => base.SelectMany_with_nested_DefaultIfEmpty(async));
@@ -102,8 +101,8 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_with_multiple_Take(bool async)
@@ -118,8 +117,13 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Entity_passed_to_DTO_constructor_works(bool async)
     {
-        // Fails: Projections issue EF-76
-        await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Entity_passed_to_DTO_constructor_works(async));
+        await base.Entity_passed_to_DTO_constructor_works(async);
+
+        AssertMql(
+            """
+            Customers.
+            """
+        );
     }
 
     public override async Task Set_operation_in_pending_collection(bool async)
@@ -131,7 +135,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Projection_when_arithmetic_expression_precedence(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Truncation resulted in data loss
         Assert.Contains(
             "An error occurred while deserializing the B property",
             (await Assert.ThrowsAsync<FormatException>(() =>
@@ -145,21 +149,17 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Projection_when_arithmetic_expressions(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the o property",
-            (await Assert.ThrowsAsync<FormatException>(() =>
-                base.Projection_when_arithmetic_expressions(async))).Message);
+        await base.Projection_when_arithmetic_expressions(async);
 
         AssertMql(
             """
-            Orders.{ "$project" : { "OrderID" : "$_id", "Double" : { "$multiply" : ["$_id", 2] }, "Add" : { "$add" : ["$_id", 23] }, "Sub" : { "$subtract" : [100000, "$_id"] }, "Divide" : { "$divide" : ["$_id", { "$divide" : ["$_id", 2] }] }, "Literal" : { "$literal" : 42 }, "o" : "$$ROOT", "_id" : 0 } }
+            Orders.
             """);
     }
 
     public override async Task Projection_when_arithmetic_mixed(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subqueries not supported
         await AssertTranslationFailed(() => base.Projection_when_arithmetic_mixed(async));
 
         AssertMql();
@@ -177,7 +177,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Projection_when_client_evald_subquery(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subqueries not supported
         await AssertTranslationFailed(() => base.Projection_when_client_evald_subquery(async));
 
         AssertMql();
@@ -185,7 +185,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Project_to_object_array(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Mixed array types not supported by C# driver
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -199,37 +199,27 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Projection_of_entity_type_into_object_array(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Constructor on type 'MongoDB.Bson.Serialization.Serializers.ArraySerializer",
-            (await Assert.ThrowsAsync<MissingMethodException>(() =>
-                base.Projection_of_entity_type_into_object_array(async))).Message);
+        await base.Projection_of_entity_type_into_object_array(async);
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }
+""");
     }
 
     public override async Task Projection_of_multiple_entity_types_into_object_array(bool async)
     {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Projection_of_multiple_entity_types_into_object_array(async));
-
-        AssertMql();
+        await AssertTranslationFailed(
+            () => base.Projection_of_multiple_entity_types_into_object_array(async));
     }
 
     public override async Task Projection_of_entity_type_into_object_list(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported: new List`1() {Void Add(System.Object)(c)}.",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Projection_of_entity_type_into_object_list(async))).Message);
+        await base.Projection_of_entity_type_into_object_list(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$sort" : { "_id" : 1 } }
             """);
     }
 
@@ -245,7 +235,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_bool_closure_with_order_parameter_with_cast_to_nullable(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unknown reasons
         Assert.Contains(
             "Command aggregate failed: Invalid $project :: caused by :: Cannot do exclusion on field _key1 in inclusion projection.",
             (await Assert.ThrowsAsync<MongoCommandException>(() =>
@@ -389,7 +379,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_nested_collection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection(async));
 
         AssertMql();
@@ -397,7 +387,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_nested_collection_multi_level(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_multi_level(async));
 
         AssertMql();
@@ -405,7 +395,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_nested_collection_multi_level2(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_multi_level2(async));
 
         AssertMql();
@@ -413,7 +403,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_nested_collection_multi_level3(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_multi_level3(async));
 
         AssertMql();
@@ -421,7 +411,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_nested_collection_multi_level4(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_multi_level4(async));
 
         AssertMql();
@@ -429,7 +419,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_nested_collection_multi_level5(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_multi_level5(async));
 
         AssertMql();
@@ -437,7 +427,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_nested_collection_multi_level6(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_multi_level6(async));
 
         AssertMql();
@@ -445,7 +435,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_nested_collection_count_using_anonymous_type(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_count_using_anonymous_type(async));
 
         AssertMql();
@@ -514,7 +504,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
     public override async Task Select_non_matching_value_types_from_binary_expression_nested_introduces_top_level_explicit_cast(
         bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "Expression not supported: Convert((Convert(o.OrderID, Int64) + Convert(o.OrderID, Int64)), Int16) because conversion to System.Int16 is not supported.",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -569,7 +559,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Select_non_matching_value_types_from_anonymous_type_introduces_explicit_cast(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "Expression not supported: Convert(o.OrderID, Int16) because conversion to System.Int16 is not supported.",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -587,8 +577,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$or" : [{ "$eq" : ["$CustomerID", null] }, { "$lt" : ["$_id", 100] }] }, "_id" : 0 } }
-""");
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$or" : [{ "$eq" : ["$CustomerID", null] }, { "$lt" : ["$_id", 100] }] }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_over_10_nested_ternary_condition(bool isAsync)
@@ -608,8 +598,8 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$or
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_conditional_terminates_at_true(bool isAsync)
@@ -618,8 +608,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : 0 } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : 0 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_conditional_flatten_nested_results(bool isAsync)
@@ -628,8 +618,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 5] }, 0] }, "then" : { "$subtract" : [0, "$_id"] }, "else" : "$_id" } }, "else" : "$_id" } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 5] }, 0] }, "then" : { "$subtract" : [0, "$_id"] }, "else" : "$_id" } }, "else" : "$_id" } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_conditional_flatten_nested_tests(bool isAsync)
@@ -638,15 +628,15 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
-""");
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
+            """);
     }
 
 #endif
 
     public override async Task Projection_in_a_subquery_should_be_liftable(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         Assert.Contains(
             "Expression not supported: Format(\"{0}\", Convert(e.EmployeeID, Object)).",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -660,7 +650,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Projection_containing_DateTime_subtraction(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "Expression not supported: (o.OrderDate.Value",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -674,7 +664,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Project_single_element_from_collection_with_OrderBy_Take_and_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_OrderBy_Take_and_FirstOrDefault(async));
 
@@ -683,7 +673,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Project_single_element_from_collection_with_OrderBy_Skip_and_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_OrderBy_Skip_and_FirstOrDefault(async));
 
@@ -692,7 +682,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Project_single_element_from_collection_with_OrderBy_Distinct_and_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_OrderBy_Distinct_and_FirstOrDefault(async));
 
@@ -702,7 +692,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
     public override async Task
         Project_single_element_from_collection_with_OrderBy_Distinct_and_FirstOrDefault_followed_by_projecting_length(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_OrderBy_Distinct_and_FirstOrDefault_followed_by_projecting_length(
                 async));
@@ -712,7 +702,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Project_single_element_from_collection_with_OrderBy_Take_and_SingleOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_OrderBy_Take_and_SingleOrDefault(async));
 
@@ -722,7 +712,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
     public override async Task
         Project_single_element_from_collection_with_OrderBy_Take_and_FirstOrDefault_with_parameter(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_OrderBy_Take_and_FirstOrDefault_with_parameter(async));
 
@@ -731,7 +721,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Project_single_element_from_collection_with_multiple_OrderBys_Take_and_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_multiple_OrderBys_Take_and_FirstOrDefault(async));
 
@@ -742,7 +732,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
         Project_single_element_from_collection_with_multiple_OrderBys_Take_and_FirstOrDefault_followed_by_projection_of_length_property(
             bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base
                 .Project_single_element_from_collection_with_multiple_OrderBys_Take_and_FirstOrDefault_followed_by_projection_of_length_property(
@@ -753,7 +743,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
     public override async Task Project_single_element_from_collection_with_multiple_OrderBys_Take_and_FirstOrDefault_2(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_multiple_OrderBys_Take_and_FirstOrDefault_2(async));
 
@@ -763,7 +753,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
     public override async Task
         Project_single_element_from_collection_with_OrderBy_over_navigation_Take_and_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_OrderBy_over_navigation_Take_and_FirstOrDefault(async));
 
@@ -773,7 +763,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
     public override async Task Project_single_element_from_collection_with_OrderBy_over_navigation_Take_and_FirstOrDefault_2(
         bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Project_single_element_from_collection_with_OrderBy_over_navigation_Take_and_FirstOrDefault_2(async));
 
@@ -886,8 +876,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : [{ "$mod" : ["$_id
 
         AssertMql(
             """
-Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
-""");
+            Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Anonymous_projection_AsNoTracking_Selector(bool async)
@@ -912,7 +902,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task Anonymous_projection_with_repeated_property_being_ordered_2(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Anonymous_projection_with_repeated_property_being_ordered_2(async));
 
         AssertMql();
@@ -920,7 +910,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task Select_GetValueOrDefault_on_DateTime(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "Expression not supported: o.OrderDate.GetValueOrDefault().",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -934,7 +924,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task Select_GetValueOrDefault_on_DateTime_with_null_values(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         await AssertTranslationFailed(() => base.Select_GetValueOrDefault_on_DateTime_with_null_values(async));
 
         AssertMql();
@@ -962,7 +952,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task Multiple_select_many_with_predicate(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Multiple_select_many_with_predicate(async));
 
         AssertMql();
@@ -970,7 +960,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_without_result_selector_naked_collection_navigation(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_without_result_selector_naked_collection_navigation(async));
 
         AssertMql();
@@ -978,7 +968,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_without_result_selector_collection_navigation_composed(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_without_result_selector_collection_navigation_composed(async));
 
         AssertMql();
@@ -986,7 +976,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_correlated_with_outer_1(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_correlated_with_outer_1(async));
 
         AssertMql();
@@ -994,7 +984,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_correlated_with_outer_2(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_correlated_with_outer_2(async));
 
         AssertMql();
@@ -1002,7 +992,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_correlated_with_outer_3(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_correlated_with_outer_3(async));
 
         AssertMql();
@@ -1010,7 +1000,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_correlated_with_outer_4(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_correlated_with_outer_4(async));
 
         AssertMql();
@@ -1018,7 +1008,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_correlated_with_outer_5(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_correlated_with_outer_5(async));
 
         AssertMql();
@@ -1026,7 +1016,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_correlated_with_outer_6(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_correlated_with_outer_6(async));
 
         AssertMql();
@@ -1034,7 +1024,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task SelectMany_correlated_with_outer_7(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_correlated_with_outer_7(async));
 
         AssertMql();
@@ -1042,7 +1032,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(async));
 
         AssertMql();
@@ -1050,7 +1040,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task Project_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Project_non_nullable_value_after_FirstOrDefault_on_empty_collection(async));
 
         AssertMql();
@@ -1072,7 +1062,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task Filtered_collection_projection_is_tracked(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Filtered_collection_projection_is_tracked(async));
 
         AssertMql();
@@ -1080,7 +1070,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 
     public override async Task Filtered_collection_projection_with_to_list_is_tracked(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Filtered_collection_projection_with_to_list_is_tracked(async));
 
         AssertMql();
@@ -1089,7 +1079,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
     public override async Task SelectMany_with_collection_being_correlated_subquery_which_references_inner_and_outer_entity(
         bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.SelectMany_with_collection_being_correlated_subquery_which_references_inner_and_outer_entity(async));
 
@@ -1100,7 +1090,7 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
         SelectMany_with_collection_being_correlated_subquery_which_references_non_mapped_properties_from_inner_and_outer_entity(
             bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base
                 .SelectMany_with_collection_being_correlated_subquery_which_references_non_mapped_properties_from_inner_and_outer_entity(
@@ -1122,14 +1112,14 @@ Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
 #else
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$Region", ""] }, "_id" : 0 } }
-""");
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$Region", ""] }, "_id" : 0 } }
+            """);
 #endif
     }
 
     public override async Task Select_chained_entity_navigation_doesnt_materialize_intermittent_entities(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_chained_entity_navigation_doesnt_materialize_intermittent_entities(async));
 
         AssertMql();
@@ -1137,7 +1127,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Select_entity_compared_to_null(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_entity_compared_to_null(async));
 
         AssertMql();
@@ -1155,7 +1145,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task SelectMany_whose_selector_references_outer_source(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.SelectMany_whose_selector_references_outer_source(async));
 
         AssertMql();
@@ -1163,7 +1153,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Collection_FirstOrDefault_with_entity_equality_check_in_projection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Collection_FirstOrDefault_with_entity_equality_check_in_projection(async));
 
         AssertMql();
@@ -1171,7 +1161,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Collection_FirstOrDefault_with_nullable_unsigned_int_column(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Collection_FirstOrDefault_with_nullable_unsigned_int_column(async));
 
         AssertMql();
@@ -1179,7 +1169,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task ToList_Count_in_projection_works(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.ToList_Count_in_projection_works(async));
 
         AssertMql();
@@ -1187,7 +1177,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task LastOrDefault_member_access_in_projection_translates_to_server(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.LastOrDefault_member_access_in_projection_translates_to_server(async));
 
         AssertMql();
@@ -1195,35 +1185,27 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projection_with_parameterized_constructor(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the Customer property",
-            (await Assert.ThrowsAsync<FormatException>(() =>
-                base.Projection_with_parameterized_constructor(async))).Message);
+        await base.Projection_with_parameterized_constructor(async);
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "Customer" : "$$ROOT", "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
     public override async Task Projection_with_parameterized_constructor_with_member_assignment(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the Customer property",
-            (await Assert.ThrowsAsync<FormatException>(() =>
-                base.Projection_with_parameterized_constructor_with_member_assignment(async))).Message);
+        await base.Projection_with_parameterized_constructor_with_member_assignment(async);
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "Customer" : "$$ROOT", "City" : "$City", "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
     public override async Task Collection_projection_AsNoTracking_OrderBy(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Collection_projection_AsNoTracking_OrderBy(async));
 
         AssertMql();
@@ -1241,7 +1223,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Project_uint_through_collection_FirstOrDefault(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Project_uint_through_collection_FirstOrDefault(async));
 
         AssertMql();
@@ -1249,7 +1231,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Project_keyless_entity_FirstOrDefault_without_orderby(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Project_keyless_entity_FirstOrDefault_without_orderby(async));
 
         AssertMql();
@@ -1257,7 +1239,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_changes_asc_order_to_desc(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1271,7 +1253,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_changes_desc_order_to_asc(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1285,7 +1267,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_after_multiple_orderbys(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1299,7 +1281,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_after_orderby_thenby(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Reverse_after_orderby_thenby(async))).Message);
@@ -1312,7 +1294,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_subquery_via_pushdown(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1326,7 +1308,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_after_orderBy_and_take(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1340,7 +1322,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_join_outer(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_join_outer(async));
 
         AssertMql();
@@ -1348,7 +1330,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_join_outer_with_take(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_join_outer_with_take(async));
 
         AssertMql();
@@ -1356,7 +1338,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_join_inner(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_join_inner(async));
 
         AssertMql();
@@ -1364,7 +1346,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_join_inner_with_skip(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_join_inner_with_skip(async));
 
         AssertMql();
@@ -1372,7 +1354,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_SelectMany(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_SelectMany(async));
 
         AssertMql();
@@ -1380,7 +1362,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_SelectMany_with_Take(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_SelectMany_with_Take(async));
 
         AssertMql();
@@ -1388,7 +1370,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_projection_subquery(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_projection_subquery(async));
 
         AssertMql();
@@ -1396,7 +1378,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_projection_subquery_single_result(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_projection_subquery_single_result(async));
 
         AssertMql();
@@ -1404,7 +1386,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_in_projection_scalar_subquery(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_projection_scalar_subquery(async));
 
         AssertMql();
@@ -1412,7 +1394,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projection_AsEnumerable_projection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Projection_AsEnumerable_projection(async));
 
         AssertMql();
@@ -1430,7 +1412,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projecting_multiple_collection_with_same_constant_works(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Projecting_multiple_collection_with_same_constant_works(async));
 
         AssertMql();
@@ -1438,7 +1420,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Custom_projection_reference_navigation_PK_to_FK_optimization(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Custom_projection_reference_navigation_PK_to_FK_optimization(async));
 
         AssertMql();
@@ -1446,7 +1428,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projecting_Length_of_a_string_property_after_FirstOrDefault_on_correlated_collection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Projecting_Length_of_a_string_property_after_FirstOrDefault_on_correlated_collection(async));
 
@@ -1455,7 +1437,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projecting_count_of_navigation_which_is_generic_list(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Projecting_count_of_navigation_which_is_generic_list(async));
 
         AssertMql();
@@ -1463,7 +1445,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projecting_count_of_navigation_which_is_generic_collection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Projecting_count_of_navigation_which_is_generic_collection(async));
 
         AssertMql();
@@ -1471,7 +1453,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projecting_count_of_navigation_which_is_generic_collection_using_convert(bool async)
     {
-        await AssertNoProjectionSupport(() => base.Projecting_count_of_navigation_which_is_generic_collection_using_convert(async));
+        // Fails: Subquery selection
+        await AssertNoMultiCollectionQuerySupport(() => base.Projecting_count_of_navigation_which_is_generic_collection_using_convert(async));
     }
 
     public override async Task Projection_take_projection_doesnt_project_intermittent_column(bool async)
@@ -1496,7 +1479,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projection_Distinct_projection_preserves_columns_used_for_distinct_in_subquery(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Projection_Distinct_projection_preserves_columns_used_for_distinct_in_subquery(async));
 
@@ -1526,7 +1509,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Ternary_in_client_eval_assigns_correct_types(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Limited support on client evaluation
         Assert.Contains(
             "Expression not supported: ClientMethod(o.CustomerID).",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1540,7 +1523,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projecting_after_navigation_and_distinct(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Projecting_after_navigation_and_distinct(async));
 
         AssertMql();
@@ -1549,7 +1532,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
     public override async Task
         Correlated_collection_after_distinct_with_complex_projection_containing_original_identifier(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Correlated_collection_after_distinct_with_complex_projection_containing_original_identifier(async));
 
@@ -1558,7 +1541,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Correlated_collection_after_distinct_not_containing_original_identifier(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Correlated_collection_after_distinct_not_containing_original_identifier(async));
 
         AssertMql();
@@ -1567,7 +1550,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
     public override async Task
         Correlated_collection_after_distinct_with_complex_projection_not_containing_original_identifier(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Correlated_collection_after_distinct_with_complex_projection_not_containing_original_identifier(async));
 
@@ -1577,7 +1560,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
     public override async Task
         Correlated_collection_after_groupby_with_complex_projection_containing_original_identifier(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Correlated_collection_after_groupby_with_complex_projection_containing_original_identifier(async));
 
@@ -1586,7 +1569,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Select_nested_collection_deep(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_deep(async));
 
         AssertMql();
@@ -1594,7 +1577,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Select_nested_collection_deep_distinct_no_identifiers(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Select_nested_collection_deep_distinct_no_identifiers(async));
 
         AssertMql();
@@ -1613,7 +1596,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Collection_projection_selecting_outer_element_followed_by_take(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Collection_projection_selecting_outer_element_followed_by_take(async));
 
         AssertMql();
@@ -1621,7 +1604,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Take_on_top_level_and_on_collection_projection_with_outer_apply(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Take_on_top_level_and_on_collection_projection_with_outer_apply(async));
 
         AssertMql();
@@ -1629,7 +1612,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Take_on_correlated_collection_in_first(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Take_on_correlated_collection_in_first(async));
 
         AssertMql();
@@ -1637,7 +1620,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Client_projection_via_ctor_arguments(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Client_projection_via_ctor_arguments(async));
 
         AssertMql();
@@ -1645,7 +1628,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Client_projection_with_string_initialization_with_scalar_subquery(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Client_projection_with_string_initialization_with_scalar_subquery(async));
 
         AssertMql();
@@ -1653,7 +1636,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task MemberInit_in_projection_without_arguments(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.MemberInit_in_projection_without_arguments(async));
 
         AssertMql();
@@ -1691,7 +1674,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Projection_when_arithmetic_mixed_subqueries(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Projection_when_arithmetic_mixed_subqueries(async));
 
         AssertMql();
@@ -1699,7 +1682,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Select_datetime_Ticks_component(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Unsupported by driver
         Assert.Contains(
             "Expression not supported: o.OrderDate.Value.Ticks.",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1723,31 +1706,21 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Select_anonymous_with_object(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the c property",
-            (await Assert.ThrowsAsync<FormatException>(() =>
-                base.Select_anonymous_with_object(async))).Message);
+        await base.Select_anonymous_with_object(async);
 
         AssertMql(
             """
-            Customers.{ "$project" : { "City" : "$City", "c" : "$$ROOT", "_id" : 0 } }
+            Customers.
             """);
     }
 
-    [ConditionalTheory(Skip = "Failing sometimes on latest server.")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task Client_method_in_projection_requiring_materialization_1(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Command aggregate failed",
-            (await Assert.ThrowsAsync<MongoCommandException>(() =>
-                base.Client_method_in_projection_requiring_materialization_1(async))).Message);
+        await base.Client_method_in_projection_requiring_materialization_1(async);
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_v" : { "$toString" : "$$ROOT" }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }
             """);
     }
 
@@ -1773,15 +1746,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Client_method_in_projection_requiring_materialization_2(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported: ClientMethod(c).",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Client_method_in_projection_requiring_materialization_2(async))).Message);
+        await base.Client_method_in_projection_requiring_materialization_2(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }
             """);
     }
 
@@ -1842,7 +1811,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
     public override async Task
         Correlated_collection_after_groupby_with_complex_projection_not_containing_original_identifier(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() =>
             base.Correlated_collection_after_groupby_with_complex_projection_not_containing_original_identifier(async));
 
@@ -1851,7 +1820,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Select_bool_closure_with_order_by_property_with_cast_to_nullable(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails unknown issue
         Assert.Contains(
             "Command aggregate failed: Invalid $project :: caused by :: Cannot do exclusion on field _key1 in inclusion projection.",
             (await Assert.ThrowsAsync<MongoCommandException>(() =>
@@ -1865,7 +1834,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task Reverse_without_explicit_ordering(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Reverse not supported by driver
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1879,7 +1848,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task List_of_list_of_anonymous_type(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.List_of_list_of_anonymous_type(async));
 
         AssertMql();
@@ -1887,7 +1856,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task List_from_result_of_single_result(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.List_from_result_of_single_result(async));
 
         AssertMql();
@@ -1895,7 +1864,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task List_from_result_of_single_result_2(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.List_from_result_of_single_result_2(async));
 
         AssertMql();
@@ -1903,7 +1872,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 
     public override async Task List_from_result_of_single_result_3(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.List_from_result_of_single_result_3(async));
 
         AssertMql();
@@ -1922,21 +1891,17 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
 #if EF9
     public override async Task Entity_passed_to_DTO_constructor_works(bool async)
     {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported: new CustomerDtoWithEntityInCtor(c) because couldn't find matching properties for constructor parameters.",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Entity_passed_to_DTO_constructor_works(async))).Message);
+        await base.Entity_passed_to_DTO_constructor_works(async);
 
         AssertMql(
             """
-Customers.
-""");
+            Customers.
+            """);
     }
 
     public override async Task Set_operation_in_pending_collection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Set_operation_in_pending_collection(async));
 
         AssertMql();
@@ -1950,7 +1915,8 @@ Customers.
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
 
-    // Fails: Projections issue EF-76
-    private static async Task AssertNoProjectionSupport(Func<Task> query)
-        => await Assert.ThrowsAsync<InvalidOperationException>(query);
+    // Fails: Cross-document navigation access issue EF-216
+    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => Assert.Contains("Unsupported cross-DbSet query between",
+            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }
