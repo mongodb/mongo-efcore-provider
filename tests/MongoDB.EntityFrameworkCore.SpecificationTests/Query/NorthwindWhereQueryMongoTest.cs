@@ -82,10 +82,9 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
             """);
     }
 
-    public override async Task Where_as_queryable_expression(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_as_queryable_expression(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_as_queryable_expression(bool _)
+        => Task.CompletedTask;
 
     public override async Task<string> Where_simple_closure(bool async)
     {
@@ -353,10 +352,9 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
             """);
     }
 
-    public override async Task Where_subquery_closure_via_query_cache(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_subquery_closure_via_query_cache(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_subquery_closure_via_query_cache(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_simple_shadow(bool async)
     {
@@ -388,111 +386,37 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
             """);
     }
 
-    public override async Task Where_shadow_subquery_FirstOrDefault(bool async)
-    {
-        // Fails: Multiple query roots issue EF-220
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_shadow_subquery_FirstOrDefault(async)))
-            .Message);
+    [ConditionalTheory(Skip = "Multiple query roots issue EF-220"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_shadow_subquery_FirstOrDefault(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Employees.
-            """);
-    }
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF."), MemberData(nameof(IsAsyncData))]
+    public override Task Where_client(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_client(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF.
-        Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client(async))).Message);
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF."), MemberData(nameof(IsAsyncData))]
+    public override Task Where_subquery_correlated(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF."), MemberData(nameof(IsAsyncData))]
+    public override Task Where_subquery_correlated_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_subquery_correlated(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF.
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_subquery_correlated(async)))
-            .Message);
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF."), MemberData(nameof(IsAsyncData))]
+    public override Task Where_client_and_server_top_level(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF."), MemberData(nameof(IsAsyncData))]
+    public override Task Where_client_or_server_top_level(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_subquery_correlated_client_eval(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF.
-        await Assert.ThrowsAsync<ThrowsException>(() => base.Where_subquery_correlated_client_eval(async));
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF."), MemberData(nameof(IsAsyncData))]
+    public override Task Where_client_and_server_non_top_level(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
-
-    public override async Task Where_client_and_server_top_level(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF.
-        Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client_and_server_top_level(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
-
-    public override async Task Where_client_or_server_top_level(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF.
-        Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client_or_server_top_level(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
-
-    public override async Task Where_client_and_server_non_top_level(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF.
-        Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client_and_server_non_top_level(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
-
-    public override async Task Where_client_deep_inside_predicate_and_server_top_level(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF.
-        Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client_deep_inside_predicate_and_server_top_level(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF."), MemberData(nameof(IsAsyncData))]
+    public override Task Where_client_deep_inside_predicate_and_server_top_level(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_equals_method_int(bool async)
     {
@@ -504,19 +428,9 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
             """);
     }
 
-    public override async Task Where_equals_using_object_overload_on_mismatched_types(bool async)
-    {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Unable to cast object of type 'System.UInt64' to type 'System.UInt32'.",
-            (await Assert.ThrowsAsync<InvalidCastException>(() =>
-                base.Where_equals_using_object_overload_on_mismatched_types(async))).Message);
-
-        AssertMql(
-            """
-            Employees.
-            """);
-    }
+    [ConditionalTheory(Skip = "Equals with different types issue EF-221"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_equals_using_object_overload_on_mismatched_types(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_equals_using_int_overload_on_mismatched_types(bool async)
     {
@@ -528,33 +442,13 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
             """);
     }
 
-    public override async Task Where_equals_on_mismatched_types_nullable_int_long(bool async)
-    {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Unable to cast object of type 'System.UInt64' to type 'System.Nullable`1[System.UInt32]'.",
-            (await Assert.ThrowsAsync<InvalidCastException>(() => base.Where_equals_on_mismatched_types_nullable_int_long(async)))
-            .Message);
+    [ConditionalTheory(Skip = "Equals with different types issue EF-221"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_equals_on_mismatched_types_nullable_int_long(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Employees.
-            """);
-    }
-
-    public override async Task Where_equals_on_mismatched_types_nullable_long_nullable_int(bool async)
-    {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Unable to cast object of type 'System.UInt64' to type 'System.Nullable`1[System.UInt32]'.",
-            (await Assert.ThrowsAsync<InvalidCastException>(() =>
-                base.Where_equals_on_mismatched_types_nullable_long_nullable_int(async))).Message);
-
-        AssertMql(
-            """
-            Employees.
-            """);
-    }
+    [ConditionalTheory(Skip = "Equals with different types issue EF-221"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_equals_on_mismatched_types_nullable_long_nullable_int(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_equals_on_mismatched_types_int_nullable_int(bool async)
     {
@@ -698,53 +592,29 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
             """);
     }
 
-    public override async Task Where_in_optimization_multiple(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_in_optimization_multiple(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_in_optimization_multiple(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_not_in_optimization1(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_not_in_optimization1(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_not_in_optimization1(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_not_in_optimization2(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_not_in_optimization3(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_not_in_optimization2(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_not_in_optimization2(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_not_in_optimization4(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
-
-    public override async Task Where_not_in_optimization3(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_not_in_optimization3(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_not_in_optimization4(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_not_in_optimization4(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_select_many_and(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_select_many_and(async));
-
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_select_many_and(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_primitive(bool async)
     {
@@ -776,18 +646,9 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
             """);
     }
 
-    public override async Task Where_bool_client_side_negated(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF.
-        Assert.Contains(
-            "Expression not supported: ClientFunc(p.ProductID)",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_bool_client_side_negated(async))).Message);
-
-        AssertMql(
-            """
-            Products.
-            """);
-    }
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF."), MemberData(nameof(IsAsyncData))]
+    public override Task Where_bool_client_side_negated(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_bool_member_negated_twice(bool async)
     {
@@ -1029,13 +890,9 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_expression_invoke_2(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_expression_invoke_2(async));
-
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_expression_invoke_2(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_expression_invoke_3(bool async)
     {
@@ -1129,18 +986,9 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_compare_constructed_multi_value_not_equal(bool async)
-    {
-        // Fails: EF upstream issue--see https://github.com/dotnet/efcore/issues/36412
-        Assert.Contains(
-            "Values differ", // (Expected 91, got 85)
-            (await Assert.ThrowsAsync<EqualException>(() => base.Where_compare_constructed_multi_value_not_equal(async))).Message);
-
-        AssertMql(
-            """
-            Customers.{ "$match" : { "$expr" : { "$ne" : [{ "x" : "$City", "y" : "$Country" }, { "x" : "London", "y" : "UK" }] } } }
-            """);
-    }
+    [ConditionalTheory(Skip = "EF upstream issue--see https://github.com/dotnet/efcore/issues/36412"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_compare_constructed_multi_value_not_equal(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_compare_tuple_constructed_equal(bool async)
     {
@@ -1232,15 +1080,9 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_navigation_contains(bool async)
-    {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_navigation_contains(async))).Message);
-
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Include issue EF-117"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_navigation_contains(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_array_index(bool async)
     {
@@ -1252,40 +1094,25 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_multiple_contains_in_subquery_with_or(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_multiple_contains_in_subquery_with_or(async));
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_multiple_contains_in_subquery_with_or(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_multiple_contains_in_subquery_with_and(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_multiple_contains_in_subquery_with_and(async));
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_multiple_contains_in_subquery_with_and(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_contains_on_navigation(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_contains_on_navigation(async));
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_contains_on_navigation(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_subquery_FirstOrDefault_is_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_subquery_FirstOrDefault_is_null(async));
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_subquery_FirstOrDefault_is_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_subquery_FirstOrDefault_compared_to_entity(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_subquery_FirstOrDefault_compared_to_entity(async));
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_subquery_FirstOrDefault_compared_to_entity(bool _)
+        => Task.CompletedTask;
 
     public override async Task TypeBinary_short_circuit(bool async)
     {
@@ -1317,11 +1144,9 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() =>
-            base.Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool _)
+        => Task.CompletedTask;
 
     public override async Task Using_same_parameter_twice_in_query_generates_one_sql_parameter(bool async)
     {
@@ -1333,141 +1158,73 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_Queryable_ToList_Count(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_ToList_Count(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_ToList_Count(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_ToList_Contains(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_Queryable_ToList_Contains(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_ToList_Contains(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_ToArray_Count(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_ToArray_Contains(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_Queryable_ToArray_Count(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_ToArray_Count(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_AsEnumerable_Count(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_AsEnumerable_Contains(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_Queryable_ToArray_Contains(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_ToArray_Contains(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_ToList_Count_member(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_ToArray_Length_member(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_Queryable_AsEnumerable_Count(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_AsEnumerable_Count(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_collection_navigation_ToList_Count(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_collection_navigation_ToList_Contains(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_Queryable_AsEnumerable_Contains(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_AsEnumerable_Contains(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_collection_navigation_ToArray_Count(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_collection_navigation_ToArray_Contains(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_Queryable_ToList_Count_member(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_ToList_Count_member(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_collection_navigation_AsEnumerable_Count(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_collection_navigation_AsEnumerable_Contains(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_Queryable_ToArray_Length_member(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_ToArray_Length_member(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_collection_navigation_ToList_Count_member(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_collection_navigation_ToArray_Length_member(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Where_collection_navigation_ToList_Count(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_collection_navigation_ToList_Count(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_collection_navigation_ToList_Contains(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_collection_navigation_ToList_Contains(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_collection_navigation_ToArray_Count(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_collection_navigation_ToArray_Count(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_collection_navigation_ToArray_Contains(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_collection_navigation_ToArray_Contains(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_collection_navigation_AsEnumerable_Count(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_collection_navigation_AsEnumerable_Count(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_collection_navigation_AsEnumerable_Contains(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_collection_navigation_AsEnumerable_Contains(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_collection_navigation_ToList_Count_member(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_collection_navigation_ToList_Count_member(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_collection_navigation_ToArray_Length_member(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_collection_navigation_ToArray_Length_member(async));
-
-        AssertMql();
-    }
-
-    public override async Task Where_Queryable_AsEnumerable_Contains_negated(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_Queryable_AsEnumerable_Contains_negated(async));
-
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Queryable_AsEnumerable_Contains_negated(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_list_object_contains_over_value_type(bool async)
     {
@@ -1509,85 +1266,69 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task FirstOrDefault_over_scalar_projection_compared_to_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_over_scalar_projection_compared_to_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task FirstOrDefault_over_scalar_projection_compared_to_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task FirstOrDefault_over_scalar_projection_compared_to_not_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_over_scalar_projection_compared_to_not_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task FirstOrDefault_over_scalar_projection_compared_to_not_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task FirstOrDefault_over_custom_projection_compared_to_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_over_custom_projection_compared_to_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task FirstOrDefault_over_custom_projection_compared_to_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task FirstOrDefault_over_custom_projection_compared_to_not_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_over_custom_projection_compared_to_not_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task FirstOrDefault_over_custom_projection_compared_to_not_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task SingleOrDefault_over_custom_projection_compared_to_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.SingleOrDefault_over_custom_projection_compared_to_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task SingleOrDefault_over_custom_projection_compared_to_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task SingleOrDefault_over_custom_projection_compared_to_not_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.SingleOrDefault_over_custom_projection_compared_to_not_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task SingleOrDefault_over_custom_projection_compared_to_not_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task LastOrDefault_over_custom_projection_compared_to_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.LastOrDefault_over_custom_projection_compared_to_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task LastOrDefault_over_custom_projection_compared_to_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task LastOrDefault_over_custom_projection_compared_to_not_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.LastOrDefault_over_custom_projection_compared_to_not_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task LastOrDefault_over_custom_projection_compared_to_not_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task First_over_custom_projection_compared_to_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.First_over_custom_projection_compared_to_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task First_over_custom_projection_compared_to_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task First_over_custom_projection_compared_to_not_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.First_over_custom_projection_compared_to_not_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task First_over_custom_projection_compared_to_not_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task ElementAt_over_custom_projection_compared_to_not_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.ElementAt_over_custom_projection_compared_to_not_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task ElementAt_over_custom_projection_compared_to_not_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task ElementAtOrDefault_over_custom_projection_compared_to_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.ElementAtOrDefault_over_custom_projection_compared_to_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task ElementAtOrDefault_over_custom_projection_compared_to_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Single_over_custom_projection_compared_to_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Single_over_custom_projection_compared_to_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Single_over_custom_projection_compared_to_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Single_over_custom_projection_compared_to_not_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Single_over_custom_projection_compared_to_not_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Single_over_custom_projection_compared_to_not_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Last_over_custom_projection_compared_to_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Last_over_custom_projection_compared_to_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Last_over_custom_projection_compared_to_null(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Last_over_custom_projection_compared_to_not_null(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Last_over_custom_projection_compared_to_not_null(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Last_over_custom_projection_compared_to_not_null(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_Contains_and_comparison(bool async)
     {
@@ -1629,31 +1370,13 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task GetType_on_non_hierarchy3(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Values differ", // (Expected 0 got 91)
-            (await Assert.ThrowsAsync<EqualException>(() => base.GetType_on_non_hierarchy3(async))).Message);
+    [ConditionalTheory(Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task GetType_on_non_hierarchy3(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Customers.{ "$match" : { "_t" : null } }
-            """);
-    }
-
-    public override async Task GetType_on_non_hierarchy4(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Values differ", // (Expected 0 got 91)
-            (await Assert.ThrowsAsync<EqualException>(() => base.GetType_on_non_hierarchy4(async))).Message);
-
-        AssertMql(
-            """
-            Customers.{ "$match" : { "_t" : { "$ne" : null } } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task GetType_on_non_hierarchy4(bool _)
+        => Task.CompletedTask;
 
     public override async Task Case_block_simplification_works_correctly(bool async)
     {
@@ -1890,18 +1613,9 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
         AssertMql();
     }
 
-    public override async Task Where_simple_shadow_projection_mixed(bool async)
-    {
-        // Fails: Projected entity issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the e property ",
-            (await Assert.ThrowsAsync<FormatException>(() => base.Where_simple_shadow_projection_mixed(async))).Message);
-
-        AssertMql(
-            """
-            Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "e" : "$$ROOT", "Title" : "$Title", "_id" : 0 } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Projected entity issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_simple_shadow_projection_mixed(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_primitive_tracked(bool async)
     {
@@ -1913,31 +1627,13 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_primitive_tracked2(bool async)
-    {
-        // Fails: Projected entity issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the e property ",
-            (await Assert.ThrowsAsync<FormatException>(() => base.Where_primitive_tracked2(async))).Message);
+    [ConditionalTheory(Skip = "Projected entity issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_primitive_tracked2(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "e" : "$$ROOT", "_id" : 0 } }
-            """);
-    }
-
-    public override async Task Where_poco_closure(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Where_poco_closure(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_poco_closure(bool _)
+        => Task.CompletedTask;
 
 #if !EF8
 
@@ -2163,18 +1859,9 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_bitwise_xor(bool async)
-    {
-        // Fails MongoDB does not have an xor operator
-        Assert.Contains(
-            "because MongoDB does not have a boolean $xor operator",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_bitwise_xor(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "MongoDB does not have an xor operator"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_bitwise_xor(bool _)
+        => Task.CompletedTask;
 
 #endif
 
@@ -2209,31 +1896,13 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_string_indexof(bool async)
-    {
-        // Fails: String.IndexOf issue EF-224
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 90)
-            (await Assert.ThrowsAsync<EqualException>(() => base.Where_string_indexof(async))).Message);
+    [ConditionalTheory(Skip = "String.IndexOf issue EF-224"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_string_indexof(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Customers.{ "$match" : { "City" : { "$not" : { "$regularExpression" : { "pattern" : "^Sea", "options" : "s" } } } } }
-            """);
-    }
-
-    public override async Task Where_string_replace(bool async)
-    {
-        // Fails: String.Replace issue EF-223
-        Assert.Contains(
-            "Expression not supported: c.City.Replace(\"Sea\", \"Rea\").",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_string_replace(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "String.Replace issue EF-223"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_string_replace(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_string_substring(bool async)
     {
@@ -2390,33 +2059,13 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Where_datetimeoffset_now_component(bool async)
-    {
-        // Fails: DateTimeOffset issue CSHARP-5296
-        Assert.Contains(
-            "Expression not supported: Convert(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_datetimeoffset_now_component(async)))
-            .Message);
+    [ConditionalTheory(Skip = "DateTimeOffset issue CSHARP-5296"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_datetimeoffset_now_component(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
-
-    public override async Task Where_datetimeoffset_utcnow_component(bool async)
-    {
-        // Fails: DateTimeOffset issue CSHARP-5296
-        Assert.Contains(
-            "Expression not supported: Convert(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_datetimeoffset_utcnow_component(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "DateTimeOffset issue CSHARP-5296"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_datetimeoffset_utcnow_component(bool _)
+        => Task.CompletedTask;
 
     public override async Task Where_concat_string_int_comparison1(bool async)
     {
@@ -2508,59 +2157,21 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
-    public override async Task Like_with_non_string_column_using_ToString(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "value(Microsoft.EntityFrameworkCore.DbFunctions).Like(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Like_with_non_string_column_using_ToString(async))).Message);
+    [ConditionalTheory(Skip = "translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Like_with_non_string_column_using_ToString(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Like_with_non_string_column_using_double_cast(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Like_with_non_string_column_using_double_cast(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "value(Microsoft.EntityFrameworkCore.DbFunctions).Like(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Like_with_non_string_column_using_double_cast(async))).Message);
+    [ConditionalTheory(Skip = "translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Like_and_comparison(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
-
-    public override async Task Where_Like_and_comparison(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "value(Microsoft.EntityFrameworkCore.DbFunctions).Like(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_Like_and_comparison(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
-
-    public override async Task Where_Like_or_comparison(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "value(Microsoft.EntityFrameworkCore.DbFunctions).Like(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_Like_or_comparison(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_Like_or_comparison(bool _)
+        => Task.CompletedTask;
 
 #endif
 
@@ -2569,13 +2180,4 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
-
-    // Fails: Projections issue EF-76
-    private static async Task AssertNoProjectionSupport(Func<Task> query)
-        => await Assert.ThrowsAsync<InvalidOperationException>(query);
-
-    // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }

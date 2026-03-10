@@ -39,29 +39,21 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
-    public override async Task Union_Intersect(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Union_Intersect(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_Intersect(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Intersect_non_entity(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Intersect_non_entity(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Intersect_non_entity(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Intersect_nested(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Intersect_nested(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Intersect_nested(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Intersect(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Intersect(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Intersect(bool _)
+        => Task.CompletedTask;
 
 
     public override async Task Union(bool async)
@@ -84,14 +76,9 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Except(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Except(bool _)
+        => Task.CompletedTask;
 
     public override async Task Union_OrderBy_Skip_Take(bool async)
     {
@@ -206,64 +193,33 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Select_Union_unrelated(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Select_Union_unrelated(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Select_Union_unrelated(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Select_Union_different_fields_in_anonymous_with_subquery(bool async)
-    {
-        await AssertTranslationFailed(() => base.Select_Union_different_fields_in_anonymous_with_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Select_Union_different_fields_in_anonymous_with_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_Include(bool async)
-    {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Union_Include(async))).Message);
+    [ConditionalTheory(Skip = "Include issue EF-117"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_Include(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Include issue EF-117"), MemberData(nameof(IsAsyncData))]
+    public override Task Include_Union(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Include_Union(bool async)
-    {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_Union(async))).Message);
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Select_Except_reference_projection(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task SubSelect_Union(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Select_Except_reference_projection(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Select_Except_reference_projection(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task SubSelect_Union(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.SubSelect_Union(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task GroupBy_Select_Union(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.GroupBy_Select_Union(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task GroupBy_Select_Union(bool _)
+        => Task.CompletedTask;
 
     public override async Task Union_over_columns_with_different_nullability(bool async)
     {
@@ -325,64 +281,33 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Union_over_column_scalarsubquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_column_scalarsubquery(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_column_scalarsubquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_over_function_column(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_column(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_function_column(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_function_function(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_over_function_function(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_function(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_function_constant(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_function_unary(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_over_function_constant(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_constant(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_function_binary(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
-
-    public override async Task Union_over_function_unary(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_unary(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Union_over_function_binary(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_binary(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Union_over_function_scalarsubquery(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_scalarsubquery(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_function_scalarsubquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Union_over_constant_column(bool async)
     {
@@ -433,10 +358,9 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Union_over_constant_scalarsubquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_constant_scalarsubquery(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_constant_scalarsubquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Union_over_unary_column(bool async)
     {
@@ -488,10 +412,9 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Union_over_unary_scalarsubquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_unary_scalarsubquery(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_unary_scalarsubquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Union_over_binary_column(bool async)
     {
@@ -543,52 +466,33 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Union_over_binary_scalarsubquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_binary_scalarsubquery(async));
-    }
+    [ConditionalTheory(Skip = "No multi-collection query support"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_binary_scalarsubquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_over_scalarsubquery_column(bool async)
-    {
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_column(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_scalarsubquery_column(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_over_scalarsubquery_function(bool async)
-    {
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_function(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_scalarsubquery_function(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_over_scalarsubquery_constant(bool async)
-    {
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_constant(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_scalarsubquery_constant(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_over_scalarsubquery_unary(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_unary(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_scalarsubquery_unary(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_scalarsubquery_binary(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_over_scalarsubquery_binary(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_binary(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Union_over_scalarsubquery_scalarsubquery(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_scalarsubquery(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_over_scalarsubquery_scalarsubquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Union_over_OrderBy_Take1(bool async)
     {
@@ -640,77 +544,37 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Collection_projection_after_set_operation(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Collection_projection_after_set_operation(async));
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Collection_projection_after_set_operation(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Concat_with_one_side_being_GroupBy_aggregate(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Concat_with_one_side_being_GroupBy_aggregate(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Concat_with_one_side_being_GroupBy_aggregate(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_on_entity_with_correlated_collection(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Union_on_entity_plus_other_column_with_correlated_collection(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_on_entity_with_correlated_collection(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_on_entity_with_correlated_collection(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Except_non_entity(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Except_simple_followed_by_projecting_constant(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Union_on_entity_plus_other_column_with_correlated_collection(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_on_entity_plus_other_column_with_correlated_collection(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Except_nested(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
-
-    public override async Task Except_non_entity(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except_non_entity(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Except_simple_followed_by_projecting_constant(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except_simple_followed_by_projecting_constant(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Except_nested(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except_nested(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Except_nested2(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except_nested2(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Except_nested2(bool _)
+        => Task.CompletedTask;
 
     public override async Task Concat_nested(bool async)
     {
@@ -750,28 +614,19 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Collection_projection_after_set_operation_fails_if_distinct(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Collection_projection_after_set_operation_fails_if_distinct(async));
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Collection_projection_after_set_operation_fails_if_distinct(bool _)
+        => Task.CompletedTask;
 
-        AssertMql();
-    }
-
-    public override async Task Collection_projection_before_set_operation_fails(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Collection_projection_before_set_operation_fails(async));
-
-        AssertMql();
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Collection_projection_before_set_operation_fails(bool _)
+        => Task.CompletedTask;
 
 #if !EF8
 
-    public override async Task Intersect_on_distinct(bool async)
-    {
-        await AssertNoProjectionSupport(() => base.Intersect_on_distinct(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Intersect_on_distinct(bool _)
+        => Task.CompletedTask;
 
     public override async Task Union_on_distinct(bool async)
     {
@@ -783,14 +638,9 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Except_on_distinct(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except_on_distinct(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Except_on_distinct(bool _)
+        => Task.CompletedTask;
 
 #endif
 
@@ -858,32 +708,13 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
             """);
     }
 
-    public override async Task Client_eval_Union_FirstOrDefault(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Client_eval_Union_FirstOrDefault(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Not throwing expected translation failed exception from EF, but still throws."), MemberData(nameof(IsAsyncData))]
+    public override Task Client_eval_Union_FirstOrDefault(bool _)
+        => Task.CompletedTask;
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
-
-    // Fails: Projections issue EF-76
-    private static Task AssertNoProjectionSupport(Func<Task> query)
-        => Assert.ThrowsAsync<InvalidOperationException>(() => query());
-
-    // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }

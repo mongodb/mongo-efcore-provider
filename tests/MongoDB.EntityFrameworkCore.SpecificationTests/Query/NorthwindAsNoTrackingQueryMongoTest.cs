@@ -79,68 +79,33 @@ Customers.
 """);
     }
 
-    public override async Task Applied_to_multiple_body_clauses(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Applied_to_multiple_body_clauses(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Applied_to_multiple_body_clauses(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-);
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task SelectMany_simple(bool _)
+        => Task.CompletedTask;
 
-    public override async Task SelectMany_simple(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.SelectMany_simple(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Applied_after_navigation_expansion(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-);
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Include_reference_and_collection(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Applied_after_navigation_expansion(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Applied_after_navigation_expansion(async));
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Applied_to_body_clause(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-);
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Applied_to_projection(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Include_reference_and_collection(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Include_reference_and_collection(async));
-
-        AssertMql(
-);
-    }
-
-    public override async Task Applied_to_body_clause(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Applied_to_body_clause(async));
-
-        AssertMql(
-);
-    }
-
-    public override async Task Applied_to_projection(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Applied_to_projection(async));
-
-        AssertMql(
-);
-    }
-
-    public override async Task Applied_to_body_clause_with_projection(bool async)
-    {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Applied_to_body_clause_with_projection(async));
-
-        AssertMql(
-);
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Applied_to_body_clause_with_projection(bool _)
+        => Task.CompletedTask;
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

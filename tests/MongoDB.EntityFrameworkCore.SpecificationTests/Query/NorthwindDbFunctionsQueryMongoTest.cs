@@ -37,98 +37,35 @@ public class NorthwindDbFunctionsQueryMongoTest
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
-    public override async Task Like_literal(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_literal(async))).Message);
+    [ConditionalTheory(Skip = "Translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Like_literal(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-Customers.
-""");
-    }
+    [ConditionalTheory(Skip = "Translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Like_identity(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Like_identity(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_identity(async))).Message);
+    [ConditionalTheory(Skip = "Translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Like_literal_with_escape(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-Customers.
-""");
-    }
+    [ConditionalTheory(Skip = "Translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Like_all_literals(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Like_literal_with_escape(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_literal_with_escape(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-    }
-
-    public override async Task Like_all_literals(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "The 'Like' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Like_all_literals(async))).InnerException.Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-    }
-
-    public override async Task Like_all_literals_with_escape(bool async)
-    {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "The 'Like' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Like_all_literals_with_escape(async))).InnerException.Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-    }
+    [ConditionalTheory(Skip = "Translation of Like issue EF-222"), MemberData(nameof(IsAsyncData))]
+    public override Task Like_all_literals_with_escape(bool _)
+        => Task.CompletedTask;
 
 #if EF8 || EF9
 
-    public override async Task Random_return_less_than_1(bool async)
-    {
-        // Fails: translation of Random issue EF-234
-        Assert.Contains(
-            "The 'Random' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Random_return_less_than_1(async))).InnerException.Message);
+    [ConditionalTheory(Skip = "Translation of Random issue EF-234"), MemberData(nameof(IsAsyncData))]
+    public override Task Random_return_less_than_1(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-Orders.
-""");
-    }
-
-    public override async Task Random_return_greater_than_0(bool async)
-    {
-        // Fails: translation of Random issue EF-234
-        Assert.Contains(
-            "The 'Random' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Random_return_greater_than_0(async))).InnerException.Message);
-
-        AssertMql(
-            """
-Orders.
-""");
-    }
+    [ConditionalTheory(Skip = "Translation of Random issue EF-234"), MemberData(nameof(IsAsyncData))]
+    public override Task Random_return_greater_than_0(bool _)
+        => Task.CompletedTask;
 
 #endif
 

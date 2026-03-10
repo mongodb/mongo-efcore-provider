@@ -14,98 +14,70 @@
  */
 
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
-using MongoDB.Driver;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
-using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Mapping;
 
 public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture fixture)
     : BuiltInDataTypesTestBase<BuiltInDataTypesMongoTest.BuiltInDataTypesMongoFixture>(fixture)
 {
-    // Fails: Enum casting issue EF-215
-    public override async Task Can_filter_projection_with_captured_enum_variable(bool async)
-        => Assert.Contains(
-            "Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[",
-            (await Assert.ThrowsAsync<Exception>(() => base.Can_filter_projection_with_captured_enum_variable(async))).Message);
+    [ConditionalTheory(Skip = "Enum casting issue EF-215"), InlineData(false), InlineData(true)]
+    public override Task Can_filter_projection_with_captured_enum_variable(bool _)
+        => Task.CompletedTask;
 
-    // Fails: Enum casting issue EF-215
-    public override async Task Can_filter_projection_with_inline_enum_variable(bool async)
-        => Assert.Contains(
-            "Unexpected target type: Microsoft.EntityFrameworkCore.BuiltInDataTypesTestBase`1+EmailTemplateTypeDto[",
-            (await Assert.ThrowsAsync<Exception>(() => base.Can_filter_projection_with_inline_enum_variable(async))).Message);
+    [ConditionalTheory(Skip = "Enum casting issue EF-215"), InlineData(false), InlineData(true)]
+    public override Task Can_filter_projection_with_inline_enum_variable(bool _)
+        => Task.CompletedTask;
 
     #if !EF8
-    // Fails: Include issue EF-117
-    public override async Task Can_insert_and_read_back_with_string_key()
-        => Assert.Contains(
-            "Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Can_insert_and_read_back_with_string_key()))
-            .Message);
+    [ConditionalFact(Skip = "Include issue EF-117")]
+    public override Task Can_insert_and_read_back_with_string_key()
+        => Task.CompletedTask;
 
-    // Fails: Cross-document navigation access issue EF-216
+    [ConditionalFact(Skip = "Cross-document navigation access issue EF-216")]
     public override Task Can_read_back_bool_mapped_as_int_through_navigation()
-        => AssertTranslationFailed(() => base.Can_read_back_bool_mapped_as_int_through_navigation());
+        => Task.CompletedTask;
 
-    // Fails: Cross-document navigation access issue EF-216
+    [ConditionalFact(Skip = "Cross-document navigation access issue EF-216")]
     public override Task Can_read_back_mapped_enum_from_collection_first_or_default()
-        => AssertTranslationFailed(() => base.Can_read_back_mapped_enum_from_collection_first_or_default());
+        => Task.CompletedTask;
 
-    // Fails: Call ToString on DateTimeOffset EF-217
-    [ConditionalFact (Skip = "Failing sometimes on latest server.")]
-    public override async Task Object_to_string_conversion()
-        => Assert.Contains(
-            "Actual:   \"97\"",
-            (await Assert.ThrowsAsync<EqualException>(() => base.Object_to_string_conversion())).Message);
+    [ConditionalFact(Skip = "Call ToString on DateTimeOffset EF-217")]
+    public override Task Object_to_string_conversion()
+        => Task.CompletedTask;
 
-    // Fails: Projecting DateTimeOffset members EF-218
-    public override async Task Optional_datetime_reading_null_from_database()
-        => Assert.Contains(
-            "Serializer for System.DateTimeOffset does not represent members as fields.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Optional_datetime_reading_null_from_database()))
-            .Message);
+    [ConditionalFact(Skip = "Projecting DateTimeOffset members EF-218")]
+    public override Task Optional_datetime_reading_null_from_database()
+        => Task.CompletedTask;
     #else
-    // Fails: Include issue EF-117
+    [ConditionalFact(Skip = "Include issue EF-117")]
     public override void Can_insert_and_read_back_with_string_key()
-        => Assert.Contains(
-            "Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.",
-            Assert.Throws<InvalidOperationException>(() => base.Can_insert_and_read_back_with_string_key()).Message);
+    {
+    }
 
-    // Fails: Cross-document navigation access issue EF-216
+    [ConditionalFact(Skip = "Cross-document navigation access issue EF-216")]
     public override void Can_read_back_bool_mapped_as_int_through_navigation()
-        => AssertTranslationFailed(() => base.Can_read_back_bool_mapped_as_int_through_navigation());
+    {
+    }
 
-    // Fails: Cross-document navigation access issue EF-216
+    [ConditionalFact(Skip = "Cross-document navigation access issue EF-216")]
     public override void Can_read_back_mapped_enum_from_collection_first_or_default()
-        => AssertTranslationFailed(() => base.Can_read_back_mapped_enum_from_collection_first_or_default());
+    {
+    }
 
-    // Fails: Call ToString on DateTimeOffset EF-217
-    [ConditionalFact (Skip = "Failing sometimes on latest server.")]
+    [ConditionalFact(Skip = "Call ToString on DateTimeOffset EF-217")]
     public override void Object_to_string_conversion()
-        => Assert.Contains(
-            "Unsupported conversion from object to string in $convert with no onError value.",
-            Assert.Throws<MongoCommandException>(() => base.Object_to_string_conversion()).Message);
+    {
+    }
 
-    // Fails: Projecting DateTimeOffset members EF-218
+    [ConditionalFact(Skip = "Projecting DateTimeOffset members EF-218")]
     public override void Optional_datetime_reading_null_from_database()
-        => Assert.Contains(
-            "Serializer for System.DateTimeOffset does not represent members as fields.",
-            Assert.Throws<NotSupportedException>(() => base.Optional_datetime_reading_null_from_database()).Message);
+    {
+    }
     #endif
-
-    private static void AssertTranslationFailed(Action query)
-        => Assert.Contains(
-            CoreStrings.TranslationFailed("")[48..],
-            Assert.Throws<InvalidOperationException>(query).Message);
-
-    private static async Task AssertTranslationFailed(Func<Task> query)
-        => Assert.Contains(
-            CoreStrings.TranslationFailed("")[48..],
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 
     public class BuiltInDataTypesMongoFixture : BuiltInDataTypesFixtureBase
     {

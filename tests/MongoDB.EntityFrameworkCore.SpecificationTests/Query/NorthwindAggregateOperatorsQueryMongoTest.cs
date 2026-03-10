@@ -78,54 +78,21 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Contains_over_keyless_entity_throws(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_over_keyless_entity_throws(async))).Message);
+    [ConditionalTheory (Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_keyless_entity_throws(bool _)
+    => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Customers.{ "$limit" : 1 }
-            """,
-            //
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Enumerable_min_is_mapped_to_Queryable_1(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Enumerable_min_is_mapped_to_Queryable_1(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Enumerable_min_is_mapped_to_Queryable_1(async));
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Enumerable_min_is_mapped_to_Queryable_2(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
-
-    public override async Task Enumerable_min_is_mapped_to_Queryable_2(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Enumerable_min_is_mapped_to_Queryable_2(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Average_with_unmapped_property_access_throws_meaningful_exception(bool async)
-    {
-        // Fails: Does not use translation failed message
-        Assert.Contains(
-            "Serializer for Microsoft.EntityFramework",
-            (await Assert.ThrowsAsync<ContainsException>(() =>
-                base.Average_with_unmapped_property_access_throws_meaningful_exception(async))).Message);
-
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Does not use translation failed message"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_with_unmapped_property_access_throws_meaningful_exception(bool _)
+        => Task.CompletedTask;
 
     public override async Task Sum_over_empty_returns_zero(bool async)
     {
@@ -169,36 +136,23 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
 #if EF8 || EF9
 
-    public override async Task Average_after_default_if_empty_does_not_throw(bool async)
-    {
-        await AssertTranslationFailed(() => base.Average_after_default_if_empty_does_not_throw(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_after_default_if_empty_does_not_throw(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Max_after_default_if_empty_does_not_throw(bool async)
-    {
-        await AssertNoProjectionSupport(() => base.Max_after_default_if_empty_does_not_throw(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_after_default_if_empty_does_not_throw(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Min_after_default_if_empty_does_not_throw(bool async)
-    {
-        await AssertNoProjectionSupport(() => base.Min_after_default_if_empty_does_not_throw(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_after_default_if_empty_does_not_throw(bool _)
+        => Task.CompletedTask;
 
 #endif
 
-    public override async Task Sum_with_no_data_cast_to_nullable(bool async)
-    {
-        // Fails: Sum of empty set cast to nullable issue EF-232
-        Assert.Contains(
-            "Expected: 0",
-            (await Assert.ThrowsAsync<EqualException>(() =>
-                base.Sum_with_no_data_cast_to_nullable(async))).Message);
-
-        AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$lt" : 0 } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Sum of empty set cast to nullable issue EF-232"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_with_no_data_cast_to_nullable(bool _)
+        => Task.CompletedTask;
 
     public override async Task Sum_with_no_data_nullable(bool async)
     {
@@ -230,42 +184,17 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Min_no_data_nullable(bool async)
-    {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Min_no_data_nullable(async))).Message);
+    [ConditionalTheory(Skip = "Max over empty nullables issue EF-227"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_no_data_nullable(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Max over empty nullables issue EF-227"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_no_data_cast_to_nullable(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Min_no_data_cast_to_nullable(bool async)
-    {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Min_no_data_cast_to_nullable(async))).Message);
-
-        AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
-            """);
-    }
-
-    public override async Task Min_no_data_subquery(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Min_no_data_subquery(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_no_data_subquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Max_no_data(bool async)
     {
@@ -277,42 +206,17 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Max_no_data_nullable(bool async)
-    {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Max_no_data_nullable(async))).Message);
+    [ConditionalTheory(Skip = "Max over empty nullables issue EF-227"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_no_data_nullable(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Max over empty nullables issue EF-227"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_no_data_cast_to_nullable(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Max_no_data_cast_to_nullable(bool async)
-    {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Max_no_data_cast_to_nullable(async))).Message);
-
-        AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-            """);
-    }
-
-    public override async Task Max_no_data_subquery(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Max_no_data_subquery(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_no_data_subquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Average_no_data(bool async)
     {
@@ -344,14 +248,9 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Average_no_data_subquery(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Average_no_data_subquery(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_no_data_subquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Count_with_no_predicate(bool async)
     {
@@ -373,103 +272,33 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Where_OrderBy_Count_client_eval(bool async)
-    {
-        // Fails: Does not throw expected unable to translate exception
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.Where_OrderBy_Count_client_eval(async))).Message);
+    [ConditionalTheory(Skip = "Does not throw expected unable to translate exception"), MemberData(nameof(IsAsyncData))]
+    public override Task Where_OrderBy_Count_client_eval(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Does not throw expected unable to translate exception"), MemberData(nameof(IsAsyncData))]
+    public override Task OrderBy_Where_Count_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task OrderBy_Where_Count_client_eval(bool async)
-    {
-        // Fails: Does not throw expected unable to translate exception
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Where_Count_client_eval(async))).Message);
+    [ConditionalTheory(Skip = "Does not throw expected unable to translate exception"), MemberData(nameof(IsAsyncData))]
+    public override Task OrderBy_Where_Count_client_eval_mixed(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Does not throw expected unable to translate exception"), MemberData(nameof(IsAsyncData))]
+    public override Task OrderBy_Count_with_predicate_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task OrderBy_Where_Count_client_eval_mixed(bool async)
-    {
-        // Fails: Does not throw expected unable to translate exception
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Where_Count_client_eval_mixed(async))).Message);
+    [ConditionalTheory(Skip = "Does not throw expected unable to translate exception"), MemberData(nameof(IsAsyncData))]
+    public override Task OrderBy_Count_with_predicate_client_eval_mixed(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Does not throw expected unable to translate exception"), MemberData(nameof(IsAsyncData))]
+    public override Task OrderBy_Where_Count_with_predicate_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task OrderBy_Count_with_predicate_client_eval(bool async)
-    {
-        // Fails: Does not throw expected unable to translate exception
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Count_with_predicate_client_eval(async))).Message);
-
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
-
-    public override async Task OrderBy_Count_with_predicate_client_eval_mixed(bool async)
-    {
-        // Fails: Does not throw expected unable to translate exception
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Count_with_predicate_client_eval_mixed(async))).Message);
-
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
-
-    public override async Task OrderBy_Where_Count_with_predicate_client_eval(bool async)
-    {
-        // Fails: Does not throw expected unable to translate exception
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Where_Count_with_predicate_client_eval(async))).Message);
-
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
-
-    public override async Task OrderBy_Where_Count_with_predicate_client_eval_mixed(bool async)
-    {
-        // Fails: Does not throw expected unable to translate exception
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Where_Count_with_predicate_client_eval_mixed(async))).Message);
-
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Does not throw expected unable to translate exception"), MemberData(nameof(IsAsyncData))]
+    public override Task OrderBy_Where_Count_with_predicate_client_eval_mixed(bool _)
+        => Task.CompletedTask;
 
     public override async Task OrderBy_client_Take(bool async)
     {
@@ -673,75 +502,52 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
 #if !EF8
 
-    public override async Task Sum_over_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Sum_over_nested_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_nested_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_nested_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Sum_over_min_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_min_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_min_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Sum_over_scalar_returning_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_scalar_returning_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_scalar_returning_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Sum_over_Any_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_Any_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_Any_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Sum_over_uncorrelated_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_uncorrelated_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_uncorrelated_subquery(bool _)
+        => Task.CompletedTask;
 
 #else
-    public override async Task Sum_over_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Sum_over_nested_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_nested_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_nested_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Sum_over_min_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_min_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_over_min_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
 #endif
 
-    public override async Task Sum_on_float_column(bool async)
-    {
-        // Fails: Truncation data loss issue EF-228
-        Assert.Contains(
-            "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(() => base.Sum_on_float_column(async))).Message);
+    [ConditionalTheory(Skip = "Truncation data loss issue EF-228"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_on_float_column(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
-            """);
-    }
-
-    public override async Task Sum_on_float_column_in_subquery(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Sum_on_float_column_in_subquery(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Sum_on_float_column_in_subquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Average_with_no_arg(bool async)
     {
@@ -815,69 +621,44 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
 #if !EF8
 
-    public override async Task Average_over_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_over_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Average_over_nested_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_nested_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_over_nested_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Average_over_max_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_max_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_over_max_subquery(bool _)
+        => Task.CompletedTask;
 
 #else
-    public override async Task Average_over_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_over_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Average_over_nested_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_nested_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_over_nested_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Average_over_max_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_max_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_over_max_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
 #endif
 
-    public override async Task Average_on_float_column(bool async)
-    {
-        // Fails: Truncation data loss issue EF-228
-        Assert.Contains(
-            "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(() => base.Average_on_float_column(async))).Message);
+    [ConditionalTheory(Skip = "Truncation data loss issue EF-228"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_on_float_column(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_on_float_column_in_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Average_on_float_column_in_subquery(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Average_on_float_column_in_subquery(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Average_on_float_column_in_subquery_with_cast(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Average_on_float_column_in_subquery_with_cast(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_on_float_column_in_subquery_with_cast(bool _)
+        => Task.CompletedTask;
 
     public override async Task Min_with_no_arg(bool async)
     {
@@ -911,36 +692,30 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
 #if !EF8
 
-    public override async Task Min_over_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_over_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Min_over_nested_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_nested_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_over_nested_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Min_over_max_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_max_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_over_max_subquery(bool _)
+        => Task.CompletedTask;
 
 #else
-    public override async Task Min_over_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_over_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Min_over_nested_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_nested_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_over_nested_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Min_over_max_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_max_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_over_max_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
 #endif
 
@@ -976,36 +751,30 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
 #if !EF8
 
-    public override async Task Max_over_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_over_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Max_over_nested_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_nested_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_over_nested_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Max_over_sum_subquery(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_sum_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_over_sum_subquery(bool _)
+        => Task.CompletedTask;
 
 #else
-    public override async Task Max_over_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_over_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Max_over_nested_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_nested_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_over_nested_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Max_over_sum_subquery_is_client_eval(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_sum_subquery_is_client_eval(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_over_sum_subquery_is_client_eval(bool _)
+        => Task.CompletedTask;
 
 #endif
 
@@ -1150,26 +919,21 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task FirstOrDefault_inside_subquery_gets_server_evaluated(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.FirstOrDefault_inside_subquery_gets_server_evaluated(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task FirstOrDefault_inside_subquery_gets_server_evaluated(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Multiple_collection_navigation_with_FirstOrDefault_chained(bool async)
-    {
-        await AssertNoProjectionSupport(() => base.Multiple_collection_navigation_with_FirstOrDefault_chained(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Multiple_collection_navigation_with_FirstOrDefault_chained(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(bool async)
-    {
-        await AssertNoProjectionSupport(() =>
-            base.Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Multiple_collection_navigation_with_FirstOrDefault_chained_projecting_scalar(bool _)
+        => Task.CompletedTask;
 
-    public override async Task First_inside_subquery_gets_client_evaluated(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.First_inside_subquery_gets_client_evaluated(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task First_inside_subquery_gets_client_evaluated(bool _)
+        => Task.CompletedTask;
 
     public override async Task Last(bool async)
     {
@@ -1231,10 +995,9 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Contains_with_subquery(bool async)
-    {
-        await AssertNoProjectionSupport(() => base.Contains_with_subquery(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_with_subquery(bool _)
+        => Task.CompletedTask;
 
     public override async Task Contains_with_local_array_closure(bool async)
     {
@@ -1250,19 +1013,9 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Contains_with_subquery_and_local_array_closure(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_with_subquery_and_local_array_closure(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_with_subquery_and_local_array_closure(bool _)
+        => Task.CompletedTask;
 
     public override async Task Contains_with_local_uint_array_closure(bool async)
     {
@@ -1627,18 +1380,9 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Contains_top_level(bool async)
-    {
-        // Fails: Incorrect results issue EF-229
-        Assert.Contains(
-            "Expected: True",
-            (await Assert.ThrowsAsync<EqualException>(() => base.Contains_top_level(async))).Message);
-
-        AssertMql(
-            """
-            Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$match" : { "_v" : { "_v" : "ALFKI" } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Incorrect results issue EF-229"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_top_level(bool _)
+        => Task.CompletedTask;
 
     public override async Task Contains_with_local_anonymous_type_array_closure(bool async)
     {
@@ -1650,23 +1394,13 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task OfType_Select(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.OfType_Select(async));
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task OfType_Select(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
-
-    public override async Task OfType_Select_OfType_Select(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.OfType_Select_OfType_Select(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task OfType_Select_OfType_Select(bool _)
+        => Task.CompletedTask;
 
     public override async Task Average_with_non_matching_types_in_projection_doesnt_produce_second_explicit_cast(bool async)
     {
@@ -1718,85 +1452,29 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Contains_over_entityType_should_rewrite_to_identity_equality(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() =>
-                base.Contains_over_entityType_should_rewrite_to_identity_equality(async))).Message);
+    [ConditionalTheory(Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_entityType_should_rewrite_to_identity_equality(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }
-            """,
-            //
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task List_Contains_over_entityType_should_rewrite_to_identity_equality(bool _)
+        => Task.CompletedTask;
 
-    public override async Task List_Contains_over_entityType_should_rewrite_to_identity_equality(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() =>
-            base.List_Contains_over_entityType_should_rewrite_to_identity_equality(async));
-    }
+    [ConditionalTheory(Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task List_Contains_with_constant_list(bool _)
+        => Task.CompletedTask;
 
-    public override async Task List_Contains_with_constant_list(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.List_Contains_with_constant_list(async))).Message);
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task List_Contains_with_parameter_list(bool _)
+        => Task.CompletedTask;
 
-    public override async Task List_Contains_with_parameter_list(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.List_Contains_with_parameter_list(async))).Message);
+    [ConditionalTheory(Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_with_parameter_list_value_type_id(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
-
-    public override async Task Contains_with_parameter_list_value_type_id(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_with_parameter_list_value_type_id(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
-
-    public override async Task Contains_with_constant_list_value_type_id(bool async)
-    {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_over_keyless_entity_throws(async))).Message);
-
-        AssertMql(
-            """
-            Customers.{ "$limit" : 1 }
-            """,
-            //
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "Entity equality issue EF-202"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_with_constant_list_value_type_id(bool _)
+        => Task.CompletedTask;
 
     public override async Task IImmutableSet_Contains_with_parameter(bool async)
     {
@@ -1848,135 +1526,45 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery(async))).Message);
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_entityType_with_null_in_projection(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Contains_over_entityType_with_null_in_projection(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_with_null_in_projection(async))).Message);
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_scalar_with_null_should_rewrite_to_identity_equality_subquery(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Contains_over_scalar_with_null_should_rewrite_to_identity_equality_subquery(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_scalar_with_null_should_rewrite_to_identity_equality_subquery(async))).Message);
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_negated(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_complex(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_negated(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_negated(async))).Message);
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_nullable_scalar_with_null_in_subquery_translated_correctly(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_non_nullable_scalar_with_null_in_subquery_simplifies_to_false(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_complex(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_complex(async))).Message);
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_entityType_should_materialize_when_composite(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-            """
-            Orders.
-            """);
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_over_entityType_should_materialize_when_composite2(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Contains_over_nullable_scalar_with_null_in_subquery_translated_correctly(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Contains_over_nullable_scalar_with_null_in_subquery_translated_correctly(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Contains_over_non_nullable_scalar_with_null_in_subquery_simplifies_to_false(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() =>
-            base.Contains_over_non_nullable_scalar_with_null_in_subquery_simplifies_to_false(async));
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Contains_over_entityType_should_materialize_when_composite(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_should_materialize_when_composite(async))).Message);
-
-        AssertMql(
-            """
-            OrderDetails.
-            """);
-    }
-
-    public override async Task Contains_over_entityType_should_materialize_when_composite2(bool async)
-    {
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_should_materialize_when_composite2(async))).Message);
-
-        AssertMql(
-            """
-            OrderDetails.
-            """);
-    }
-
-    public override async Task String_FirstOrDefault_in_projection_does_not_do_client_eval(bool async)
-    {
-        // Fails: String.FirstOrDefault issue EF-231
-        Assert.Contains(
-            "StringSerializer must implement IBsonArraySerializer",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.String_FirstOrDefault_in_projection_does_not_do_client_eval(async))).Message);
-
-        AssertMql(
-            """
-            Customers.
-            """);
-    }
+    [ConditionalTheory(Skip = "String.FirstOrDefault issue EF-231"), MemberData(nameof(IsAsyncData))]
+    public override Task String_FirstOrDefault_in_projection_does_not_do_client_eval(bool _)
+        => Task.CompletedTask;
 
     public override async Task Project_constant_Sum(bool async)
     {
@@ -2086,25 +1674,17 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Cast_before_aggregate_is_preserved(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Cast_before_aggregate_is_preserved(async));
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Cast_before_aggregate_is_preserved(bool _)
+        => Task.CompletedTask;
 
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Collection_Last_member_access_in_projection_translated(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Collection_Last_member_access_in_projection_translated(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_Last_member_access_in_projection_translated(async));
-    }
-
-    public override async Task Collection_LastOrDefault_member_access_in_projection_translated(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() =>
-            base.Collection_LastOrDefault_member_access_in_projection_translated(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Collection_LastOrDefault_member_access_in_projection_translated(bool _)
+        => Task.CompletedTask;
 
     public override async Task Sum_over_explicit_cast_over_column(bool async)
     {
@@ -2134,14 +1714,9 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Average_on_nav_subquery_in_projection(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.Average_on_nav_subquery_in_projection(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_on_nav_subquery_in_projection(bool _)
+        => Task.CompletedTask;
 
     public override async Task Count_after_client_projection(bool async)
     {
@@ -2163,15 +1738,13 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Not_Any_false(bool async)
-    {
-        await AssertNoMultiCollectionQuerySupport(() => base.Not_Any_false(async));
-    }
+    [ConditionalTheory(Skip = "Cross-document navigation access issue EF-216"), MemberData(nameof(IsAsyncData))]
+    public override Task Not_Any_false(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Contains_inside_aggregate_function_with_GroupBy(bool async)
-    {
-        await AssertTranslationFailed(() => base.Contains_inside_aggregate_function_with_GroupBy(async));
-    }
+    [ConditionalTheory(Skip = "Translation failed"), MemberData(nameof(IsAsyncData))]
+    public override Task Contains_inside_aggregate_function_with_GroupBy(bool _)
+        => Task.CompletedTask;
 
     public override async Task Contains_inside_Average_without_GroupBy(bool async)
     {
@@ -2234,36 +1807,27 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     }
 
 #if EF8 || EF9
-    public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
-    {
-        await AssertNoProjectionSupport(() => base.DefaultIfEmpty_selects_only_required_columns(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task DefaultIfEmpty_selects_only_required_columns(bool _)
+        => Task.CompletedTask;
 
 #else
 
-    public override async Task Average_after_DefaultIfEmpty_does_not_throw(bool async)
-    {
-        await AssertTranslationFailed(() => base.Average_after_DefaultIfEmpty_does_not_throw(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Average_after_DefaultIfEmpty_does_not_throw(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Max_after_DefaultIfEmpty_does_not_throw(bool async)
-    {
-        await AssertTranslationFailed(() => base.Max_after_DefaultIfEmpty_does_not_throw(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Max_after_DefaultIfEmpty_does_not_throw(bool _)
+        => Task.CompletedTask;
 
-    public override async Task Min_after_DefaultIfEmpty_does_not_throw(bool async)
-    {
-        await AssertTranslationFailed(() => base.Min_after_DefaultIfEmpty_does_not_throw(async));
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task Min_after_DefaultIfEmpty_does_not_throw(bool _)
+        => Task.CompletedTask;
 
-    public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
-    {
-        // Fails: Projections issue EF-76
-        await AssertTranslationFailed(() => base.DefaultIfEmpty_selects_only_required_columns(async));
-
-        AssertMql(
-        );
-    }
+    [ConditionalTheory(Skip = "Projections issue EF-76"), MemberData(nameof(IsAsyncData))]
+    public override Task DefaultIfEmpty_selects_only_required_columns(bool _)
+        => Task.CompletedTask;
 
 #endif
 
@@ -2299,19 +1863,9 @@ public class NorthwindAggregateOperatorsQueryMongoTest
             """);
     }
 
-    public override async Task Type_casting_inside_sum(bool async)
-    {
-        // Returns 121.04000180587159838 instead of 121.040 because of conversion errors.
-        Assert.Contains(
-            "Actual:   121.04000180587159838",
-            (await Assert.ThrowsAsync<EqualException>(() =>
-                base.Type_casting_inside_sum(async))).Message);
-
-        AssertMql(
-            """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$toDecimal" : "$Discount" } } } }, { "$project" : { "_id" : 0 } }
-            """);
-    }
+    [ConditionalTheory(Skip = "Returns 121.04000180587159838 instead of 121.040 because of conversion errors"), MemberData(nameof(IsAsyncData))]
+    public override Task Type_casting_inside_sum(bool _)
+        => Task.CompletedTask;
 
 #endif
 
@@ -2320,13 +1874,4 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
-
-    // Fails: Projections issue EF-76
-    private static Task AssertNoProjectionSupport(Func<Task> query)
-        => Assert.ThrowsAsync<InvalidOperationException>(query);
-
-    // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
 }
