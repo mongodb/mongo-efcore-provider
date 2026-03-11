@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Class MongoRelationshipDiscoveryConvention | MongoDB EF Core Provider API Reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Class MongoRelationshipDiscoveryConvention | MongoDB EF Core Provider API Reference ">
+      
+      <meta name="description" content="A convention that ensures embedded objects are correctly configured as owned entities.">
+      <link rel="icon" href="../favicon.ico">
+      <link rel="stylesheet" href="../public/docfx.min.css">
+      <link rel="stylesheet" href="../public/main.css">
+      <meta name="docfx:navrel" content="">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/mongodb/mongo-efcore-provider/new/main/apiSpec/new?filename=MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention.md&amp;value=---%0Auid%3A%20MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./../public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="../index.html">
+            <img id="logo" class="svg" src="../images/mongodb-logo.svg" alt="">
+            
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+      <div class="toc-offcanvas">
+        <div class="offcanvas-md offcanvas-start" tabindex="-1" id="tocOffcanvas" aria-labelledby="tocOffcanvasLabel">
+          <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="tocOffcanvasLabel">Table of Contents</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#tocOffcanvas" aria-label="Close"></button>
+          </div>
+          <div class="offcanvas-body">
+            <nav class="toc" id="toc"></nav>
+          </div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="actionbar">
+          <button class="btn btn-lg border-0 d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#tocOffcanvas" aria-controls="tocOffcanvas" aria-expanded="false" aria-label="Show table of contents">
+            <i class="bi bi-list"></i>
+          </button>
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention">
+
+
+
+  <h1 id="MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention" data-uid="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention" class="text-break">
+Class MongoRelationshipDiscoveryConvention  <a class="header-action link-secondary" title="View source" href="https://github.com/mongodb/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Conventions/MongoRelationshipDiscoveryConvention.cs/#L27"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="MongoDB.html">MongoDB</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.html">EntityFrameworkCore</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.html">Metadata</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.html">Conventions</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>MongoDB.EntityFrameworkCore.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>A convention that ensures embedded objects are correctly configured as owned entities.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public class MongoRelationshipDiscoveryConvention : RelationshipDiscoveryConvention, ITypeIgnoredConvention, IEntityTypeAddedConvention, IEntityTypeBaseTypeChangedConvention, IEntityTypeMemberIgnoredConvention, INavigationRemovedConvention, INavigationAddedConvention, IForeignKeyOwnershipChangedConvention, IForeignKeyNullNavigationSetConvention, IForeignKeyRemovedConvention, IConvention</code></pre>
+  </div>
+
+
+
+
+  <dl class="typelist inheritance">
+    <dt>Inheritance</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object">object</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention">RelationshipDiscoveryConvention</a></div>
+      <div><span class="xref">MongoRelationshipDiscoveryConvention</span></div>
+    </dd>
+  </dl>
+
+  <dl class="typelist implements">
+    <dt>Implements</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.itypeignoredconvention">ITypeIgnoredConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.ientitytypeaddedconvention">IEntityTypeAddedConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.ientitytypebasetypechangedconvention">IEntityTypeBaseTypeChangedConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.ientitytypememberignoredconvention">IEntityTypeMemberIgnoredConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.inavigationremovedconvention">INavigationRemovedConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.inavigationaddedconvention">INavigationAddedConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.iforeignkeyownershipchangedconvention">IForeignKeyOwnershipChangedConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.iforeignkeynullnavigationsetconvention">IForeignKeyNullNavigationSetConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.iforeignkeyremovedconvention">IForeignKeyRemovedConvention</a></div>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.iconvention">IConvention</a></div>
+    </dd>
+  </dl>
+
+
+  <dl class="typelist inheritedMembers">
+    <dt>Inherited Members</dt>
+    <dd>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.discoverrelationships">RelationshipDiscoveryConvention.DiscoverRelationships(IConventionEntityTypeBuilder, IConventionContext, bool)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.trygettargetentitytypebuilder">RelationshipDiscoveryConvention.TryGetTargetEntityTypeBuilder(IConventionEntityTypeBuilder, Type, MemberInfo, bool?, bool)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processentitytypeadded">RelationshipDiscoveryConvention.ProcessEntityTypeAdded(IConventionEntityTypeBuilder, IConventionContext&lt;IConventionEntityTypeBuilder&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processentitytypebasetypechanged">RelationshipDiscoveryConvention.ProcessEntityTypeBaseTypeChanged(IConventionEntityTypeBuilder, IConventionEntityType, IConventionEntityType, IConventionContext&lt;IConventionEntityType&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processforeignkeyremoved">RelationshipDiscoveryConvention.ProcessForeignKeyRemoved(IConventionEntityTypeBuilder, IConventionForeignKey, IConventionContext&lt;IConventionForeignKey&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processnavigationremoved">RelationshipDiscoveryConvention.ProcessNavigationRemoved(IConventionEntityTypeBuilder, IConventionEntityTypeBuilder, string, MemberInfo, IConventionContext&lt;string&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processtypeignored">RelationshipDiscoveryConvention.ProcessTypeIgnored(IConventionModelBuilder, string, Type, IConventionContext&lt;string&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processentitytypememberignored">RelationshipDiscoveryConvention.ProcessEntityTypeMemberIgnored(IConventionEntityTypeBuilder, string, IConventionContext&lt;string&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processforeignkeynullnavigationset">RelationshipDiscoveryConvention.ProcessForeignKeyNullNavigationSet(IConventionForeignKeyBuilder, bool, IConventionContext&lt;IConventionNavigation&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processnavigationadded">RelationshipDiscoveryConvention.ProcessNavigationAdded(IConventionNavigationBuilder, IConventionContext&lt;IConventionNavigationBuilder&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.processforeignkeyownershipchanged">RelationshipDiscoveryConvention.ProcessForeignKeyOwnershipChanged(IConventionForeignKeyBuilder, IConventionContext&lt;bool?&gt;)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.dependencies">RelationshipDiscoveryConvention.Dependencies</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.metadata.conventions.relationshipdiscoveryconvention.useattributes">RelationshipDiscoveryConvention.UseAttributes</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object)">object.Equals(object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object-system-object)">object.Equals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gethashcode">object.GetHashCode()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gettype">object.GetType()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.memberwiseclone">object.MemberwiseClone()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.referenceequals">object.ReferenceEquals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.tostring">object.ToString()</a>
+    </div>
+  </dd></dl>
+
+
+
+
+
+  <h2 class="section" id="constructors">Constructors
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.-ctor.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention__ctor_Microsoft_EntityFrameworkCore_Metadata_Conventions_Infrastructure_ProviderConventionSetBuilderDependencies_">MongoRelationshipDiscoveryConvention(ProviderConventionSetBuilderDependencies)</a></dt>
+    <dd><p>Creates a <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.html">MongoRelationshipDiscoveryConvention</a>.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="methods">Methods
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwned.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention_ShouldBeOwned_System_Type_Microsoft_EntityFrameworkCore_Metadata_IConventionModel_">ShouldBeOwned(Type, IConventionModel)</a></dt>
+    <dd><p>Returns a value indicating whether the given entity type should be added as owned if it isn't currently in the model.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Conventions.MongoRelationshipDiscoveryConvention.ShouldBeOwnedType.html#MongoDB_EntityFrameworkCore_Metadata_Conventions_MongoRelationshipDiscoveryConvention_ShouldBeOwnedType_System_Type_Microsoft_EntityFrameworkCore_Metadata_IConventionModel_">ShouldBeOwnedType(Type, IConventionModel)</a></dt>
+    <dd><p>Determine if a given entity type should be added as an owned entity if not already in the model.</p>
+</dd>
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          &copy; 2023 MongoDB, Inc.
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
