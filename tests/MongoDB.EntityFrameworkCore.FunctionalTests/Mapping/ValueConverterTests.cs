@@ -727,7 +727,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     [InlineData("0", false)]
     public void Decimal_can_deserialize_and_query_from_Decimal128(string amountString, bool defaultConverter)
     {
-        var amount = decimal.Parse(amountString);
+        var amount = decimal.Parse(amountString, CultureInfo.InvariantCulture);
         var expected = new AmountIsDecimal128 {amount = new Decimal128(amount), _id = ObjectId.GenerateNewId()};
         var docs = database.CreateCollection<AmountIsDecimal128>(values: [amount, defaultConverter]);
         docs.InsertOne(expected);
@@ -750,7 +750,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     [InlineData("0", false)]
     public void Decimal_can_serialize_to_Decimal128(string amountString, bool defaultConverter)
     {
-        var amount = decimal.Parse(amountString);
+        var amount = decimal.Parse(amountString, CultureInfo.InvariantCulture);
         var collection = database.CreateCollection<AmountIsDecimal>(values: [amount, defaultConverter]);
         using var db =
             SingleEntityDbContext.Create(collection, defaultConverter ? DefaultDecimalToDecimal128 : DecimalToDecimal128);
@@ -779,7 +779,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     [InlineData("0", false)]
     public void Decimal128_can_deserialize_and_query_from_Decimal(string amountString, bool defaultConverter)
     {
-        var amount = decimal.Parse(amountString);
+        var amount = decimal.Parse(amountString, CultureInfo.InvariantCulture);
         var expected = new AmountIsDecimal {amount = amount, _id = ObjectId.GenerateNewId()};
         var docs = database.CreateCollection<AmountIsDecimal>(values: [amount, defaultConverter]);
         docs.InsertOne(expected);
@@ -802,7 +802,7 @@ public class ValueConverterTests(TemporaryDatabaseFixture database)
     [InlineData("0", false)]
     public void Decimal128_can_serialize_to_Decimal(string amountString, bool defaultConverter)
     {
-        var amount = decimal.Parse(amountString);
+        var amount = decimal.Parse(amountString, CultureInfo.InvariantCulture);
         var collection =
             database.CreateCollection<AmountIsDecimal128>(values: [amount, defaultConverter]);
         using var db =
