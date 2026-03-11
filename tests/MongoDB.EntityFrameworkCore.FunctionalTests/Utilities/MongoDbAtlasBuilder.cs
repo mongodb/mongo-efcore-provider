@@ -95,6 +95,7 @@ public sealed class MongoDbAtlasBuilder : ContainerBuilder<MongoDbAtlasBuilder, 
                     """));
 
                 await database.GetCollection<BsonDocument>(collectionName).SearchIndexes.CreateOneAsync(model);
+                using var _ = await database.GetCollection<BsonDocument>(collectionName).SearchIndexes.ListAsync();
                 weGood = true;
             }
             catch
