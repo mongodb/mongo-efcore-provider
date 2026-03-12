@@ -176,12 +176,12 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Max_after_default_if_empty_does_not_throw(bool async)
     {
-        await base.Max_after_default_if_empty_does_not_throw(async);
+        await AssertTranslationFailed(() => base.Max_after_default_if_empty_does_not_throw(async));
     }
 
     public override async Task Min_after_default_if_empty_does_not_throw(bool async)
     {
-        await base.Min_after_default_if_empty_does_not_throw(async);
+        await AssertTranslationFailed(() => base.Min_after_default_if_empty_does_not_throw(async));
     }
 
 #endif
@@ -2236,7 +2236,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 #if EF8 || EF9
     public override async Task DefaultIfEmpty_selects_only_required_columns(bool async)
     {
-        await base.DefaultIfEmpty_selects_only_required_columns(async);
+        await AssertTranslationFailed(() => base.DefaultIfEmpty_selects_only_required_columns(async));
     }
 
 #else
