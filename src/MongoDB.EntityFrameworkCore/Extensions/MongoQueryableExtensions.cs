@@ -43,13 +43,10 @@ public static class MongoQueryableExtensions
         && genericMethod == VectorSearchMethodInfo;
 
     /// <summary>
-    /// Adds a MongoDB Atlas Vector Search to this LINQ query. This method must be called at the root of an EF Core query
+    /// Adds a MongoDB Vector Search to this LINQ query. This method must be called at the root of an EF Core query
     /// against MongoDB, except that a <see cref="System.Linq.Queryable.Where{T}(IQueryable{T},Expression{Func{T,bool}})"/>
     /// clause can be used to add a pre-query filter.
     /// </summary>
-    /// <remarks>
-    /// Note that MongoDB Atlas Vector Search can only be used with MongoDB Atlas, not with other MongoDB configurations.
-    /// </remarks>
     /// <typeparam name="TSource">The type of the elements of <paramref name="source" />.</typeparam>
     /// <typeparam name="TProperty">The type of the vector property to search.</typeparam>
     /// <param name="source">The <see cref="IQueryable{T}"/> LINQ expression from EF Core.</param>
@@ -68,13 +65,10 @@ public static class MongoQueryableExtensions
         => VectorSearch((IQueryable<TSource>)source, property, null, queryVector, limit, options);
 
     /// <summary>
-    /// Adds a MongoDB Atlas Vector Search to this LINQ query. This method must be called at the root of an EF Core query
+    /// Adds a MongoDB Vector Search to this LINQ query. This method must be called at the root of an EF Core query
     /// against MongoDB, except that a <see cref="System.Linq.Queryable.Where{T}(IQueryable{T},Expression{Func{T,bool}})"/>
     /// clause can be used to add a pre-query filter.
     /// </summary>
-    /// <remarks>
-    /// Note that MongoDB Atlas Vector Search can only be used with MongoDB Atlas, not with other MongoDB configurations.
-    /// </remarks>
     /// <typeparam name="TSource">The type of the elements of <paramref name="source" />.</typeparam>
     /// <typeparam name="TProperty">The type of the vector property to search.</typeparam>
     /// <param name="source">The <see cref="IQueryable{T}"/> LINQ expression from EF Core.</param>
