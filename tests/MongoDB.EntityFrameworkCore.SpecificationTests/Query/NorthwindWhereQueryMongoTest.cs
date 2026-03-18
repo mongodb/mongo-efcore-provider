@@ -169,12 +169,12 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
 
         AssertMql(
             """
-            Employees.{ "$match" : { "$expr" : { "$eq" : [{ "$toLong" : "$ReportsTo" }, 2] } } }
-            """,
+Employees.{ "$match" : { "ReportsTo" : 2 } }
+""",
             //
             """
-            Employees.{ "$match" : { "$expr" : { "$eq" : [{ "$toLong" : "$ReportsTo" }, 5] } } }
-            """);
+Employees.{ "$match" : { "ReportsTo" : 5 } }
+""");
     }
 
     public override async Task Where_method_call_nullable_type_reverse_closure_via_query_cache(bool async)
@@ -323,16 +323,16 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
 
         AssertMql(
             """
-            Employees.{ "$match" : { "$expr" : { "$eq" : [{ "$toLong" : "$ReportsTo" }, 2] } } }
-            """,
+Employees.{ "$match" : { "ReportsTo" : 2 } }
+""",
             //
             """
-            Employees.{ "$match" : { "$expr" : { "$eq" : [{ "$toLong" : "$ReportsTo" }, 5] } } }
-            """,
+Employees.{ "$match" : { "ReportsTo" : 5 } }
+""",
             //
             """
-            Employees.{ "$match" : { "$expr" : { "$eq" : [{ "$toLong" : "$ReportsTo" }, null] } } }
-            """);
+Employees.{ "$match" : { "ReportsTo" : null } }
+""");
     }
 
     public override async Task Where_simple_closure_via_query_cache_nullable_type_reverse(bool async)
@@ -341,16 +341,16 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
 
         AssertMql(
             """
-            Employees.{ "$match" : { "$expr" : { "$eq" : [{ "$toLong" : "$ReportsTo" }, null] } } }
-            """,
+Employees.{ "$match" : { "ReportsTo" : null } }
+""",
             //
             """
-            Employees.{ "$match" : { "$expr" : { "$eq" : [{ "$toLong" : "$ReportsTo" }, 5] } } }
-            """,
+Employees.{ "$match" : { "ReportsTo" : 5 } }
+""",
             //
             """
-            Employees.{ "$match" : { "$expr" : { "$eq" : [{ "$toLong" : "$ReportsTo" }, 2] } } }
-            """);
+Employees.{ "$match" : { "ReportsTo" : 2 } }
+""");
     }
 
     public override async Task Where_subquery_closure_via_query_cache(bool async)
@@ -406,8 +406,8 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
     {
         // Fails: Not throwing expected translation failed exception from EF.
         Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client(async))).Message);
 
         AssertMql(
             """
@@ -444,8 +444,8 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
     {
         // Fails: Not throwing expected translation failed exception from EF.
         Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client_and_server_top_level(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client_and_server_top_level(async))).Message);
 
         AssertMql(
             """
@@ -457,8 +457,8 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
     {
         // Fails: Not throwing expected translation failed exception from EF.
         Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client_or_server_top_level(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client_or_server_top_level(async))).Message);
 
         AssertMql(
             """
@@ -470,8 +470,8 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
     {
         // Fails: Not throwing expected translation failed exception from EF.
         Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client_and_server_non_top_level(async)))
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client_and_server_non_top_level(async)))
             .Message);
 
         AssertMql(
@@ -484,8 +484,8 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
     {
         // Fails: Not throwing expected translation failed exception from EF.
         Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_client_deep_inside_predicate_and_server_top_level(async)))
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client_deep_inside_predicate_and_server_top_level(async)))
             .Message);
 
         AssertMql(
@@ -953,8 +953,8 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
         await base.Where_comparison_to_nullable_bool(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$_id" }, 2] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$_id", "KI", "$$start"] }, "$$start"] }] } } }, true] } } }
-            """);
+Customers.{ "$match" : { "$expr" : { "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$_id" }, 2] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$_id", "KI", "$$start"] }, "$$start"] }] } } } } }
+""");
     }
 
     public override async Task Where_true(bool async)
@@ -1303,8 +1303,8 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$gt" : [{ "$toDouble" : "$UnitPrice" }, 100.0] } } }
-            """);
+Products.{ "$match" : { "UnitPrice" : { "$gt" : 100.0 } } }
+""");
     }
 
     public override async Task Where_is_conditional(bool async)
@@ -2211,14 +2211,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_string_indexof(bool async)
     {
-        // Fails: String.IndexOf issue EF-224
-        Assert.Contains(
-            "Values differ", // (Expected 1, got 90)
-            (await Assert.ThrowsAsync<EqualException>(() => base.Where_string_indexof(async))).Message);
+        await base.Where_string_indexof(async);
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : { "$not" : { "$regularExpression" : { "pattern" : "^Sea", "options" : "s" } } } } }
+            Customers.{ "$match" : { "$expr" : { "$ne" : [{ "$indexOfCP" : ["$City", "Sea"] }, -1] } } }
             """);
     }
 
@@ -2226,7 +2223,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
     {
         // Fails: String.Replace issue EF-223
         Assert.Contains(
-            "Expression not supported: c.City.Replace(\"Sea\", \"Rea\").",
+            "Expression not supported: c.City.Replace(\"Sea\", \"Rea\")",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_string_replace(async))).Message);
 
         AssertMql(

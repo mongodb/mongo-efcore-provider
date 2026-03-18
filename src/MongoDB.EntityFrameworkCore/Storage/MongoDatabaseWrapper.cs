@@ -319,7 +319,7 @@ public class MongoDatabaseWrapper : Database
         {
             var stateManager = entry.StateManager;
             var ownership = entry.EntityType.FindOwnership();
-            if (ownership == null) continue;
+            if (ownership == null) return entry;
 
             var principal = stateManager.FindPrincipal(entry, ownership);
             if (principal == null)
