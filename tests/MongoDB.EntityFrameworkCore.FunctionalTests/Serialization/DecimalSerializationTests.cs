@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using System.Globalization;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Serialization;
 
 public class DecimalSerializationTests(TemporaryDatabaseFixture database)
@@ -24,7 +26,7 @@ public class DecimalSerializationTests(TemporaryDatabaseFixture database)
     [InlineData("0")]
     public void Decimal_round_trips(string expectedString)
     {
-        var expected = Decimal.Parse(expectedString);
+        var expected = decimal.Parse(expectedString, CultureInfo.InvariantCulture);
         var collection = Database.CreateCollection<DecimalEntity>(values: expected);
 
         {

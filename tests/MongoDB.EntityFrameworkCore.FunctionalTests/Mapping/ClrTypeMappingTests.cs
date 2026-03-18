@@ -14,6 +14,7 @@
  */
 
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
@@ -541,8 +542,8 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
     [InlineData("-79228162514264337593543950335", "1.1")]
     public void Decimal_read_update(string insertedString,string updatedString)
     {
-        var inserted = decimal.Parse(insertedString);
-        var updated = decimal.Parse(updatedString);
+        var inserted = decimal.Parse(insertedString, CultureInfo.InvariantCulture);
+        var updated = decimal.Parse(updatedString, CultureInfo.InvariantCulture);
 
         var collection = database.CreateCollection<DecimalEntity>(values: [inserted, updated]);
         var id = ObjectId.GenerateNewId();
