@@ -14,6 +14,9 @@
  */
 
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -27,7 +30,7 @@ using MongoDB.EntityFrameworkCore.Design;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design;
 
 [XUnitCollection("DesignTests")]
-public class CompiledModelTests(TemporaryDatabaseFixture database)
+public partial class CompiledModelTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     public enum TestEnum
@@ -112,6 +115,9 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
 
         scope.Dispose();
     }
+
+    private static Guid CreateStableGuid(string input)
+        => new(MD5.HashData(Encoding.UTF8.GetBytes(input)));
 
     [Theory]
     [InlineData(false)]
@@ -212,16 +218,22 @@ public class CompiledModelTests(TemporaryDatabaseFixture database)
         Assert.NotNull(callerDirectory);
 
 #if EF10
-        var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF10");
+        const string efVersion = "EF10";
 #elif EF9
-        var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF9");
+        const string efVersion  = "EF9";
 #elif EF8
-        var generatedCodePath = Path.Combine(callerDirectory, "Generated\\EF8");
+        const string efVersion  = "EF8";
 #endif
 
-        Directory.CreateDirectory(generatedCodePath);
+        // Stabilize ModelId so it's not a new Guid every time causing commit/diff churn.
+        var stableGuid = CreateStableGuid(efVersion);
+        file.Code = ModelIdRegex().Replace(file.Code, $"modelId: new Guid(\"{stableGuid}\")");
 
-        var fileName = Path.Combine(generatedCodePath, file.Path);
-        File.WriteAllText(fileName, file.Code);
+        var generatedCodePath = Path.Combine(callerDirectory, "Generated", efVersion);
+        Directory.CreateDirectory(generatedCodePath);
+        File.WriteAllText(Path.Combine(generatedCodePath, file.Path), file.Code);
     }
+
+    [GeneratedRegex("""modelId:\s*new\s*Guid\("[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}"\)""")]
+    private static partial Regex ModelIdRegex();
 }

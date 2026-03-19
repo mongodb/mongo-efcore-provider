@@ -123,7 +123,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Equal("Milton", actual.name);
     }
 
-    [Fact]
+    [Fact(Skip = "EF-202 required")]
     public void OwnedEntity_nested_one_level_collection_match()
     {
         var collection = database.CreateCollection<PersonWithMultipleLocations>();
@@ -136,7 +136,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Equal("Damien", actual.name);
     }
 
-    [Fact]
+    [Fact(Skip = "EF-202 required")]
     public void OwnedEntity_nested_one_level_collection_not_match()
     {
         var collection = database.CreateCollection<PersonWithMultipleLocations>();

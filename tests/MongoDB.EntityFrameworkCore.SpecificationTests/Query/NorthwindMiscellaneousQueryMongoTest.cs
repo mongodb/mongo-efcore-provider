@@ -905,15 +905,12 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task OrderBy_arithmetic(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.OrderBy_arithmetic(async))).Message);
+        await base.OrderBy_arithmetic(async);
 
         AssertMql(
             """
-            Employees.
-            """);
+Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$subtract" : ["$_id", "$_id"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
+""");
     }
 
     public override async Task OrderBy_condition_comparison(bool async)
@@ -4679,8 +4676,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws.
         Assert.Contains(
-            "Serializer for",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_query_composition5(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition5(async))).Message);
 
         AssertMql(
             """
@@ -4692,8 +4689,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws.
         Assert.Contains(
-            "Serializer for",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Where_query_composition6(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition6(async))).Message);
 
         AssertMql(
             """
@@ -4744,8 +4741,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws.
         Assert.Contains(
-            "Serializer for",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.OrderBy_client_mixed(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.OrderBy_client_mixed(async))).Message);
 
         AssertMql(
             """
@@ -4814,8 +4811,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws.
         Assert.Contains(
-            "Serializer for",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Queryable_reprojection(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Queryable_reprojection(async))).Message);
 
         AssertMql(
             """
@@ -4827,8 +4824,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws.
         Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.All_client(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client(async))).Message);
         AssertMql(
             """
             Customers.
@@ -4839,8 +4836,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws.
         Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.All_client_and_server_top_level(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client_and_server_top_level(async))).Message);
 
         AssertMql(
             """
@@ -4852,8 +4849,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws.
         Assert.Contains(
-            "Serializer for Microsoft.",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.All_client_or_server_top_level(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client_or_server_top_level(async))).Message);
 
         AssertMql(
             """
@@ -4865,8 +4862,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws
         Assert.Contains(
-            "Serializer for",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.First_client_predicate(async))).Message);
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.First_client_predicate(async))).Message);
 
         AssertMql(
             """
