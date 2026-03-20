@@ -62,28 +62,6 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     }
 
     [Fact]
-    public void Contains_cannot_match_entities()
-    {
-        var earth = _db.Planets.Single(p => p.name == "Earth");
-
-        var ex = Assert.Throws<NotSupportedException>(() => _db.Planets.Contains(earth));
-
-        Assert.Contains("Entity to entity comparison is not supported", ex.Message);
-        Assert.Contains("_id", ex.Message);
-    }
-
-    [Fact]
-    public async Task ContainsAsync_cannot_match_entities()
-    {
-        var earth = await EntityFrameworkQueryableExtensions.SingleAsync(_db.Planets, p => p.name == "Earth");
-
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(() => _db.Planets.ContainsAsync(earth));
-
-        Assert.Contains("Entity to entity comparison is not supported", ex.Message);
-        Assert.Contains("_id", ex.Message);
-    }
-
-    [Fact]
     public void Except_can_not_be_translated()
     {
         var closerThanEarth = new List<Planet>([new Planet { _id = ObjectId.GenerateNewId(), name = "Earth" }]);

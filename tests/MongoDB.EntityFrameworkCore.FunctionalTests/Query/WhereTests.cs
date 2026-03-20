@@ -261,22 +261,36 @@ public class WhereTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Where_entity_equal_throws()
+    public void Where_entity_equal()
     {
         var first = _db.Planets.First();
-        var ex = Assert.Throws<NotSupportedException>(() => _db.Planets.Where(p => p == first).ToList());
-        Assert.Contains(nameof(Planet._id), ex.Message);
-        Assert.Contains(nameof(Planet), ex.Message);
+        var found = _db.Planets.Where(p => p == first).ToList();
+        Assert.Single(found);
+        Assert.Equal(first, found[0]);
     }
 
     [Fact]
-    public void Where_entity_not_equal_throws()
+    public void Where_entity_not_equal()
     {
         var orderedPlanets = _db.Planets.OrderBy(p => p.name);
         var first = orderedPlanets.First();
-        var ex = Assert.Throws<NotSupportedException>(() => orderedPlanets.First(p => p != first));
-        Assert.Contains(nameof(Planet._id), ex.Message);
-        Assert.Contains(nameof(Planet), ex.Message);
+        var found = orderedPlanets.Where(p => p != first).ToList();
+        Assert.DoesNotContain(first, found);
+    }
+
+    [Fact]
+    public void Where_entity_contains()
+    {
+        var first = _db.Planets.First();
+        Assert.True(_db.Planets.Contains(first));
+    }
+
+    [Fact]
+    public void Where_entity_array_contains()
+    {
+        var expected = _db.Planets.Take(2).ToArray();
+        var actual = _db.Planets.Where(p => expected.Contains(p)).ToArray();
+        Assert.Equal(expected, actual);
     }
 
     public void Dispose()

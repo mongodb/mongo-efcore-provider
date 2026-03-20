@@ -1922,15 +1922,16 @@ Products.{ "$match" : { "UnitPrice" : { "$gt" : 100.0 } } }
 
     public override async Task Where_poco_closure(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Where_poco_closure(async))).Message);
+        await base.Where_poco_closure(async);
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+""");
     }
 
 #if !EF8
