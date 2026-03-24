@@ -73,16 +73,11 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_top_level_entity_with_null_value_required_scalars(bool async)
     {
-        // Fails: No support for nested JSON
-        Assert.Contains(
-            "An error occurred while deserializing the RequiredReference property",
-            (await Assert.ThrowsAsync<FormatException>(() =>
-                base.Project_top_level_entity_with_null_value_required_scalars(async)))
-            .Message);
+        await base.Project_top_level_entity_with_null_value_required_scalars(async);
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "_id" : "$_id", "RequiredReference" : "$RequiredReference" } }
+            Entities.{ "$match" : { "_id" : 4 } }
             """);
     }
 
@@ -103,11 +98,16 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_missing_required_navigation(bool async)
     {
-        await base.Project_missing_required_navigation(async);
+        // Fails: Entity id=5 has no RequiredReference field
+        Assert.Contains(
+            "Field 'RequiredReference' required but not present",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Project_missing_required_navigation(async)))
+            .Message);
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 5 } }, { "$project" : { "_v" : "$RequiredReference.NestedRequiredReference", "_id" : 0 } }
+            Entities.{ "$match" : { "_id" : 5 } }
             """);
     }
 
@@ -128,16 +128,16 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_null_required_navigation(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: NestedRequiredReference is null in BsonDocument for entity id=6
         Assert.Contains(
-            "The method or operation is not implemented.",
-            (await Assert.ThrowsAsync<NotImplementedException>(
+            "Field 'NestedRequiredReference' required but not present",
+            (await Assert.ThrowsAsync<InvalidOperationException>(
                 () => base.Project_null_required_navigation(async)))
             .Message);
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 6 } }, { "$project" : { "_v" : "$RequiredReference", "_id" : 0 } }
+            Entities.{ "$match" : { "_id" : 6 } }
             """);
     }
 
