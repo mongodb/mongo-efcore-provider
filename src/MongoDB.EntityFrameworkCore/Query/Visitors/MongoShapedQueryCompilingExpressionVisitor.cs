@@ -86,10 +86,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         IEntityType rootEntityType,
         MongoQueryExpression mongoQueryExpression)
     {
+        VerifyNoClientConstant(shapedQueryExpression.ShaperExpression);
+
         if (ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression))
         {
-            VerifyNoClientConstant(shapedQueryExpression.ShaperExpression);
-
             // Push-down path: scalar/anonymous projections handled entirely by LINQ V3
             return Expression.Call(null,
                 ExecuteProjectedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType,

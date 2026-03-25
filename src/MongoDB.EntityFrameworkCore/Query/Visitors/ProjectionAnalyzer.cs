@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Diagnostics;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 
@@ -107,6 +108,7 @@ internal static class ProjectionAnalyzer
             default:
                 // Unknown expression types conservatively prevent push-down to avoid
                 // silently mishandling future expression types that may wrap entities.
+                Debug.Assert(true, $"Unknown expression type {expression.GetType().Name}");
                 return true;
         }
     }
