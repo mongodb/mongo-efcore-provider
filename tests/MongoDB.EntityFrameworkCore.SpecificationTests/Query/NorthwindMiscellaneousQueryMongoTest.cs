@@ -43,7 +43,6 @@ public class NorthwindMiscellaneousQueryMongoTest
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
 #if EF8 || EF9
-
     public override async Task DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(bool async)
     {
         await AssertTranslationFailed(() => base.DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(async));
@@ -908,8 +907,8 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$subtract" : ["$_id", "$_id"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
-""");
+            Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$subtract" : ["$_id", "$_id"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
+            """);
     }
 
     public override async Task OrderBy_condition_comparison(bool async)
@@ -4035,8 +4034,12 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.
+""",
+            //
+            """
+Customers.
+""");
     }
 
     public override async Task Select_nested_collection_in_anonymous_type(bool async)

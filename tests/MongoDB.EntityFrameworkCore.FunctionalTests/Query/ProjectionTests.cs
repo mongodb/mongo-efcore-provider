@@ -1082,9 +1082,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Select_projection_object_array()
     {
-        // Heterogeneous object arrays are not supported by LINQ V3 (items need same serializer)
-        Assert.ThrowsAny<Exception>(() =>
-            _db.Planets.Select(p => new object[] { p.name, p.orderFromSun }).ToList());
+        var results = _db.Planets.Select(p => new object[] { p.name, p.orderFromSun }).ToList();
+        Assert.Equal(8, results.Count);
+        Assert.All(results, r => Assert.Equal(2, r.Length));
     }
 
     [Fact]

@@ -185,11 +185,7 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
     public override async Task Project_to_object_array(bool async)
     {
-        // Fails: Mixed array types not supported by C# driver
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Project_to_object_array(async))).Message);
+        await base.Project_to_object_array(async);
 
         AssertMql(
             """
