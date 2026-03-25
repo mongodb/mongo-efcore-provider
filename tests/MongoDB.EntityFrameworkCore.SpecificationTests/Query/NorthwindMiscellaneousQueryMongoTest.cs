@@ -55,7 +55,6 @@ public class NorthwindMiscellaneousQueryMongoTest
     }
 
 #else
-
     public override async Task DefaultIfEmpty_top_level(bool async)
     {
         await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level(async));
@@ -571,7 +570,6 @@ public class NorthwindMiscellaneousQueryMongoTest
     }
 
 #else
-
     public override async Task Join_with_DefaultIfEmpty_on_both_sources(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
@@ -3838,8 +3836,8 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$indexOfCP" : ["$_v", "c"] } } }, { "$sort" : { "_key1" : 1, "_document._v" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 5 }
-""");
+            Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$indexOfCP" : ["$_v", "c"] } } }, { "$sort" : { "_key1" : 1, "_document._v" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 5 }
+            """);
     }
 
     public override async Task DefaultIfEmpty_Sum_over_collection_navigation(bool async)
@@ -4037,12 +4035,8 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-Customers.
-""",
-            //
-            """
-Customers.
-""");
+            Customers.
+            """);
     }
 
     public override async Task Select_nested_collection_in_anonymous_type(bool async)
@@ -4547,8 +4541,8 @@ Customers.
             CoreStrings.ClientProjectionCapturingConstantInMethodInstance(
                 "MongoDB.EntityFrameworkCore.SpecificationTests.Query.NorthwindMiscellaneousQueryMongoTest",
                 "InstanceMethod"),
-            (await Assert.ThrowsAsync<InvalidOperationException>(
-                () => base.Client_code_using_instance_method_throws(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Client_code_using_instance_method_throws(async)))
+            .Message);
     }
 
     public override async Task Client_code_using_instance_in_static_method(bool async)
@@ -4557,8 +4551,8 @@ Customers.
             CoreStrings.ClientProjectionCapturingConstantInMethodArgument(
                 "MongoDB.EntityFrameworkCore.SpecificationTests.Query.NorthwindMiscellaneousQueryMongoTest",
                 "StaticMethod"),
-            (await Assert.ThrowsAsync<InvalidOperationException>(
-                () => base.Client_code_using_instance_in_static_method(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Client_code_using_instance_in_static_method(async)))
+            .Message);
     }
 
     public override async Task Client_code_using_instance_in_anonymous_type(bool async)
@@ -4566,8 +4560,8 @@ Customers.
         Assert.Equal(
             CoreStrings.ClientProjectionCapturingConstantInTree(
                 "MongoDB.EntityFrameworkCore.SpecificationTests.Query.NorthwindMiscellaneousQueryMongoTest"),
-            (await Assert.ThrowsAsync<InvalidOperationException>(
-                () => base.Client_code_using_instance_in_anonymous_type(async))).Message);
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Client_code_using_instance_in_anonymous_type(async)))
+            .Message);
     }
 
     public override async Task Client_code_unknown_method(bool async)
