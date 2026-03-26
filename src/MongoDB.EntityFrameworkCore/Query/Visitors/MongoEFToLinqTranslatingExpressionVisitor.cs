@@ -640,7 +640,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
         Expression candidateEntity, Expression candidateConstant)
     {
         var unwrappedEntity = candidateEntity.RemoveConvert();
-        var entityType = _queryContext.Context.Model.FindEntityType(unwrappedEntity.Type);
+        var entityType = FindEntityType(unwrappedEntity.Type);
         if (entityType == null)
             return (null, null);
 
@@ -698,6 +698,9 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
 
     private static ConstantExpression ExtractKeyValue(object entity, IProperty property)
     {
+        if (property.PropertyInfo == null && property.FieldInfo == null)
+            throw new NotSupportedException($"Entity comparison on shadow key property '{property.Name}' is not supported.");
+
         var value = property.PropertyInfo?.GetValue(entity) ?? property.FieldInfo?.GetValue(entity);
         return Expression.Constant(value, property.ClrType);
     }

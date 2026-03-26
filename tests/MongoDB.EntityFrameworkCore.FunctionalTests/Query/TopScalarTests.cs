@@ -337,7 +337,7 @@ public class TopScalarTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public async Task ContainsAsync_cannot_match_entities()
+    public async Task ContainsAsync_can_match_entities()
     {
         var earth = await EntityFrameworkQueryableExtensions.SingleAsync(_db.Planets, p => p.name == "Earth");
 

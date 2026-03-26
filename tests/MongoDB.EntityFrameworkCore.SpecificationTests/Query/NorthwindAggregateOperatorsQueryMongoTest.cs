@@ -1770,19 +1770,12 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
     public override async Task Contains_with_constant_list_value_type_id(bool async)
     {
-        // Contains_over_keyless_entity_throws: CustomerQuery is keyless, so entity comparison is not supported
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_over_keyless_entity_throws(async))).Message);
+        await base.Contains_with_constant_list_value_type_id(async);
 
         AssertMql(
             """
-            Customers.{ "$limit" : 1 }
-            """,
-            //
-            """
-            Customers.
-            """);
+Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
+""");
     }
 
     public override async Task IImmutableSet_Contains_with_parameter(bool async)

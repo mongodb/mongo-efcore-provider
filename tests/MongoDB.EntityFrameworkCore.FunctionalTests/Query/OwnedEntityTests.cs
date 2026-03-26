@@ -96,7 +96,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void OwnedEntity_nested_one_level_first_no_matching_location()
+    public void OwnedEntity_nested_one_level_where_no_matching_location()
     {
         var collection = database.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
