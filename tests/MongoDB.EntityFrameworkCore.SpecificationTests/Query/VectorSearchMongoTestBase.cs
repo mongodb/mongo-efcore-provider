@@ -481,12 +481,41 @@ public abstract class VectorSearchMongoTestBase
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
             .Select(e => new { Book = e, Score = Mql.Field(e, "__score", DoubleSerializer.Instance) });
 
-        // Fails: Projections issue EF-76
-        Assert.Contains(
-            "An error occurred while deserializing the Book ",
-            (await Assert.ThrowsAsync<FormatException>(async () =>
-                _ = async ? await queryable.ToListAsync() : queryable.ToList()))
-            .Message);
+        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+        Assert.Equal(2, results.Count);
+
+        Assert.Equal("Entity Framework Core in Action", results[0].Book.Title);
+        Assert.Equal("Jon P Smith", results[0].Book.Author);
+        Assert.True(results[0].Score > 0);
+
+        Assert.Equal("Programming Entity Framework: DbContext", results[1].Book.Title);
+        Assert.Equal("Julie Lerman", results[1].Book.Author);
+        Assert.True(results[1].Score > 0);
+    }
+
+    [ConditionalTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public virtual async Task VectorSearch_with_projection_of_entity_and_score_using_EF_Property(bool async)
+    {
+        await using var context = Fixture.CreateContext();
+        var inputVector = new[] { 0.33f, -0.52f };
+
+        var queryable = context.Set<Book>()
+            .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
+            .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
+            .Select(e => new { Book = e, Score = EF.Property<double>(e, "__score") });
+
+        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+        Assert.Equal(2, results.Count);
+
+        Assert.Equal("Entity Framework Core in Action", results[0].Book.Title);
+        Assert.Equal("Jon P Smith", results[0].Book.Author);
+        Assert.True(results[0].Score > 0);
+
+        Assert.Equal("Programming Entity Framework: DbContext", results[1].Book.Title);
+        Assert.Equal("Julie Lerman", results[1].Book.Author);
+        Assert.True(results[1].Score > 0);
     }
 
     [ConditionalTheory]

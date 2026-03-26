@@ -1014,7 +1014,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
     public override async Task Sum_over_round_works_correctly_in_projection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Sum_over_round_works_correctly_in_projection(async));
 
         AssertMql(
@@ -1023,7 +1023,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
     public override async Task Sum_over_round_works_correctly_in_projection_2(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Sum_over_round_works_correctly_in_projection_2(async));
 
         AssertMql(
@@ -1032,7 +1032,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
     public override async Task Sum_over_truncate_works_correctly_in_projection(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Sum_over_truncate_works_correctly_in_projection(async));
 
         AssertMql(
@@ -1041,7 +1041,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
     public override async Task Sum_over_truncate_works_correctly_in_projection_2(bool async)
     {
-        // Fails: Projections issue EF-76
+        // Fails: Subquery selection
         await AssertTranslationFailed(() => base.Sum_over_truncate_works_correctly_in_projection_2(async));
 
         AssertMql(
@@ -2191,7 +2191,6 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Order_by_length_twice_followed_by_projection_of_naked_collection_navigation(bool async)
     {
-        // Fails: Projections issue EF-76
         await AssertTranslationFailed(() =>
             base.Order_by_length_twice_followed_by_projection_of_naked_collection_navigation(async));
 

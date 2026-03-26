@@ -268,7 +268,17 @@ Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsInd
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "Book" : "$$ROOT", "Score" : "$__score", "_id" : 0 } }
+Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }
+""");
+    }
+
+    public override async Task VectorSearch_with_projection_of_entity_and_score_using_EF_Property(bool async)
+    {
+        await base.VectorSearch_with_projection_of_entity_and_score_using_EF_Property(async);
+
+        AssertMql(
+            """
+Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }
 """);
     }
 
