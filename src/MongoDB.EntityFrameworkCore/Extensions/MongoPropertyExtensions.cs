@@ -391,7 +391,7 @@ public static class MongoPropertyExtensions
         this IConventionProperty property,
         object? maxValue,
         bool fromDataAnnotation = false)
-        => (QueryableEncryptionType?)property
+        => property
             .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMax, maxValue, fromDataAnnotation)?.Value;
 
     /// <summary>
@@ -434,7 +434,7 @@ public static class MongoPropertyExtensions
         this IConventionProperty property,
         object? minValue,
         bool fromDataAnnotation = false)
-        => (QueryableEncryptionType?)property
+        => property
             .SetOrRemoveAnnotation(MongoAnnotationNames.QueryableEncryptionRangeMin, minValue, fromDataAnnotation)?.Value;
 
     /// <summary>
