@@ -48,7 +48,7 @@ public sealed class BsonDateTimeOptionsAttributeConvention : PropertyAttributeCo
         if (attribute.DateOnly)
         {
             throw new NotSupportedException(
-                $"{nameof(BsonDateTimeOptionsAttribute)} with ${nameof(DateOnly)} of true not currently supported.");
+                $"{nameof(BsonDateTimeOptionsAttribute)} with {nameof(DateOnly)} of true not currently supported.");
         }
 
         propertyBuilder.HasDateTimeKind(attribute.Kind);
