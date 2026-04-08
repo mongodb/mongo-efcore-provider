@@ -59,7 +59,7 @@ public class MongoValueConverterSelector : ValueConverterSelector
 
         if (modelClrType == typeof(decimal) && providerClrType == typeof(Decimal128))
         {
-            yield return _mongoConverters.GetOrAdd((modelClrType, typeof(ObjectId)), _ => DecimalToDecimal128Converter.DefaultInfo);
+            yield return _mongoConverters.GetOrAdd((modelClrType, typeof(Decimal128)), _ => DecimalToDecimal128Converter.DefaultInfo);
         }
 
         foreach (var converter in base.Select(modelClrType, providerClrType))

@@ -54,5 +54,5 @@ public class DecimalToDecimal128Converter : Decimal128DecimalConverter<decimal, 
     /// A <see cref="ValueConverterInfo" /> for the default use of this converter.
     /// </summary>
     public static ValueConverterInfo DefaultInfo { get; }
-        = new(typeof(string), typeof(ObjectId), i => new DecimalToDecimal128Converter(i.MappingHints));
+        = new(typeof(decimal), typeof(Decimal128), i => new DecimalToDecimal128Converter(i.MappingHints));
 }
