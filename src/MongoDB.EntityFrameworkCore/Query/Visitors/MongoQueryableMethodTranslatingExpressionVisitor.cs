@@ -234,7 +234,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                      genericMethod == QueryableMethods.LastOrDefaultWithPredicate:
             case nameof(Queryable.SingleOrDefault)
                 when genericMethod == QueryableMethods.SingleOrDefaultWithoutPredicate ||
-                     genericMethod == QueryableMethods.SingleWithoutPredicate:
+                     genericMethod == QueryableMethods.SingleOrDefaultWithPredicate:
 
                 return ResultCardinality.SingleOrDefault;
         }
