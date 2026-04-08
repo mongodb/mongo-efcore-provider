@@ -20,13 +20,6 @@ internal static class EnumerableMethods
             .GroupBy(mi => mi.Name)
             .ToDictionary(e => e.Key, l => l.ToList());
 
-        GetMethod(
-            nameof(Enumerable.All), 1,
-            types =>
-            [
-                typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))
-            ]);
-
         Cast = GetMethod(nameof(Enumerable.Cast), 1, _ =>
         [
             typeof(IEnumerable)
