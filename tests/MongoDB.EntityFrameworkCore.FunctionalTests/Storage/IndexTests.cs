@@ -55,6 +55,23 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         public double[] Doubles { get; set; }
     }
 
+    class EntityWithTwoOwnedTypes
+    {
+        public Guid Id { get; set; }
+        public FirstOwnedType First { get; set; }
+        public SecondOwnedType Second { get; set; }
+    }
+
+    class FirstOwnedType
+    {
+        public string Name { get; set; }
+    }
+
+    class SecondOwnedType
+    {
+        public double[] Doubles { get; set; }
+    }
+
     [AtlasTheory]
     [InlineData(false, false, false)]
     [InlineData(true, true, true)]
@@ -622,6 +639,51 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     }
 
 #endif
+
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateMissingVectorIndexes_detects_vector_index_on_second_owned_entity(bool async)
+    {
+        var collection = database.CreateCollection<EntityWithTwoOwnedTypes>(values: async);
+        using var db = SingleEntityDbContext.Create(collection,
+            b => b.Entity<EntityWithTwoOwnedTypes>(b =>
+            {
+                b.OwnsOne(e => e.First);
+                b.OwnsOne(e => e.Second)
+                    .HasIndex(e => e.Doubles)
+                    .IsVectorIndex(VectorSimilarity.Cosine, 2);
+            }));
+
+        var options = new MongoDatabaseCreationOptions(CreateMissingVectorIndexes: false, WaitForVectorIndexes: false);
+        var bsonCollection = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
+
+        if (async)
+        {
+            await db.Database.EnsureCreatedAsync(options);
+            Assert.Empty(bsonCollection.SearchIndexes.List().ToList());
+
+            await db.Database.CreateMissingVectorIndexesAsync();
+            await db.Database.WaitForVectorIndexesAsync();
+        }
+        else
+        {
+            db.Database.EnsureCreated(options);
+            Assert.Empty(bsonCollection.SearchIndexes.List().ToList());
+
+            db.Database.CreateMissingVectorIndexes();
+            db.Database.WaitForVectorIndexes();
+        }
+
+        var indexes = bsonCollection.SearchIndexes.List().ToList();
+        var index = Assert.Single(indexes);
+        var fields = index["latestDefinition"]["fields"].AsBsonArray;
+        Assert.Equal("DoublesVectorIndex", index["name"].AsString);
+        Assert.Equal("vector", fields[0]["type"].AsString);
+        Assert.Equal("Second.Doubles", fields[0]["path"].AsString);
+        Assert.Equal(2, fields[0]["numDimensions"].AsInt32);
+        Assert.Equal("cosine", fields[0]["similarity"].AsString);
+    }
 
     private int GetIndexCount(IMongoCollection<SimpleEntity> collection)
         => database.GetCollection<BsonDocument>(collection.CollectionNamespace).Indexes.List().ToList().Count;

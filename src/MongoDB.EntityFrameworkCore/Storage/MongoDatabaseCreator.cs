@@ -317,7 +317,7 @@ public class MongoDatabaseCreator(
 
         foreach (var ownedEntityType in entityType.Model.GetEntityTypes().Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType))
         {
-            return HasAtlasIndexes(ownedEntityType);
+            if (HasAtlasIndexes(ownedEntityType)) return true;
         }
 
         return false;
