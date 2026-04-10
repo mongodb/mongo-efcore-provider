@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(dotnet test:*)",
-      "Bash(dotnet build:*)"
+      "Bash(dotnet build:*)",
+      "Bash(dotnet --list-sdks)",
+      "Bash(docker info)"
     ]
   }
 }
