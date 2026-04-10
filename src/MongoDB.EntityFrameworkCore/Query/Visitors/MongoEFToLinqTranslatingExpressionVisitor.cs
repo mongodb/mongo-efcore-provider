@@ -495,7 +495,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
         if (entityType.IsOwned())
         {
             var properties = entityType.GetProperties()
-                .Where(p => p.PropertyInfo != null || p.FieldInfo != null)
+                .Where(p => p.PropertyInfo != null || p.FieldInfo != null) // exclude shadow properties — they have no CLR member to read a constant value from
                 .ToList();
             return properties.Count > 0 ? properties : null;
         }
@@ -521,6 +521,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
                 queryAccess = p.PropertyInfo != null
                     ? Expression.Property(querySide, p.PropertyInfo)
                     : Expression.Field(querySide, p.FieldInfo!);
+                // Shadow properties are excluded by GetComparisonProperties so PropertyInfo/FieldInfo is always non-null here
                 var value = p.PropertyInfo?.GetValue(constantEntity) ?? p.FieldInfo?.GetValue(constantEntity);
                 constantExpr = Expression.Constant(value, p.ClrType);
             }
@@ -644,6 +645,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
         if (entityType == null)
             return (null, null);
 
+        // If neither side evaluates to a constant (e.g. entity == entity), we return null and let EF Core handle it
         var constantValue = TryEvaluateToConstant(candidateConstant);
         if (constantValue == null)
             return (null, null);
