@@ -2,7 +2,7 @@
 name: test-all
 description: Build and run tests against all three EF version targets (EF8, EF9, EF10)
 argument-hint: "[optional: test filter or project name] [--model haiku|sonnet|opus]"
-allowed-tools: Bash(dotnet *), Bash(docker *), Read, Glob, Grep, Agent
+allowed-tools: Bash(dotnet *), Bash(docker info), Read, Glob, Grep, Agent
 ---
 
 # Test All EF Versions
@@ -27,7 +27,7 @@ Parse `$ARGUMENTS` for:
 2. Database connectivity — Check that either:
    - Docker is available (`docker info` succeeds), OR
    - `MONGODB_URI` environment variable is set.
-   If neither: stop with: "No database available."
+   If neither: stop with: "No database available. Start Docker or set `MONGODB_URI`."
 
 ## Phase 2: Parallel Build & Test via Sub-agents
 
@@ -36,8 +36,8 @@ using the Agent tool. Set the `model` parameter on each agent.
 
 Each agent's prompt must include the full build and test commands:
 
-  1. Build:  dotnet build {sln} -c "Debug EF{version}" -v quiet
-  2. Test:   dotnet test  {sln} -c "Debug EF{version}" --no-build
+  1. Build:  dotnet build $SLN -c "Debug EF{version}" -v quiet
+  2. Test:   dotnet test  $SLN -c "Debug EF{version}" --no-build
                    --logger "console;verbosity=normal" -v quiet
 
 ## Important Rules
@@ -49,10 +49,18 @@ Each agent's prompt must include the full build and test commands:
 
 ## Phase 3: Console Summary
 
+Populate the summary table with the actual results from each sub-agent.
+For each EF version, parse the `dotnet test` output and extract the real
+`Passed`, `Failed`, and `Skipped` totals from the final test summary
+(for example, the line containing `Passed:`, `Failed:`, and `Skipped:`).
+Set the `Build` column to the actual build result for that version (`OK` or `FAILED`).
+
+Use this format for the console summary:
+
 | Version | Build  | Passed | Failed | Skipped |
 |---------|--------|--------|--------|---------|
-| EF8     | OK     | 142    | 0      | 3       |
-| EF9     | OK     | 145    | 2      | 1       |
-| EF10    | OK     | 148    | 0      | 0       |
+| EF8     | <actual> | <actual> | <actual> | <actual> |
+| EF9     | <actual> | <actual> | <actual> | <actual> |
+| EF10    | <actual> | <actual> | <actual> | <actual> |
 
 If any version had failures, list failing test names grouped by version.
