@@ -4,7 +4,8 @@
       "Bash(dotnet test:*)",
       "Bash(dotnet build:*)",
       "Bash(dotnet --list-sdks)",
-      "Bash(docker info)"
+      "Bash(docker info)",
+      "Bash(git -C /Users/damieng/Source/mongo-efcore-provider pull)"
     ]
   }
 }
