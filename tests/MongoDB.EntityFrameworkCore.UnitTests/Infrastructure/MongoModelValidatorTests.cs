@@ -526,6 +526,92 @@ public static class MongoModelValidatorTests
         public int VersionB2 { get; set; }
     }
 
+    class Customer
+    {
+        public int _id { get; set; }
+        public Address HomeAddress { get; set; }
+        public Address BillingAddress { get; set; }
+    }
+
+    class Address
+    {
+        public string Street { get; set; }
+        public string City { get; set; }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_same_owned_clr_type_has_differing_property_element_names()
+    {
+        using var db = SingleEntityDbContext.Create<Customer>(mb =>
+        {
+            mb.Entity<Customer>(e =>
+            {
+                e.OwnsOne(c => c.HomeAddress,
+                    o => o.Property(a => a.Street).HasElementName("street_name"));
+                e.OwnsOne(c => c.BillingAddress,
+                    o => o.Property(a => a.Street).HasElementName("road"));
+            });
+        });
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
+        Assert.Contains($"'{nameof(Address)}'", ex.Message);
+        Assert.Contains($"'{nameof(Address.Street)}'", ex.Message);
+        Assert.Contains("'street_name'", ex.Message);
+        Assert.Contains("'road'", ex.Message);
+    }
+
+    [Fact]
+    public static void Validate_throws_when_one_owned_navigation_has_custom_element_name_and_other_uses_default()
+    {
+        using var db = SingleEntityDbContext.Create<Customer>(mb =>
+        {
+            mb.Entity<Customer>(e =>
+            {
+                e.OwnsOne(c => c.HomeAddress,
+                    o => o.Property(a => a.Street).HasElementName("street_name"));
+                e.OwnsOne(c => c.BillingAddress);
+            });
+        });
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Model);
+        Assert.Contains($"'{nameof(Address)}'", ex.Message);
+        Assert.Contains($"'{nameof(Address.Street)}'", ex.Message);
+        Assert.Contains("'street_name'", ex.Message);
+        Assert.Contains($"'{nameof(Address.Street)}'", ex.Message); // default element name equals property name
+    }
+
+    [Fact]
+    public static void Validate_succeeds_when_same_owned_clr_type_has_identical_custom_element_names()
+    {
+        using var db = SingleEntityDbContext.Create<Customer>(mb =>
+        {
+            mb.Entity<Customer>(e =>
+            {
+                e.OwnsOne(c => c.HomeAddress,
+                    o => o.Property(a => a.Street).HasElementName("street_name"));
+                e.OwnsOne(c => c.BillingAddress,
+                    o => o.Property(a => a.Street).HasElementName("street_name"));
+            });
+        });
+
+        Assert.NotNull(db.Model);
+    }
+
+    [Fact]
+    public static void Validate_succeeds_when_same_owned_clr_type_has_default_mappings_on_both_navigations()
+    {
+        using var db = SingleEntityDbContext.Create<Customer>(mb =>
+        {
+            mb.Entity<Customer>(e =>
+            {
+                e.OwnsOne(c => c.HomeAddress);
+                e.OwnsOne(c => c.BillingAddress);
+            });
+        });
+
+        Assert.NotNull(db.Model);
+    }
+
     class Book
     {
         public ObjectId Id { get; set; }

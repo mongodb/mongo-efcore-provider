@@ -328,6 +328,22 @@ public class TopScalarTests(ReadOnlySampleGuidesFixture database)
         Assert.Equal(1, sum);
     }
 
+    [Fact]
+    public void Contains_can_match_entities()
+    {
+        var earth = _db.Planets.Single(p => p.name == "Earth");
+
+        Assert.True(_db.Planets.Contains(earth));
+    }
+
+    [Fact]
+    public async Task ContainsAsync_can_match_entities()
+    {
+        var earth = await EntityFrameworkQueryableExtensions.SingleAsync(_db.Planets, p => p.name == "Earth");
+
+        Assert.True(await _db.Planets.ContainsAsync(earth));
+    }
+
     public void Dispose()
         => _db.Dispose();
 

@@ -56,6 +56,43 @@ public class CompositeKeyQueryTests(TemporaryDatabaseFixture database)
         Assert.All(result, e => Assert.True(e.Key2 > 2));
     }
 
+    [Fact]
+    public void Should_match_entity_equal()
+    {
+        using var db = CreateContext();
+
+        var expected = db.Entities.First(e => e.Key1 == "two" && e.Key2 == 2);
+        var actual = db.Entities.Where(e => e == expected).ToList();
+
+        Assert.Single(actual);
+        Assert.Equal(expected.Key1, actual[0].Key1);
+        Assert.Equal(expected.Key2, actual[0].Key2);
+    }
+
+    [Fact]
+    public void Should_match_entity_not_equal()
+    {
+        using var db = CreateContext();
+
+        var excluded = db.Entities.First(e => e.Key1 == "one" && e.Key2 == 1);
+        var actual = db.Entities.Where(e => e != excluded).ToList();
+
+        Assert.Equal(2, actual.Count);
+        Assert.DoesNotContain(actual, e => e.Key1 == excluded.Key1 && e.Key2 == excluded.Key2);
+    }
+
+    [Fact]
+    public void Should_match_entity_array_contains()
+    {
+        using var db = CreateContext();
+
+        var expected = db.Entities.Where(e => e.Key1 == "two").ToArray();
+        var actual = db.Entities.Where(e => expected.Contains(e)).ToList();
+
+        Assert.Equal(2, actual.Count);
+        Assert.All(actual, e => Assert.Equal("two", e.Key1));
+    }
+
     private SingleEntityDbContext<Entity> CreateContext([CallerMemberName] string? name = null)
     {
         var collection = database.CreateCollection<Entity>(name);

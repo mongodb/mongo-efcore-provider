@@ -1720,20 +1720,16 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Contains_over_entityType_should_rewrite_to_identity_equality(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() =>
-                base.Contains_over_entityType_should_rewrite_to_identity_equality(async))).Message);
+        await base.Contains_over_entityType_should_rewrite_to_identity_equality(async);
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }
-            """,
+Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }
+""",
             //
             """
-            Orders.
-            """);
+Orders.{ "$match" : { "CustomerID" : "VINET" } }, { "$match" : { "_id" : 10248 } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+""");
     }
 
     public override async Task List_Contains_over_entityType_should_rewrite_to_identity_equality(bool async)
@@ -1744,58 +1740,42 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task List_Contains_with_constant_list(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.List_Contains_with_constant_list(async))).Message);
+        await base.List_Contains_with_constant_list(async);
+
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
+""");
     }
 
     public override async Task List_Contains_with_parameter_list(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.List_Contains_with_parameter_list(async))).Message);
+        await base.List_Contains_with_parameter_list(async);
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
+""");
     }
 
     public override async Task Contains_with_parameter_list_value_type_id(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_with_parameter_list_value_type_id(async)))
-            .Message);
+       await base.Contains_with_parameter_list_value_type_id(async);
 
         AssertMql(
             """
-            Orders.
-            """);
+Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
+""");
     }
 
     public override async Task Contains_with_constant_list_value_type_id(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_over_keyless_entity_throws(async))).Message);
+        await base.Contains_with_constant_list_value_type_id(async);
 
         AssertMql(
             """
-            Customers.{ "$limit" : 1 }
-            """,
-            //
-            """
-            Customers.
-            """);
+Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
+""");
     }
 
     public override async Task IImmutableSet_Contains_with_parameter(bool async)

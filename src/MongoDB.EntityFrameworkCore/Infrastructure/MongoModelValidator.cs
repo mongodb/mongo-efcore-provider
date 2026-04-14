@@ -74,6 +74,7 @@ public class MongoModelValidator : ModelValidator
         ValidateMaximumOneRowVersionPerEntity(model);
         ValidateNoUnsupportedAttributesOrAnnotations(model);
         ValidateElementNames(model);
+        ValidateOwnedTypeMappingConsistency(model);
         ValidateNoMutableKeys(model, logger);
         ValidatePrimaryKeys(model);
         ValidateQueryableEncryption(model, logger);
@@ -635,6 +636,49 @@ public class MongoModelValidator : ModelValidator
                 throw new NotSupportedException(
                     $"Entity '{entityType.DisplayName()}' is mapped with a {mappingStrategy
                     } strategy. Only TPH (the default) is supported by the MongoDB provider.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validate that owned entity types sharing the same CLR type have consistent property-to-element-name mappings.
+    /// If two navigations use the same CLR type but map properties to different BSON element names, queries that
+    /// compare owned entities cannot reliably determine which mapping to use.
+    /// </summary>
+    /// <param name="model">The <see cref="IModel"/> to validate.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the same CLR type is used as an owned entity type
+    /// in multiple navigations with differing element-name mappings.</exception>
+    private static void ValidateOwnedTypeMappingConsistency(IModel model)
+    {
+        var ownedByClrType = model.GetEntityTypes()
+            .Where(e => e.IsOwned())
+            .GroupBy(e => e.ClrType)
+            .Where(g => g.Count() > 1);
+
+        foreach (var group in ownedByClrType)
+        {
+            var entityTypes = group.ToList();
+            var reference = entityTypes[0];
+            var referenceMap = reference.GetProperties()
+                .ToDictionary(p => p.Name, p => p.GetElementName());
+
+            foreach (var other in entityTypes.Skip(1))
+            {
+                foreach (var property in other.GetProperties())
+                {
+                    if (!referenceMap.TryGetValue(property.Name, out var referenceElementName))
+                        continue;
+
+                    if (property.GetElementName() != referenceElementName)
+                    {
+                        throw new InvalidOperationException(
+                            $"Owned entity type '{group.Key.ShortDisplayName()}' is used in multiple navigations " +
+                            $"('{reference.DisplayName()}' and '{other.DisplayName()}') with different BSON element " +
+                            $"name mappings for property '{property.Name}' ('{referenceElementName}' vs '{property.GetElementName()}'). " +
+                            $"Owned entity types used in multiple navigations must have identical element-name mappings, " +
+                            $"or use different CLR types.");
+                    }
+                }
             }
         }
     }

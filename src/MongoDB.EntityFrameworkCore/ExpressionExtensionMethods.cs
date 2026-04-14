@@ -79,8 +79,11 @@ internal static class ExpressionExtensionMethods
         return expression;
     }
 
+    internal static Expression ConvertIfRequired(this Expression expression, Type targetType) =>
+        expression.Type == targetType ? expression : Expression.Convert(expression, targetType);
+
     [return: NotNullIfNotNull(nameof(expression))]
-    internal static Expression? RemoveConvert(Expression? expression)
+    internal static Expression? RemoveConvert(this Expression? expression)
         => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
             ? RemoveConvert(unaryExpression.Operand)
             : expression;

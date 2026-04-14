@@ -80,7 +80,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void OwnedEntity_nested_one_level_first_matching_location_throws()
+    public void OwnedEntity_nested_one_level_first_matching_location()
     {
         var collection = database.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
@@ -88,14 +88,15 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection);
 
         var location = db.Entities.First(p => p.name == "Carmen").location;
+        var actual = db.Entities.First(p => p.location == location && p.name != "Carmen");
 
-        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.First(p => p.location == location && p.name != "Carmen"));
-        Assert.Contains(nameof(Location), ex.Message);
-        Assert.Contains("unique fields", ex.Message);
+        Assert.Equal("Milton", actual.name);
+        Assert.Equal(location.latitude, actual.location.latitude);
+        Assert.Equal(location.longitude, actual.location.longitude);
     }
 
     [Fact]
-    public void OwnedEntity_nested_one_level_first_no_matching_location_throws()
+    public void OwnedEntity_nested_one_level_where_no_matching_location()
     {
         var collection = database.CreateCollection<PersonWithLocation>();
         collection.WriteTestDocs(PersonWithLocation1);
@@ -103,10 +104,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection);
 
         var location = db.Entities.First(p => p.name == "Carmen").location;
+        var found = db.Entities.Where(p => p.location != location).ToList();
 
-        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.FirstOrDefault(p => p.location != location));
-        Assert.Contains(nameof(Location), ex.Message);
-        Assert.Contains("unique fields", ex.Message);
+        Assert.Empty(found);
     }
 
     [Fact]
@@ -123,7 +123,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Equal("Milton", actual.name);
     }
 
-    [Fact(Skip = "EF-202 required")]
+    [Fact]
     public void OwnedEntity_nested_one_level_collection_match()
     {
         var collection = database.CreateCollection<PersonWithMultipleLocations>();
@@ -136,7 +136,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Equal("Damien", actual.name);
     }
 
-    [Fact(Skip = "EF-202 required")]
+    [Fact]
     public void OwnedEntity_nested_one_level_collection_not_match()
     {
         var collection = database.CreateCollection<PersonWithMultipleLocations>();
@@ -145,6 +145,32 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
 
         var location = db.Entities.First().locations[1];
         var actual = db.Entities.FirstOrDefault(p => !p.locations.Contains(location));
+
+        Assert.Equal("Carmen", actual.name);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_collection_any_match()
+    {
+        var collection = database.CreateCollection<PersonWithMultipleLocations>();
+        collection.WriteTestDocs(PersonWithLocations1);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var location = db.Entities.First().locations[1];
+        var actual = db.Entities.FirstOrDefault(p => p.locations.Any(l => l == location));
+
+        Assert.Equal("Damien", actual.name);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_one_level_collection_any_not_match()
+    {
+        var collection = database.CreateCollection<PersonWithMultipleLocations>();
+        collection.WriteTestDocs(PersonWithLocations1);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var location = db.Entities.First().locations[1];
+        var actual = db.Entities.FirstOrDefault(p => !p.locations.Any(l => l == location));
 
         Assert.Equal("Carmen", actual.name);
     }
@@ -1260,6 +1286,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     {
         public List<Location> locations { get; set; }
     }
+
 
     private record PersonWithIEnumerableLocations : Person
     {

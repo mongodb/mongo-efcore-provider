@@ -362,40 +362,31 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Entity_equality_local(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Entity_equality_local(async))).Message);
+        await base.Entity_equality_local(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
             """);
     }
 
     public override async Task Entity_equality_local_composite_key(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Entity_equality_local_composite_key(async))).Message);
+        await base.Entity_equality_local_composite_key(async);
 
         AssertMql(
             """
-            OrderDetails.
+            OrderDetails.{ "$match" : { "_id.OrderID" : 10248, "_id.ProductID" : 11 } }
             """);
     }
 
     public override async Task Entity_equality_local_double_check(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Entity_equality_local_double_check(async))).Message);
+        await base.Entity_equality_local_double_check(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$and" : [{ "_id" : "ANATR" }, { "_id" : "ANATR" }] } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
             """);
     }
 
@@ -410,28 +401,21 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Entity_equality_local_inline(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Entity_equality_local_inline(async))).Message);
+        await base.Entity_equality_local_inline(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
             """);
     }
 
     public override async Task Entity_equality_local_inline_composite_key(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Entity_equality_local_inline_composite_key(async)))
-            .Message);
+        await base.Entity_equality_local_inline_composite_key(async);
 
         AssertMql(
             """
-            OrderDetails.
+            OrderDetails.{ "$match" : { "_id.OrderID" : 10248, "_id.ProductID" : 11 } }
             """);
     }
 
@@ -3712,29 +3696,21 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Entity_equality_with_null_coalesce_client_side(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Entity_equality_with_null_coalesce_client_side(async)))
-            .Message);
+        await base.Entity_equality_with_null_coalesce_client_side(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
             """);
     }
 
     public override async Task Entity_equality_contains_with_list_of_null(bool async)
     {
-        // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Entity_equality_contains_with_list_of_null(async)))
-            .Message);
+        await base.Entity_equality_contains_with_list_of_null(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$or" : [{ "$expr" : { "$eq" : ["$$ROOT", null] } }, { "_id" : "ALFKI" }] } }
             """);
     }
 
