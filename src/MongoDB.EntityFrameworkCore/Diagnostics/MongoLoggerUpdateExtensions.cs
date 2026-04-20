@@ -62,7 +62,7 @@ internal static class MongoLoggerUpdateExtensions
         {
             var eventData = new MongoBulkWriteEventData(
                 definition,
-                ExecutedBulkWrite,
+                ExecutingBulkWriteMessage,
                 duration,
                 collectionNamespace,
                 insertCount,
@@ -71,6 +71,18 @@ internal static class MongoLoggerUpdateExtensions
 
             diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
         }
+    }
+
+    private static string ExecutingBulkWriteMessage(EventDefinitionBase definition, EventData payload)
+    {
+        var d = (BulkWriteEventDefinition)definition;
+        var p = (MongoBulkWriteEventData)payload;
+        return d.GenerateMessage(
+            p.Elapsed.TotalMilliseconds.ToString(),
+            p.CollectionNamespace,
+            p.InsertCount,
+            p.DeleteCount,
+            p.ModifyCount);
     }
 
     private static BulkWriteEventDefinition LogExecutingBulkWrite(IDiagnosticsLogger logger)
@@ -138,7 +150,7 @@ internal static class MongoLoggerUpdateExtensions
         var d = (BulkWriteEventDefinition)definition;
         var p = (MongoBulkWriteEventData)payload;
         return d.GenerateMessage(
-            p.Elapsed.Milliseconds.ToString(),
+            p.Elapsed.TotalMilliseconds.ToString(),
             p.CollectionNamespace,
             p.InsertCount,
             p.DeleteCount,

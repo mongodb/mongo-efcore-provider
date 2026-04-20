@@ -30,7 +30,7 @@ internal static class Check
     {
         if (value is not null && value.Length == 0)
         {
-            throw new ArgumentException($"The string argument '{nameof(parameterName)}' cannot be empty.", parameterName);
+            throw new ArgumentException($"The string argument '{parameterName}' cannot be empty.", parameterName);
         }
 
         return value;
@@ -56,7 +56,7 @@ internal static class Check
     public static Guid? NotEmpty(Guid? argument, [CallerArgumentExpression(nameof(argument))] string? parameterName = null)
         => argument != Guid.Empty
             ? argument
-            : throw new ArgumentException($"The string argument '{nameof(parameterName)}' cannot be empty.", parameterName);
+            : throw new ArgumentException($"The Guid argument '{parameterName}' cannot be empty.", parameterName);
 
     public static T? IsDefinedOrNull<T>(T? argument,
         [CallerArgumentExpression(nameof(argument))]
@@ -71,5 +71,5 @@ internal static class Check
         [CallerArgumentExpression(nameof(argument))] string? parameterName = null)
         => argument >= min && argument <= max
             ? argument
-            : throw new ArgumentOutOfRangeException(parameterName, argument, "Value must be between {min} and {max} inclusive.");
+            : throw new ArgumentOutOfRangeException(parameterName, argument, $"Value must be between {min} and {max} inclusive.");
 }
