@@ -652,7 +652,7 @@ public static class MongoModelValidatorTests
                    .IsVectorIndex(VectorSimilarity.Cosine, 2).HasQuantization((VectorQuantization?)3)))
         {
             Assert.Contains(
-                "Vector quantization is set to '3' which is not a valid value from the 'VectorQuantization' enum.",
+                "Vector quantization is set to 'BinaryNoRescore' which is not a valid value from the 'VectorQuantization' enum.",
                 Assert.Throws<InvalidOperationException>(() => context.Model).Message);
         }
     }

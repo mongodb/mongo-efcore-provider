@@ -4674,6 +4674,16 @@ Customers.
         AssertMql();
     }
 
+    public override async Task Captured_variable_from_switch_case_pattern_matching(bool async)
+    {
+        await base.Captured_variable_from_switch_case_pattern_matching(async);
+
+        AssertMql(
+            """
+            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            """);
+    }
+
 #else
     public override async Task Default_if_empty_top_level_arg(bool async)
     {

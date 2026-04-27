@@ -613,11 +613,7 @@ Customers.
 
     public override async Task String_Compare_nested(bool async)
     {
-        // Fails: String.Compare issue EF-244
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Compare_nested(async))).Message);
+        await base.String_Compare_nested(async);
 
         AssertMql(
             """
@@ -629,7 +625,19 @@ Customers.
             """,
             //
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", { "$replaceAll" : { "input" : "ALFKI", "find" : "ALF", "replacement" : "$_id" } }] }, 0] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$gte" : [0, { "$cmp" : ["$_id", { "$concat" : ["M", "$_id"] }] }] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [1, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", { "$replaceAll" : { "input" : "ALFKI", "find" : "ALF", "replacement" : "$_id" } }] }, -1] } } }
             """);
     }
 
@@ -757,10 +765,7 @@ Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
 
     public override async Task String_Compare_to_nested(bool async)
     {
-        // Fails: String.Replace issue EF-223
-        Assert.Contains(
-            "Expression not supported: \"AROUT\".Replace",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.String_Compare_to_nested(async))).Message);
+        await base.String_Compare_to_nested(async);
 
         AssertMql(
             """
@@ -772,7 +777,19 @@ Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
             """,
             //
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", { "$replaceAll" : { "input" : "AROUT", "find" : "OUT", "replacement" : "$_id" } }] }, 0] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$gte" : [0, { "$cmp" : ["$_id", { "$concat" : ["M", "$_id"] }] }] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [1, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
+            """,
+            //
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", { "$replaceAll" : { "input" : "AROUT", "find" : "OUT", "replacement" : "$_id" } }] }, -1] } } }
             """);
     }
 
@@ -1900,28 +1917,21 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Replace_with_emptystring(bool async)
     {
-        // Fails: Translate string.Replace methods issue EF-223
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Replace_with_emptystring(async))).Message);
+        await base.Replace_with_emptystring(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$ContactName", "find" : "ia", "replacement" : "" } }, "Mar Anders"] } } }
             """);
     }
 
     public override async Task Replace_using_property_arguments(bool async)
     {
-        // Fails: Translate string.Replace methods issue EF-223
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Replace_using_property_arguments(async)))
-            .Message);
+        await base.Replace_using_property_arguments(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$ContactName", "find" : "$ContactName", "replacement" : "$_id" } }, "$_id"] } } }
             """);
     }
 

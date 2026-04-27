@@ -2216,14 +2216,11 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
     public override async Task Where_string_replace(bool async)
     {
-        // Fails: String.Replace issue EF-223
-        Assert.Contains(
-            "Expression not supported: c.City.Replace(\"Sea\", \"Rea\")",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_string_replace(async))).Message);
+        await base.Where_string_replace(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$City", "find" : "Sea", "replacement" : "Rea" } }, "Reattle"] } } }
             """);
     }
 

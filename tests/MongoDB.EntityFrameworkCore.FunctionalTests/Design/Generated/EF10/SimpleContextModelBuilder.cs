@@ -25,7 +25,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
             EveryTypeEntityType.CreateAnnotations(everyType);
             OwnedEntityEntityType.CreateAnnotations(ownedEntity);
 
-            AddAnnotation("ProductVersion", "10.0.2");
+            AddAnnotation("ProductVersion", "10.0.7");
         }
     }
 }
