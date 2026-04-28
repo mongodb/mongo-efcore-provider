@@ -649,10 +649,10 @@ public static class MongoModelValidatorTests
         }
 
         using (var context = SingleEntityDbContext.Create<Book>(mb => mb.Entity<Book>().HasIndex(e => new { e.Floats1 })
-                   .IsVectorIndex(VectorSimilarity.Cosine, 2).HasQuantization((VectorQuantization?)3)))
+                   .IsVectorIndex(VectorSimilarity.Cosine, 2).HasQuantization((VectorQuantization?)4)))
         {
             Assert.Contains(
-                "Vector quantization is set to 'BinaryNoRescore' which is not a valid value from the 'VectorQuantization' enum.",
+                "Vector quantization is set to '4' which is not a valid value from the 'VectorQuantization' enum.",
                 Assert.Throws<InvalidOperationException>(() => context.Model).Message);
         }
     }
