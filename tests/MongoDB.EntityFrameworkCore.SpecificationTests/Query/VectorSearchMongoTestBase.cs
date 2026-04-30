@@ -635,7 +635,7 @@ public abstract class VectorSearchMongoTestBase
         ], booksFromStore.Select(e => e.Title));
     }
 
-    [ConditionalTheory]
+    [ConditionalTheory(Skip = "Pre-filter on nested reference returns wrong results; pending C# driver 3.9.0 fix")]
     [InlineData(false)]
     [InlineData(true)]
     public virtual async Task VectorSearch_with_bool_pre_filter_on_nested_reference(bool async)
@@ -657,7 +657,7 @@ public abstract class VectorSearchMongoTestBase
         ], booksFromStore.Select(e => e.Title));
     }
 
-    [ConditionalTheory]
+    [ConditionalTheory(Skip = "Pre-filter on nested reference returns wrong results; pending C# driver 3.9.0 fix")]
     [InlineData(false)]
     [InlineData(true)]
     public virtual async Task VectorSearch_with_complex_pre_filter_on_nested_reference(bool async)
