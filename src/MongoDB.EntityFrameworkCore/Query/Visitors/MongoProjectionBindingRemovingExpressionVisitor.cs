@@ -26,6 +26,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Storage;
@@ -42,10 +43,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     private readonly IEntityType _rootEntityType;
     private readonly ParameterExpression DocParameter;
     private readonly bool _trackQueryResults;
+    private readonly bool _useSyntheticOwnedKeys;
     private readonly Dictionary<ParameterExpression, Expression> _materializationContextBindings = new();
-    private readonly Dictionary<Expression, ParameterExpression> ProjectionBindings = new();
+    private readonly Dictionary<Expression, ParameterExpression> _projectionBindings = new();
     private readonly Dictionary<Expression, (IEntityType EntityType, Expression BsonDocExpression)> _ownerMappings = new();
-    private readonly Dictionary<Expression, Expression> _ordinalParameterBindings = new();
+    private readonly Dictionary<Expression, Expression> _ordinalMappings = new();
     private List<IncludeExpression> _pendingIncludes = [];
 
     /// <summary>
@@ -54,20 +56,18 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// <param name="rootEntityType">The <see cref="IEntityType"/> this projection relates to.</param>
     /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> this visitor should use.</param>
     /// <param name="docParameter">The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.</param>
-    /// <param name="trackQueryResults">
-    /// <see langword="true"/> if the results from this query are being tracked for changes,
-    /// <see langword="false"/> if they are not.
-    /// </param>
+    /// <param name="trackingBehavior">The <see cref="QueryTrackingBehavior"/> for this query.</param>
     public MongoProjectionBindingRemovingExpressionVisitor(
         IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
         ParameterExpression docParameter,
-        bool trackQueryResults)
+        QueryTrackingBehavior trackingBehavior)
     {
         _queryExpression = queryExpression;
         _rootEntityType = rootEntityType;
         DocParameter = docParameter;
-        _trackQueryResults = trackQueryResults;
+        _trackQueryResults = trackingBehavior == QueryTrackingBehavior.TrackAll;
+        _useSyntheticOwnedKeys = trackingBehavior == QueryTrackingBehavior.NoTracking;
     }
 
     protected override Expression VisitExtension(Expression extensionExpression)
@@ -77,6 +77,39 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             case ProjectionBindingExpression projectionBindingExpression:
                 {
                     var projection = GetProjection(projectionBindingExpression);
+
+                    // Alias is null when the projection's expression has no natural name —
+                    // the BsonDoc itself is the value.
+                    if (projection.Alias is null)
+                    {
+                        return DocParameter;
+                    }
+
+                    // Resolve the source IProperty so we apply its serializer / nullability —
+                    // not whatever EF property happens to share the alias name on the root entity.
+                    var fieldAccess = TryResolveFieldAccess(projection.Expression);
+                    if (fieldAccess.Property != null)
+                    {
+                        return BsonBinding.CreateGetValueExpression(
+                            DocParameter,
+                            projection.Alias,
+                            fieldAccess.Property,
+                            projectionBindingExpression.Type);
+                    }
+
+                    // For genuinely non-property expressions (arithmetic, constants, Mql.Field) the
+                    // push-down result document has the alias as its BSON element name — read it raw.
+                    // When projection.Expression is null (EF key-property binding via BindProperty)
+                    // there is no source expression to inspect; fall through to the property-lookup
+                    // path so the alias is resolved against the declared entity type, which gives us
+                    // the correct BSON element name (e.g. OrderID → _id).
+                    if (projection.Expression != null)
+                    {
+                        return BsonBinding.CreateGetElementValue(
+                            DocParameter,
+                            projection.Alias,
+                            projectionBindingExpression.Type);
+                    }
 
                     return CreateGetValueExpression(
                         DocParameter,
@@ -101,19 +134,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                             throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
                     }
 
-                    var bsonArray = ProjectionBindings[objectArrayProjection];
+                    var bsonArray = _projectionBindings[objectArrayProjection];
                     var jObjectParameter = Expression.Parameter(typeof(BsonDocument), bsonArray.Name + "Object");
                     var ordinalParameter = Expression.Parameter(typeof(int), bsonArray.Name + "Ordinal");
 
                     var accessExpression = objectArrayProjection.InnerProjection.ParentAccessExpression;
-                    ProjectionBindings[accessExpression] = jObjectParameter;
-                    _ownerMappings[accessExpression] =
-                        (objectArrayProjection.Navigation.DeclaringEntityType, objectArrayProjection.AccessExpression);
-                    _ordinalParameterBindings[accessExpression] = Expression.Add(
-                        ordinalParameter, Expression.Constant(1, typeof(int)));
+                    _projectionBindings[accessExpression] = jObjectParameter;
+                    _ownerMappings[accessExpression] = (objectArrayProjection.Navigation.DeclaringEntityType, objectArrayProjection.AccessExpression);
+                    _ownerMappings[jObjectParameter] = (objectArrayProjection.Navigation.DeclaringEntityType, objectArrayProjection.AccessExpression);
+                    _ordinalMappings[accessExpression] = Expression.Add(ordinalParameter, Expression.Constant(1, typeof(int)));
 
                     var innerShaper = (BlockExpression)Visit(collectionShaperExpression.InnerShaper);
-
                     innerShaper = AddIncludes(innerShaper);
 
                     var entities = Expression.Call(
@@ -203,26 +234,35 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     if (projectionExpression is ObjectArrayProjectionExpression objectArrayProjectionExpression)
                     {
                         innerAccessExpression = objectArrayProjectionExpression.AccessExpression;
-                        ProjectionBindings[objectArrayProjectionExpression] = parameterExpression;
-                        fieldName ??= objectArrayProjectionExpression.Name;
+                        _projectionBindings[objectArrayProjectionExpression] = parameterExpression;
+                        fieldName ??= FindProjectionAlias(objectArrayProjectionExpression) ?? objectArrayProjectionExpression.Name;
                     }
                     else
                     {
                         var entityProjectionExpression = (EntityProjectionExpression)projectionExpression;
                         var accessExpression = entityProjectionExpression.ParentAccessExpression;
-                        ProjectionBindings[accessExpression] = parameterExpression;
+                        _projectionBindings[accessExpression] = parameterExpression;
                         fieldName ??= entityProjectionExpression.Name;
 
                         switch (accessExpression)
                         {
                             case ObjectAccessExpression innerObjectAccessExpression:
                                 innerAccessExpression = innerObjectAccessExpression.AccessExpression;
-                                _ownerMappings[accessExpression] =
-                                    (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
+                                _ownerMappings[accessExpression] = (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
                                 fieldRequired = innerObjectAccessExpression.Required;
                                 break;
                             case RootReferenceExpression:
                                 innerAccessExpression = DocParameter;
+                                if (_ownerMappings.TryGetValue(accessExpression, out var ownerInfo))
+                                {
+                                    _ownerMappings[parameterExpression] = (ownerInfo.EntityType, ownerInfo.BsonDocExpression);
+                                }
+
+                                if (_ordinalMappings.TryGetValue(accessExpression, out var ordinalExpression))
+                                {
+                                    _ordinalMappings[parameterExpression] = ordinalExpression;
+                                }
+
                                 break;
                             default:
                                 throw new InvalidOperationException(
@@ -343,7 +383,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                 var ownership = entityType.FindOwnership();
                 if (ownership?.IsUnique == false && property.IsOwnedTypeOrdinalKey())
                 {
-                    var readExpression = _ordinalParameterBindings[docExpression];
+                    var readExpression = _ordinalMappings[docExpression];
                     if (readExpression.Type != type)
                     {
                         readExpression = Expression.Convert(readExpression, type);
@@ -356,8 +396,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                 if (principalProperty != null)
                 {
                     Expression? ownerBsonDocExpression = null;
-                    if (_ownerMappings.TryGetValue(docExpression,
-                            out var ownerInfo))
+                    if (_ownerMappings.TryGetValue(docExpression, out var ownerInfo))
                     {
                         ownerBsonDocExpression = ownerInfo.BsonDocExpression;
                     }
@@ -372,6 +411,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                     if (ownerBsonDocExpression != null)
                     {
+                        if (_useSyntheticOwnedKeys
+                            && property.DeclaringType is IEntityType { } declaringEntityType
+                            && declaringEntityType.IsOwned()
+                            && principalProperty.Name == "_id")
+                        {
+                            return CreateSyntheticKeyValue(principalProperty, type);
+                        }
+
                         return CreateGetValueExpression(ownerBsonDocExpression, principalProperty, type);
                     }
                 }
@@ -420,7 +467,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         };
 
         var innerExpression = docExpression;
-        if (ProjectionBindings.TryGetValue(docExpression, out var innerVariable))
+        if (_projectionBindings.TryGetValue(docExpression, out var innerVariable))
         {
             innerExpression = innerVariable;
         }
@@ -438,6 +485,104 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         var elementType = typeMapping?.ClrType ?? type;
         return BsonBinding.CreateGetValueExpression(innerExpression, propertyName, required, elementType, entityType);
     }
+
+    protected ResolvedFieldAccess TryResolveFieldAccess(Expression expression)
+    {
+        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
+        {
+            expression = unary.Operand;
+        }
+
+        if (expression is MemberExpression memberExpression)
+        {
+            var source = TryResolveFieldAccessSource(memberExpression.Expression);
+            var property = source.EntityType?.FindProperty(memberExpression.Member);
+            return property != null
+                ? new ResolvedFieldAccess(property, source.DocumentExpression, null, memberExpression.Member)
+                : new ResolvedFieldAccess(null, source.DocumentExpression, memberExpression.Member.Name, memberExpression.Member);
+        }
+
+        if (expression is MethodCallExpression methodCall)
+        {
+            if (methodCall.Method.IsEFPropertyMethod()
+                && methodCall.Arguments[1] is ConstantExpression { Value: string propertyName })
+            {
+                var source = TryResolveFieldAccessSource(methodCall.Arguments[0]);
+                var property = source.EntityType?.FindProperty(propertyName);
+                return property != null
+                    ? new ResolvedFieldAccess(property, source.DocumentExpression, null, null)
+                    : new ResolvedFieldAccess(null, source.DocumentExpression, propertyName, null);
+            }
+
+            if (methodCall.Method.IsGenericMethod
+                && methodCall.Method.GetGenericMethodDefinition() == MqlFieldMethodInfo
+                && methodCall.Arguments[1] is ConstantExpression { Value: string fieldName })
+            {
+                var source = TryResolveFieldAccessSource(methodCall.Arguments[0]);
+                return new ResolvedFieldAccess(null, source.DocumentExpression, fieldName, null);
+            }
+        }
+
+        return new ResolvedFieldAccess(null, null, null, null);
+    }
+
+    private (IEntityType? EntityType, Expression? DocumentExpression) TryResolveFieldAccessSource(Expression? expression)
+    {
+        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
+        {
+            expression = unary.Operand;
+        }
+
+        if (expression is EntityTypedExpression entityTypedExpression)
+        {
+            return (entityTypedExpression.EntityType, entityTypedExpression);
+        }
+
+        if (expression is RootReferenceExpression rootReferenceExpression)
+        {
+            return (rootReferenceExpression.EntityType, rootReferenceExpression);
+        }
+
+        if (expression is ObjectAccessExpression objectAccessExpression)
+        {
+            return (objectAccessExpression.Navigation.TargetEntityType, objectAccessExpression);
+        }
+
+        // When a projection lambda does `new { o.Prop }`, EF stores MemberExpr(STS_root, "Prop")
+        // in the projection mapping. Recognise the root entity's shaper here so we can resolve
+        // the property and use its own BSON element name instead of the projected alias.
+        if (expression is StructuralTypeShaperExpression { StructuralType: IEntityType shaperEntityType }
+            && shaperEntityType == _rootEntityType)
+        {
+            return (shaperEntityType, DocParameter);
+        }
+
+        if (expression is ParameterExpression parameterExpression)
+        {
+            var entityType = _rootEntityType.Model.GetEntityTypes()
+                .FirstOrDefault(e => e.ClrType == parameterExpression.Type);
+            if (entityType != null)
+            {
+                return (entityType, parameterExpression);
+            }
+        }
+
+        if (expression != null && _ownerMappings.TryGetValue(expression, out var ownerInfo))
+        {
+            return (ownerInfo.EntityType, ownerInfo.BsonDocExpression);
+        }
+
+        return (null, null);
+    }
+
+    private static readonly MethodInfo MqlFieldMethodInfo =
+        typeof(Mql).GetMethod(nameof(Mql.Field), BindingFlags.Public | BindingFlags.Static)!;
+
+    protected readonly record struct ResolvedFieldAccess(
+        IProperty? Property,
+        Expression? DocumentExpression,
+        string? FieldName,
+        MemberInfo? MemberInfo);
 
     private BlockExpression AddIncludes(BlockExpression shaperBlock)
     {
@@ -660,6 +805,42 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         = typeof(MongoProjectionBindingRemovingExpressionVisitor).GetTypeInfo()
             .GetDeclaredMethod(nameof(PopulateCollection))!;
 
+    private static Expression CreateSyntheticKeyValue(IProperty principalProperty, Type type)
+    {
+        var nonNullableType = principalProperty.ClrType.UnwrapNullableType();
+        if (nonNullableType == typeof(ObjectId))
+        {
+            var value = Expression.Constant(new ObjectId("000000000000000000000001"));
+            return value.Type == type ? value : Expression.Convert(value, type);
+        }
+
+        if (nonNullableType == typeof(Guid))
+        {
+            var value = Expression.Constant(new Guid("00000000-0000-0000-0000-000000000001"));
+            return value.Type == type ? value : Expression.Convert(value, type);
+        }
+
+        if (nonNullableType == typeof(string))
+        {
+            var value = Expression.Constant("__mongo_ef_synthetic_owner_key");
+            return value.Type == type ? value : Expression.Convert(value, type);
+        }
+
+        if (nonNullableType == typeof(int))
+        {
+            var value = Expression.Constant(1);
+            return value.Type == type ? value : Expression.Convert(value, type);
+        }
+
+        if (nonNullableType == typeof(long))
+        {
+            var value = Expression.Constant(1L);
+            return value.Type == type ? value : Expression.Convert(value, type);
+        }
+
+        return Expression.Default(type);
+    }
+
     private static readonly MethodInfo IsAssignableFromMethodInfo
         = typeof(IReadOnlyEntityType).GetMethod(nameof(IReadOnlyEntityType.IsAssignableFrom), [
             typeof(IReadOnlyEntityType)
@@ -688,4 +869,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             ? _queryExpression.GetMappedProjection(projectionBindingExpression.ProjectionMember).GetConstantValue<int>()
             : projectionBindingExpression.Index
               ?? throw new InvalidOperationException("Internal error - projection mapping has neither member nor index.");
+
+    private string? FindProjectionAlias(Expression expression)
+        => _queryExpression.Projection.FirstOrDefault(p => p.Expression.Equals(expression))?.Alias;
 }

@@ -414,6 +414,108 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         }
     }
 
+    [Fact]
+    public void OwnedEntity_projection_alias_with_bson_representation_uses_owned_property_serializer()
+    {
+        var collection = database.CreateCollection<PersonWithLocation>();
+
+        var id = ObjectId.GenerateNewId();
+        var expectedLocation = new Location { latitude = 1.234m, longitude = 1.567m };
+
+        var modelBuilder = (ModelBuilder mb) =>
+        {
+            mb.Entity<PersonWithLocation>(p =>
+            {
+                p.OwnsOne(e => e.location, f =>
+                {
+                    f.HasElementName("Location");
+                    f.Property(g => g.longitude)
+                        .HasElementName("Longitude")
+                        .HasBsonRepresentation(BsonType.String);
+                });
+            });
+        };
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            dbContext.Entities.Add(new PersonWithLocation
+            {
+                _id = id,
+                name = Guid.NewGuid().ToString(),
+                location = expectedLocation
+            });
+            dbContext.SaveChanges();
+        }
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            var found = dbContext.Entities.AsNoTracking()
+                .Where(e => e._id == id)
+                .Select(e => new { Alias = e.location.longitude })
+                .Single();
+
+            Assert.Equal(expectedLocation.longitude, found.Alias);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_projection_alias_with_bson_representation_uses_owned_property_serializer()
+    {
+        var collection = database.CreateCollection<PersonWithMultipleLocations>();
+
+        var id = ObjectId.GenerateNewId();
+        var expectedLocations = new[]
+        {
+            new Location { latitude = 1.234m, longitude = 1.567m },
+            new Location { latitude = 2.345m, longitude = 2.678m }
+        };
+
+        var modelBuilder = (ModelBuilder mb) =>
+        {
+            mb.Entity<PersonWithMultipleLocations>(p =>
+            {
+                p.OwnsMany(e => e.locations, f =>
+                {
+                    f.HasElementName("Locations");
+                    f.Property(g => g.longitude)
+                        .HasElementName("Longitude")
+                        .HasBsonRepresentation(BsonType.String);
+                });
+            });
+        };
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            dbContext.Entities.Add(new PersonWithMultipleLocations
+            {
+                _id = id,
+                name = "A",
+                locations = [.. expectedLocations]
+            });
+            dbContext.SaveChanges();
+        }
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            var actual = dbContext.Entities
+                .AsNoTracking()
+                .Where(e => e._id == id)
+                .Select(e => new
+                {
+                    e.name,
+                    e.locations,
+                    Longitudes = e.locations
+                        .Select(l => new { Alias = l.longitude })
+                        .ToList()
+                })
+                .Single();
+
+            Assert.Equal("A", actual.name);
+            Assert.Equal(expectedLocations.Length, actual.locations.Count);
+            Assert.Equal(expectedLocations.Select(l => l.longitude), actual.Longitudes.Select(l => l.Alias));
+        }
+    }
+
     class SimpleNonNullableCollection
     {
         public ObjectId _id { get; set; }
@@ -434,6 +536,34 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     class SimpleChild
     {
         public string name { get; set; }
+    }
+
+    [Fact]
+    public void OwnedEntity_single_NoTrackingWithIdentityResolution_returns_correct_owned_entity_per_owner()
+    {
+        // Regression test: with !_trackQueryResults covering both NoTracking and
+        // NoTrackingWithIdentityResolution, all owned entities got the same synthetic principal
+        // key. The standalone state manager then collapsed distinct owned entities from different
+        // owners into a single cached instance, returning the wrong location for the second owner.
+        var collection = database.CreateCollection<PersonWithLocation>();
+        collection.WriteTestDocs([
+            new PersonWithLocation { name = "Owner1", location = Location1 },
+            new PersonWithLocation { name = "Owner2", location = Location2 }
+        ]);
+
+        using var db = SingleEntityDbContext.Create(collection,
+            optionsBuilderAction: x => x.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTrackingWithIdentityResolution));
+
+        var results = db.Entities.ToList();
+
+        var owner1 = results.Single(p => p.name == "Owner1");
+        var owner2 = results.Single(p => p.name == "Owner2");
+
+        Assert.Equal(Location1.latitude, owner1.location.latitude);
+        Assert.Equal(Location1.longitude, owner1.location.longitude);
+        Assert.Equal(Location2.latitude, owner2.location.latitude);
+        Assert.Equal(Location2.longitude, owner2.location.longitude);
+        Assert.NotSame(owner1.location, owner2.location);
     }
 
     [Theory]

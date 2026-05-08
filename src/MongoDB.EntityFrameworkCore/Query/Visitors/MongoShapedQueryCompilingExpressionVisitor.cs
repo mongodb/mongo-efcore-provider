@@ -77,8 +77,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         // Entity path: full BsonDocuments shaped into tracked/untracked entity instances
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
-            (bsonDoc, track) => new MongoProjectionBindingRemovingExpressionVisitor(
-                rootEntityType, mongoQueryExpression, bsonDoc, track));
+            (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
+                rootEntityType, mongoQueryExpression, bsonDoc, behavior));
     }
 
     private MethodCallExpression VisitProjectedQuery(
@@ -104,26 +104,25 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
 
         // Mixed path: projection contains entity references that LINQ V3 can't handle.
-        // Strip the Select, return full BsonDocuments, and build a client-side shaper.
-        if (mongoQueryExpression.CapturedExpression is MethodCallExpression
-                { Method: { Name: "Select", DeclaringType.Name: "Queryable" } } selectCall)
-        {
-            mongoQueryExpression.CapturedExpression = selectCall.Arguments[0];
-        }
+        // Strip the Select so the driver returns full BsonDocuments keyed by EF-configured
+        // element names; the client-side shaper handles the projection. The Select may sit
+        // directly on the captured expression, or under a no-arg cardinality terminator
+        // (Single/First/etc.) which we also need to rebind to the un-projected source type.
+        mongoQueryExpression.CapturedExpression = StripPushedDownSelect(mongoQueryExpression.CapturedExpression);
 
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
-            (bsonDoc, track) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
-                rootEntityType, mongoQueryExpression, bsonDoc, track));
+            (bsonDoc, behavior) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
+                rootEntityType, mongoQueryExpression, bsonDoc, behavior));
     }
 
     private MethodCallExpression CompileShapedQuery(
         ShapedQueryExpression shapedQueryExpression,
         MongoQueryExpression mongoQueryExpression,
         IEntityType rootEntityType,
-        Func<ParameterExpression, bool, System.Linq.Expressions.ExpressionVisitor> createBindingRemover)
+        Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor> createBindingRemover)
     {
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
-        var trackQueryResults = QueryCompilationContext.QueryTrackingBehavior == QueryTrackingBehavior.TrackAll;
+        var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
 
         var shaperBody = shapedQueryExpression.ShaperExpression;
         shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
@@ -132,7 +131,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 #else
         shaperBody = InjectStructuralTypeMaterializers(shaperBody);
 #endif
-        shaperBody = createBindingRemover(bsonDocParameter, trackQueryResults).Visit(shaperBody);
+        shaperBody = createBindingRemover(bsonDocParameter, trackingBehavior).Visit(shaperBody);
 
         var shaperLambda = Expression.Lambda(
             shaperBody,
@@ -155,6 +154,35 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             Expression.Constant(standAloneStateManager),
             Expression.Constant(_threadSafetyChecksEnabled),
             Expression.Constant(shapedQueryExpression.ResultCardinality));
+    }
+
+    private static Expression? StripPushedDownSelect(Expression? captured)
+    {
+        if (captured is not MethodCallExpression call || call.Method.DeclaringType != typeof(Queryable))
+        {
+            return captured;
+        }
+
+        if (call.Method.Name == nameof(Queryable.Select) && call.Arguments.Count == 2)
+        {
+            return call.Arguments[0];
+        }
+
+        if (call.Method.IsGenericMethod
+            && call.Method.GetParameters().Length == 1
+            && call.Method.Name is nameof(Queryable.Single) or nameof(Queryable.SingleOrDefault)
+                or nameof(Queryable.First) or nameof(Queryable.FirstOrDefault)
+                or nameof(Queryable.Last) or nameof(Queryable.LastOrDefault)
+            && call.Arguments is [MethodCallExpression { Method: { Name: nameof(Queryable.Select), DeclaringType: var st } } innerSelect]
+            && st == typeof(Queryable))
+        {
+            var newSource = innerSelect.Arguments[0];
+            var newSourceType = newSource.Type.GetGenericArguments()[0];
+            var rebound = call.Method.GetGenericMethodDefinition().MakeGenericMethod(newSourceType);
+            return Expression.Call(rebound, newSource);
+        }
+
+        return captured;
     }
 
     private static (MongoQueryContext, MongoExecutableQuery) TranslateQuery<TSource>(
