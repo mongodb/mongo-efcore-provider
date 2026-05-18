@@ -262,13 +262,17 @@ functions:
           . ./evergreen/pack-packages.sh
 
   sign-packages:
+    - command: ec2.assume_role
+      params:
+        role_arn: ${ecr-evergreen-role}
     - command: shell.exec
       params:
         shell: bash
         working_dir: mongo-efcore-provider
         include_expansions_in_env:
-          - "ARTIFACTORY_PASSWORD"
-          - "ARTIFACTORY_USERNAME"
+          - "AWS_ACCESS_KEY_ID"
+          - "AWS_SECRET_ACCESS_KEY"
+          - "AWS_SESSION_TOKEN"
           - "GRS_USERNAME"
           - "GRS_PASSWORD"
           - "AUTHENTICODE_KEY_NAME"
@@ -378,6 +382,19 @@ functions:
     - command: ec2.assume_role
       params:
         role_arn: ${kondukto_role_arn}
+    - command: shell.exec
+      params:
+        working_dir: mongo-efcore-provider
+        include_expansions_in_env:
+          - "AWS_ACCESS_KEY_ID"
+          - "AWS_SECRET_ACCESS_KEY"
+          - "AWS_SESSION_TOKEN"
+        script: |
+          ${PREPARE_SHELL}
+          ./evergreen/fetch-kondukto-token.sh
+    - command: ec2.assume_role
+      params:
+        role_arn: ${ecr-evergreen-role}
     - command: shell.exec
       params:
         working_dir: mongo-efcore-provider
