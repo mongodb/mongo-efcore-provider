@@ -16,7 +16,7 @@ The provider sits on top of the C# driver's LINQ v3 provider — Query produces 
 ## Review focus
 
 - **Method-source whitelist.** Translators must dispatch only on `Queryable`, `MongoQueryableExtensions`, and `MongoDB.Driver.Linq.MongoQueryable` methods. Anything broader is a category error.
-- **`MethodInfo` reference equality.** Open vs. constructed generic methods compare unequal. Use the canonical constants (typically from `EnumerableMethods` or the driver's `*Method` reflection classes), not freshly-resolved `MethodInfo` instances.
+- **`MethodInfo` reference equality.** Open vs. constructed generic methods compare unequal. Use the canonical constants — `QueryableMethods` for the top-level translator (`MongoQueryableMethodTranslatingExpressionVisitor`), `EnumerableMethods` inside the projection-binding visitors, and the driver's `*Method` reflection classes where needed — not freshly-resolved `MethodInfo` instances.
 - **VectorSearch preprocessor ordering.** `VectorSearch(...)` is lifted before EF's nav-expansion and re-inserted after. Changes to `MongoQueryTranslationPreprocessor` ordering need to preserve this — see the area `AGENTS.md`.
 - **`MongoQueryExpression._projectionMapping` consistency.** Post-processor mapping keys (`ProjectionMember`s) must match what the shaper consumes. Mismatches produce silent wrong-results, not exceptions.
 - **`CapturedExpression` is the full method chain.** Set once at the tail of `VisitMethodCall`; setting it mid-chain truncates the query.

@@ -14,7 +14,7 @@ Read `src/MongoDB.EntityFrameworkCore/Serializers/AGENTS.md` first; then root `A
 ## Review focus
 
 - **`BsonSerializerFactory` is the single entry point.** Other areas ask for serializers through this factory. No `new SomeSerializer(...)` in Query/Storage/Metadata. No `BsonSerializer.RegisterSerializer(...)` anywhere in the provider — that mutates global driver state.
-- **`ValueConverterSerializer<TActual, TStorage>` rejects nullable model types.** The constructor's guard exists for a reason. The pattern is `NullableSerializer<>` wrapping the converter, not the converter wrapping nullable.
+- **`ValueConverterSerializer<TActual, TStorage>` rejects nullable model types.** The nullable-rejection guard in `BsonSerializerFactory.CreateValueConverterSerializer` exists for a reason. The pattern is `NullableSerializer<>` wrapping the converter, not the converter wrapping nullable.
 - **`ApplyBsonRepresentation` recursion.** It descends through `INullableSerializer` so `[BsonRepresentation]` on a `Nullable<T>` does the right thing. Don't short-circuit the recursion.
 - **Entity serializer caching.** `BsonSerializerFactory` caches entity serializers by `IReadOnlyEntityType`. Don't invalidate the cache lazily; the runtime model is meant to be immutable.
 - **Discriminator routing.** `MongoEFDiscriminator` implements the *driver's* `IScalarDiscriminatorConvention`. It's what makes polymorphic LINQ filters work against `_t`. Changes here must keep EF's discriminator-property model and the driver's discriminator API in sync.

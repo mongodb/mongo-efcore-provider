@@ -20,7 +20,7 @@ Read `src/MongoDB.EntityFrameworkCore/Storage/AGENTS.md` first; then root `AGENT
 - **`AutoTransactionBehavior.Never` disables optimistic concurrency.** Don't add a fast path that bypasses transactions on a code path that depends on row-version atomicity.
 - **Cross-collection atomicity is the *transaction's* job**, not `BulkWrite`'s. Each collection gets its own `BulkWrite`; only the surrounding transaction makes them atomic.
 - **`EnsureCreated` is idempotent for indexes and collections but re-seeds on each call.** Duplicate-key errors during seeding are tolerated by design.
-- **No direct BSON serialization here.** Storage looks up serializers via `BsonSerializerFactory.GetPropertySerializationInfo(property)`. Spotting a raw `BsonWriter` / `BsonReader` is a layering violation; flag.
+- **No direct per-type BSON serialization here.** Storage may drive `IBsonWriter`/`IBsonReader` (e.g. `MongoUpdate` uses a `BsonDocumentWriter` as the host that drives looked-up serializers) but must never roll its own per-type serialization — values must round-trip through `BsonSerializerFactory.GetPropertySerializationInfo(property).Serializer`.
 - **Vector-index creation paths.** `CreateMissingVectorIndexes` (sync) and the async variant must stay in lockstep — vector-search-reviewer also looks at these.
 - **Multi-EF type-mapping branches.** `MongoTypeMappingSource` has `#if EF8 || EF9` branches for dictionary comparers. Changes must compile under all three.
 
@@ -31,7 +31,7 @@ Read `src/MongoDB.EntityFrameworkCore/Storage/AGENTS.md` first; then root `AGENT
 
 ## Escalate to user (do not auto-approve) when
 
-- Default-value change for `AutoTransactionBehavior` (behavior break — see `BREAKING-CHANGES.md`).
+- Any change that re-disables automatic transactions inside `SaveChanges`/`SaveChangesAsync` by default (the 8.1.0 break in `BREAKING-CHANGES.md` was *requiring* transactions by default; rolling that back would be the inverse break).
 - Change to the concurrency-filter shape (which properties enter the WHERE clause).
 - Change to row-version increment ordering relative to serialization.
 - `IMongoClientWrapper` interface change (`BREAKING-CHANGES.md` calls this out as a recurring break point).

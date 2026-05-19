@@ -14,7 +14,7 @@ This `AGENTS.md` covers the cross-cutting test infrastructure and the EF Core sp
 In:
 
 - **SpecificationTests project.** EF Core's standard provider-conformance suite. Test classes inherit upstream bases from `Microsoft.EntityFrameworkCore.Specification.Tests` (e.g. `NorthwindQueryFiltersQueryTestBase<TFixture>`) and override methods to assert the produced MQL via `AssertMql(...)`. The fixture pattern is `*MongoFixture<TModelCustomizer>` and the test class pattern is `*MongoTest`.
-- **Functional test infrastructure** (`tests/.../FunctionalTests/Utilities/`) — `TestServer` (connection bootstrap from `ATLAS_URI` / `MONGODB_URI` / TestContainers fallback), `TemporaryDatabaseFixtureBase` / `TemporaryDatabaseFixture` (per-test database isolation), `TestDatabaseNamer` (unique names; prefix-based cleanup), `TestMqlLoggerFactory` (MQL capture by filtering `MongoEventId.ExecutedMqlQuery`), `ModuleInitialization` (registers driver BSON serializers at module load via `[ModuleInitializer]`).
+- **Functional test infrastructure** (`tests/.../FunctionalTests/Utilities/`) — `TestServer` (connection bootstrap from `ATLAS_URI` / `MONGODB_URI` / TestContainers fallback), `TemporaryDatabaseFixtureBase` / `TemporaryDatabaseFixture` (per-test database isolation), `TestDatabaseNamer` (unique names via `Interlocked.Increment`), `DatabaseCleaner` (a manual `[Fact(Skip = "...")]` opt-in cleaner — not automatic). `TestMqlLoggerFactory` lives in `tests/MongoDB.EntityFrameworkCore.SpecificationTests/Utilities/` (MQL capture by filtering `MongoEventId.ExecutedMqlQuery`). `ModuleInitialization` lives at the FunctionalTests project root (`tests/.../FunctionalTests/ModuleInitialization.cs`) and registers driver BSON serializers at module load via `[ModuleInitializer]`.
 - **Parallelism / collection semantics** — `Usings.cs` declares `[assembly: CollectionBehavior(DisableTestParallelization = true)]` for FunctionalTests and SpecificationTests. Without this, fixture cleanup-by-prefix and shared MongoDB state would race.
 
 Out: per-area test classes themselves (`Query/`, `Storage/`, etc.) — those are owned by their respective `src/` area reviewers.
@@ -22,7 +22,7 @@ Out: per-area test classes themselves (`Query/`, `Storage/`, etc.) — those are
 ## Test infrastructure
 
 - **Connection bootstrap** (`tests/.../FunctionalTests/Utilities/TestServer.cs`). Priority: `ATLAS_URI` (`"Disabled"` skips Atlas tests) → `MONGODB_URI` → `TestContainersTestServer` (Docker-backed local Mongo). The cached server is initialized once via double-checked locking.
-- **Per-test isolation.** `TemporaryDatabaseFixtureBase.InitializeAsync()` requests a unique database name from `TestDatabaseNamer`; cleanup drops everything with the test-database prefix. Test methods get a *collection name* derived from `[CallerMemberName]` (`CreateCollectionName(...)`) with a sequential-counter fallback for CI where caller names may be unavailable.
+- **Per-test isolation.** `TemporaryDatabaseFixtureBase.InitializeAsync()` requests a unique database name from `TestDatabaseNamer.GetUniqueDatabaseName()` (which appends an `Interlocked.Increment` counter to a timestamped prefix). `DisposeAsync` returns `Task.CompletedTask` — there is no automatic teardown; stale `Test*` databases are cleaned up only by manually running the `[Fact(Skip = "Manually run to clean up the database")]` `DatabaseCleaner.CleanDatabase` test. Test methods get a *collection name* derived from `[CallerMemberName]` (`CreateCollectionName(...)`) with a sequential-counter fallback for CI where caller names may be unavailable.
 - **Fixture sharing.** Heavy fixtures are declared with `[CollectionDefinition("name")]` and consumed via `[XUnitCollection("name")]`. Encryption tests live in their own collection (`[XUnitCollection("Encryption")]`) so they serialize cleanly with the crypto state. Compatibility tests likewise.
 - **MQL assertion pattern.** Specification tests override `await base.SomeTest()` and follow with `AssertMql("{ $match: ... }", "{ $project: ... }")` (see e.g. `NorthwindQueryFiltersQueryMongoTest`). The pipeline-string format is whitespace-insensitive but field-order-sensitive.
 
@@ -58,7 +58,7 @@ Special test concerns under `FunctionalTests/`: `Encryption/` (CSFLE / QE end-to
 
 ## Common pitfalls
 
-- **Don't enable test parallelization.** Fixtures rely on prefix-based cleanup; parallel runs cross-pollute databases.
+- **Don't enable test parallelization.** Tests share global MongoDB state and rely on serial execution for stable fixture/collection setup; parallel runs cross-pollute.
 - **Don't drop test isolation.** A test that uses a fixed collection name (instead of `[CallerMemberName]`) collides with anything else using that name across the suite — the failure mode is intermittent leaks.
 - **Encryption tests skip silently** when `CRYPT_SHARED_LIB_PATH` is unset (`SupportsEncryption` returns false). If you're verifying an encryption change, check that the variable is exported in your shell.
 - **MQL assertions are field-order-sensitive.** When you add a new translator branch, expected-MQL strings often need updates across many specification tests.

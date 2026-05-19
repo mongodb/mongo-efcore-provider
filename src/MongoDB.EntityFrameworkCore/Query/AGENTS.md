@@ -43,6 +43,7 @@ IQueryable<T>  (EF Core)
 - `Visitors/MongoShapedQueryCompilingExpressionVisitor` — bridges to the C# driver. Splits scalar vs. entity result paths and compiles the shaper.
 - `Visitors/MongoEFToLinqTranslatingExpressionVisitor` — converts the residual EF expression into a tree the driver's LINQ v3 provider understands (`Mql.Field`, parameter resolution, `As<T>(serializer)`).
 - `Visitors/MongoProjectionBindingRemovingExpressionVisitor` — replaces `ProjectionBindingExpression` nodes with concrete index-based reads from a `BsonDocument`.
+- `Visitors/MongoMixedProjectionBindingRemovingExpressionVisitor` — sibling of the above used on the mixed path (projection contains entity references LINQ v3 can't handle); `MongoShapedQueryCompilingExpressionVisitor` strips the trailing `Select` and dispatches to this visitor so the shaper runs client-side over full `BsonDocument`s.
 - `Expressions/MongoQueryExpression` — root MongoDB query node; holds `_projectionMapping` and the captured method chain.
 - `Expressions/MongoCollectionExpression`, `EntityProjectionExpression`, `RootReferenceExpression`, `ObjectAccessExpression`, `ObjectArrayProjectionExpression` — provider-specific expression nodes for collection roots, nested-document access, and entity shape.
 - `MongoExecutableQuery` + `QueryingEnumerable` — the compiled-query handoff. `QueryingEnumerable` calls `MongoClientWrapper.Execute(MongoExecutableQuery)` and applies the shaper.
@@ -61,10 +62,10 @@ IQueryable<T>  (EF Core)
 - **VectorSearch extraction.** `VectorSearch(...)` must be pulled out of the tree before EF's nav-expansion runs (it crashes nav-expansion otherwise) and stitched back in after. If you change preprocessor ordering, re-check this dance.
 - **ProjectionMapping discipline.** The `_projectionMapping` keys (`ProjectionMember`s) must match exactly what the shaper expects. A mismatch between the post-processor mapping and the shaper compilation produces silent wrong-results, not crashes.
 - **`MongoQueryExpression.CapturedExpression`** must be a *complete* method chain — set once at the tail of `MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall`. Setting it mid-chain truncates the query.
-- **Reference-equality on `MethodInfo`.** Translators that match by `MethodInfo` must use canonical constants (typically from `EnumerableMethods` or the driver's `*Method` classes); open vs. constructed generic methods compare unequal.
+- **Reference-equality on `MethodInfo`.** Translators that match by `MethodInfo` must use canonical constants — `QueryableMethods` for the top-level dispatch in `MongoQueryableMethodTranslatingExpressionVisitor`, `EnumerableMethods` inside the projection-binding visitors, and the driver's `*Method` reflection classes where the bridge to driver-LINQ needs them; open vs. constructed generic methods compare unequal.
 - **Unsupported shapes are detected, not silently translated.** Joins, `GroupBy`, set operations (`Intersect` / `Except`) throw early — see the early-fail branches in `MongoQueryableMethodTranslatingExpressionVisitor`.
 - **EF Core query cache.** Compiled queries are cached by EF Core by expression-tree shape; if you change a translator's output for a previously-translatable tree, you've quietly invalidated user caches.
-- **Multi-EF guards.** Some visitor signatures changed between EF8/EF9/EF10. Look for `#if EF8 || EF9` in `QueryingEnumerable.cs` and the projection-binding remover.
+- **Multi-EF guards.** Some visitor signatures changed between EF8/EF9/EF10. For representative guard shapes elsewhere in the tree see `Storage/MongoTypeMappingSource.cs` (`#if EF8 || EF9`), the `ChangeTracking/StringDictionaryComparer*.cs` pair (legacy vs. EF10 split), and the `ChangeTracking/ListOf*Comparer.cs` files (`#if EF8`); in Query itself, `QueryingEnumerable.cs` has a `#if !EF8` block.
 
 ## How to test
 

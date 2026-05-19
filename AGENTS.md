@@ -42,7 +42,7 @@ The provider follows EF Core's pattern, not the C# driver's. There is **no enfor
 
 ## Testing
 - Functional and SpecificationTests need MongoDB. `tests/.../FunctionalTests/Utilities/TestServer.cs` checks env vars in priority order: `ATLAS_URI` (set to `"Disabled"` to skip Atlas tests), then `MONGODB_URI`. If neither is set, a `TestContainersTestServer` boots a local MongoDB via Docker.
-- Tests run **serially** (parallelization disabled at the assembly level) — required because fixtures mutate shared database state and clean up by name prefix.
+- Tests run **serially** (parallelization disabled at the assembly level) — required because fixtures share global MongoDB state and each test relies on a uniquely-named database / collection that would race under parallel execution.
 - Each test gets a unique database name via `TestDatabaseNamer.GetUniqueDatabaseName()`.
 - `[ModuleInitializer]` in `tests/.../FunctionalTests/ModuleInitialization.cs` registers BSON serializers at load time.
 
@@ -80,7 +80,7 @@ These reviewers cover cohesive features that span more than one directory. They 
 | Feature | Reviewer | Spans |
 |---|---|---|
 | Atlas Vector Search | `vector-search-reviewer` | `VectorIndex*`, `BinaryVector*`, `VectorSearch*` across Query, Metadata, Storage, Extensions |
-| Client-Side Field Level Encryption / Queryable Encryption | `encryption-reviewer` | `CryptProvider.cs`, `QueryableEncryption*` across Infrastructure, Extensions, Metadata, Serializers |
+| Client-Side Field Level Encryption / Queryable Encryption | `encryption-reviewer` | `CryptProvider.cs`, `QueryableEncryption*` across Infrastructure, Extensions, Metadata, Storage |
 
 ## Cross-cutting reviewers
 

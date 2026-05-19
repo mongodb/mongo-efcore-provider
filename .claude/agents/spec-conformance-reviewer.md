@@ -33,6 +33,6 @@ Read `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` first; the
 - Enabling test parallelization at the assembly level.
 - Skipping a Specification test without a clear "permanently unsupported" rationale.
 - Changes to `TestServer.GetOrInitializeTestServerAsync()` connection-priority logic.
-- Changes to the cleanup-by-prefix behavior in `TestDatabaseNamer` / fixture teardown.
+- Changes to unique-name generation in `TestDatabaseNamer` (the `Interlocked.Increment`-backed `GetUniqueDatabaseName`) or the manual `DatabaseCleaner.CleanDatabase` skip-fact.
 - New `[XUnitCollection]` that overlaps existing collection memberships in non-obvious ways.
 - Bumping the upstream EF version in `Versions.props` (touches every Specification-tests inheritance chain).

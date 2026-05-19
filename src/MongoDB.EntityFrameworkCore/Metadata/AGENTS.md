@@ -31,7 +31,7 @@ Key annotations (non-exhaustive — defer to `MongoAnnotationNames.cs`):
 | `Mongo:VectorIndexOptions` | Index | `VectorIndexOptions` | `.IsVectorIndex(...)` (with optional `VectorIndexBuilder` config) |
 | `Mongo:BinaryVectorDataType` | Property | `BinaryVectorDataType?` | `[BinaryVector]`, `.HasBinaryVectorDataType(...)` |
 | `Mongo:EncryptionDataKeyId` | Property / ForeignKey | `Guid?` | encryption builders |
-| `Mongo:QueryableEncryptionType` | Property | `QueryableEncryptionType?` | `.IsEncrypted` / `.IsEncryptedForEquality` / `.IsEncryptedForRange` |
+| `Mongo:QueryableEncryptionType` | Property / ForeignKey | `QueryableEncryptionType?` | `.IsEncrypted` / `.IsEncryptedForEquality` / `.IsEncryptedForRange` |
 | `Mongo:QueryableEncryption{RangeMin,RangeMax,Contention,TrimFactor,Precision,Sparsity}` | Property | per-encryption-type config | range / equality encryption builders |
 | `Mongo:NotSupportedAttributes` | Property | `string[]` (recorded by the unsupported-attribute conventions) | the `Bson*PropertyAttributeConvention` "not supported" set |
 
