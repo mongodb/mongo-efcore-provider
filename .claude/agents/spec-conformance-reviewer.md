@@ -13,7 +13,7 @@ Read `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` first; the
 
 ## Review focus
 
-- **Test parallelization is disabled by design.** `tests/.../FunctionalTests/Usings.cs` declares `[assembly: CollectionBehavior(DisableTestParallelization = true)]`. Fixture cleanup-by-prefix and shared MongoDB state both depend on serial execution. Don't enable parallel.
+- **Test parallelization is disabled by design.** `tests/.../FunctionalTests/Usings.cs` declares `[assembly: CollectionBehavior(DisableTestParallelization = true)]`. Shared MongoDB state and `[CallerMemberName]`-derived collection names both depend on serial execution. Don't enable parallel.
 - **Per-test database isolation.** Tests get a unique database name via `TestDatabaseNamer.GetUniqueDatabaseName()`. Tests using fixed names cross-pollute and produce intermittent failures.
 - **`[CallerMemberName]` collection-name generation.** `TemporaryDatabaseFixtureBase.CreateCollectionName(...)` derives collection names from caller method names. Hard-coded names defeat isolation.
 - **Specification-tests inheritance pattern.** Fixtures inherit `*FixtureBase<TModelCustomizer>` from `Microsoft.EntityFrameworkCore.Specification.Tests`; tests inherit `*TestBase<TFixture>`. Naming is `*MongoFixture<TCustomizer>` / `*MongoTest`.
