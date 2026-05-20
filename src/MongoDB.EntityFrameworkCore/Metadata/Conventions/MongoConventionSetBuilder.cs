@@ -49,6 +49,7 @@ public class MongoConventionSetBuilder : ProviderConventionSetBuilder
         conventionSet.Add(new CollectionNameFromDbSetConvention(Dependencies));
         conventionSet.Add(new IndexNamingConvention(Dependencies));
         conventionSet.Add(new MongoDiscriminatorNamingConvention(Dependencies));
+        conventionSet.Add(new SearchIndexDefinitionFinalizingConvention(Dependencies));
 
         // Convenience conventions for users familiar with EF
         conventionSet.Add(new ColumnAttributeConvention(Dependencies));

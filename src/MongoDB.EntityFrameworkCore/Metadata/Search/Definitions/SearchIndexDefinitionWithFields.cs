@@ -35,7 +35,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Search.Definitions;
 /// </remarks>
 public abstract class SearchIndexDefinitionWithFields : SearchIndexDefinitionBase
 {
-    private IMutableEntityType _entityType = null!;
+    private IMutableEntityType? _entityType;
 
     /// <summary>
     /// The entity type for which the search index is being defined. May be an owned entity type when defining indexes on
@@ -44,15 +44,31 @@ public abstract class SearchIndexDefinitionWithFields : SearchIndexDefinitionBas
     /// <remarks>
     /// This reference is used only at build time while configuring the search index. The build-time-resolved
     /// containing element name is captured into <see cref="ContainingElementName"/> on assignment and is used at runtime
-    /// instead of dereferencing this <see cref="IMutableEntityType"/>.
+    /// instead of dereferencing this <see cref="IMutableEntityType"/>. After model finalization the reference is
+    /// cleared so it is not persisted into the model annotation; callers must not access this property after the
+    /// model has been finalized.
     /// </remarks>
     public IMutableEntityType EntityType
     {
-        get => _entityType;
+        get => _entityType!;
         set
         {
             _entityType = value;
             ContainingElementName = value?.GetContainingElementName();
+        }
+    }
+
+    /// <summary>
+    /// Clears the build-time <see cref="IMutableEntityType"/> reference on this definition and recursively on any
+    /// nested <see cref="SearchIndexDefinitionWithFields"/> field definitions, so that the persisted model annotation
+    /// does not capture a build-time mutable entity-type reference across model finalization.
+    /// </summary>
+    internal void ClearEntityType()
+    {
+        _entityType = null;
+        foreach (var nested in FieldDefinitions.OfType<SearchIndexDefinitionWithFields>())
+        {
+            nested.ClearEntityType();
         }
     }
 
