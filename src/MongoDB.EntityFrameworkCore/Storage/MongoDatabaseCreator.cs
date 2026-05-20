@@ -718,6 +718,14 @@ public class MongoDatabaseCreator(
                     existingIndexes.Add(name);
                 }
             }
+
+            var ownedEntityTypes = designTimeModel.Model.GetEntityTypes()
+                .Where(o => o.FindDeclaredOwnership()?.PrincipalEntityType == entityType);
+
+            foreach (var ownedEntityType in ownedEntityTypes)
+            {
+                BuildAtlasIndexes(ownedEntityType, collectionName, existingIndexesMap, indexModelsMap, forVectorIndexes: false);
+            }
         }
     }
 

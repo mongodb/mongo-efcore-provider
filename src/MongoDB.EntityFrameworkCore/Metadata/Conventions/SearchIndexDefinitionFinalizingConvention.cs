@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using System.Linq;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
@@ -27,7 +29,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Conventions;
 /// <c>Mongo:SearchIndexDefinitions</c> annotation payload does not carry a mutable build-time reference across model
 /// finalization (which would otherwise be retained by compiled models).
 /// </summary>
-public class SearchIndexDefinitionFinalizingConvention : IModelFinalizingConvention
+internal sealed class SearchIndexDefinitionFinalizingConvention : IModelFinalizingConvention
 {
     /// <summary>
     /// Creates a <see cref="SearchIndexDefinitionFinalizingConvention" /> with required dependencies.
@@ -40,12 +42,26 @@ public class SearchIndexDefinitionFinalizingConvention : IModelFinalizingConvent
     /// <inheritdoc/>
     public void ProcessModelFinalizing(IConventionModelBuilder modelBuilder, IConventionContext<IConventionModelBuilder> context)
     {
-        foreach (var entityType in modelBuilder.Metadata.GetEntityTypes())
+        foreach (var entityType in modelBuilder.Metadata.GetEntityTypes().Where(e => e.IsDocumentRoot()))
         {
-            foreach (var definition in entityType.GetSearchIndexDefinitions())
-            {
-                definition.ClearEntityType();
-            }
+            ProcessEntityType(entityType);
+        }
+    }
+
+    private static void ProcessEntityType(IConventionEntityType entityType)
+    {
+        foreach (var definition in entityType.GetSearchIndexDefinitions())
+        {
+            definition.ClearEntityType();
+        }
+
+        var ownedEntityTypes = entityType.GetReferencingForeignKeys()
+            .Where(k => k.IsOwnership && k.PrincipalEntityType == entityType)
+            .Select(k => k.DeclaringEntityType);
+
+        foreach (var ownedEntityType in ownedEntityTypes)
+        {
+            ProcessEntityType(ownedEntityType);
         }
     }
 }

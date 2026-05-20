@@ -50,7 +50,7 @@ public abstract class SearchIndexDefinitionWithFields : SearchIndexDefinitionBas
     /// </remarks>
     public IMutableEntityType EntityType
     {
-        get => _entityType!;
+        get => _entityType ?? throw new InvalidOperationException("EntityType is not available after model finalization.");
         set
         {
             _entityType = value;
