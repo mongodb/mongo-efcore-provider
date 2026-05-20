@@ -410,7 +410,9 @@ public class MongoDatabaseCreator(
 
                 foreach (var indexModel in cursor.ToList())
                 {
-                    var isVector = indexModel["latestDefinition"].AsBsonDocument.TryGetElement("fields", out _);
+                    var isVector = indexModel.TryGetValue("type", out var typeValue)
+                        && typeValue.IsString
+                        && typeValue.AsString == "vectorSearch";
                     if (isVector != forVectors)
                     {
                         continue;
@@ -420,8 +422,10 @@ public class MongoDatabaseCreator(
 
                     if (status == "FAILED")
                     {
-                        throw new InvalidOperationException(
-                            $"Failed to build the {(isVector ? "vector" : "search")} index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'.");
+                        var failureMessage = isVector
+                            ? $"Failed to build the vector index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'."
+                            : $"Failed to build the search index '{indexModel["name"]}'.";
+                        throw new InvalidOperationException(failureMessage);
                     }
 
                     var remainingBeforeTimeout = failAfter - DateTime.UtcNow;
@@ -571,7 +575,9 @@ public class MongoDatabaseCreator(
 
                 foreach (var indexModel in indexModels)
                 {
-                    var isVector = indexModel["latestDefinition"].AsBsonDocument.TryGetElement("fields", out _);
+                    var isVector = indexModel.TryGetValue("type", out var typeValue)
+                        && typeValue.IsString
+                        && typeValue.AsString == "vectorSearch";
                     if (isVector != forVectors)
                     {
                         continue;
@@ -581,8 +587,10 @@ public class MongoDatabaseCreator(
 
                     if (status == "FAILED")
                     {
-                        throw new InvalidOperationException(
-                            $"Failed to build the {(forVectors ? "vector" : "search")} index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'.");
+                        var failureMessage = forVectors
+                            ? $"Failed to build the vector index '{indexModel["name"]}' for path '{indexModel["latestDefinition"]["fields"][0]["path"]}'."
+                            : $"Failed to build the search index '{indexModel["name"]}'.";
+                        throw new InvalidOperationException(failureMessage);
                     }
 
                     var remainingBeforeTimeout = failAfter - DateTime.UtcNow;

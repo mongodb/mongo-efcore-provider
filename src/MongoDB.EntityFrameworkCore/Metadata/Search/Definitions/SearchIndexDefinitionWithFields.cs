@@ -35,11 +35,32 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Search.Definitions;
 /// </remarks>
 public abstract class SearchIndexDefinitionWithFields : SearchIndexDefinitionBase
 {
+    private IMutableEntityType _entityType = null!;
+
     /// <summary>
     /// The entity type for which the search index is being defined. May be an owned entity type when defining indexes on
     /// properties of embedded (nested) entity types.
     /// </summary>
-    public IMutableEntityType EntityType { get; set; } = null!;
+    /// <remarks>
+    /// This reference is used only at build time while configuring the search index. The build-time-resolved
+    /// containing element name is captured into <see cref="ContainingElementName"/> on assignment and is used at runtime
+    /// instead of dereferencing this <see cref="IMutableEntityType"/>.
+    /// </remarks>
+    public IMutableEntityType EntityType
+    {
+        get => _entityType;
+        set
+        {
+            _entityType = value;
+            ContainingElementName = value?.GetContainingElementName();
+        }
+    }
+
+    /// <summary>
+    /// The containing element name resolved from <see cref="EntityType"/> at build time. Used at runtime to avoid holding
+    /// onto a build-time <see cref="IMutableEntityType"/> reference across model finalization.
+    /// </summary>
+    public string? ContainingElementName { get; private set; }
 
     /// <summary>
     /// Definitions for each field included in the index.
@@ -158,7 +179,7 @@ public abstract class SearchIndexDefinitionWithFields : SearchIndexDefinitionBas
                 return;
             }
 
-            prefix += definition.EntityType.GetContainingElementName() + ".";
+            prefix += definition.ContainingElementName + ".";
 
             foreach (var fieldName in definition.IncludedFieldNames)
             {

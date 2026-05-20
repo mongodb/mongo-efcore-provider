@@ -32,7 +32,7 @@ public interface ISearchIndexDefinition
     /// <summary>
     /// The name for this part of the index definition.
     /// </summary>
-    string Name { get; set; }
+    string Name { get; init; }
 
     /// <summary>
     /// Generates the BSON for this part of the index definition.

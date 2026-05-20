@@ -224,8 +224,16 @@ public static class MongoEntityTypeExtensions
     /// </summary>
     /// <param name="entityType">The entity type.</param>
     /// <returns>The search index definitions, which may be empty if none are set.</returns>
+    /// <remarks>
+    /// The returned list is a snapshot — callers must not assume mutations to the underlying annotation are reflected in
+    /// previously returned lists. Use <see cref="SetSearchIndexDefinition(IMutableEntityType, SearchIndexDefinition)"/> to add or replace
+    /// a definition.
+    /// </remarks>
     public static IReadOnlyList<SearchIndexDefinition> GetSearchIndexDefinitions(this IReadOnlyEntityType entityType)
-        => (IReadOnlyList<SearchIndexDefinition>?)entityType[MongoAnnotationNames.SearchIndexDefinitions] ?? [];
+    {
+        var stored = (IReadOnlyList<SearchIndexDefinition>?)entityType[MongoAnnotationNames.SearchIndexDefinitions];
+        return stored is null ? [] : stored.ToArray();
+    }
 
     /// <summary>
     /// Returns the <see cref="SearchIndexDefinition"/> with the given name.
@@ -265,7 +273,8 @@ public static class MongoEntityTypeExtensions
     /// </summary>
     /// <param name="entityType">The entity type.</param>
     /// <param name="indexName">The name of the index to remove.</param>
-    public static string? RemoveSearchIndexDefinition(this IMutableEntityType entityType, string indexName)
+    /// <returns><see langword="true" /> if a search index with the given name was removed; otherwise <see langword="false" />.</returns>
+    public static bool RemoveSearchIndexDefinition(this IMutableEntityType entityType, string indexName)
     {
         var indexDefinitions = entityType.GetSearchIndexDefinitions().ToList();
         for (var i = 0; i < indexDefinitions.Count; i++)
@@ -274,11 +283,11 @@ public static class MongoEntityTypeExtensions
             {
                 indexDefinitions.Remove(indexDefinitions[i]);
                 entityType.SetAnnotation(MongoAnnotationNames.SearchIndexDefinitions, indexDefinitions);
-                return indexName;
+                return true;
             }
         }
 
-        return null;
+        return false;
     }
 
     /// <summary>
@@ -287,8 +296,8 @@ public static class MongoEntityTypeExtensions
     /// <param name="entityType">The entity type.</param>
     /// <param name="indexName">The name of the index to remove.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
-    /// <returns>The configured value.</returns>
-    public static string? RemoveSearchIndexDefinition(
+    /// <returns><see langword="true" /> if a search index with the given name was removed; otherwise <see langword="false" />.</returns>
+    public static bool RemoveSearchIndexDefinition(
         this IConventionEntityType entityType,
         string indexName,
         bool fromDataAnnotation = false)
@@ -296,8 +305,7 @@ public static class MongoEntityTypeExtensions
                 ? ConfigurationSource.Convention
                 : ConfigurationSource.DataAnnotation)
             .Overrides(GetSearchIndexDefinitionConfigurationSource(entityType))
-                ? RemoveSearchIndexDefinition((IMutableEntityType)entityType, indexName)
-                : null;
+            && RemoveSearchIndexDefinition((IMutableEntityType)entityType, indexName);
 
     /// <summary>
     /// Sets all the <see cref="SearchIndexDefinition"/> for a given entity type.

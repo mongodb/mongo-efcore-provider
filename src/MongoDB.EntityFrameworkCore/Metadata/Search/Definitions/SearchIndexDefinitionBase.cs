@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Search.Definitions;
 public abstract class SearchIndexDefinitionBase : ISearchIndexDefinition
 {
     /// <inheritdoc />
-    public virtual string Name { get; set; } = null!;
+    public virtual string Name { get; init; } = null!;
 
     /// <inheritdoc />
     public abstract BsonValue ToBson();

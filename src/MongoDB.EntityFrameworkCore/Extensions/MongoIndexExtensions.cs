@@ -100,5 +100,5 @@ public static class MongoIndexExtensions
     /// <param name="property">The property.</param>
     /// <returns>The <see cref="ConfigurationSource" /> for <see cref="GetVectorIndexOptions" />.</returns>
     public static ConfigurationSource? GetVectorIndexOptionsConfigurationSource(this IConventionIndex property)
-        => property.FindAnnotation(MongoAnnotationNames.SearchIndexDefinitions)?.GetConfigurationSource();
+        => property.FindAnnotation(MongoAnnotationNames.VectorIndexOptions)?.GetConfigurationSource();
 }

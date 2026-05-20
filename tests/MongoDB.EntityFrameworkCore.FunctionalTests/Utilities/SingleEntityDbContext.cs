@@ -14,6 +14,7 @@
  */
 
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -46,9 +47,11 @@ internal static class SingleEntityDbContext
     public static SingleEntityDbContext<T> Create<T>(
         TemporaryDatabaseFixtureBase fixture,
         Action<ModelBuilder>? modelBuilderAction = null,
-        Action<ModelConfigurationBuilder>? configBuilderAction = null) where T : class
+        Action<ModelConfigurationBuilder>? configBuilderAction = null,
+        [CallerMemberName] string? collectionName = null,
+        params object?[] values) where T : class
     {
-        var collection = fixture.CreateCollection<T>();
+        var collection = fixture.CreateCollection<T>(collectionName, values);
         return new(
             GetOrCreateOptionsBuilder<T, T>(collection),
             collection.CollectionNamespace,
@@ -61,14 +64,14 @@ internal static class SingleEntityDbContext
         Action<ModelBuilder>? modelBuilderAction = null,
         Action<ModelConfigurationBuilder>? configBuilderAction = null,
         Action<DbContextOptionsBuilder>? optionsBuilderAction = null) where T : class =>
-        new(GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace, modelBuilderAction, configBuilderAction);
+        new(GetOrCreateOptionsBuilder<T, T>(collection), collection.CollectionNamespace, modelBuilderAction, configBuilderAction, optionsBuilderAction);
 
     public static SingleEntityDbContext<T2> Create<T1, T2>(
         IMongoCollection<T1> collection,
         Action<ModelBuilder>? modelBuilderAction = null,
         Action<ModelConfigurationBuilder>? configBuilderAction = null,
         Action<DbContextOptionsBuilder>? optionsBuilderAction = null) where T1 : class where T2 : class
-        => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace, modelBuilderAction, configBuilderAction);
+        => new(GetOrCreateOptionsBuilder<T1, T2>(collection), collection.CollectionNamespace, modelBuilderAction, configBuilderAction, optionsBuilderAction);
 
     // New overloads for logging support in tests (no caching to ensure logger is applied)
     public static SingleEntityDbContext<T> Create<T>(
