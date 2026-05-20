@@ -7,7 +7,7 @@ The MongoDB database provider for [Entity Framework Core](https://github.com/dot
 - Single project (`src/MongoDB.EntityFrameworkCore/`) packaged as `MongoDB.EntityFrameworkCore` on NuGet.
 - Multi-EF-version targeting via build *configurations* (not target frameworks): `Debug|Release EF8`, `Debug|Release EF9`, `Debug|Release EF10`. EF8/EF9 build for `net8.0`; EF10 builds for `net10.0`. The active EF version is selected by the `EF8` / `EF9` / `EF10` define constant — see the version-conditional `<PropertyGroup>`s in `src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj`.
 - EF and driver versions are pinned in `Versions.props`. The C# driver version can be overridden by setting the `DRIVER_VERSION` env var (CI uses this to test forward-compat).
-- `<Nullable>enable</Nullable>` on `src/`. `NoWarn>EF1001</NoWarn>` — the provider intentionally consumes EF Core's internal APIs.
+- `<Nullable>enable</Nullable>` on `src/`. `<NoWarn>EF1001</NoWarn>` — the provider intentionally consumes EF Core's internal APIs.
 - xUnit + FluentAssertions for tests. Tests run **serially** — see `tests/MongoDB.EntityFrameworkCore.FunctionalTests/Usings.cs` (`[assembly: CollectionBehavior(DisableTestParallelization = true)]`).
 
 ## Project Structure
@@ -67,11 +67,11 @@ Each area has its own `AGENTS.md` (auto-loaded by Claude Code when working in th
 | Query / LINQ translation | `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` | `query-reviewer` |
 | Storage, update pipeline & transactions | `src/MongoDB.EntityFrameworkCore/Storage/AGENTS.md` | `storage-reviewer` |
 | Metadata, attributes & conventions | `src/MongoDB.EntityFrameworkCore/Metadata/AGENTS.md` | `metadata-reviewer` |
-| Serialization & change tracking | `src/MongoDB.EntityFrameworkCore/Serializers/AGENTS.md` (+ `src/MongoDB.EntityFrameworkCore/ChangeTracking/AGENTS.md`) | `serialization-reviewer` |
-| Public API, DI & options | `src/MongoDB.EntityFrameworkCore/Extensions/AGENTS.md` (+ `src/MongoDB.EntityFrameworkCore/Infrastructure/AGENTS.md`) | `public-api-reviewer` |
+| Serialization & change tracking | `src/MongoDB.EntityFrameworkCore/Serializers/AGENTS.md` (+ `src/MongoDB.EntityFrameworkCore/ChangeTracking/CLAUDE.md` cross-ref) | `serialization-reviewer` |
+| Public API, DI & options | `src/MongoDB.EntityFrameworkCore/Extensions/AGENTS.md` (+ `src/MongoDB.EntityFrameworkCore/Infrastructure/CLAUDE.md` and `src/MongoDB.EntityFrameworkCore/Design/CLAUDE.md` cross-refs) | `public-api-reviewer` |
 | Diagnostics: events & logging | `src/MongoDB.EntityFrameworkCore/Diagnostics/AGENTS.md` | `diagnostics-reviewer` |
 | Value generation | `src/MongoDB.EntityFrameworkCore/ValueGeneration/AGENTS.md` | `value-generation-reviewer` |
-| Spec conformance & test infra | `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` (+ `tests/MongoDB.EntityFrameworkCore.FunctionalTests/AGENTS.md`) | `spec-conformance-reviewer` |
+| Spec conformance & test infra | `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` (+ `tests/MongoDB.EntityFrameworkCore.FunctionalTests/CLAUDE.md` cross-ref) | `spec-conformance-reviewer` |
 
 ## Feature reviewers
 
