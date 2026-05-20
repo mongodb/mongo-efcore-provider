@@ -22,7 +22,7 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.Metadata.Search.Definitions;
 
 /// <summary>
-/// The definition for a type set in a MongoDB search index.
+/// The definition for an analyzer in a MongoDB search index.
 /// </summary>
 /// <remarks>
 /// This type is typically used by the database provider. It is only needed by applications when reading metadata from EF Core.
@@ -50,7 +50,7 @@ public class SearchIndexAnalyzerDefinition : SearchIndexDefinitionBase
         => _characterFilterDefinitions.GetOrAddDefinition<TDefinition>(filterName);
 
     /// <summary>
-    /// Finds the definition for the given tokenfilter. If none is found, then a new instance is created and returned.
+    /// Finds the definition for the given token filter. If none is found, then a new instance is created and returned.
     /// </summary>
     /// <typeparam name="TDefinition">The type of definition to find or add.</typeparam>
     /// <param name="filterName">The name of the filter.</param>

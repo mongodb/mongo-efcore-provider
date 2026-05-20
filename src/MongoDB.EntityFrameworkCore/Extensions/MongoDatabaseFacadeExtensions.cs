@@ -37,7 +37,7 @@ public static class MongoDatabaseFacadeExtensions
     /// <summary>
     /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
     /// does not already exist and can therefore be created. The index may be a MongoDB search index, MongoDB vector search index,
-    /// or a normal MongoDB index.
+    /// or a regular MongoDB index.
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="index">The <see cref="IIndex"/> definition.</param>
@@ -51,7 +51,7 @@ public static class MongoDatabaseFacadeExtensions
     /// <summary>
     /// Creates an index in MongoDB based on the EF Core <see cref="IIndex"/> definition. No attempt is made to check that the index
     /// does not already exist and can therefore be created. The index may be a MongoDB search index, MongoDB vector index, or a
-    /// normal MongoDB index.
+    /// regular MongoDB index.
     /// </summary>
     /// <param name="databaseFacade">The <see cref="DatabaseFacade"/> from the EF Core <see cref="Microsoft.EntityFrameworkCore.DbContext"/>.</param>
     /// <param name="index">The <see cref="IIndex"/> definition.</param>

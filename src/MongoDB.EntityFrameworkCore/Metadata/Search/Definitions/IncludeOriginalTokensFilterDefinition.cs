@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata.Search.Definitions;
 public class IncludeOriginalTokensFilterDefinition : SearchIndexDefinitionBase
 {
     /// <summary>
-    /// If <see langword="false"/>, then original tokens are also included in the output, otherwise they are not.
+    /// If <see langword="true"/>, then original tokens are also included in the output, otherwise they are not.
     /// </summary>
     public bool? IncludeOriginalTokens { get; set; }
 
