@@ -102,7 +102,12 @@ public static class MongoAnnotationNames
     public const string BinaryVectorDataType = Prefix + nameof(BinaryVectorDataType);
 
     /// <summary>
-    /// Annotation for the Atlas Vector Search index options of a property.
+    /// Annotation for the MongoDB Vector Search index options of a property.
     /// </summary>
     public const string VectorIndexOptions = Prefix + nameof(VectorIndexOptions);
+
+    /// <summary>
+    /// Annotation for the MongoDB Search index definitions for an entity type.
+    /// </summary>
+    public const string SearchIndexDefinitions = Prefix + nameof(SearchIndexDefinitions);
 }

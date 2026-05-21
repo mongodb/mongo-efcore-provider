@@ -14,9 +14,13 @@
  */
 
 using System;
-using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Collections.Generic;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Metadata.Search;
+using MongoDB.EntityFrameworkCore.Metadata.Search.Builders;
+using MongoDB.EntityFrameworkCore.Metadata.Search.Definitions;
 
 namespace MongoDB.EntityFrameworkCore.Extensions;
 
@@ -167,4 +171,183 @@ public static class MongoEntityTypeBuilderExtensions
 
         return entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.ElementName, name, fromDataAnnotation);
     }
+
+    /// <summary>
+    /// Configures MongoDB search indexing for members of this type.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="indexName">The index name, or <see langword="null" /> to use "default".</param>
+    /// <returns>A builder to further configure the search index.</returns>
+    public static SearchIndexBuilder HasSearchIndex(
+        this EntityTypeBuilder entityTypeBuilder,
+        string? indexName = null)
+        => new(SearchIndexDefinition(entityTypeBuilder.Metadata, indexName));
+
+    /// <summary>
+    /// Configures MongoDB search indexing for members of this type.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="buildAction">A nested builder to configure the search index.</param>
+    /// <returns>A builder to further configure the entity type.</returns>
+    public static EntityTypeBuilder HasSearchIndex(
+        this EntityTypeBuilder entityTypeBuilder,
+        Action<SearchIndexBuilder> buildAction)
+        => entityTypeBuilder.HasSearchIndex(null, buildAction);
+
+    /// <summary>
+    /// Configures MongoDB search indexing for members of this type.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="indexName">The index name, or <see langword="null" /> to use "default".</param>
+    /// <param name="buildAction">A nested builder to configure the search index.</param>
+    /// <returns>A builder to further configure the entity type.</returns>
+    public static EntityTypeBuilder HasSearchIndex(
+        this EntityTypeBuilder entityTypeBuilder,
+        string? indexName,
+        Action<SearchIndexBuilder> buildAction)
+    {
+        buildAction(entityTypeBuilder.HasSearchIndex(indexName));
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    /// Configures MongoDB search indexing for members of this type.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="indexName">The index name, or <see langword="null" /> to use "default".</param>
+    /// <returns>A builder to further configure the search index.</returns>
+    public static SearchIndexBuilder<TEntity> HasSearchIndex<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        string? indexName = null) where TEntity : class
+        => new(SearchIndexDefinition(entityTypeBuilder.Metadata, indexName));
+
+    private static SearchIndexDefinition SearchIndexDefinition(IMutableEntityType entityType, string? indexName)
+    {
+        indexName ??= "default";
+        var indexDefinition = entityType.GetSearchIndexDefinition(indexName);
+
+        if (indexDefinition is null)
+        {
+            indexDefinition = new SearchIndexDefinition(entityType, indexName);
+            entityType.SetSearchIndexDefinition(indexDefinition);
+        }
+
+        return indexDefinition;
+    }
+
+    /// <summary>
+    /// Configures MongoDB search indexing for members of this type.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="buildAction">A nested builder to configure the search index.</param>
+    /// <returns>A builder to further configure the entity type.</returns>
+    public static EntityTypeBuilder<TEntity> HasSearchIndex<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        Action<SearchIndexBuilder<TEntity>> buildAction) where TEntity : class
+        => entityTypeBuilder.HasSearchIndex(null, buildAction);
+
+    /// <summary>
+    /// Configures MongoDB search indexing for members of this type.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="buildAction">A nested builder to configure the search index.</param>
+    /// <returns>A builder to further configure the entity type.</returns>
+    public static EntityTypeBuilder<TEntity> HasSearchIndex<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        Action<SearchIndexBuilder> buildAction) where TEntity : class
+        => entityTypeBuilder.HasSearchIndex(null, buildAction);
+
+    /// <summary>
+    /// Configures MongoDB search indexing for members of this type.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="indexName">The index name, or <see langword="null" /> to use "default".</param>
+    /// <param name="buildAction">A nested builder to configure the search index.</param>
+    /// <returns>A builder to further configure the entity type.</returns>
+    public static EntityTypeBuilder<TEntity> HasSearchIndex<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        string? indexName,
+        Action<SearchIndexBuilder> buildAction) where TEntity : class
+    {
+        buildAction(entityTypeBuilder.HasSearchIndex(indexName));
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    /// Configures MongoDB search indexing for members of this type.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="indexName">The index name, or <see langword="null" /> to use "default".</param>
+    /// <param name="buildAction">A nested builder to configure the search index.</param>
+    /// <returns>A builder to further configure the entity type.</returns>
+    public static EntityTypeBuilder<TEntity> HasSearchIndex<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        string? indexName,
+        Action<SearchIndexBuilder<TEntity>> buildAction) where TEntity : class
+    {
+        buildAction(entityTypeBuilder.HasSearchIndex(indexName));
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    /// Configures MongoDB search indexes.
+    /// </summary>
+    /// <remarks>
+    /// See <see href="https://www.mongodb.com/docs/atlas/atlas-search"/> for more information about MongoDB search indexes.
+    /// </remarks>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="indexDefinitions">The <see cref="SearchIndexDefinition"/> to use for the MongoDB search Indexes.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.
+    /// </returns>
+    public static IConventionEntityTypeBuilder? HasSearchIndexes(
+        this IConventionEntityTypeBuilder entityTypeBuilder,
+        IReadOnlyList<SearchIndexDefinition>? indexDefinitions,
+        bool fromDataAnnotation = false)
+    {
+        if (entityTypeBuilder.CanHaveSearchIndexes(indexDefinitions, fromDataAnnotation))
+        {
+            entityTypeBuilder.Metadata.SetSearchIndexDefinition(indexDefinitions, fromDataAnnotation);
+            return entityTypeBuilder;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns a value indicating whether the search indexes can be configured.
+    /// </summary>
+    /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
+    /// <param name="indexDefinitions">The <see cref="SearchIndexDefinition"/> to use for the search indexes.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns><see langword="true" /> if the search index definition can be set.</returns>
+    public static bool CanHaveSearchIndexes(
+        this IConventionEntityTypeBuilder entityTypeBuilder,
+        IReadOnlyList<SearchIndexDefinition>? indexDefinitions,
+        bool fromDataAnnotation = false)
+        => entityTypeBuilder.CanSetAnnotation(MongoAnnotationNames.SearchIndexDefinitions, indexDefinitions, fromDataAnnotation);
 }

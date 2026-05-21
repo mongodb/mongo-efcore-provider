@@ -49,7 +49,7 @@ public class MongoApiConsistencyTest(MongoApiConsistencyTest.MongoApiConsistency
             typeof(MongoServiceCollectionExtensions)
         ];
 
-public override
+        public override
             Dictionary<Type,
                 (Type? ReadonlyExtensions,
                 Type? MutableExtensions,

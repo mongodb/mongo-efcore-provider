@@ -79,6 +79,34 @@ public class MongoModelValidator : ModelValidator
         ValidatePrimaryKeys(model);
         ValidateQueryableEncryption(model, logger);
         ValidateIndexes(model, logger);
+        ValidateSearchIndexes(model);
+    }
+
+    /// <summary>
+    /// Validate that the configured MongoDB Atlas search index definitions are internally consistent.
+    /// </summary>
+    /// <param name="model">The <see cref="IModel"/> to validate.</param>
+    /// <exception cref="InvalidOperationException">if a search index definition is not valid for MongoDB.</exception>
+    private static void ValidateSearchIndexes(IModel model)
+    {
+        foreach (var entityType in model.GetEntityTypes().Where(e => e.IsDocumentRoot()))
+        {
+            var seenNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var searchIndex in entityType.GetSearchIndexDefinitions())
+            {
+                if (string.IsNullOrWhiteSpace(searchIndex.Name))
+                {
+                    throw new InvalidOperationException(
+                        $"A search index on entity type '{entityType.DisplayName()}' has no name. Each search index must be given a name.");
+                }
+
+                if (!seenNames.Add(searchIndex.Name))
+                {
+                    throw new InvalidOperationException(
+                        $"Entity type '{entityType.DisplayName()}' has multiple search indexes named '{searchIndex.Name}'. Search index names must be unique per entity type.");
+                }
+            }
+        }
     }
 
     private void ValidateIndexes(IModel model, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
