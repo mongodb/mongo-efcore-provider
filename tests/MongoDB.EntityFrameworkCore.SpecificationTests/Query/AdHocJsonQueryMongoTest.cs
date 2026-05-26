@@ -49,7 +49,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_top_level_json_entity_with_missing_scalars(bool async)
     {
-        // Fails: No support for nested JSON
+        // Fails: No support for nested JSON EF-X008
         Assert.Contains(
             "Argument type 'System.Collections.Generic.IEnumerable`1[Microsoft.EntityFrameworkCore.Query.AdHocJsonQueryTestBase+Context21006+JsonEntity]' does not match",
             (await Assert.ThrowsAsync<ArgumentException>(
@@ -61,7 +61,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_nested_json_entity_with_missing_scalars(bool async)
     {
-        // Fails: No support for nested JSON
+        // Fails: No support for nested JSON EF-X008
         Assert.Contains(
             "An item with the same key has already been added.",
             (await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -98,7 +98,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_missing_required_navigation(bool async)
     {
-        // Fails: Entity id=5 has no RequiredReference field
+        // Fails: Entity id=5 has no RequiredReference field EF-X005
         Assert.Contains(
             "Field 'RequiredReference' required but not present",
             (await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -128,7 +128,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_null_required_navigation(bool async)
     {
-        // Fails: NestedRequiredReference is null in BsonDocument for entity id=6
+        // Fails: NestedRequiredReference is null in BsonDocument for entity id=6 EF-X005
         Assert.Contains(
             "Field 'NestedRequiredReference' required but not present",
             (await Assert.ThrowsAsync<InvalidOperationException>(

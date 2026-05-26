@@ -43,7 +43,7 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task KeylessEntity_by_database_view(bool async)
     {
-        // Fails: Views are not supported, so this returns all entities from mapped collection.
+        // Fails: Views are not supported, so this returns all entities from mapped collection. EF-X007
         await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_by_database_view(async));
 
         AssertMql(
@@ -62,7 +62,7 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task KeylessEntity_with_nav_defining_query(bool async)
     {
-        // Fails: Defining queries are not supported.
+        // Fails: Defining queries are not supported. EF-X007
         await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_with_nav_defining_query(async));
 
         AssertMql(

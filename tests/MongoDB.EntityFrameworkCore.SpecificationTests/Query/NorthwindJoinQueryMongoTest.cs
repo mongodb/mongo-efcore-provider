@@ -38,6 +38,7 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
 
     public override async Task LeftJoin(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.LeftJoin(async));
 
         AssertMql(
@@ -46,6 +47,7 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
 
     public override async Task RightJoin(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.RightJoin(async));
 
         AssertMql(
@@ -54,6 +56,7 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
 
     public override async Task GroupJoin_aggregate_anonymous_key_selectors(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.GroupJoin_aggregate_anonymous_key_selectors(async));
 
         AssertMql(
@@ -62,6 +65,7 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
 
     public override async Task GroupJoin_aggregate_anonymous_key_selectors2(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.GroupJoin_aggregate_anonymous_key_selectors2(async));
 
         AssertMql(
@@ -70,6 +74,7 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
 
     public override async Task GroupJoin_aggregate_anonymous_key_selectors_one_argument(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.GroupJoin_aggregate_anonymous_key_selectors_one_argument(async));
 
         AssertMql(
@@ -78,6 +83,7 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
 
     public override async Task GroupJoin_aggregate_nested_anonymous_key_selectors(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.GroupJoin_aggregate_nested_anonymous_key_selectors(async));
 
         AssertMql(
@@ -86,6 +92,7 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
 
     public override async Task Join_with_key_selectors_being_nested_anonymous_objects(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.Join_with_key_selectors_being_nested_anonymous_objects(async));
 
         AssertMql(
