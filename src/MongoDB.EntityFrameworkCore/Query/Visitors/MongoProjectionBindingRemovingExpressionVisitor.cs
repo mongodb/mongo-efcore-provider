@@ -85,9 +85,22 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                     // Resolve the source IProperty so we apply its serializer / nullability —
                     // not whatever EF property happens to share the alias name on the root entity.
+                    // TryResolveFieldAccess unwraps Convert nodes, so in principle the binding's
+                    // outer type could differ from the property's CLR type. In practice it never
+                    // does at this call site: aliased projections that introduce a Convert (e.g.
+                    // `new { X = (long)p.intProp }`) go through the LINQ V3 push-down path and
+                    // never reach this visitor — see ProjectionAnalyzer.CanPushDown. The assert
+                    // below pins the invariant so a future change that violates it fails loudly
+                    // rather than mis-deserialising via the wrong property's serializer.
                     var fieldAccess = TryResolveFieldAccess(projection.Expression);
                     if (fieldAccess.Property != null)
                     {
+                        System.Diagnostics.Debug.Assert(
+                            fieldAccess.Property.ClrType == projectionBindingExpression.Type
+                            || fieldAccess.Property.ClrType == projectionBindingExpression.Type.UnwrapNullableType(),
+                            $"Aliased projection type {projectionBindingExpression.Type} does not match source property '{
+                                fieldAccess.Property.Name}' of type {fieldAccess.Property.ClrType}; the property's serializer "
+                            + "may produce values that cannot be cast to the binding's outer type.");
                         return BsonBinding.CreateGetValueExpression(
                             DocParameter,
                             projection.Alias,
@@ -476,8 +489,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         return BsonBinding.CreateGetValueExpression(innerExpression, propertyName, required, elementType, entityType);
     }
 
-    protected ResolvedFieldAccess TryResolveFieldAccess(Expression expression)
+    protected ResolvedFieldAccess TryResolveFieldAccess(Expression? expression)
     {
+        if (expression == null) return default;
+
         while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
         {
             expression = unary.Operand;
@@ -575,7 +590,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         MemberInfo? MemberInfo);
 
     private string? FindProjectionAlias(Expression expression)
-        => _queryExpression.Projection.FirstOrDefault(p => p.Expression.Equals(expression))?.Alias;
+        => _queryExpression.Projection.FirstOrDefault(p => p.Expression != null && p.Expression.Equals(expression))?.Alias;
 
     private BlockExpression AddIncludes(BlockExpression shaperBlock)
     {

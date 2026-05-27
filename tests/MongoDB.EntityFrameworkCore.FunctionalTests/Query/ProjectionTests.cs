@@ -594,6 +594,49 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
+    public void Select_projection_alias_with_bson_representation_widening_cast()
+    {
+        using var db = CreateStringOrderContext(
+            nameof(Select_projection_alias_with_bson_representation_widening_cast));
+        var results = db.Entities
+            .OrderBy(p => p.orderFromSun)
+            .Select(p => new { Position = (long)p.orderFromSun })
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(1L, results[0].Position);
+        Assert.Equal(2L, results[1].Position);
+    }
+
+    [Fact]
+    public void Select_projection_alias_with_bson_representation_nullable_lift()
+    {
+        using var db = CreateStringOrderContext(
+            nameof(Select_projection_alias_with_bson_representation_nullable_lift));
+        var results = db.Entities
+            .OrderBy(p => p.orderFromSun)
+            .Select(p => new { Position = (int?)p.orderFromSun })
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(1, results[0].Position);
+        Assert.Equal(2, results[1].Position);
+    }
+
+    [Fact]
+    public void Select_projection_alias_with_value_converter_cast_throws()
+    {
+        // Driver's NumericConversionSerializer requires IHasRepresentationSerializer, which
+        // ValueConverterSerializer does not implement — so widening/narrowing casts on a
+        // value-converted property fail at LINQ translation time. Documents the limitation.
+        using var db = CreateLongOrderContext();
+        Assert.ThrowsAny<Exception>(
+            () => db.Entities.Select(p => new { Position = (decimal)p.orderFromSun }).ToList());
+        Assert.ThrowsAny<Exception>(
+            () => db.Entities.Select(p => new { Position = (int)p.orderFromSun }).ToList());
+    }
+
+    [Fact]
     public void Sum_with_value_converter()
     {
         using var db = CreateLongOrderContext();

@@ -2461,28 +2461,52 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
     public override async Task Select_expression_other_to_string(bool async)
         => await base.Select_expression_other_to_string(async);
 
+    // The driver translates DateAdd/Sub but the resulting Bson DateTime loses the .NET
+    // DateTimeKind (returned as UTC) so the base test's exact-value comparison fails. The
+    // assertions below pin the failure type and a stable message portion so unrelated
+    // regressions surface as a different exception rather than silently passing.
+
     public override async Task Select_expression_date_add_year(bool async)
-        => await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(() => base.Select_expression_date_add_year(async));
+        => Assert.Contains(
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_date_add_year(async))).Message);
 
     public override async Task Select_expression_datetime_add_month(bool async)
-        => await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(() => base.Select_expression_datetime_add_month(async));
+        => Assert.Contains(
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_month(async))).Message);
 
     public override async Task Select_expression_datetime_add_hour(bool async)
-        => await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(() => base.Select_expression_datetime_add_hour(async));
+        => Assert.Contains(
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_hour(async))).Message);
 
     public override async Task Select_expression_datetime_add_minute(bool async)
-        => await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(() => base.Select_expression_datetime_add_minute(async));
+        => Assert.Contains(
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_minute(async))).Message);
 
     public override async Task Select_expression_datetime_add_second(bool async)
-        => await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(() => base.Select_expression_datetime_add_second(async));
+        => Assert.Contains(
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_second(async))).Message);
 
     public override async Task Select_expression_date_add_milliseconds_above_the_range(bool async)
-        => await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-            () => base.Select_expression_date_add_milliseconds_above_the_range(async));
+        => Assert.Contains(
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_date_add_milliseconds_above_the_range(async))).Message);
 
     public override async Task Select_expression_date_add_milliseconds_below_the_range(bool async)
-        => await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-            () => base.Select_expression_date_add_milliseconds_below_the_range(async));
+        => Assert.Contains(
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_date_add_milliseconds_below_the_range(async))).Message);
 
     public override async Task Select_expression_date_add_milliseconds_large_number_divided(bool async)
     {
@@ -4183,7 +4207,12 @@ Customers.
     }
 
     public override async Task Select_expression_datetime_add_ticks(bool async)
-        => await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(() => base.Select_expression_datetime_add_ticks(async));
+        // Same root cause as the DateAdd family above: driver translates the arithmetic but the
+        // result's DateTimeKind round-trips as UTC, failing the base test's exact equality.
+        => Assert.Contains(
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_ticks(async))).Message);
 
     public override async Task Where_subquery_expression_same_parametername(bool async)
     {

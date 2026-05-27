@@ -94,6 +94,12 @@ internal static class BsonBinding
     /// <param name="name">The projected element name in the current document.</param>
     /// <param name="property">The source model property that defines serializer/nullability metadata.</param>
     /// <param name="mappedType">What <see cref="Type"/> the value is to be treated as.</param>
+    /// <remarks>
+    /// Callers must ensure <paramref name="mappedType"/> matches <paramref name="property"/>'s CLR
+    /// type (modulo nullability). The generated call casts the deserialized value to
+    /// <paramref name="mappedType"/>; if it differs from the property's CLR type the cast can
+    /// throw because the property's serializer produces values of its own type.
+    /// </remarks>
     /// <returns>A compilable expression the shaper can use to obtain this value.</returns>
     public static Expression CreateGetValueExpression(
         Expression bsonDocExpression,
@@ -203,8 +209,7 @@ internal static class BsonBinding
         {
             if (value == null && !property.IsNullable)
             {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name
-                }'.");
+                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
             }
 
             return value;
@@ -227,8 +232,7 @@ internal static class BsonBinding
         {
             if (value == null && !property.IsNullable)
             {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name
-                }'.");
+                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
             }
 
             return value;
@@ -236,8 +240,7 @@ internal static class BsonBinding
 
         if (property.IsNullable) return default;
 
-        throw new InvalidOperationException($"Document element '{elementName}' is missing for required non-nullable property '{
-            property.Name}'.");
+        throw new InvalidOperationException($"Document element '{elementName}' is missing for required non-nullable property '{property.Name}'.");
     }
 
     internal static T? GetElementValue<T>(BsonDocument document, string elementName)
