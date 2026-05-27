@@ -45,22 +45,26 @@ public class NorthwindMiscellaneousQueryMongoTest
 #if EF8 || EF9
     public override async Task DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.DefaultIfEmpty_over_empty_collection_followed_by_projecting_constant(async));
     }
 
     public override async Task DefaultIfEmpty_without_group_join(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.DefaultIfEmpty_without_group_join(async));
     }
 
 #else
     public override async Task DefaultIfEmpty_top_level(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level(async));
     }
 
     public override async Task DefaultIfEmpty_without_group_join(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.DefaultIfEmpty_without_group_join(async));
     }
 
@@ -89,6 +93,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task DefaultIfEmpty_top_level_followed_by_constant_Select(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level_followed_by_constant_Select(async));
 
         AssertMql(
@@ -97,6 +102,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task DefaultIfEmpty_top_level_preceded_by_constant_Select(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.DefaultIfEmpty_top_level_preceded_by_constant_Select(async));
 
         AssertMql(
@@ -105,6 +111,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task SelectMany_correlated_with_Select_value_type_and_DefaultIfEmpty_in_selector(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() =>
             base.SelectMany_correlated_with_Select_value_type_and_DefaultIfEmpty_in_selector(async));
 
@@ -114,6 +121,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Late_subquery_pushdown(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await Assert.ThrowsAnyAsync<ExpressionNotSupportedException>(() => base.Late_subquery_pushdown(async));
 
         AssertMql("Orders."
@@ -122,6 +130,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Where_nanosecond_and_microsecond_component(bool async)
     {
+        // Fails: Sub-second DateTime component translation EF-X015
         await Assert.ThrowsAnyAsync<ExpressionNotSupportedException>(() => base.Where_nanosecond_and_microsecond_component(async));
 
         AssertMql("Orders."
@@ -140,6 +149,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Any_on_distinct(bool async)
     {
+        // Fails: Cross-document navigation access issue EF-216
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Any_on_distinct(async));
     }
 
@@ -196,7 +206,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Skip_1_Take_0_works_when_constant(bool async)
     {
-        // Fails: Subqueries not supported
+        // Fails: Subqueries not supported EF-X001
         await AssertTranslationFailed(() => base.Skip_1_Take_0_works_when_constant(async));
 
         AssertMql();
@@ -204,7 +214,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Take_0_works_when_constant(bool async)
     {
-        // Fails: Subqueries not supported
+        // Fails: Subqueries not supported EF-X001
         await AssertTranslationFailed(() => base.Take_0_works_when_constant(async));
 
         AssertMql();
@@ -290,7 +300,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Subquery_DefaultIfEmpty_Any(bool async)
     {
-        // Fails: No subquery support
+        // Fails: No subquery support EF-X001
         await AssertTranslationFailed(() => base.Subquery_DefaultIfEmpty_Any(async));
     }
 
@@ -534,21 +544,25 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Join_with_default_if_empty_on_both_sources(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.Join_with_default_if_empty_on_both_sources(async));
     }
 
     public override async Task Default_if_empty_top_level_followed_by_projecting_constant(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Default_if_empty_top_level_followed_by_projecting_constant(async));
     }
 
     public override async Task Default_if_empty_top_level_positive(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Default_if_empty_top_level_positive(async));
     }
 
     public override async Task Default_if_empty_top_level_projection(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Default_if_empty_top_level_projection(async));
     }
 
@@ -1238,16 +1252,19 @@ public class NorthwindMiscellaneousQueryMongoTest
 #if EF9
     public override async Task Any_on_distinct(bool async)
     {
+        // Fails: Cross-document navigation access issue EF-216
         await AssertNoMultiCollectionQuerySupport(() => base.Any_on_distinct(async));
     }
 
     public override async Task Contains_on_distinct(bool async)
     {
+        // Fails: Cross-document navigation access issue EF-216
         await AssertNoMultiCollectionQuerySupport(() => base.Contains_on_distinct(async));
     }
 
     public override async Task All_on_distinct(bool async)
     {
+        // Fails: Cross-document navigation access issue EF-216
         await AssertNoMultiCollectionQuerySupport(() => base.All_on_distinct(async));
     }
 
@@ -1275,7 +1292,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task All_top_level_subquery(bool async)
     {
-        // Fails: Subqueries not supported
+        // Fails: Subqueries not supported EF-X001
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1289,7 +1306,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task All_top_level_subquery_ef_property(bool async)
     {
-        // Fails: Subqueries not supported
+        // Fails: Subqueries not supported EF-X001
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1303,76 +1320,91 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Where_select_many_or(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Where_select_many_or(async));
     }
 
     public override async Task Where_select_many_or2(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Where_select_many_or2(async));
     }
 
     public override async Task Where_select_many_or3(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Where_select_many_or3(async));
     }
 
     public override async Task Where_select_many_or4(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Where_select_many_or4(async));
     }
 
     public override async Task Where_select_many_or_with_parameter(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Where_select_many_or_with_parameter(async));
     }
 
     public override async Task SelectMany_simple_subquery(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_simple_subquery(async));
     }
 
     public override async Task SelectMany_simple1(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_simple1(async));
     }
 
     public override async Task SelectMany_simple2(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_simple2(async));
     }
 
     public override async Task SelectMany_entity_deep(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_entity_deep(async));
     }
 
     public override async Task SelectMany_projection1(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_projection1(async));
     }
 
     public override async Task SelectMany_projection2(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_projection2(async));
     }
 
     public override async Task SelectMany_Count(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_Count(async));
     }
 
     public override async Task SelectMany_LongCount(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_LongCount(async));
     }
 
     public override async Task SelectMany_OrderBy_ThenBy_Any(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.SelectMany_OrderBy_ThenBy_Any(async));
     }
 
     public override async Task Join_Where_Count(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.Join_Where_Count(async));
     }
 
@@ -1383,7 +1415,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Where_Join_Exists(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => ss.Set<Customer>().Where(c =>
@@ -1392,7 +1424,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Where_Join_Exists_Inequality(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => ss.Set<Customer>().Where(c =>
@@ -1401,7 +1433,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Where_Join_Exists_Constant(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => ss.Set<Customer>().Where(c => c.CustomerID == "ALFKI" && c.Orders.Exists(o => false))));
@@ -1411,7 +1443,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Where_Join_Not_Exists(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => ss.Set<Customer>().Where(c => c.CustomerID == "ALFKI" && !c.Orders.Exists(o => false))));
@@ -1748,7 +1780,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task OrderBy_correlated_subquery1(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.OrderBy_correlated_subquery1(async))).Message);
@@ -2480,6 +2512,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
     public override async Task Select_expression_date_add_year(bool async)
     {
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
@@ -2493,6 +2526,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Select_expression_datetime_add_month(bool async)
     {
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
@@ -2506,6 +2540,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Select_expression_datetime_add_hour(bool async)
     {
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
@@ -2519,6 +2554,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Select_expression_datetime_add_minute(bool async)
     {
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
@@ -2532,6 +2568,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Select_expression_datetime_add_second(bool async)
     {
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
@@ -2545,6 +2582,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Select_expression_date_add_milliseconds_above_the_range(bool async)
     {
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
@@ -2558,6 +2596,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Select_expression_date_add_milliseconds_below_the_range(bool async)
     {
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
@@ -2571,6 +2610,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Select_expression_date_add_milliseconds_large_number_divided(bool async)
     {
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Cannot deserialize a 'Int32' from BsonType 'DateTime'",
             (await Assert.ThrowsAsync<FormatException>(() =>
@@ -2816,7 +2856,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Complex_query_with_repeated_query_model_compiles_correctly(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -2830,7 +2870,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Complex_query_with_repeated_nested_query_model_compiles_correctly(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -2914,7 +2954,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Anonymous_subquery_orderby(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Anonymous_projection_skip_take_empty_collection_FirstOrDefault(async));
 
         AssertMql(
@@ -3526,7 +3566,16 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
     }
 
     public override async Task Convert_to_nullable_on_nullable_value_is_ignored(bool async)
-        => await base.Convert_to_nullable_on_nullable_value_is_ignored(async);
+    {
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
+        Assert.Contains(
+            "Rewriting child expression",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Convert_to_nullable_on_nullable_value_is_ignored(async))).Message);
+
+        AssertMql(
+        );
+    }
 
     public override async Task Navigation_inside_interpolated_string_is_expanded(bool async)
     {
@@ -3638,7 +3687,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Anonymous_projection_skip_empty_collection_FirstOrDefault(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Anonymous_projection_skip_empty_collection_FirstOrDefault(async));
 
         AssertMql(
@@ -3647,7 +3696,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Anonymous_projection_take_empty_collection_FirstOrDefault(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Anonymous_projection_take_empty_collection_FirstOrDefault(async));
 
         AssertMql(
@@ -3656,7 +3705,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Anonymous_projection_skip_take_empty_collection_FirstOrDefault(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Anonymous_projection_skip_take_empty_collection_FirstOrDefault(async));
 
         AssertMql(
@@ -3956,7 +4005,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Non_nullable_property_through_optional_navigation(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         Assert.Contains(
             "MongoCommandException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Non_nullable_property_through_optional_navigation(async)))
@@ -4274,8 +4323,7 @@ Customers.
 
     public override async Task Select_expression_datetime_add_ticks(bool async)
     {
-        // Same root cause as the DateAdd family above: driver translates the arithmetic but the
-        // result's DateTimeKind round-trips as UTC, failing the base test's exact equality.
+        // Fails: Unsupported by driver EF-X003
         Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
@@ -4387,7 +4435,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Using_static_string_Equals_with_StringComparison_throws_informative_error(bool async)
     {
-        // Fails: Throws different exception, but still throws
+        // Fails: Throws different exception, but still throws EF-X002
         Assert.Contains(
             "Expression not supported: Equals",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -4401,7 +4449,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Using_string_Equals_with_StringComparison_throws_informative_error(bool async)
     {
-        // Fails: Throws different exception, but still throws
+        // Fails: Throws different exception, but still throws EF-X002
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -4542,7 +4590,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Client_code_unknown_method(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Client_code_unknown_method(async))).Message);
@@ -4599,7 +4647,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Where_query_composition3(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         Assert.Contains(
             "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition3(async))).Message);
@@ -4612,7 +4660,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Where_query_composition4(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         Assert.Contains(
             "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition4(async))).Message);
@@ -4625,7 +4673,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Where_query_composition5(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
+        // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition5(async))).Message);
@@ -4638,7 +4686,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Where_query_composition6(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
+        // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition6(async))).Message);
@@ -4700,7 +4748,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task OrderBy_client_mixed(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
+        // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.OrderBy_client_mixed(async))).Message);
@@ -4728,6 +4776,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 #if EF9
     public override async Task IQueryable_captured_variable()
     {
+        // Fails: Cross-document navigation access issue EF-216
         await AssertNoMultiCollectionQuerySupport(() => base.IQueryable_captured_variable());
     }
 
@@ -4770,7 +4819,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Queryable_reprojection(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
+        // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Queryable_reprojection(async))).Message);
@@ -4783,7 +4832,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task All_client(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
+        // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client(async))).Message);
@@ -4795,7 +4844,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task All_client_and_server_top_level(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
+        // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client_and_server_top_level(async))).Message);
@@ -4808,7 +4857,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task All_client_or_server_top_level(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
+        // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client_or_server_top_level(async))).Message);
@@ -4821,7 +4870,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task First_client_predicate(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws
+        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.First_client_predicate(async))).Message);
@@ -4899,6 +4948,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Parameter_collection_Contains_with_projection_and_ordering(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Parameter_collection_Contains_with_projection_and_ordering(async));
     }
 
@@ -4994,6 +5044,7 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_v" : "$_id", "_id" : 
 
     public override async Task Where_Order_First(bool async)
     {
+        // Fails: Cross-document navigation access issue EF-216
         await AssertNoMultiCollectionQuerySupport(() => base.Where_Order_First(async));
     }
 

@@ -328,6 +328,7 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Collection_select_nav_prop_all(bool async)
     {
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Collection_select_nav_prop_all(async));
     }
 
@@ -338,6 +339,7 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Collection_select_nav_prop_count(bool async)
     {
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Collection_select_nav_prop_count(async));
     }
 
@@ -491,7 +493,7 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Where_subquery_on_navigation(bool async)
     {
-        // Fails: Does not throw expected unable to translate exception
+        // Fails: Does not throw expected unable to translate exception EF-X002
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => from p in ss.Set<Product>()
@@ -503,7 +505,7 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Where_subquery_on_navigation2(bool async)
     {
-        // Fails: Does not throw expected unable to translate exception
+        // Fails: Does not throw expected unable to translate exception EF-X002
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => from p in ss.Set<Product>()
@@ -632,7 +634,7 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Select_Where_Navigation_Client(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "The LINQ expression",
             (await Assert.ThrowsAsync<ContainsException>(() => base.Select_Where_Navigation_Client(async))).Message);
@@ -642,7 +644,7 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Collection_select_nav_prop_all_client(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "The LINQ expression",
             (await Assert.ThrowsAsync<ContainsException>(() => base.Collection_select_nav_prop_all_client(async))).Message);

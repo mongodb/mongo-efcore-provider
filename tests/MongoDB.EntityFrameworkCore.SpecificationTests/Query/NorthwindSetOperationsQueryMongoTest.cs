@@ -41,25 +41,25 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_Intersect(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Union_Intersect(async));
     }
 
     public override async Task Intersect_non_entity(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Intersect_non_entity(async));
     }
 
     public override async Task Intersect_nested(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Intersect_nested(async));
     }
 
     public override async Task Intersect(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Intersect(async));
     }
 
@@ -213,6 +213,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Select_Union_different_fields_in_anonymous_with_subquery(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Select_Union_different_fields_in_anonymous_with_subquery(async));
     }
 
@@ -550,16 +551,19 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_over_scalarsubquery_column(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Union_over_scalarsubquery_column(async));
     }
 
     public override async Task Union_over_scalarsubquery_function(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Union_over_scalarsubquery_function(async));
     }
 
     public override async Task Union_over_scalarsubquery_constant(bool async)
     {
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Union_over_scalarsubquery_constant(async));
     }
 
@@ -642,7 +646,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Collection_projection_after_set_operation(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Collection_projection_after_set_operation(async));
 
         AssertMql(
@@ -651,7 +655,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Concat_with_one_side_being_GroupBy_aggregate(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Concat_with_one_side_being_GroupBy_aggregate(async));
 
         AssertMql(
@@ -660,7 +664,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_on_entity_with_correlated_collection(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Union_on_entity_with_correlated_collection(async));
 
         AssertMql(
@@ -669,7 +673,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_on_entity_plus_other_column_with_correlated_collection(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Union_on_entity_plus_other_column_with_correlated_collection(async));
 
         AssertMql(
@@ -752,7 +756,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Collection_projection_after_set_operation_fails_if_distinct(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Collection_projection_after_set_operation_fails_if_distinct(async));
 
         AssertMql();
@@ -760,7 +764,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Collection_projection_before_set_operation_fails(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Collection_projection_before_set_operation_fails(async));
 
         AssertMql();
@@ -770,7 +774,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Intersect_on_distinct(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Intersect_on_distinct(async));
     }
 
@@ -861,7 +865,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Client_eval_Union_FirstOrDefault(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws.
+        // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Client_eval_Union_FirstOrDefault(async)))

@@ -404,7 +404,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_client(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client(async))).Message);
@@ -417,7 +417,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_subquery_correlated(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_subquery_correlated(async)))
@@ -431,7 +431,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_subquery_correlated_client_eval(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         await Assert.ThrowsAsync<ThrowsException>(() => base.Where_subquery_correlated_client_eval(async));
 
         AssertMql(
@@ -442,7 +442,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_client_and_server_top_level(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client_and_server_top_level(async))).Message);
@@ -455,7 +455,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_client_or_server_top_level(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client_or_server_top_level(async))).Message);
@@ -468,7 +468,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_client_and_server_non_top_level(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client_and_server_non_top_level(async)))
@@ -482,7 +482,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_client_deep_inside_predicate_and_server_top_level(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "ExpressionNotSupportedException",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_client_deep_inside_predicate_and_server_top_level(async)))
@@ -778,7 +778,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_bool_client_side_negated(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF.
+        // Fails: Not throwing expected translation failed exception from EF. EF-X002
         Assert.Contains(
             "Expression not supported: ClientFunc(p.ProductID)",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_bool_client_side_negated(async))).Message);
@@ -2160,7 +2160,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
     public override async Task Where_bitwise_xor(bool async)
     {
-        // Fails MongoDB does not have an xor operator
+        // Fails: MongoDB does not have an xor operator EF-X013
         Assert.Contains(
             "because MongoDB does not have a boolean $xor operator",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_bitwise_xor(async))).Message);

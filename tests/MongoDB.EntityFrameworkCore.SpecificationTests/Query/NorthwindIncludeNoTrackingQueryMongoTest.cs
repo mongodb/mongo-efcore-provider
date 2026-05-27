@@ -34,6 +34,7 @@ public class NorthwindIncludeNoTrackingQueryMongoTest : NorthwindIncludeNoTracki
 
     public override async Task Include_collection_with_right_join_clause_with_filter(bool async)
     {
+        // Fails: Include (joins) issue EF-117
         await AssertTranslationFailed(() => base.Include_collection_with_right_join_clause_with_filter(async));
     }
 
@@ -1170,7 +1171,7 @@ public class NorthwindIncludeNoTrackingQueryMongoTest : NorthwindIncludeNoTracki
 
     public override async Task Include_collection_with_client_filter(bool async)
     {
-        // Throws with Mongo-specific message rather than the generic EF message.
+        // Fails: Throws with Mongo-specific message rather than the generic EF message. EF-X010
         Assert.Contains(
             "Including navigation 'Navigation' is not",
             (await Assert.ThrowsAsync<ContainsException>(() => base.Include_collection_with_client_filter(async))).Message);
