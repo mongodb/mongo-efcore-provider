@@ -24,7 +24,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 public sealed class MongoDbAtlasBuilder : ContainerBuilder<MongoDbAtlasBuilder, MongoDbAtlasContainer, IContainerConfiguration>
 {
-    private const string MongoDbAtlasImage = "mongodb/mongodb-atlas-local:8.0";
+    private const string MongoDbAtlasImage = "mongodb/mongodb-atlas-local:latest";
     public const ushort MongoDbAtlasPort = 27017;
 
     public MongoDbAtlasBuilder()
