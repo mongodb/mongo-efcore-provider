@@ -21,19 +21,19 @@ using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
-#if !EF8 && !EF9
+#if !EF9
 public class AdHocManyToManyQueryMongoTest(NonSharedFixture fixture) : AdHocManyToManyQueryTestBase(fixture)
 #else
 public class AdHocManyToManyQueryMongoTest : AdHocManyToManyQueryTestBase
 #endif
 {
     public override async Task SelectMany_with_collection_selector_having_subquery()
-        // Fails: seed adds entities without explicit int Ids and MongoDB does not auto-generate them
+        // Fails: seed adds entities without explicit int Ids and MongoDB does not auto-generate them EF-27
         => await Assert.ThrowsAsync<InvalidOperationException>(
             () => base.SelectMany_with_collection_selector_having_subquery());
 
     public override async Task Many_to_many_load_works_when_join_entity_has_custom_key(bool async)
-        // Fails: seed adds entities without explicit int Ids and MongoDB does not auto-generate them
+        // Fails: seed adds entities without explicit int Ids and MongoDB does not auto-generate them EF-27
         => await Assert.ThrowsAsync<InvalidOperationException>(
             () => base.Many_to_many_load_works_when_join_entity_has_custom_key(async));
 

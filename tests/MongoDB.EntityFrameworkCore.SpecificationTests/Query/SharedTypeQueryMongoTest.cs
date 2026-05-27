@@ -29,7 +29,7 @@ public class SharedTypeQueryMongoTest : SharedTypeQueryTestBase
 #endif
 {
     public override async Task Can_use_shared_type_entity_type_in_query_filter(bool async)
-        // Fails: seed inserts shared-type entity without an Id; MongoDB rejects multiple rows with default _id 0
+        // Fails: seed inserts shared-type entity without an Id; MongoDB rejects multiple rows with default _id 0 EF-27
         => await Assert.ThrowsAsync<MongoBulkWriteException<BsonDocument>>(
             () => base.Can_use_shared_type_entity_type_in_query_filter(async));
 

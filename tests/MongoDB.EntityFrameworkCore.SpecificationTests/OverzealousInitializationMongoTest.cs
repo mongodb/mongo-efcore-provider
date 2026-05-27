@@ -56,6 +56,8 @@ public class OverzealousInitializationMongoTest(OverzealousInitializationMongoTe
 
         protected override void OnModelCreating(ModelBuilder modelBuilder, DbContext context)
         {
+            base.OnModelCreating(modelBuilder, context);
+
             modelBuilder.Entity<Album>().ToCollection("Albums");
             modelBuilder.Entity<Artist>().ToCollection("Artists");
             modelBuilder.Entity<Track>().ToCollection("Tracks");
