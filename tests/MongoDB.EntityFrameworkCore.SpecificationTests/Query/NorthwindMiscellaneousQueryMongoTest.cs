@@ -2479,46 +2479,95 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
     // regressions surface as a different exception rather than silently passing.
 
     public override async Task Select_expression_date_add_year(bool async)
-        => Assert.Contains(
+    {
+        Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
                 () => base.Select_expression_date_add_year(async))).Message);
 
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "year", "amount" : 1 } }, "_id" : 0 } }
+""");
+    }
+
     public override async Task Select_expression_datetime_add_month(bool async)
-        => Assert.Contains(
+    {
+        Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
                 () => base.Select_expression_datetime_add_month(async))).Message);
 
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "month", "amount" : 1 } }, "_id" : 0 } }
+""");
+    }
+
     public override async Task Select_expression_datetime_add_hour(bool async)
-        => Assert.Contains(
+    {
+        Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
                 () => base.Select_expression_datetime_add_hour(async))).Message);
 
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "hour", "amount" : 1.0 } }, "_id" : 0 } }
+""");
+    }
+
     public override async Task Select_expression_datetime_add_minute(bool async)
-        => Assert.Contains(
+    {
+        Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
                 () => base.Select_expression_datetime_add_minute(async))).Message);
 
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "minute", "amount" : 1.0 } }, "_id" : 0 } }
+""");
+    }
+
     public override async Task Select_expression_datetime_add_second(bool async)
-        => Assert.Contains(
+    {
+        Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
                 () => base.Select_expression_datetime_add_second(async))).Message);
 
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "second", "amount" : 1.0 } }, "_id" : 0 } }
+""");
+    }
+
     public override async Task Select_expression_date_add_milliseconds_above_the_range(bool async)
-        => Assert.Contains(
+    {
+        Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
                 () => base.Select_expression_date_add_milliseconds_above_the_range(async))).Message);
 
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1000000000000.0 } }, "_id" : 0 } }
+""");
+    }
+
     public override async Task Select_expression_date_add_milliseconds_below_the_range(bool async)
-        => Assert.Contains(
+    {
+        Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
                 () => base.Select_expression_date_add_milliseconds_below_the_range(async))).Message);
+
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : -1000000000000.0 } }, "_id" : 0 } }
+""");
+    }
 
     public override async Task Select_expression_date_add_milliseconds_large_number_divided(bool async)
     {
@@ -2526,6 +2575,11 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
             "Cannot deserialize a 'Int32' from BsonType 'DateTime'",
             (await Assert.ThrowsAsync<FormatException>(() =>
                 base.Select_expression_date_add_milliseconds_large_number_divided(async))).Message);
+
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "day", "amount" : { "$divide" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "unit" : "millisecond", "amount" : { "$mod" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Add_minutes_on_constant_value(bool async)
@@ -4219,12 +4273,19 @@ Customers.
     }
 
     public override async Task Select_expression_datetime_add_ticks(bool async)
+    {
         // Same root cause as the DateAdd family above: driver translates the arithmetic but the
         // result's DateTimeKind round-trips as UTC, failing the base test's exact equality.
-        => Assert.Contains(
+        Assert.Contains(
             "Assert.Equal() Failure",
             (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
                 () => base.Select_expression_datetime_add_ticks(async))).Message);
+
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1.0 } }, "_id" : 0 } }
+""");
+    }
 
     public override async Task Where_subquery_expression_same_parametername(bool async)
     {
