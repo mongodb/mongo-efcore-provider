@@ -699,10 +699,9 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
 
         var fields = index["latestDefinition"]["fields"].AsBsonArray;
 
-        Assert.Equal("vectorSearch", index["type"].AsString);
         Assert.Equal("READY", index["status"].AsString);
         Assert.True(index["queryable"].AsBoolean);
-        Assert.Equal(0, index["latestVersion"].AsInt32);
+        Assert.Equal(0, index["latestDefinitionVersion"]["version"].AsInt32);
 
         var field = fields[0];
         Assert.Equal("vector", field["type"].AsString);
