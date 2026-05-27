@@ -169,7 +169,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override void Compiled_query_when_does_not_end_in_query_operator()
     {
-         // Fails: Compiled query with non-query operator issue EF-232
+         // Fails: Compiled query with non-query operator issue EF-X011
          Assert.Contains(
              "No ultimate source found",
              Assert.Throws<ArgumentException>(() => base.Compiled_query_when_does_not_end_in_query_operator()).Message);

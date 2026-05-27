@@ -184,7 +184,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
     public override async Task Client_eval(bool async)
     {
-        // Fails: Does not throw expected unable to translate exception
+        // Fails: Does not throw expected unable to translate exception EF-X002
         Assert.Contains(
             "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
             (await Assert.ThrowsAsync<ThrowsException>(() => base.Client_eval(async))).Message);

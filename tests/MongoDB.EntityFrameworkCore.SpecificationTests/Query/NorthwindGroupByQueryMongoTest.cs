@@ -41,6 +41,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task Final_GroupBy_TagWith(bool async)
     {
+        // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.Final_GroupBy_TagWith(async));
     }
 
@@ -2353,6 +2354,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
 
+    // Fails: Cross-document navigation access issue EF-216
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         =>  Assert.Contains("Unsupported cross-DbSet query between",
             (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);

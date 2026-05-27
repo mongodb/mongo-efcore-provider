@@ -195,7 +195,7 @@ Customers.
 
     public override async Task String_StartsWith_with_StringComparison_unsupported(bool async)
     {
-        // These are translated by the Mongo provider. See EF-243.
+        // These are translated by the Mongo provider.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CompanyName.StartsWith("Qu", StringComparison.CurrentCulture)));
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("m", StringComparison.CurrentCultureIgnoreCase)));
 
@@ -205,6 +205,7 @@ Customers.
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCulture))))).Message);
 
+        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -311,7 +312,7 @@ Customers.
 
     public override async Task String_EndsWith_with_StringComparison_unsupported(bool async)
     {
-        // These are translated by the Mongo provider. See EF-243.
+        // These are translated by the Mongo provider.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("e", StringComparison.CurrentCulture)));
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("m", StringComparison.CurrentCultureIgnoreCase)));
 
@@ -321,6 +322,7 @@ Customers.
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCulture))))).Message);
 
+        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -1031,7 +1033,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
     public override async Task Sum_over_round_works_correctly_in_projection(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Sum_over_round_works_correctly_in_projection(async));
 
         AssertMql(
@@ -1040,7 +1042,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
     public override async Task Sum_over_round_works_correctly_in_projection_2(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Sum_over_round_works_correctly_in_projection_2(async));
 
         AssertMql(
@@ -1049,7 +1051,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
     public override async Task Sum_over_truncate_works_correctly_in_projection(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Sum_over_truncate_works_correctly_in_projection(async));
 
         AssertMql(
@@ -1058,7 +1060,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
     public override async Task Sum_over_truncate_works_correctly_in_projection_2(bool async)
     {
-        // Fails: Subquery selection
+        // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Sum_over_truncate_works_correctly_in_projection_2(async));
 
         AssertMql(
@@ -2201,6 +2203,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Order_by_length_twice_followed_by_projection_of_naked_collection_navigation(bool async)
     {
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() =>
             base.Order_by_length_twice_followed_by_projection_of_naked_collection_navigation(async));
 
@@ -2220,7 +2223,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Static_equals_nullable_datetime_compared_to_non_nullable(bool async)
     {
-        // Fails: MongoDB DateTimeKind handling
+        // Fails: MongoDB DateTimeKind handling EF-X006
         var arg = new DateTime(1996, 7, 4, 0, 0, 0, DateTimeKind.Utc);
 
         await AssertQuery(
@@ -2302,7 +2305,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Regex_IsMatch_MethodCall_constant_input(bool async)
     {
-        // Fails Regex with non-constant pattern issue EF-247
+        // Fails: Regex with non-constant pattern issue EF-247
         Assert.Contains(
             "Expression not supported: IsMatch",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
@@ -2409,7 +2412,7 @@ Customers.
 
     public override async Task String_Contains_with_StringComparison_unsupported(bool async)
     {
-        // These are translated by the Mongo provider. See EF-243.
+        // These are translated by the Mongo provider.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.CurrentCulture)));
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("m", StringComparison.CurrentCultureIgnoreCase)));
 
@@ -2419,6 +2422,7 @@ Customers.
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
                 AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCulture))))).Message);
 
+        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
         Assert.Contains(
             "Expression not supported",
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
