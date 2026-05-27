@@ -40,7 +40,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Expressions.ExpressionVisitor
 {
     private static readonly MethodInfo MqlFieldMethodInfo =
-        typeof(Mql).GetMethod(nameof(Mql.Field), BindingFlags.Public | BindingFlags.Static)!;
+        typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
 
     private readonly QueryContext _queryContext;
     private readonly Expression _source;

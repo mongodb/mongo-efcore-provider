@@ -95,12 +95,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     var fieldAccess = TryResolveFieldAccess(projection.Expression);
                     if (fieldAccess.Property != null)
                     {
-                        System.Diagnostics.Debug.Assert(
-                            fieldAccess.Property.ClrType == projectionBindingExpression.Type
-                            || fieldAccess.Property.ClrType == projectionBindingExpression.Type.UnwrapNullableType(),
-                            $"Aliased projection type {projectionBindingExpression.Type} does not match source property '{
-                                fieldAccess.Property.Name}' of type {fieldAccess.Property.ClrType}; the property's serializer "
-                            + "may produce values that cannot be cast to the binding's outer type.");
+                        if (fieldAccess.Property.ClrType != projectionBindingExpression.Type
+                            && fieldAccess.Property.ClrType != projectionBindingExpression.Type.UnwrapNullableType())
+                        {
+                            throw new InvalidOperationException(
+                                $"Aliased projection type '{projectionBindingExpression.Type}' does not match source property " +
+                                $"'{fieldAccess.Property.Name}' of type '{fieldAccess.Property.ClrType}'; the property's serializer " +
+                                "may produce values that cannot be cast to the binding's outer type.");
+                        }
+
                         return BsonBinding.CreateGetValueExpression(
                             DocParameter,
                             projection.Alias,
@@ -581,7 +584,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     private static readonly MethodInfo MqlFieldMethodInfo =
-        typeof(Mql).GetMethod(nameof(Mql.Field), BindingFlags.Public | BindingFlags.Static)!;
+        typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
 
     protected readonly record struct ResolvedFieldAccess(
         IProperty? Property,

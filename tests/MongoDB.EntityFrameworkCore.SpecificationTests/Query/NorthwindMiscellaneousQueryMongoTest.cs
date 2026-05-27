@@ -2445,10 +2445,22 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
     }
 
     public override async Task Select_expression_long_to_string(bool async)
-        => await base.Select_expression_long_to_string(async);
+    {
+        await base.Select_expression_long_to_string(async);
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : { "$toString" : { "$toLong" : "$_id" } }, "_id" : 0 } }
+""");
+    }
 
     public override async Task Select_expression_int_to_string(bool async)
-        => await base.Select_expression_int_to_string(async);
+    {
+        await base.Select_expression_int_to_string(async);
+        AssertMql(
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : { "$toString" : "$_id" }, "_id" : 0 } }
+""");
+    }
 
     public override async Task ToString_with_formatter_is_evaluated_on_the_client(bool async)
     {
