@@ -30,7 +30,7 @@ public class TestContainersTestServer : TestServer
 
     public override async Task InitializeAsync()
     {
-        _container = new MongoDbAtlasBuilder().WithImage("mongodb/mongodb-atlas-local:8.0").Build();
+        _container = new MongoDbAtlasBuilder().Build();
 
         await _container.StartAsync().ConfigureAwait(false);
 
