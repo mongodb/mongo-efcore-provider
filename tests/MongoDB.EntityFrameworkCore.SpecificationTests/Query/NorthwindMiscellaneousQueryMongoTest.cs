@@ -3566,16 +3566,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
     }
 
     public override async Task Convert_to_nullable_on_nullable_value_is_ignored(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "Rewriting child expression",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Convert_to_nullable_on_nullable_value_is_ignored(async))).Message);
-
-        AssertMql(
-        );
-    }
+        => await base.Convert_to_nullable_on_nullable_value_is_ignored(async);
 
     public override async Task Navigation_inside_interpolated_string_is_expanded(bool async)
     {
