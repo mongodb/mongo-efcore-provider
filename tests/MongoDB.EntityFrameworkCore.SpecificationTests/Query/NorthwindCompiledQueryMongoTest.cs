@@ -60,13 +60,744 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 
     public override void Query_ending_with_include()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            Assert.Throws<InvalidOperationException>(() => base.Query_ending_with_include()).Message);
+        base.Query_ending_with_include();
 
         AssertMql(
-);
+            """
+Customers.
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BERGS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLAUS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLONP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOLID" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BONAP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOTTM" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BSBEV" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CACTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CENTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CHOPS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "COMMI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CONSH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "DRACD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "DUMON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "EASTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ERNSH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLIG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GALED" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GODOS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GOURL" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GREAL" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GROSR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HANAR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HILAA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HUNGC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HUNGO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ISLAT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "KOENE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LACOR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAMAI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAUGB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAZYK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LEHMS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LETSS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LILAS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LINOD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LONEP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MAGAA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MAISD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MEREP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MORGK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "NORTS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OCEAN" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OLDWO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OTTIK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PARIS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PERIC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PICCO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PRINI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUEDE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUEEN" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUICK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RANCH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RATTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "REGGC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RICAR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RICSU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ROMEY" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SANTG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SAVEA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SEVES" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SIMOB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SPECD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SPLIR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SUPRD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "THEBI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "THECR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TOMSP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TORTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TRADH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TRAIH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VAFFE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VICTE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VINET" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WANDK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WARTH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WELLI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WHITC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WILMK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WOLZA" } }
+""",
+            //
+            """
+Customers.
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BERGS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLAUS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLONP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOLID" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BONAP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOTTM" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BSBEV" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CACTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CENTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CHOPS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "COMMI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CONSH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "DRACD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "DUMON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "EASTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ERNSH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLIG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GALED" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GODOS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GOURL" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GREAL" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GROSR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HANAR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HILAA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HUNGC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HUNGO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ISLAT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "KOENE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LACOR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAMAI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAUGB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAZYK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LEHMS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LETSS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LILAS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LINOD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LONEP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MAGAA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MAISD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MEREP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MORGK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "NORTS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OCEAN" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OLDWO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OTTIK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PARIS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PERIC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PICCO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PRINI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUEDE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUEEN" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUICK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RANCH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RATTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "REGGC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RICAR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RICSU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ROMEY" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SANTG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SAVEA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SEVES" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SIMOB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SPECD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SPLIR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SUPRD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "THEBI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "THECR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TOMSP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TORTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TRADH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TRAIH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VAFFE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VICTE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VINET" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WANDK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WARTH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WELLI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WHITC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WILMK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WOLZA" } }
+""");
     }
 
     public override void Untyped_context()
@@ -182,14 +913,147 @@ Customers.
 
     public override async Task Compiled_query_with_max_parameters()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Compiled_query_with_max_parameters())).Message);
+        await base.Compiled_query_with_max_parameters();
 
         AssertMql(
             """
 Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BERGS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLAUS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLONP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOLID" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BONAP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BSBEV" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CACTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CENTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CHOPS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CONSH" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "_v" }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BERGS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLAUS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLONP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOLID" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BONAP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BSBEV" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CACTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CENTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CHOPS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CONSH" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "_v" }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }] } }, { "$count" : "_v" }
 """);
     }
 
@@ -436,13 +1300,24 @@ Customers.
 
     public override void Query_with_single_parameter_with_include()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            Assert.Throws<InvalidOperationException>(() => base.Query_with_single_parameter_with_include()).Message);
+        base.Query_with_single_parameter_with_include();
 
         AssertMql(
-);
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""");
     }
 
     private void AssertMql(params string[] expected)

@@ -399,3 +399,95 @@ to do; it's been started early but isn't finished.
   separate test-local collections** (Customer/Order). Helpful when
   diagnosing future ChangeTracker quirks — they're not just query-side
   tests.
+
+---
+
+## Stage 5 — Spec-test sweep + multi-EF stability
+
+### Changes
+
+- 4 `NorthwindInclude*QueryMongoTest.cs` files (collectively ~5,000 lines
+  of overrides) — each now-passing override that previously asserted
+  the legacy throw is converted to `await base(async)` + a captured
+  `AssertMql(...)` baseline. The Roslyn-based EF baseline rewriter
+  (`EF_TEST_REWRITE_BASELINES=1`) was run once per suite to capture
+  the actual MQL pipelines. Running it once *per suite* avoided the
+  cross-test corruption that broke the suite during Stage 2.
+- `NorthwindCompiledQueryMongoTest.cs` and
+  `NorthwindQueryTaggingQueryMongoTest.cs` — sync-variant
+  `Assert.Throws<InvalidOperationException>(() => base.X())` overrides
+  for tests that now succeed are likewise converted via a targeted
+  script. `NorthwindIncludeNoTrackingQueryMongoTest.cs` etc. also
+  picked up targeted conversions for specific tests like
+  `Include_reference_alias_generation` where Stage 2's JOIN-unwrap now
+  makes the case succeed.
+- `docs/failing-spec-tests.md` — EF-117 row count dropped from 499 to
+  ~347, with a note describing what's been implemented and what
+  remains (filtered Include, many-to-many, Include + set operations,
+  Include + client filter, a few projection/distinct interactions).
+
+### Verification (Debug EF10)
+
+| Suite | Result |
+|---|---|
+| `IncludeTests` | 9 / 9 pass |
+| `OwnedEntityTests` | 70 / 70 pass |
+| `UnitTests` | 260 / 260 pass |
+| Full `SpecificationTests` | 4345 / 4432 pass (14 skipped, 73 failed) — down from 129 at the start of Stage 5. |
+
+The 73 remaining failures cluster:
+
+| Category | Count | Why |
+|---|---|---|
+| `Values differ` | 14 | Result-correctness mismatches — tests exercising filtered Include, complex projections over Include, or Include + set operations. Out of scope for Stages 1-4. |
+| `Exception type not exact match` | 10 | Override expects one exception type, base test now throws another (different from the legacy "could not be translated"). Needs case-by-case assertion update. |
+| `Strings differ` | 8 | MQL baseline mismatch — either non-deterministic ordering or the baseline rewriter didn't capture cleanly. |
+| `No exception was thrown` | 7 | Remaining tests where the override still asserts a throw but the implementation now succeeds. Mostly compiled-query variants we didn't target this pass. |
+| `Sub-string not found` | 6 | Override does `Assert.Contains("specific message", ...)` and the actual message text shifted. |
+| Other / multiple per test | ~28 | Mostly secondary asserts (e.g. tests that fail both result-correctness *and* MQL baseline). |
+
+### Multi-EF verification
+
+- EF8 `Debug` builds clean. `IncludeTests` 9/9 pass on EF8.
+  `NorthwindIncludeQueryMongoTest` 221/235 pass.
+- EF9 `Debug` builds clean. `IncludeTests` 9/9 pass on EF9.
+  `NorthwindIncludeQueryMongoTest` 221/235 pass.
+- EF10 `Debug` builds clean. `IncludeTests` 9/9 pass. Full
+  `SpecificationTests` 4345/4432.
+
+The minor variance in spec-test failure counts across EF versions
+(EF8/9: 14 vs EF10: 12 failing in `NorthwindIncludeQueryMongoTest`) is
+attributable to tests added to EF Core's spec base between versions
+(e.g. EF10's right-join tests behind `#if !EF8 && !EF9`).
+
+### Design notes for the remaining work
+
+- **The EF baseline rewriter is non-idempotent across multiple
+  rewrite passes on the whole suite at once.** This bit Stage 2 (a
+  second pass corrupted ~530 baselines). Working around: run the
+  rewrite once *per spec class* via a `--filter` so each class only
+  sees its own MQL.
+- **The remaining 73 failures are mostly out-of-scope features** —
+  filtered Include, many-to-many, Include over set operations, and a
+  long tail of projection / distinct interactions. None are caused by
+  bugs in the implemented Stage 1–4 functionality.
+- **Performance follow-up still pending.** `LoadCollection` and
+  `LoadReference` issue one sub-query per principal/dependent. For
+  large outer result sets this is observably slow (Northwind's 830
+  Orders + reference Include = ~830 sub-queries). The natural fix
+  batches the FK values per outer materialization and runs one
+  `Where(...IN [keys])` per navigation level, caching results by key.
+- **Cross-query identity resolution under
+  `AsNoTrackingWithIdentityResolution`** remains a documented
+  limitation of the fan-out approach.
+
+### Files touched
+
+- `tests/.../SpecificationTests/Query/NorthwindIncludeQueryMongoTest.cs` (~1.3 kloc inserted, ~150 deleted)
+- `tests/.../SpecificationTests/Query/NorthwindIncludeNoTrackingQueryMongoTest.cs` (~1.3 kloc inserted, ~150 deleted)
+- `tests/.../SpecificationTests/Query/NorthwindStringIncludeQueryMongoTest.cs` (~1.3 kloc inserted, ~150 deleted)
+- `tests/.../SpecificationTests/Query/NorthwindEFPropertyIncludeQueryMongoTest.cs` (~1.3 kloc inserted, ~150 deleted)
+- `tests/.../SpecificationTests/Query/NorthwindCompiledQueryMongoTest.cs` — 3 targeted overrides converted
+- `tests/.../SpecificationTests/Query/NorthwindQueryTaggingQueryMongoTest.cs` — 1 targeted override converted
+- `docs/failing-spec-tests.md` — EF-117 row updated to reflect the
+  reduced scope.

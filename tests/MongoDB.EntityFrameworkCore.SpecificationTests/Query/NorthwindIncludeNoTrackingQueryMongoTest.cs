@@ -519,7 +519,37 @@ Orders.{ "$match" : { "CustomerID" : "HANAR" } }
         await base.Include_collection_then_include_collection_predicate(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10643 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10692 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10702 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10835 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10952 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11011 } }
+""");
     }
 
     public override async Task Include_collection_take_no_order_by(bool async)
@@ -578,8 +608,16 @@ Orders.{ "$match" : { "CustomerID" : "BOTTM" } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
-            """);
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""");
     }
 
     public override async Task Include_collection_OrderBy_object(bool async)
@@ -857,7 +895,501 @@ Orders.{ "$match" : { "CustomerID" : "FRANS" } }
         await base.Include_collection_then_reference(async);
 
         AssertMql(
-        );
+            """
+Products.{ "$match" : { "_id" : { "$mod" : [17, 5] } } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.ProductID" : 5 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10258 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10262 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10290 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10382 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10635 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10708 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10848 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10958 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11030 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11047 } }, { "$limit" : 1 }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.ProductID" : 22 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10251 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10435 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10553 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10603 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10619 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10635 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10648 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10651 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10763 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10768 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10836 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10844 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10943 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11001 } }, { "$limit" : 1 }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.ProductID" : 39 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10253 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10257 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10297 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10305 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10323 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10347 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10361 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10377 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10445 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10455 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10477 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10508 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10577 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10614 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10643 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10647 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10654 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10661 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10762 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10764 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10784 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10827 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10830 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10840 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10865 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10895 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10899 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10977 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11069 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11077 } }, { "$limit" : 1 }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.ProductID" : 56 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10262 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10295 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10301 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10329 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10346 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10369 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10383 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10401 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10426 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10430 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10433 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10436 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10458 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10464 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10471 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10494 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10497 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10514 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10519 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10526 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10555 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10570 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10596 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10608 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10616 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10618 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10637 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10657 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10664 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10690 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10712 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10714 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10727 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10740 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10748 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10749 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10755 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10762 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10781 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10790 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10808 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10820 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10841 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10855 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10884 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10896 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10944 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10966 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11018 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11029 } }, { "$limit" : 1 }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.ProductID" : 73 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10278 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10420 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10488 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10533 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10537 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10558 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10600 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10627 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10670 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10693 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10703 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10751 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10881 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11077 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Include_collection_order_by_key(bool async)
@@ -926,8 +1458,16 @@ Orders.{ "$match" : { "CustomerID" : "FURIB" } }
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""");
     }
 
     public override async Task Include_with_complex_projection_does_not_change_ordering_of_projection(bool async)
@@ -944,7 +1484,25 @@ Orders.{ "$match" : { "CustomerID" : "FURIB" } }
         await base.Include_multi_level_collection_and_then_include_reference_predicate(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10248 } }
+""",
+            //
+            """
+Products.{ "$match" : { "_id" : 11 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Products.{ "$match" : { "_id" : 42 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Products.{ "$match" : { "_id" : 72 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Multi_level_includes_are_applied_with_skip_take(bool async)
@@ -1052,7 +1610,293 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11011 } }
         await base.Include_collection_then_include_collection(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10347 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10386 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10414 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10512 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10581 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10650 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10725 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLIG" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10408 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10480 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10634 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10763 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10789 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10264 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10327 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10378 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10434 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10460 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10533 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10561 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10703 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10762 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10774 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10824 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10880 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10902 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10955 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10977 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10980 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10993 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11001 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11050 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10267 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10337 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10342 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10396 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10488 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10560 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10623 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10653 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10670 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10675 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10717 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10791 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10859 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10929 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11012 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10671 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10860 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10971 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10422 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10710 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10753 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10807 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11026 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11060 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10328 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10352 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10464 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10491 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10551 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10604 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10664 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10963 } }
+""");
     }
 
     public override async Task Include_collection_with_multiple_conditional_order_by(bool async)
@@ -1084,11 +1928,388 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11011 } }
 
     public override async Task Include_reference_alias_generation(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Include_reference_alias_generation(async));
+        await base.Include_reference_alias_generation(async);
 
         AssertMql(
-        );
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$mod" : [23, 13] } } }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10271 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10294 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10294 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10294 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10294 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10294 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10317 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10340 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10340 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10340 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10363 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10363 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10363 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10386 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10386 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10409 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10409 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10432 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10432 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10455 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10455 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10455 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10455 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10478 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10501 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10524 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10524 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10524 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10524 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10547 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10547 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10570 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10570 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10593 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10593 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10593 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10616 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10616 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10616 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10616 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10639 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10662 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10685 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10685 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10685 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10708 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10708 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10731 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10731 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10754 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10777 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10800 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10800 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10800 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10823 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10823 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10823 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10823 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10846 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10846 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10846 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10869 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10869 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10869 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10869 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10892 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10915 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10915 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10915 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10938 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10938 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10938 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10938 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10961 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10961 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10984 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10984 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10984 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11007 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11007 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11007 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11030 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11030 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11030 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11030 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11053 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11053 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11053 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11076 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11076 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11076 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Include_with_cycle_does_not_throw_when_AsNoTrackingWithIdentityResolution(bool async)
@@ -1230,10 +2451,6 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 """,
             //
             """
-Orders.{ "$match" : { "CustomerID" : "AROUT" } }
-""",
-            //
-            """
 Orders.{ "$match" : { "CustomerID" : "ANTON" } }
 """,
             //
@@ -1243,6 +2460,10 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
             //
             """
 Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
 """);
     }
 
@@ -2035,7 +3256,193 @@ Orders.{ "$match" : { "CustomerID" : "RANCH" } }
         await base.Include_list(async);
 
         AssertMql(
-        );
+            """
+Products.{ "$match" : { "_id" : { "$mod" : [17, 5] }, "UnitPrice" : { "$lt" : { "$numberDecimal" : "20" } } } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.ProductID" : 39 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10253 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10257 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10297 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10305 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10323 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10347 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10361 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10377 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10445 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10455 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10477 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10508 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10577 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10614 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10643 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10647 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10654 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10661 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10762 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10764 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10784 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10827 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10830 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10840 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10865 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10895 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10899 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10977 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11069 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11077 } }, { "$limit" : 1 }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.ProductID" : 73 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10278 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10420 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10488 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10533 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10537 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10558 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10600 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10627 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10670 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10693 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10703 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10751 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 10881 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "_id" : 11077 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Include_empty_reference_sets_IsLoaded(bool async)

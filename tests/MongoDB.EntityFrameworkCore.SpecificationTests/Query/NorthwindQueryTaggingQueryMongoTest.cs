@@ -91,16 +91,19 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 
     public override void Tag_on_include_query()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            Assert.Throws<InvalidOperationException>(() => base.Tag_on_include_query()).Message);
+        base.Tag_on_include_query();
 
         // Fails: TagWith EF-153
         Assert.DoesNotContain("Yanni", string.Join('|', Fixture.TestMqlLoggerFactory.MqlStatements));
 
         AssertMql(
-);
+            """
+Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""");
     }
 
     public override void Tag_on_scalar_query()

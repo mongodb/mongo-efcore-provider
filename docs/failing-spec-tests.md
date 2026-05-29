@@ -24,7 +24,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 
 | Ticket | Comment subject | Description | Count |
 | --- | --- | --- | --- |
-| [EF-117](https://jira.mongodb.org/browse/EF-117) | `Include issue EF-117` / `Include (joins) issue EF-117` | `Include`/`ThenInclude` across DbSets is not supported — joins between collections cannot be translated. | 499 |
+| [EF-117](https://jira.mongodb.org/browse/EF-117) | `Include issue EF-117` / `Include (joins) issue EF-117` | Cross-collection `Include` / `ThenInclude` is now implemented (collection, reference dependent→principal, and chained ThenInclude shapes, with tracking-mode propagation). Remaining EF-117 overrides are tests that exercise features Stage 1–4 doesn't claim to support: filtered Include (`.Include(c => c.Orders.Where(...))`), many-to-many (`ISkipNavigation`), Include over set operations (`Union`/`Intersect`/`Except`), Include with client-side filter, and a few projection/distinct interactions. Originally 499 overrides; reduced to ~347 by Stage 5's sweep. | 347 |
 | [EF-149](https://jira.mongodb.org/browse/EF-149) | `GroupBy issue EF-149` | `GroupBy` translation is severely limited; most non-trivial group-by shapes fail to translate. | 246 |
 | [EF-153](https://jira.mongodb.org/browse/EF-153) | `TagWith EF-153` | `TagWith(...)` content is silently dropped — does not appear in the emitted MQL. | 9 |
 | [EF-164](https://jira.mongodb.org/browse/EF-164) | `Missing property values issue EF-164` / `Projections issue EF-164` | BSON documents that omit a required scalar (or required navigation) throw on materialization — `Project_root_with_missing_scalars`, `Project_root_entity_with_missing_required_navigation`, etc. | 3 |
