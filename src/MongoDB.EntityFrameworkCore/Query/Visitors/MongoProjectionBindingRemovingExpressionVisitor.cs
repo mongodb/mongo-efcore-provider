@@ -46,6 +46,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
     private readonly ParameterExpression _queryContextParameter;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
     private readonly bool _trackQueryResults;
+    private readonly QueryTrackingBehavior _queryTrackingBehavior;
     private readonly Dictionary<ParameterExpression, Expression> _materializationContextBindings = new();
     private readonly Dictionary<Expression, ParameterExpression> ProjectionBindings = new();
     private readonly Dictionary<Expression, (IEntityType EntityType, Expression BsonDocExpression)> _ownerMappings = new();
@@ -66,13 +67,18 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
     /// <see langword="true"/> if the results from this query are being tracked for changes,
     /// <see langword="false"/> if they are not.
     /// </param>
+    /// <param name="queryTrackingBehavior">The outer query's <see cref="QueryTrackingBehavior"/>
+    /// — propagated to cross-collection include sub-queries so that
+    /// <c>AsNoTracking</c> / <c>AsNoTrackingWithIdentityResolution</c> on the principal
+    /// query apply to the loaded related entities too.</param>
     public MongoProjectionBindingRemovingExpressionVisitor(
         IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
         ParameterExpression docParameter,
         ParameterExpression queryContextParameter,
         BsonSerializerFactory bsonSerializerFactory,
-        bool trackQueryResults)
+        bool trackQueryResults,
+        QueryTrackingBehavior queryTrackingBehavior)
     {
         _queryExpression = queryExpression;
         _rootEntityType = rootEntityType;
@@ -80,6 +86,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
         _queryContextParameter = queryContextParameter;
         _bsonSerializerFactory = bsonSerializerFactory;
         _trackQueryResults = trackQueryResults;
+        _queryTrackingBehavior = queryTrackingBehavior;
     }
 
     protected override Expression VisitExtension(Expression extensionExpression)
@@ -558,7 +565,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
             Expression.Convert(instanceVariable, principalClrType),
             Expression.Constant(pkExtractor, typeof(Func<,>).MakeGenericType(principalClrType, typeof(object))),
             Expression.Constant(fkProperty.Name),
-            Expression.Constant(chainPath, typeof(string)));
+            Expression.Constant(chainPath, typeof(string)),
+            Expression.Constant(_queryTrackingBehavior));
     }
 
     private Expression BuildReferenceLoaderCall(INavigation navigation, Expression instanceVariable, string? chainPath)
@@ -587,7 +595,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
             Expression.Convert(instanceVariable, dependentClrType),
             Expression.Constant(fkExtractor, typeof(Func<,>).MakeGenericType(dependentClrType, typeof(object))),
             Expression.Constant(pkProperty.Name),
-            Expression.Constant(chainPath, typeof(string)));
+            Expression.Constant(chainPath, typeof(string)),
+            Expression.Constant(_queryTrackingBehavior));
     }
 
     private static readonly MethodInfo IncludeReferenceMethodInfo

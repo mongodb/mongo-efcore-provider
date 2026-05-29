@@ -127,6 +127,130 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Include_collection_as_no_tracking_materializes()
+    {
+        const string testName = nameof(Include_collection_as_no_tracking_materializes);
+        // Stage 4: AsNoTracking on the outer query should still load related
+        // collections — the loader has to propagate the outer's per-query
+        // tracking behavior to its sub-query, otherwise the related entities
+        // get attached to the DbContext anyway.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new Customer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki" },
+            new Order { Id = "o2", CustomerId = "alfki" });
+        seed.SaveChanges();
+
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var customers = db.Customers
+            .AsNoTracking()
+            .Include(c => c.Orders)
+            .ToList();
+
+        var alfki = Assert.Single(customers);
+        Assert.Equal(2, alfki.Orders.Count);
+        Assert.All(alfki.Orders, o => Assert.Same(alfki, o.Customer));
+        // Nothing should be tracked.
+        Assert.Empty(db.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public void Include_reference_as_no_tracking_materializes()
+    {
+        const string testName = nameof(Include_reference_as_no_tracking_materializes);
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new Customer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki" },
+            new Order { Id = "o2", CustomerId = "alfki" });
+        seed.SaveChanges();
+
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var orders = db.Orders
+            .AsNoTracking()
+            .Include(o => o.Customer)
+            .ToList();
+
+        Assert.Equal(2, orders.Count);
+        Assert.All(orders, o => Assert.NotNull(o.Customer));
+        Assert.All(orders, o => Assert.Equal("Alfreds", o.Customer.Name));
+        Assert.Empty(db.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public void Include_collection_no_tracking_with_identity_resolution_materializes_without_tracking()
+    {
+        const string testName = nameof(Include_collection_no_tracking_with_identity_resolution_materializes_without_tracking);
+        // Stage 4: AsNoTrackingWithIdentityResolution propagates to the
+        // include sub-query so no entities get tracked. Cross-query identity
+        // resolution (two Orders pointing to the same Customer resolve to a
+        // single Customer instance) is a known limitation of the fan-out
+        // implementation: each sub-query has its own materialization scope.
+        // Tracking-mode TrackAll DOES dedupe via the DbContext state manager
+        // — see Include_reference_dependent_to_principal_materializes.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new Customer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki" },
+            new Order { Id = "o2", CustomerId = "alfki" });
+        seed.SaveChanges();
+
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var orders = db.Orders
+            .AsNoTrackingWithIdentityResolution()
+            .Include(o => o.Customer)
+            .ToList();
+
+        Assert.Equal(2, orders.Count);
+        Assert.All(orders, o => Assert.NotNull(o.Customer));
+        Assert.All(orders, o => Assert.Equal("Alfreds", o.Customer.Name));
+        Assert.Empty(db.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public void Include_collection_with_no_matching_dependents_returns_empty_collection()
+    {
+        const string testName = nameof(Include_collection_with_no_matching_dependents_returns_empty_collection);
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new Customer { Id = "lonely", Name = "No Orders" });
+        // No Orders for this customer.
+        seed.SaveChanges();
+
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var customers = db.Customers
+            .Include(c => c.Orders)
+            .ToList();
+
+        var lonely = Assert.Single(customers);
+        Assert.NotNull(lonely.Orders);
+        Assert.Empty(lonely.Orders);
+    }
+
+    [Fact]
+    public void Include_reference_with_missing_principal_leaves_navigation_null()
+    {
+        const string testName = nameof(Include_reference_with_missing_principal_leaves_navigation_null);
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        // Order with a CustomerId pointing at a Customer that doesn't exist —
+        // dangling FK. The Include should leave Customer null rather than throw.
+        seed.Orders.AddRange(new Order { Id = "o-orphan", CustomerId = "ghost" });
+        seed.SaveChanges();
+
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var orders = db.Orders
+            .Include(o => o.Customer)
+            .ToList();
+
+        var orphan = Assert.Single(orders);
+        Assert.Null(orphan.Customer);
+    }
+
+    [Fact]
     public void Include_skip_navigation_throws_not_supported()
     {
         // EF-117's scope explicitly excludes many-to-many (skip navigations).

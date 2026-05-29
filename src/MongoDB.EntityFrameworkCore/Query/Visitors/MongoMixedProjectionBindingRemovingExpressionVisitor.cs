@@ -44,8 +44,9 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         ParameterExpression docParameter,
         ParameterExpression queryContextParameter,
         BsonSerializerFactory bsonSerializerFactory,
-        bool trackQueryResults)
-        : base(rootEntityType, queryExpression, docParameter, queryContextParameter, bsonSerializerFactory, trackQueryResults)
+        bool trackQueryResults,
+        Microsoft.EntityFrameworkCore.QueryTrackingBehavior queryTrackingBehavior)
+        : base(rootEntityType, queryExpression, docParameter, queryContextParameter, bsonSerializerFactory, trackQueryResults, queryTrackingBehavior)
     {
         _queryExpression = queryExpression;
         _rootEntityType = rootEntityType;

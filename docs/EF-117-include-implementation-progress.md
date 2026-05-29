@@ -331,3 +331,71 @@ to do; it's been started early but isn't finished.
 - **The N+1 perf caveat from Stage 2 still applies.** Each chain
   segment adds another set of per-principal sub-queries. A future
   perf pass should batch FK lookups across principals at every level.
+
+---
+
+## Stage 4 — Tracking-mode propagation + edge-case coverage
+
+### Changes
+
+- `src/.../Query/Visitors/MongoIncludeCompiler.cs` — added
+  `ApplyTrackingBehavior` helper that switches the sub-query between
+  `AsNoTracking()`, `AsNoTrackingWithIdentityResolution()`, or
+  default-tracked based on the outer query's behavior.
+  `LoadCollection` and `LoadReference` now accept a
+  `QueryTrackingBehavior queryTrackingBehavior` parameter and apply it
+  to the `dbContext.Set<TRelated>()` queryable before adding includes
+  and the FK filter.
+- `MongoProjectionBindingRemovingExpressionVisitor` constructor takes
+  a new `QueryTrackingBehavior` parameter (alongside the existing
+  `bool trackQueryResults`) and threads it through to both
+  `BuildCollectionLoaderCall` and `BuildReferenceLoaderCall`. The
+  `MongoMixedProjectionBindingRemovingExpressionVisitor` subclass
+  mirrors the new parameter.
+- `MongoShapedQueryCompilingExpressionVisitor.CompileShapedQuery`
+  passes `QueryCompilationContext.QueryTrackingBehavior` to both visitor
+  factories.
+- `tests/.../FunctionalTests/Query/IncludeTests.cs` — five new tests:
+  - `Include_collection_as_no_tracking_materializes` — verifies
+    `AsNoTracking().Include(c => c.Orders)` loads Orders and leaves the
+    ChangeTracker empty.
+  - `Include_reference_as_no_tracking_materializes` — same for the
+    dependent → principal reference shape.
+  - `Include_collection_no_tracking_with_identity_resolution_materializes_without_tracking`
+    — verifies `AsNoTrackingWithIdentityResolution()` doesn't track
+    (full cross-include identity resolution is a known limitation;
+    see "Design notes" below).
+  - `Include_collection_with_no_matching_dependents_returns_empty_collection`
+    — empty collection is initialized, not null.
+  - `Include_reference_with_missing_principal_leaves_navigation_null`
+    — dangling FK leaves the navigation null.
+
+### Verification (Debug EF10)
+
+| Suite | Result |
+|---|---|
+| `IncludeTests` | 9 / 9 pass — Stage 4 added 5 new tests on top of Stages 1–3's 4 |
+| `OwnedEntityTests` | 70 / 70 pass |
+| `UnitTests` | 260 / 260 pass |
+| Full `SpecificationTests` | 4289 / 4432 pass (14 skipped, 129 failed) — two new spec failures vs Stage 3 in `NorthwindEFPropertyIncludeQueryMongoTest`. These are overrides whose assertions were written assuming the old "AsNoTracking didn't propagate" behavior; they need refresh in Stage 5's sweep |
+
+### Design notes for later stages
+
+- **Cross-include identity resolution under `AsNoTrackingWithIdentityResolution`
+  is a known limitation of the fan-out approach.** Each sub-query goes
+  through `DbContext.Set<TRelated>().AsNoTrackingWithIdentityResolution()`
+  in its own materialization scope. EF Core's identity resolution
+  works *within* a single materialization, not across separate queries.
+  So if two Orders share the same Customer, the no-tracking path loads
+  two distinct Customer instances. The tracking-mode path (`TrackAll`)
+  does dedupe correctly because the DbContext's state manager spans
+  all queries on that context — see
+  `Include_reference_dependent_to_principal_materializes` which asserts
+  `Assert.Same(orders[0].Customer, orders[1].Customer)`. Fixing this
+  for no-tracking would require sharing a per-outer-query in-memory
+  cache; deferred to a follow-up.
+- **The functional tests for tracking modes also implicitly exercise
+  the `EnsureCreated` + `AddRange` + `SaveChanges` flow against
+  separate test-local collections** (Customer/Order). Helpful when
+  diagnosing future ChangeTracker quirks — they're not just query-side
+  tests.

@@ -159,7 +159,8 @@ internal static class MongoIncludeCompiler
         TPrincipal? principal,
         Func<TPrincipal, object?> principalKeyExtractor,
         string foreignKeyClrPropertyName,
-        string? thenIncludeChainPath)
+        string? thenIncludeChainPath,
+        QueryTrackingBehavior queryTrackingBehavior)
         where TPrincipal : class
         where TRelated : class
     {
@@ -180,7 +181,7 @@ internal static class MongoIncludeCompiler
         // include results and to a stand-alone DbSet query against the same type.
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var dbContext = mongoQueryContext.Context;
-        IQueryable<TRelated> query = dbContext.Set<TRelated>();
+        IQueryable<TRelated> query = ApplyTrackingBehavior(dbContext.Set<TRelated>(), queryTrackingBehavior);
 
         // Apply any chained ThenInclude path so the loader recursively materializes
         // nested navigations through the same pipeline (and our preprocessor handles
@@ -223,7 +224,8 @@ internal static class MongoIncludeCompiler
         TPrincipal? principal,
         Func<TPrincipal, object?> foreignKeyExtractor,
         string principalKeyClrPropertyName,
-        string? thenIncludeChainPath)
+        string? thenIncludeChainPath,
+        QueryTrackingBehavior queryTrackingBehavior)
         where TPrincipal : class
         where TRelated : class
     {
@@ -240,7 +242,7 @@ internal static class MongoIncludeCompiler
 
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var dbContext = mongoQueryContext.Context;
-        IQueryable<TRelated> query = dbContext.Set<TRelated>();
+        IQueryable<TRelated> query = ApplyTrackingBehavior(dbContext.Set<TRelated>(), queryTrackingBehavior);
 
         if (!string.IsNullOrEmpty(thenIncludeChainPath))
         {
@@ -260,6 +262,21 @@ internal static class MongoIncludeCompiler
 
         return query.Where(predicate).FirstOrDefault();
     }
+
+    /// <summary>
+    /// Applies the outer query's per-query tracking behavior to a cross-collection
+    /// include sub-query. Without this, <c>AsNoTracking</c> on the principal does
+    /// nothing for the dependents the loader materializes — the sub-query inherits
+    /// the DbContext default (TrackAll) and the related entities end up tracked.
+    /// </summary>
+    private static IQueryable<T> ApplyTrackingBehavior<T>(IQueryable<T> query, QueryTrackingBehavior trackingBehavior)
+        where T : class
+        => trackingBehavior switch
+        {
+            QueryTrackingBehavior.NoTracking => query.AsNoTracking(),
+            QueryTrackingBehavior.NoTrackingWithIdentityResolution => query.AsNoTrackingWithIdentityResolution(),
+            _ => query, // TrackAll — leave default
+        };
 
     /// <summary>
     /// Reflected handle for the <see cref="LoadCollection{TPrincipal, TRelated}"/>
