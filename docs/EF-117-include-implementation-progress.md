@@ -270,3 +270,64 @@ to do; it's been started early but isn't finished.
   purpose; the `AssertTranslationFailed` cleanup and full Stage 5
   sweep belong in a focused follow-up commit where the rewrite is run
   exactly once with a clean before/after diff.
+
+---
+
+## Stage 3 — `ThenInclude` chains
+
+### Changes
+
+- `src/.../Query/Visitors/MongoIncludeCompiler.cs` — added
+  `ExtractIncludeChainPath(IncludeExpression)`. Walks the outer
+  `IncludeExpression.NavigationExpression`'s nested
+  `Select(t => IncludeExpression(t, ..., nav))` shapes (EF Core's
+  encoding of `ThenInclude`) and returns a dot-separated path like
+  `"Items.Tag"`.
+- `LoadCollection` and `LoadReference` accept a new
+  `thenIncludeChainPath` parameter and call
+  `dbSet.Include(path)` on the sub-query when it's non-null. The
+  recursive `Include` re-enters the provider's pipeline, hits the
+  preprocessor's `IncludeJoinUnwrapper` (for reference legs) and the
+  same cross-collection loader (for collection legs), so chains of
+  arbitrary depth — including mixed reference/collection legs —
+  materialize through a single uniform mechanism.
+- `MongoProjectionBindingRemovingExpressionVisitor.BuildCrossCollectionLoaderCall`
+  now extracts the chain path and forwards it to the
+  `Build{Collection,Reference}LoaderCall` helpers.
+- `tests/.../FunctionalTests/Query/IncludeTests.cs` — flipped the
+  Stage 1 placeholder `ThenInclude_chain_outer_collection_loads_inner_pending`
+  test to `ThenInclude_chain_materializes`: seeds a Customer with one
+  Order and two Items, queries
+  `db.Customers.Include(c => c.Orders).ThenInclude(o => o.Items)`,
+  asserts both levels are loaded and inverse-navigation fixup works.
+
+### Verification (Debug EF10)
+
+| Suite | Result |
+|---|---|
+| `IncludeTests` | 4 / 4 pass — `ThenInclude_chain_materializes` now asserts full chain materialization |
+| `OwnedEntityTests` | 70 / 70 pass |
+| `UnitTests` | 260 / 260 pass |
+| Full `SpecificationTests` | 4291 / 4432 pass (14 skipped, 127 failed) — same as Stage 2. No regressions; the spec-test override counts for ThenInclude tests don't drop until Stage 5's sweep updates them |
+
+### Design notes for later stages
+
+- **The chain path is a string applied via `Include(string)`, not a
+  rebuilt lambda chain.** EF Core's string-based `Include` supports
+  dotted paths (e.g. `"Items.Tag"`) and recursively re-enters the
+  provider's pipeline. This means Stage 1's preprocessor + classifier +
+  loader machinery handles every level of a ThenInclude chain
+  uniformly — no Stage 3-specific recursion logic in the visitor.
+- **The chain extraction is structural, not depth-limited.**
+  `WalkForNestedIncludes` recurses through nested
+  `Select(t => IncludeExpression(...))` shapes for as many levels as
+  EF Core encoded — collection-on-collection-on-collection,
+  reference-on-reference, or mixed chains all just produce a longer
+  dot path.
+- **Reference legs in the chain (`...ThenInclude(o => o.Reference)`)
+  go through the preprocessor's `IncludeJoinUnwrapper` again on the
+  recursive call.** Worth confirming once a test exercises that mix —
+  the current functional test is collection-then-collection only.
+- **The N+1 perf caveat from Stage 2 still applies.** Each chain
+  segment adds another set of per-principal sub-queries. A future
+  perf pass should batch FK lookups across principals at every level.

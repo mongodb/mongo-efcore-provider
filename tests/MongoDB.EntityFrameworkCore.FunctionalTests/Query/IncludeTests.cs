@@ -97,21 +97,21 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void ThenInclude_chain_outer_collection_loads_inner_pending()
+    public void ThenInclude_chain_materializes()
     {
-        const string testName = nameof(ThenInclude_chain_outer_collection_loads_inner_pending);
-        // Stage 1 limitation: a ThenInclude chain runs the outer Include via
-        // the fan-out loader, but the nested ThenInclude is silently dropped
-        // because the loader doesn't yet recurse. Stage 3 of EF-117 wires the
-        // recursion and the assertion below flips to a materialization
-        // assertion for the inner collection.
+        const string testName = nameof(ThenInclude_chain_materializes);
+        // Stage 3: a ThenInclude chain. The outer collection Include
+        // (Customer.Orders) is materialized via the fan-out loader; the loader
+        // extracts the chained ThenInclude path (Items) from the outer's
+        // NavigationExpression and applies it as a recursive .Include(path) on
+        // the sub-query, so the inner collection is loaded too.
         using var seed = new ThenIncludeContext(MongoDatabase, testName);
         seed.Database.EnsureCreated();
         seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
-        seed.Orders.AddRange(
-            new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" });
+        seed.Orders.AddRange(new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" });
         seed.Items.AddRange(
-            new ThenIncludeItem { Id = "i1", OrderId = "o1" });
+            new ThenIncludeItem { Id = "i1", OrderId = "o1" },
+            new ThenIncludeItem { Id = "i2", OrderId = "o1" });
         seed.SaveChanges();
 
         using var db = new ThenIncludeContext(MongoDatabase, testName);
@@ -121,8 +121,9 @@ public class IncludeTests(TemporaryDatabaseFixture database)
             .ToList();
 
         var alfki = Assert.Single(customers);
-        Assert.Single(alfki.Orders); // Stage 1: Orders loaded
-        Assert.Empty(alfki.Orders[0].Items); // Stage 1 limit: Items not loaded yet (Stage 3 wires this)
+        var order = Assert.Single(alfki.Orders);
+        Assert.Equal(2, order.Items.Count);
+        Assert.All(order.Items, i => Assert.Same(order, i.Order));
     }
 
     [Fact]

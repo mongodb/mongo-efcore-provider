@@ -85,6 +85,48 @@ internal static class MongoIncludeCompiler
         => !navigation.IsEmbedded();
 
     /// <summary>
+    /// Extracts the chained ThenInclude navigations from an outer
+    /// <see cref="IncludeExpression"/>'s <c>NavigationExpression</c>. EF Core
+    /// nav-expansion encodes ThenInclude as nested
+    /// <c>Select(t =&gt; IncludeExpression(t, ..., nestedNav))</c> shapes inside
+    /// the outer <c>MaterializeCollectionNavigationExpression.Subquery</c>;
+    /// this helper walks that nesting and returns a dot-separated path
+    /// (e.g. <c>"Items.Tag"</c>) suitable for passing to
+    /// <c>EntityFrameworkQueryableExtensions.Include(string)</c> when the
+    /// loader runs its sub-query.
+    /// </summary>
+    public static string? ExtractIncludeChainPath(IncludeExpression includeExpression)
+    {
+        var chain = new List<string>();
+        var navExpr = includeExpression.NavigationExpression;
+        var subquery = navExpr switch
+        {
+            MaterializeCollectionNavigationExpression mcne => mcne.Subquery,
+            _ => navExpr
+        };
+        WalkForNestedIncludes(subquery, chain);
+        return chain.Count > 0 ? string.Join(".", chain) : null;
+    }
+
+    private static void WalkForNestedIncludes(Expression expression, List<string> chain)
+    {
+        // Look for: <source>.Select(t => IncludeExpression(t, ..., nav))
+        if (expression is MethodCallExpression mc
+            && mc.Method.Name == nameof(Queryable.Select)
+            && mc.Arguments.Count == 2
+            && Unquote(mc.Arguments[1]) is LambdaExpression selectorLambda
+            && selectorLambda.Body is IncludeExpression nestedInclude
+            && nestedInclude.Navigation is INavigation nav)
+        {
+            chain.Add(nav.Name);
+            WalkForNestedIncludes(nestedInclude.NavigationExpression, chain);
+        }
+    }
+
+    private static Expression Unquote(Expression e)
+        => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;
+
+    /// <summary>
     /// Resolves the CLR <see cref="PropertyInfo"/> for an EF property,
     /// throwing a clear "not yet supported" error if the property is a
     /// shadow property (no CLR representation). Stage 1 only supports
@@ -116,7 +158,8 @@ internal static class MongoIncludeCompiler
         QueryContext queryContext,
         TPrincipal? principal,
         Func<TPrincipal, object?> principalKeyExtractor,
-        string foreignKeyClrPropertyName)
+        string foreignKeyClrPropertyName,
+        string? thenIncludeChainPath)
         where TPrincipal : class
         where TRelated : class
     {
@@ -137,11 +180,17 @@ internal static class MongoIncludeCompiler
         // include results and to a stand-alone DbSet query against the same type.
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var dbContext = mongoQueryContext.Context;
-        var dbSet = dbContext.Set<TRelated>();
+        IQueryable<TRelated> query = dbContext.Set<TRelated>();
+
+        // Apply any chained ThenInclude path so the loader recursively materializes
+        // nested navigations through the same pipeline (and our preprocessor handles
+        // a second round of join-unwrap or collection fan-out as needed).
+        if (!string.IsNullOrEmpty(thenIncludeChainPath))
+        {
+            query = query.Include(thenIncludeChainPath);
+        }
 
         // Build: r => EF.Property<object>(r, foreignKeyClrPropertyName).Equals(pkValue)
-        // EF.Property handles both CLR-backed and shadow FK properties via standard
-        // translation.
         var rParam = Expression.Parameter(typeof(TRelated), "r");
         var efPropertyMethod = typeof(EF).GetMethod(nameof(EF.Property))!
             .MakeGenericMethod(pkValue.GetType());
@@ -152,7 +201,7 @@ internal static class MongoIncludeCompiler
         var equality = Expression.Equal(fkAccess, Expression.Constant(pkValue, pkValue.GetType()));
         var predicate = Expression.Lambda<Func<TRelated, bool>>(equality, rParam);
 
-        return dbSet.Where(predicate).ToList();
+        return query.Where(predicate).ToList();
     }
 
     /// <summary>
@@ -173,7 +222,8 @@ internal static class MongoIncludeCompiler
         QueryContext queryContext,
         TPrincipal? principal,
         Func<TPrincipal, object?> foreignKeyExtractor,
-        string principalKeyClrPropertyName)
+        string principalKeyClrPropertyName,
+        string? thenIncludeChainPath)
         where TPrincipal : class
         where TRelated : class
     {
@@ -190,7 +240,12 @@ internal static class MongoIncludeCompiler
 
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var dbContext = mongoQueryContext.Context;
-        var dbSet = dbContext.Set<TRelated>();
+        IQueryable<TRelated> query = dbContext.Set<TRelated>();
+
+        if (!string.IsNullOrEmpty(thenIncludeChainPath))
+        {
+            query = query.Include(thenIncludeChainPath);
+        }
 
         // Build: r => EF.Property<TKey>(r, principalKeyClrPropertyName).Equals(fkValue)
         var rParam = Expression.Parameter(typeof(TRelated), "r");
@@ -203,7 +258,7 @@ internal static class MongoIncludeCompiler
         var equality = Expression.Equal(pkAccess, Expression.Constant(fkValue, fkValue.GetType()));
         var predicate = Expression.Lambda<Func<TRelated, bool>>(equality, rParam);
 
-        return dbSet.Where(predicate).FirstOrDefault();
+        return query.Where(predicate).FirstOrDefault();
     }
 
     /// <summary>

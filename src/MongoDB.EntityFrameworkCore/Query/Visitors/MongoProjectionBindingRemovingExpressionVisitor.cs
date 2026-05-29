@@ -484,7 +484,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
             includingClrType, relatedEntityClrType, navigation, inverseNavigation!);
 
         var navigationExpression = MongoIncludeCompiler.IsCrossCollection(navigation)
-            ? BuildCrossCollectionLoaderCall(navigation, instanceVariable)
+            ? BuildCrossCollectionLoaderCall(includeExpression, navigation, instanceVariable)
             : Visit(includeExpression.NavigationExpression);
 
         shaperExpressions.Add(
@@ -507,7 +507,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
 #pragma warning restore EF1001 // Internal EF Core API usage.
     }
 
-    private Expression BuildCrossCollectionLoaderCall(INavigation navigation, Expression instanceVariable)
+    private Expression BuildCrossCollectionLoaderCall(IncludeExpression includeExpression, INavigation navigation, Expression instanceVariable)
     {
         var principalClrType = navigation.DeclaringEntityType.ClrType;
         var relatedClrType = navigation.TargetEntityType.ClrType;
@@ -521,12 +521,18 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
                 + "as a follow-up to EF-117.");
         }
 
+        // Extract any chained ThenInclude path from the outer's NavigationExpression
+        // (EF nav-expansion encodes it as a nested Select(t => IncludeExpression(...))
+        // inside the MaterializeCollectionNavigationExpression's Subquery). We pass it
+        // through to the loader, which applies it as .Include(path) on the sub-query.
+        var chainPath = MongoIncludeCompiler.ExtractIncludeChainPath(includeExpression);
+
         return navigation.IsCollection
-            ? BuildCollectionLoaderCall(navigation, instanceVariable)
-            : BuildReferenceLoaderCall(navigation, instanceVariable);
+            ? BuildCollectionLoaderCall(navigation, instanceVariable, chainPath)
+            : BuildReferenceLoaderCall(navigation, instanceVariable, chainPath);
     }
 
-    private Expression BuildCollectionLoaderCall(INavigation navigation, Expression instanceVariable)
+    private Expression BuildCollectionLoaderCall(INavigation navigation, Expression instanceVariable, string? chainPath)
     {
         // navigation.DeclaringEntityType is the principal (e.g. Customer)
         // navigation.TargetEntityType is the dependent (e.g. Order)
@@ -551,10 +557,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
             _queryContextParameter,
             Expression.Convert(instanceVariable, principalClrType),
             Expression.Constant(pkExtractor, typeof(Func<,>).MakeGenericType(principalClrType, typeof(object))),
-            Expression.Constant(fkProperty.Name));
+            Expression.Constant(fkProperty.Name),
+            Expression.Constant(chainPath, typeof(string)));
     }
 
-    private Expression BuildReferenceLoaderCall(INavigation navigation, Expression instanceVariable)
+    private Expression BuildReferenceLoaderCall(INavigation navigation, Expression instanceVariable, string? chainPath)
     {
         // navigation.DeclaringEntityType is the dependent (e.g. Order)
         // navigation.TargetEntityType is the principal (e.g. Customer)
@@ -579,7 +586,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
             _queryContextParameter,
             Expression.Convert(instanceVariable, dependentClrType),
             Expression.Constant(fkExtractor, typeof(Func<,>).MakeGenericType(dependentClrType, typeof(object))),
-            Expression.Constant(pkProperty.Name));
+            Expression.Constant(pkProperty.Name),
+            Expression.Constant(chainPath, typeof(string)));
     }
 
     private static readonly MethodInfo IncludeReferenceMethodInfo
