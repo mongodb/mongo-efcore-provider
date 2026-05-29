@@ -157,13 +157,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
             case IncludeExpression includeExpression:
                 {
-                    if (!(includeExpression.Navigation is INavigation includableNavigation && includableNavigation.IsEmbedded()))
-                    {
-                        throw new InvalidOperationException(
-                            $"Including navigation '{
-                                nameof(includeExpression.Navigation)
-                            }' is not supported as the navigation is not embedded in same resource.");
-                    }
+                    var includableNavigation = MongoIncludeCompiler.ClassifyIncludeNavigation(includeExpression);
 
                     _includedNavigations.Push(includableNavigation);
                     var newIncludeExpression = base.VisitExtension(includeExpression);
