@@ -181,3 +181,92 @@ to do; it's been started early but isn't finished.
   via `GetClrPropertyOrThrow`. Both are mentioned in the plan as
   out-of-scope corners; they get clean error messages today and will be
   addressed in a later stage.
+
+---
+
+## Stage 2 — Reference navigation, dependent → principal (JOIN unwrap)
+
+### Changes
+
+- `src/.../Query/MongoQueryTranslationPreprocessor.cs` — new
+  `IncludeJoinUnwrapper` visitor runs after `base.Process(query)`. It
+  matches the synthetic
+  `Queryable.Join(...).Select(o => IncludeExpression(o.Outer, o.Inner, nav))`
+  shape EF Core's nav-expansion generates for dependent → principal
+  reference Include and rewrites it to
+  `<outerSource>.Select(p => IncludeExpression(p, default(TInner), nav))`.
+  Subsequent stages of the pipeline then see the same Include shape they
+  do for collection navigations.
+- `src/.../Query/Visitors/MongoIncludeCompiler.cs` — added
+  `LoadReference<TPrincipal, TRelated>` runtime helper. Issues
+  `dbSet.Where(r => EF.Property<TKey>(r, pkName).Equals(fkValue)).FirstOrDefault()`
+  per dependent, materializing the related principal through the full
+  EF pipeline.
+- `src/.../Query/Visitors/MongoProjectionBindingRemovingExpressionVisitor.cs`
+  — `BuildCrossCollectionLoaderCall` now dispatches on
+  `navigation.IsCollection`: collection navs call
+  `BuildCollectionLoaderCall` (the Stage 1 path), reference navs call
+  the new `BuildReferenceLoaderCall`. The reference loader extracts the
+  FK from the materialized dependent and looks up the principal by PK.
+- `tests/.../FunctionalTests/Query/IncludeTests.cs` — flipped the
+  reference test from "asserts the legacy 'could not be translated'
+  failure" to a materialization assertion (seed Customers/Orders,
+  query `db.Orders.Include(o => o.Customer)`, assert every Order's
+  Customer is populated and identity resolution gives shared Customer
+  instances for orders that share an FK). Added
+  `ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>` to all
+  test-local contexts so per-test collection-name suffixes aren't
+  invalidated by EF's model cache.
+
+### Verification (Debug EF10)
+
+| Suite | Result |
+|---|---|
+| `IncludeTests` | 4 / 4 pass — reference now materializes; collection still works; ThenInclude outer-only still asserts the Stage 1 partial behavior; M2M still throws the final error |
+| `OwnedEntityTests` | 70 / 70 pass |
+| `UnitTests` | 260 / 260 pass |
+| Full `SpecificationTests` | 4291 / 4432 pass (14 skipped, 127 failed) — 8 *new* failures vs Stage 1's 119. These are cases where Stage 2 now successfully materializes the reference Include but the spec-test override still asserts `AssertTranslationFailed` — expected progressions that need per-test override updates in the Stage 5 sweep |
+
+### Design notes for later stages
+
+- **The JOIN-unwrap rewrite happens in the preprocessor, not in
+  `TranslateJoin`.** Originally planned to override `TranslateJoin`
+  inside `MongoQueryableMethodTranslatingExpressionVisitor`. That would
+  have required producing a `TransparentIdentifier`-shaped
+  `ShapedQueryExpression` and letting the subsequent `Select` project
+  it back down — invasive and required understanding how the base
+  visitor expects to compose with such results. The preprocessor
+  rewrite is dramatically simpler: rewrite the tree *before* the
+  Translator sees it and the rest of the pipeline doesn't notice the
+  Join was ever there. User-written Joins are unaffected because the
+  pattern-match requires both a TransparentIdentifier-typed selector
+  parameter and an `IncludeExpression` body — neither appears in
+  user-written joins.
+- **`default(TInner)` in the rewritten IncludeExpression is a
+  placeholder.** Cross-collection projection-binding never visits
+  `IncludeExpression.NavigationExpression`; the loader extracts what it
+  needs from `INavigation` metadata. The default keeps the tree
+  structurally valid for any later visitor that needs the type but
+  never gets evaluated at runtime.
+- **Performance caveat for large dependent sets.** `LoadReference`
+  issues one sub-query per dependent. For Northwind's 830 Orders, that
+  is 830 round-trips against the Customers collection for a single
+  `db.Orders.Include(o => o.Customer)` — observably slow in the
+  specification suite. A natural follow-up is to batch the FK values
+  and do `Where(c => fks.Contains(c.Id))` once per principal type,
+  caching the results by FK in the query context. This is also the
+  natural shape Stage 1's collection path *should* take (it currently
+  also does one sub-query per principal). Both deferred to a later
+  perf-pass ticket.
+- **Spec-test override cleanup is two-pass and brittle.** A first
+  bulk-replace pass converted ~157 `Assert.ThrowsAsync` overrides to
+  `await base(async); AssertMql(...)` (Stage 1 commit), and a second
+  pass would convert ~270 `AssertTranslationFailed` overrides
+  similarly. The
+  `EF_TEST_REWRITE_BASELINES=1` rewriter is *not idempotent* across
+  runs in practice — running it a second time corrupted hundreds of
+  baselines and caused the suite to take 31 minutes (from ~35s). This
+  commit holds the spec-test files at the Stage 1 baseline state on
+  purpose; the `AssertTranslationFailed` cleanup and full Stage 5
+  sweep belong in a focused follow-up commit where the rewrite is run
+  exactly once with a clean before/after diff.

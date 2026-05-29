@@ -509,15 +509,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
 
     private Expression BuildCrossCollectionLoaderCall(INavigation navigation, Expression instanceVariable)
     {
-        // Stage 1: collection navigation, principal → dependents only.
-        // Reference (dependent → principal) is handled in Stage 2 via JOIN unwrap.
-        if (!navigation.IsCollection)
-        {
-            throw new NotImplementedException(
-                $"Cross-collection reference Include of '{navigation.DeclaringEntityType.DisplayName()
-                }.{navigation.Name}' is not yet implemented. Reference navigations land in Stage 2 of EF-117.");
-        }
-
         var principalClrType = navigation.DeclaringEntityType.ClrType;
         var relatedClrType = navigation.TargetEntityType.ClrType;
         var foreignKey = navigation.ForeignKey;
@@ -530,11 +521,24 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
                 + "as a follow-up to EF-117.");
         }
 
+        return navigation.IsCollection
+            ? BuildCollectionLoaderCall(navigation, instanceVariable)
+            : BuildReferenceLoaderCall(navigation, instanceVariable);
+    }
+
+    private Expression BuildCollectionLoaderCall(INavigation navigation, Expression instanceVariable)
+    {
+        // navigation.DeclaringEntityType is the principal (e.g. Customer)
+        // navigation.TargetEntityType is the dependent (e.g. Order)
+        // FK lives on the dependent; match dependent.<fk> == principal.<pk>.
+        var principalClrType = navigation.DeclaringEntityType.ClrType;
+        var relatedClrType = navigation.TargetEntityType.ClrType;
+        var foreignKey = navigation.ForeignKey;
         var fkProperty = foreignKey.Properties[0];
         var pkProperty = foreignKey.PrincipalKey.Properties[0];
         var pkClrProperty = MongoIncludeCompiler.GetClrPropertyOrThrow(pkProperty, navigation);
 
-        // Build pkExtractor: (TPrincipal p) => (object?)p.<pkProperty>
+        // pkExtractor: (TPrincipal p) => (object?)p.<pkProperty>
         var principalParam = Expression.Parameter(principalClrType, "p");
         var pkAccess = Expression.Property(principalParam, pkClrProperty);
         var pkExtractor = Expression.Lambda(
@@ -548,6 +552,34 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Exp
             Expression.Convert(instanceVariable, principalClrType),
             Expression.Constant(pkExtractor, typeof(Func<,>).MakeGenericType(principalClrType, typeof(object))),
             Expression.Constant(fkProperty.Name));
+    }
+
+    private Expression BuildReferenceLoaderCall(INavigation navigation, Expression instanceVariable)
+    {
+        // navigation.DeclaringEntityType is the dependent (e.g. Order)
+        // navigation.TargetEntityType is the principal (e.g. Customer)
+        // FK lives on the dependent (this); match principal.<pk> == this.<fk>.
+        var dependentClrType = navigation.DeclaringEntityType.ClrType;
+        var relatedClrType = navigation.TargetEntityType.ClrType;
+        var foreignKey = navigation.ForeignKey;
+        var fkProperty = foreignKey.Properties[0];
+        var pkProperty = foreignKey.PrincipalKey.Properties[0];
+        var fkClrProperty = MongoIncludeCompiler.GetClrPropertyOrThrow(fkProperty, navigation);
+
+        // fkExtractor: (TDependent d) => (object?)d.<fkProperty>
+        var dependentParam = Expression.Parameter(dependentClrType, "d");
+        var fkAccess = Expression.Property(dependentParam, fkClrProperty);
+        var fkExtractor = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(dependentClrType, typeof(object)),
+            Expression.Convert(fkAccess, typeof(object)),
+            dependentParam).Compile();
+
+        return Expression.Call(
+            MongoIncludeCompiler.LoadReferenceMethodInfo.MakeGenericMethod(dependentClrType, relatedClrType),
+            _queryContextParameter,
+            Expression.Convert(instanceVariable, dependentClrType),
+            Expression.Constant(fkExtractor, typeof(Func<,>).MakeGenericType(dependentClrType, typeof(object))),
+            Expression.Constant(pkProperty.Name));
     }
 
     private static readonly MethodInfo IncludeReferenceMethodInfo

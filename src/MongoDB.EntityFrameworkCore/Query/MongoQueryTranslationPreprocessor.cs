@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
@@ -45,6 +46,13 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
         query = base.Process(query);
         query = VectorSearchReplacer.ReplaceVectorSearchCalls(query, removed);
 
+        // EF Core's nav-expansion rewrites cross-collection dependent-to-principal
+        // reference Includes as a synthetic Queryable.Join + Select wrapping an
+        // IncludeExpression. Lift those back to a plain Select(p => IncludeExpression(p, ..., nav))
+        // so the rest of the provider sees a uniform Include shape (the loader path
+        // built in EF-117 Stage 1 then picks up the reference case in Stage 2).
+        query = IncludeJoinUnwrapper.Unwrap(query);
+
         return query;
     }
 
@@ -54,6 +62,73 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
     protected override bool IsEfConstantSupported => true;
 
 #endif
+
+    /// <summary>
+    /// Rewrites the synthetic <c>Queryable.Join(...).Select(o =&gt; IncludeExpression(o.Outer, o.Inner, nav))</c>
+    /// shape that EF Core's nav-expansion produces for dependent-to-principal reference
+    /// Include into <c>&lt;outerSource&gt;.Select(p =&gt; IncludeExpression(p, default(TInner), nav))</c>.
+    /// The provider then sees the same Include shape as for collection navigations and
+    /// the cross-collection loader path (EF-117) materializes the related entity via a
+    /// per-principal sub-query.
+    /// </summary>
+    private sealed class IncludeJoinUnwrapper : ExpressionVisitor
+    {
+        public static Expression Unwrap(Expression expression)
+            => new IncludeJoinUnwrapper().Visit(expression);
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            // Match: <something>.Select(o => IncludeExpression(o.Outer, o.Inner, nav))
+            // where <something> is a Queryable.Join with a TransparentIdentifier
+            // result selector.
+            if (node.Method.Name == nameof(Queryable.Select)
+                && node.Arguments.Count == 2
+                && node.Arguments[0] is MethodCallExpression joinCall
+                && joinCall.Method.Name == nameof(Queryable.Join)
+                && joinCall.Arguments.Count == 5
+                && Unquote(node.Arguments[1]) is LambdaExpression selectorLambda
+                && selectorLambda.Body is Microsoft.EntityFrameworkCore.Query.IncludeExpression includeExpr
+                && IsTransparentIdentifierFieldAccess(includeExpr.EntityExpression, "Outer", out var outerParam)
+                && IsTransparentIdentifierFieldAccess(includeExpr.NavigationExpression, "Inner", out var innerParam)
+                && outerParam == innerParam
+                && outerParam == selectorLambda.Parameters[0])
+            {
+                var outerSource = joinCall.Arguments[0];
+                var outerType = outerSource.Type.GetGenericArguments()[0];
+
+                // Build new selector: p => IncludeExpression(p, default(TInner), nav)
+                var newParam = Expression.Parameter(outerType, "p");
+                var newInclude = includeExpr.Update(
+                    newParam,
+                    Expression.Default(includeExpr.NavigationExpression.Type));
+                var newSelector = Expression.Lambda(newInclude, newParam);
+
+                var selectMethod = node.Method.GetGenericMethodDefinition()
+                    .MakeGenericMethod(outerType, newInclude.Type);
+                return Expression.Call(selectMethod, Visit(outerSource), Expression.Quote(newSelector));
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        private static Expression Unquote(Expression e)
+            => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;
+
+        private static bool IsTransparentIdentifierFieldAccess(Expression e, string memberName, out ParameterExpression? param)
+        {
+            if (e is MemberExpression me
+                && me.Member.Name == memberName
+                && me.Expression is ParameterExpression p
+                && p.Type.IsGenericType
+                && p.Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+            {
+                param = p;
+                return true;
+            }
+            param = null;
+            return false;
+        }
+    }
 
     private sealed class VectorSearchExtractor : ExpressionVisitor
     {

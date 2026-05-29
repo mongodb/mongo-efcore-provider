@@ -156,10 +156,69 @@ internal static class MongoIncludeCompiler
     }
 
     /// <summary>
+    /// Runtime helper invoked from the compiled shaper for reference (single-related)
+    /// navigations. Loads the related principal of a dependent via a
+    /// <c>FirstOrDefault</c> query keyed on the dependent's foreign key, materialized
+    /// through the standard EF pipeline so that all mappings, tracking, and identity
+    /// resolution apply.
+    /// </summary>
+    /// <remarks>
+    /// EF Core's nav-expansion produces a synthetic <c>Queryable.Join</c> for the
+    /// dependent → principal reference case. The provider's preprocessor
+    /// (<c>IncludeJoinUnwrapper</c>) rewrites that into a plain
+    /// <c>Select(p =&gt; IncludeExpression(p, default(TRelated), nav))</c>, after which
+    /// the shaper-stage visitor emits the call to this helper.
+    /// </remarks>
+    public static TRelated? LoadReference<TPrincipal, TRelated>(
+        QueryContext queryContext,
+        TPrincipal? principal,
+        Func<TPrincipal, object?> foreignKeyExtractor,
+        string principalKeyClrPropertyName)
+        where TPrincipal : class
+        where TRelated : class
+    {
+        if (principal is null)
+        {
+            return null;
+        }
+
+        var fkValue = foreignKeyExtractor(principal);
+        if (fkValue is null)
+        {
+            return null;
+        }
+
+        var mongoQueryContext = (MongoQueryContext)queryContext;
+        var dbContext = mongoQueryContext.Context;
+        var dbSet = dbContext.Set<TRelated>();
+
+        // Build: r => EF.Property<TKey>(r, principalKeyClrPropertyName).Equals(fkValue)
+        var rParam = Expression.Parameter(typeof(TRelated), "r");
+        var efPropertyMethod = typeof(EF).GetMethod(nameof(EF.Property))!
+            .MakeGenericMethod(fkValue.GetType());
+        var pkAccess = Expression.Call(
+            efPropertyMethod,
+            rParam,
+            Expression.Constant(principalKeyClrPropertyName));
+        var equality = Expression.Equal(pkAccess, Expression.Constant(fkValue, fkValue.GetType()));
+        var predicate = Expression.Lambda<Func<TRelated, bool>>(equality, rParam);
+
+        return dbSet.Where(predicate).FirstOrDefault();
+    }
+
+    /// <summary>
     /// Reflected handle for the <see cref="LoadCollection{TPrincipal, TRelated}"/>
     /// helper, used by the shaper-stage visitor when generating the loader call.
     /// </summary>
     public static readonly MethodInfo LoadCollectionMethodInfo
         = typeof(MongoIncludeCompiler).GetTypeInfo()
             .GetDeclaredMethod(nameof(LoadCollection))!;
+
+    /// <summary>
+    /// Reflected handle for the <see cref="LoadReference{TPrincipal, TRelated}"/>
+    /// helper, used by the shaper-stage visitor when generating the loader call.
+    /// </summary>
+    public static readonly MethodInfo LoadReferenceMethodInfo
+        = typeof(MongoIncludeCompiler).GetTypeInfo()
+            .GetDeclaredMethod(nameof(LoadReference))!;
 }

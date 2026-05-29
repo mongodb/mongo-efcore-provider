@@ -27,18 +27,41 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     private IMongoDatabase MongoDatabase => database.MongoDatabase;
 
     [Fact]
-    public void Include_reference_dependent_to_principal_throws_pending()
+    public void Include_reference_dependent_to_principal_materializes()
     {
-        // Stage 0/1: dependent → principal reference Include is rewritten by
-        // EF nav-expansion into a Queryable.Join the provider's translator
-        // doesn't support. Stage 2 of EF-117 lands the JOIN-unwrap path; the
-        // assertion below flips to a materialization assertion then.
-        using var db = new CustomerOrderContext(MongoDatabase, nameof(Include_reference_dependent_to_principal_throws_pending));
+        const string testName = nameof(Include_reference_dependent_to_principal_materializes);
+        // Stage 2: dependent → principal reference Include. EF nav-expansion
+        // rewrites Orders.Include(o => o.Customer) into a Queryable.Join + Select
+        // wrapping an IncludeExpression; MongoQueryTranslationPreprocessor's
+        // IncludeJoinUnwrapper lifts that back to a plain
+        // Select(p => IncludeExpression(p, default(TInner), nav)), after which
+        // the Stage 1 loader infrastructure (now extended with a reference
+        // branch) materializes the related principal via a per-dependent
+        // sub-query.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki" },
+            new Order { Id = "o2", CustomerId = "alfki" },
+            new Order { Id = "o3", CustomerId = "anatr" });
+        seed.SaveChanges();
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => db.Orders.Include(o => o.Customer).ToList());
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var orders = db.Orders
+            .OrderBy(o => o.Id)
+            .Include(o => o.Customer)
+            .ToList();
 
-        Assert.Contains("could not be translated", ex.Message);
+        Assert.Equal(3, orders.Count);
+        Assert.All(orders, o => Assert.NotNull(o.Customer));
+        Assert.Equal("Alfreds", orders[0].Customer.Name);
+        Assert.Equal("Alfreds", orders[1].Customer.Name);
+        Assert.Equal("Ana Trujillo", orders[2].Customer.Name);
+        // Identity resolution: orders 0 and 1 share the same Customer instance.
+        Assert.Same(orders[0].Customer, orders[1].Customer);
     }
 
     [Fact]
@@ -138,6 +161,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => base.OnConfiguring(optionsBuilder
                 .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
 
         protected override void OnModelCreating(ModelBuilder mb)
@@ -183,6 +207,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => base.OnConfiguring(optionsBuilder
                 .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
 
         protected override void OnModelCreating(ModelBuilder mb)
@@ -224,6 +249,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => base.OnConfiguring(optionsBuilder
                 .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
 
         protected override void OnModelCreating(ModelBuilder mb)
