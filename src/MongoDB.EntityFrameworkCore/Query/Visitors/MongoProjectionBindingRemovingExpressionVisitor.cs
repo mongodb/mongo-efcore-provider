@@ -26,8 +26,10 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -36,11 +38,13 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// Translates an shaper expression tree to use <see cref="BsonDocument"/> and the right
 /// methods to obtain data instead of the <see cref="ValueBuffer"/> EF provides.
 /// </summary>
-internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisitor
+internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Expressions.ExpressionVisitor
 {
     private readonly MongoQueryExpression _queryExpression;
     private readonly IEntityType _rootEntityType;
     private readonly ParameterExpression DocParameter;
+    private readonly ParameterExpression _queryContextParameter;
+    private readonly BsonSerializerFactory _bsonSerializerFactory;
     private readonly bool _trackQueryResults;
     private readonly Dictionary<ParameterExpression, Expression> _materializationContextBindings = new();
     private readonly Dictionary<Expression, ParameterExpression> ProjectionBindings = new();
@@ -54,6 +58,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// <param name="rootEntityType">The <see cref="IEntityType"/> this projection relates to.</param>
     /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> this visitor should use.</param>
     /// <param name="docParameter">The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.</param>
+    /// <param name="queryContextParameter">The parameter that will hold the <see cref="QueryContext"/> input
+    /// parameter to the shaper — used by cross-collection include loaders.</param>
+    /// <param name="bsonSerializerFactory">Factory used to obtain related-entity serializers for include
+    /// sub-queries.</param>
     /// <param name="trackQueryResults">
     /// <see langword="true"/> if the results from this query are being tracked for changes,
     /// <see langword="false"/> if they are not.
@@ -62,11 +70,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
         ParameterExpression docParameter,
+        ParameterExpression queryContextParameter,
+        BsonSerializerFactory bsonSerializerFactory,
         bool trackQueryResults)
     {
         _queryExpression = queryExpression;
         _rootEntityType = rootEntityType;
         DocParameter = docParameter;
+        _queryContextParameter = queryContextParameter;
+        _bsonSerializerFactory = bsonSerializerFactory;
         _trackQueryResults = trackQueryResults;
     }
 
@@ -471,7 +483,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         var fixup = GenerateFixup(
             includingClrType, relatedEntityClrType, navigation, inverseNavigation!);
 
-        var navigationExpression = Visit(includeExpression.NavigationExpression);
+        var navigationExpression = MongoIncludeCompiler.IsCrossCollection(navigation)
+            ? BuildCrossCollectionLoaderCall(navigation, instanceVariable)
+            : Visit(includeExpression.NavigationExpression);
 
         shaperExpressions.Add(
             Expression.IfThen(
@@ -491,6 +505,49 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 #pragma warning disable EF1001 // Internal EF Core API usage.
                     Expression.Constant(includeExpression.SetLoaded))));
 #pragma warning restore EF1001 // Internal EF Core API usage.
+    }
+
+    private Expression BuildCrossCollectionLoaderCall(INavigation navigation, Expression instanceVariable)
+    {
+        // Stage 1: collection navigation, principal → dependents only.
+        // Reference (dependent → principal) is handled in Stage 2 via JOIN unwrap.
+        if (!navigation.IsCollection)
+        {
+            throw new NotImplementedException(
+                $"Cross-collection reference Include of '{navigation.DeclaringEntityType.DisplayName()
+                }.{navigation.Name}' is not yet implemented. Reference navigations land in Stage 2 of EF-117.");
+        }
+
+        var principalClrType = navigation.DeclaringEntityType.ClrType;
+        var relatedClrType = navigation.TargetEntityType.ClrType;
+        var foreignKey = navigation.ForeignKey;
+
+        if (foreignKey.Properties.Count != 1)
+        {
+            throw new NotSupportedException(
+                $"Cross-collection Include of '{navigation.DeclaringEntityType.DisplayName()
+                }.{navigation.Name}' requires a single-column foreign key. Composite keys are tracked "
+                + "as a follow-up to EF-117.");
+        }
+
+        var fkProperty = foreignKey.Properties[0];
+        var pkProperty = foreignKey.PrincipalKey.Properties[0];
+        var pkClrProperty = MongoIncludeCompiler.GetClrPropertyOrThrow(pkProperty, navigation);
+
+        // Build pkExtractor: (TPrincipal p) => (object?)p.<pkProperty>
+        var principalParam = Expression.Parameter(principalClrType, "p");
+        var pkAccess = Expression.Property(principalParam, pkClrProperty);
+        var pkExtractor = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(principalClrType, typeof(object)),
+            Expression.Convert(pkAccess, typeof(object)),
+            principalParam).Compile();
+
+        return Expression.Call(
+            MongoIncludeCompiler.LoadCollectionMethodInfo.MakeGenericMethod(principalClrType, relatedClrType),
+            _queryContextParameter,
+            Expression.Convert(instanceVariable, principalClrType),
+            Expression.Constant(pkExtractor, typeof(Func<,>).MakeGenericType(principalClrType, typeof(object))),
+            Expression.Constant(fkProperty.Name));
     }
 
     private static readonly MethodInfo IncludeReferenceMethodInfo

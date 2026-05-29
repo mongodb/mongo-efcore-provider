@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -41,8 +42,10 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
         ParameterExpression docParameter,
+        ParameterExpression queryContextParameter,
+        BsonSerializerFactory bsonSerializerFactory,
         bool trackQueryResults)
-        : base(rootEntityType, queryExpression, docParameter, trackQueryResults)
+        : base(rootEntityType, queryExpression, docParameter, queryContextParameter, bsonSerializerFactory, trackQueryResults)
     {
         _queryExpression = queryExpression;
         _rootEntityType = rootEntityType;

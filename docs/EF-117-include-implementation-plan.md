@@ -170,12 +170,24 @@ tests (`OwnedEntityTests`, `Mapping/OwnedEntityElementNameTests`,
 
 ---
 
-### Stage 1 — Reference navigation, dependent → principal
+### Stage 1 — Collection navigation, principal → dependents
 
-**Goal.** `query.Include(o => o.Customer)` — a reference navigation
-whose FK lives on the principal entity (`Order.CustomerId` → `Customer`).
-Single level, no `ThenInclude`. Synchronous and asynchronous paths both
-work. Tracking and no-tracking both work.
+> **Re-staged after Stage 0.** The plan originally listed reference
+> (dependent → principal) as Stage 1. Probing EF Core's
+> `NavigationExpandingExpressionVisitor` revealed that dependent →
+> principal references are rewritten into a synthetic `Queryable.Join`
+> with a `TransparentIdentifier` result selector — meaning the include
+> never reaches `MongoIncludeCompiler.ClassifyIncludeNavigation`; the
+> provider's `TranslateJoin` rejects the tree earlier. Collection
+> navigations, by contrast, surface as a clean `IncludeExpression` in
+> the shaper and already land on the classifier today. Swapping the
+> order keeps Stage 1 minimal and produces shared loader / sub-query
+> infrastructure that Stage 2 then reuses for the JOIN-unwrap case.
+
+**Goal.** `query.Include(c => c.Orders)` — a collection navigation
+where the FK lives on the dependent entity (`Order.CustomerId` →
+`Customer`). Single level, no `ThenInclude`. Synchronous and
+asynchronous paths both work. Tracking and no-tracking both work.
 
 **Changes.**
 
@@ -189,7 +201,8 @@ work. Tracking and no-tracking both work.
       (`$match` keyed on the FK values; parameters live on
       `QueryContext.Parameters` under sentinel names),
     - a compiled "key extractor" `Func<TPrincipal, TKey>` that reads the
-      FK values off the materialized principal,
+      PK values off the materialized principal (which match the
+      dependent's FK),
     - the entity shaper for the related type (compiled by the standard
       pipeline — re-enters `MongoShapedQueryCompilingExpressionVisitor`
       for the related-entity sub-shape).
@@ -200,9 +213,9 @@ work. Tracking and no-tracking both work.
   - In `AddIncludes(...)`, after materializing the principal, emit
     code that:
     1. calls the loader,
-    2. invokes the existing `IncludeReference` helper with the result.
-  - `IncludeReference` itself is unchanged — it already accepts a
-    materialized `TRelated relatedEntity`.
+    2. invokes the existing `IncludeCollection` helper with the result.
+  - `IncludeCollection` itself is unchanged — it already accepts a
+    materialized `IEnumerable<TRelated>`.
 - `src/.../Query/Visitors/MongoShapedQueryCompilingExpressionVisitor.cs`
   — thread the cross-collection-include loaders through
   `CompileShapedQuery` so they end up captured in the compiled shaper's
@@ -213,7 +226,7 @@ work. Tracking and no-tracking both work.
   storing sub-loaders as captured closures in the shaper lambda (the
   loader holds its own `MongoExecutableQuery`).
 - **Sub-query execution path.** The loader, when invoked, must:
-  - bind FK values into the surrounding `QueryContext.Parameters` (so
+  - bind PK values into the surrounding `QueryContext.Parameters` (so
     the LINQ-v3 driver pipeline parameterizes correctly),
   - execute the sub-query (`MongoClient.GetCollection<TRelated>(...).AsQueryable()` +
     `Where` on the parameters),
@@ -223,36 +236,35 @@ work. Tracking and no-tracking both work.
   `MongoShapedQueryCompilingExpressionVisitor.TranslateQuery`) so MQL
   logging, transaction binding, and retries Just Work for sub-queries
   too.
-- **Async.** Provide an `IncludeReferenceAsync` companion to the
-  existing `IncludeReference`. The shaper picks the async path when the
+- **Async.** Provide an `IncludeCollectionAsync` companion to the
+  existing `IncludeCollection`. The shaper picks the async path when the
   query result cardinality / `CancellationToken` is async-flavored.
 
 **MQL shape expected.**
 
 ```text
-Orders.{ "$match" : { ... } }
-Customers.{ "$match" : { "_id" : { "$in" : [<FK values of materialized principals>] } } }
+Customers.{ "$match" : { ... } }
+Orders.{ "$match" : { "CustomerId" : { "$in" : [<PK values of materialized principals>] } } }
 ```
 
-Note: for a single principal we can use `_id : value`; for an
-enumerable result we batch the FK lookup with `$in`. Decide between
-"one sub-query per principal" and "batched `$in`" — *batched* is
-the in-memory provider's effective behavior because the shaper sees
-the whole result set; for MongoDB we should do the same.
+Note: for a single principal we can use `CustomerId : value`; for an
+enumerable result we batch the FK lookup with `$in`. The
+in-memory provider's effective behavior is batched because the shaper
+sees the whole result set; for MongoDB we do the same.
 
 **Verification.**
 
 ```bash
 dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj \
-  -c "Debug EF10" --no-build --filter "FullyQualifiedName~IncludeTests.Include_reference_dependent_to_principal"
+  -c "Debug EF10" --no-build --filter "FullyQualifiedName~IncludeTests.Include_collection_principal_to_dependents"
 ```
 
 The corresponding spec tests start passing — focus the spec-test
-verification on the tracked-/no-tracking-reference cases:
+verification on the collection-include cases:
 
 ```bash
 dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj \
-  -c "Debug EF10" --no-build --filter "FullyQualifiedName~NorthwindIncludeQueryMongoTest.Include_reference"
+  -c "Debug EF10" --no-build --filter "FullyQualifiedName~NorthwindIncludeQueryMongoTest.Include_collection"
 ```
 
 For each spec test that now translates, drop the `Assert.ThrowsAsync` /
@@ -264,43 +276,57 @@ delete the `// Fails: Include issue EF-117` line (per
 
 ---
 
-### Stage 2 — Collection navigation, principal → dependents
+### Stage 2 — Reference navigation, dependent → principal (JOIN unwrap)
 
-**Goal.** `query.Include(c => c.Orders)` — a collection navigation
-where the FK lives on the dependent entity (`Order.CustomerId`). Single
-level, no `ThenInclude`.
+**Goal.** `query.Include(o => o.Customer)` — a reference navigation
+whose FK lives on the dependent (`Order.CustomerId` → `Customer`).
+Single level, no `ThenInclude`.
+
+EF Core's nav-expansion rewrites this Include into a synthetic
+`Queryable.Join(Customers, o.CustomerId, c.Id, (o, i) => new
+TransparentIdentifier<Order, Customer>(o, i))`. The provider's existing
+`TranslateJoin` (which returns null) rejects this tree before the
+`IncludeExpression` can reach the classifier. Stage 2's work is to
+recognise that synthetic JOIN shape, lift the inner DbSet back to a
+logical Include, and route it through the same loader / fan-out
+infrastructure Stage 1 built.
 
 **Changes.**
 
-- Extend `MongoIncludeCompiler` to handle the collection case:
-  - sub-query filter is `{ <fk-field> : { "$in" : [<principal PKs>] } }`
-    (or `{ <fk-field> : <pk> }` for single-principal queries),
-  - the loader returns `IEnumerable<TRelated>` grouped by FK value so the
-    shaper can dispatch each group to the correct principal,
-  - or, alternatively (preferred for symmetry with EF in-memory): the
-    loader materializes a flat sequence and the shaper indexes into it
-    by FK match — same as `IncludeCollection`'s existing handling but
-    sourced from the sub-query instead of from a nested
-    `BsonArrayProjection`.
-- `IncludeCollection` is reused unchanged.
-- Verify `IClrCollectionAccessor.GetOrCreate(...)` is invoked for empty
-  collection navigations (the existing helper already does this at
-  line ~610 — make sure cross-collection includes hit that path too).
-- Handle ordering: collection navigation results retain insertion order
-  (no explicit `$sort` is needed unless the user added one via filtered
-  Include, which is out of scope here).
+- `src/.../Query/Visitors/MongoQueryableMethodTranslatingExpressionVisitor.cs`
+  — implement `TranslateJoin` to:
+  - detect the nav-expansion-generated JOIN pattern: both sources are
+    entity query roots, key selectors are `EF.Property` accesses, the
+    result selector returns a `TransparentIdentifier<TOuter, TInner>`
+    where the outer / inner generic args match the FK / principal
+    entities;
+  - return a `ShapedQueryExpression` whose inner shaper carries an
+    `IncludeExpression` for the inner side — which then flows through
+    the existing classifier and Stage 1's loader machinery via the
+    reference-Include path (`IncludeReference` rather than
+    `IncludeCollection`).
+- `src/.../Query/Visitors/MongoIncludeCompiler.cs` — generalise the
+  Stage 1 loader so it dispatches between
+  - **collection** sub-query (single `$match` keyed by principal PK,
+    materialise enumerable, call `IncludeCollection`), and
+  - **reference** sub-query (`$match { _id : <FK value> }`,
+    `FirstOrDefault`, call `IncludeReference`).
+  The split is on `navigation.IsCollection`.
+- User-written JOINs (the ones EF Core's `TranslateJoin` is normally
+  supposed to handle for relational providers) remain unsupported —
+  the new `TranslateJoin` only matches the synthetic Include shape and
+  returns null otherwise, preserving the current "Join operations are
+  not supported" error for genuine user joins.
 
 **Verification.**
 
 ```bash
-dotnet test ... --filter "FullyQualifiedName~IncludeTests.Include_collection"
-dotnet test ... --filter "FullyQualifiedName~NorthwindIncludeQueryMongoTest.Include_collection"
+dotnet test ... --filter "FullyQualifiedName~IncludeTests.Include_reference_dependent_to_principal"
+dotnet test ... --filter "FullyQualifiedName~NorthwindIncludeQueryMongoTest.Include_reference"
 ```
 
-Spec-test overrides for the collection-include shapes flip from
-"asserts failure" to "asserts MQL". Expect on the order of 60-80 spec
-tests to flip in this stage. Update `failing-spec-tests.md`'s EF-117
-count.
+Spec-test overrides for reference-include shapes flip from
+"asserts failure" to "asserts MQL".
 
 **Stop for review.**
 

@@ -29,12 +29,11 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Include_reference_dependent_to_principal_throws_pending()
     {
-        // Stage 0: dependent → principal reference Include reaches EF Core's
-        // navigation-expansion which currently produces a sub-Select shape the
-        // MongoDB provider can't translate. Stage 1 of EF-117 will route this
-        // through the cross-collection Include path and the assertion below
-        // flips to a materialization assertion.
-        using var db = new CustomerOrderContext(MongoDatabase);
+        // Stage 0/1: dependent → principal reference Include is rewritten by
+        // EF nav-expansion into a Queryable.Join the provider's translator
+        // doesn't support. Stage 2 of EF-117 lands the JOIN-unwrap path; the
+        // assertion below flips to a materialization assertion then.
+        using var db = new CustomerOrderContext(MongoDatabase, nameof(Include_reference_dependent_to_principal_throws_pending));
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => db.Orders.Include(o => o.Customer).ToList());
@@ -43,38 +42,64 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Include_collection_principal_to_dependents_throws_pending()
+    public void Include_collection_principal_to_dependents_materializes()
     {
-        // Stage 0: cross-collection collection Include is recognised by the
-        // provider's projection-binding visitor and rejected with the legacy
-        // EF-117 message (preserved so existing specification-test overrides
-        // remain green). Stage 2 of EF-117 lands the implementation.
-        using var db = new CustomerOrderContext(MongoDatabase);
+        const string testName = nameof(Include_collection_principal_to_dependents_materializes);
+        // Stage 1: cross-collection collection Include is implemented via a
+        // fan-out sub-query against the related collection.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki" },
+            new Order { Id = "o2", CustomerId = "alfki" },
+            new Order { Id = "o3", CustomerId = "anatr" });
+        seed.SaveChanges();
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => db.Customers.Include(c => c.Orders).ToList());
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var customers = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders)
+            .ToList();
 
-        Assert.Contains("Including navigation 'Navigation' is not supported", ex.Message);
-        Assert.Contains("EF-117", ex.Message);
-        Assert.Contains("Customer.Orders", ex.Message);
+        Assert.Equal(2, customers.Count);
+        var alfki = customers.Single(c => c.Id == "alfki");
+        var anatr = customers.Single(c => c.Id == "anatr");
+        Assert.Equal(2, alfki.Orders.Count);
+        Assert.Single(anatr.Orders);
+        Assert.All(alfki.Orders, o => Assert.Same(alfki, o.Customer));
+        Assert.Same(anatr, anatr.Orders.Single().Customer);
     }
 
     [Fact]
-    public void ThenInclude_chain_throws_pending()
+    public void ThenInclude_chain_outer_collection_loads_inner_pending()
     {
-        // Stage 0: a Customer → Order → OrderDetail ThenInclude chain hits the
-        // same cross-collection rejection. Stage 3 of EF-117 lands the
-        // implementation of multi-level chains.
-        using var db = new ThenIncludeContext(MongoDatabase);
+        const string testName = nameof(ThenInclude_chain_outer_collection_loads_inner_pending);
+        // Stage 1 limitation: a ThenInclude chain runs the outer Include via
+        // the fan-out loader, but the nested ThenInclude is silently dropped
+        // because the loader doesn't yet recurse. Stage 3 of EF-117 wires the
+        // recursion and the assertion below flips to a materialization
+        // assertion for the inner collection.
+        using var seed = new ThenIncludeContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" });
+        seed.Items.AddRange(
+            new ThenIncludeItem { Id = "i1", OrderId = "o1" });
+        seed.SaveChanges();
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => db.Customers
-                .Include(c => c.Orders)
-                .ThenInclude(o => o.Items)
-                .ToList());
+        using var db = new ThenIncludeContext(MongoDatabase, testName);
+        var customers = db.Customers
+            .Include(c => c.Orders)
+            .ThenInclude(o => o.Items)
+            .ToList();
 
-        Assert.Contains("Including navigation 'Navigation' is not supported", ex.Message);
-        Assert.Contains("EF-117", ex.Message);
+        var alfki = Assert.Single(customers);
+        Assert.Single(alfki.Orders); // Stage 1: Orders loaded
+        Assert.Empty(alfki.Orders[0].Items); // Stage 1 limit: Items not loaded yet (Stage 3 wires this)
     }
 
     [Fact]
@@ -82,7 +107,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     {
         // EF-117's scope explicitly excludes many-to-many (skip navigations).
         // This exception message ships as the final behavior for the M2M case.
-        using var db = new PostTagContext(MongoDatabase);
+        using var db = new PostTagContext(MongoDatabase, nameof(Include_skip_navigation_throws_not_supported));
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => db.Posts.Include(p => p.Tags).ToList());
@@ -105,7 +130,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         public Customer Customer { get; set; } = null!;
     }
 
-    private class CustomerOrderContext(IMongoDatabase mongoDatabase) : DbContext
+    private class CustomerOrderContext(IMongoDatabase mongoDatabase, string suffix) : DbContext
     {
         public DbSet<Customer> Customers { get; set; } = null!;
         public DbSet<Order> Orders { get; set; } = null!;
@@ -118,8 +143,8 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         protected override void OnModelCreating(ModelBuilder mb)
         {
             base.OnModelCreating(mb);
-            mb.Entity<Customer>().ToCollection("ef117_customers");
-            mb.Entity<Order>().ToCollection("ef117_orders");
+            mb.Entity<Customer>().ToCollection($"ef117_{suffix}_customers");
+            mb.Entity<Order>().ToCollection($"ef117_{suffix}_orders");
             mb.Entity<Customer>()
                 .HasMany(c => c.Orders)
                 .WithOne(o => o.Customer)
@@ -149,7 +174,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         public ThenIncludeOrder Order { get; set; } = null!;
     }
 
-    private class ThenIncludeContext(IMongoDatabase mongoDatabase) : DbContext
+    private class ThenIncludeContext(IMongoDatabase mongoDatabase, string suffix) : DbContext
     {
         public DbSet<ThenIncludeCustomer> Customers { get; set; } = null!;
         public DbSet<ThenIncludeOrder> Orders { get; set; } = null!;
@@ -163,9 +188,9 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         protected override void OnModelCreating(ModelBuilder mb)
         {
             base.OnModelCreating(mb);
-            mb.Entity<ThenIncludeCustomer>().ToCollection("ef117_ti_customers");
-            mb.Entity<ThenIncludeOrder>().ToCollection("ef117_ti_orders");
-            mb.Entity<ThenIncludeItem>().ToCollection("ef117_ti_items");
+            mb.Entity<ThenIncludeCustomer>().ToCollection($"ef117_{suffix}_customers");
+            mb.Entity<ThenIncludeOrder>().ToCollection($"ef117_{suffix}_orders");
+            mb.Entity<ThenIncludeItem>().ToCollection($"ef117_{suffix}_items");
             mb.Entity<ThenIncludeCustomer>()
                 .HasMany(c => c.Orders)
                 .WithOne(o => o.Customer)
@@ -191,7 +216,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         public List<Post> Posts { get; set; } = [];
     }
 
-    private class PostTagContext(IMongoDatabase mongoDatabase) : DbContext
+    private class PostTagContext(IMongoDatabase mongoDatabase, string suffix) : DbContext
     {
         public DbSet<Post> Posts { get; set; } = null!;
         public DbSet<Tag> Tags { get; set; } = null!;
@@ -204,8 +229,8 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         protected override void OnModelCreating(ModelBuilder mb)
         {
             base.OnModelCreating(mb);
-            mb.Entity<Post>().ToCollection("ef117_posts");
-            mb.Entity<Tag>().ToCollection("ef117_tags");
+            mb.Entity<Post>().ToCollection($"ef117_{suffix}_posts");
+            mb.Entity<Tag>().ToCollection($"ef117_{suffix}_tags");
             mb.Entity<Post>().HasMany(p => p.Tags).WithMany(t => t.Posts);
         }
     }

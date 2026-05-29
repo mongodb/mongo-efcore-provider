@@ -14,9 +14,20 @@
  */
 
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -25,51 +36,33 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// </summary>
 /// <remarks>
 /// <para>
-/// For each <c>IncludeExpression</c> whose navigation crosses collection boundaries
-/// (<see cref="MongoNavigationExtensions.IsEmbedded"/> returns <see langword="false"/>),
-/// this type will produce:
+/// For each <c>IncludeExpression</c> whose navigation crosses collection
+/// boundaries (<see cref="MongoNavigationExtensions.IsEmbedded"/> returns
+/// <see langword="false"/>), the shaper-stage visitor emits a call to one of
+/// the <c>Load*</c> helpers here. The helper builds and executes a
+/// parameterized sub-query against the related collection and returns the
+/// materialized result, which the existing <c>IncludeReference</c> /
+/// <c>IncludeCollection</c> machinery in
+/// <see cref="MongoProjectionBindingRemovingExpressionVisitor"/> then wires
+/// up via standard EF fixup.
 /// </para>
-/// <list type="bullet">
-///   <item>a parameterized <see cref="MongoExecutableQuery"/> rooted at the related entity's
-///   collection, with <c>$match</c> keyed off the principal's PK / FK values;</item>
-///   <item>a compiled key-extractor reading those values from the materialized principal;</item>
-///   <item>a compiled shaper for the related entity (re-entering
-///   <see cref="MongoShapedQueryCompilingExpressionVisitor"/>, so nested
-///   <c>ThenInclude</c> chains work recursively);</item>
-///   <item>a "loader" closure that, given a <see cref="MongoQueryContext"/> and a principal,
-///   issues the sub-query, materializes the result, and feeds it to the existing
-///   <c>IncludeReference</c> / <c>IncludeCollection</c> helpers in
-///   <see cref="MongoProjectionBindingRemovingExpressionVisitor"/>.</item>
-/// </list>
 /// <para>
-/// This file is a Stage-0 scaffold for EF-117; the implementation lands in Stages 1–3
-/// per <c>docs/EF-117-include-implementation-plan.md</c>.
+/// Stage 1 implements collection navigations on the principal side
+/// (e.g. <c>Customer.Orders</c>). Reference navigations on the dependent
+/// side (e.g. <c>Order.Customer</c>) require JOIN-unwrap handling and land
+/// in Stage 2; ThenInclude chains land in Stage 3.
 /// </para>
 /// </remarks>
 internal static class MongoIncludeCompiler
 {
-    // Stage 1: reference navigation, dependent → principal (Order.Customer).
-    // Stage 2: collection navigation, principal → dependents (Customer.Orders).
-    // Stage 3: ThenInclude chains and cycles.
-
     /// <summary>
-    /// Partitions an <see cref="IncludeExpression"/> into the three cases the provider
-    /// handles distinctly: embedded (already supported), cross-collection (EF-117 stages
-    /// 1+), and many-to-many via skip navigation (explicitly out of scope for EF-117).
+    /// Partitions an <see cref="IncludeExpression"/> by type: many-to-many
+    /// (skip navigation) is rejected with a clear error; everything else
+    /// passes through as an <see cref="INavigation"/> for downstream stages
+    /// to dispatch on <see cref="IsCrossCollection"/>.
     /// </summary>
-    /// <param name="includeExpression">The include node coming from EF Core's
-    /// navigation expansion.</param>
-    /// <returns>The classified <see cref="INavigation"/> when the include is supported
-    /// today (i.e. embedded). The current Stage-0 implementation only returns for
-    /// embedded navigations and throws for the other two cases.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the navigation is a
-    /// many-to-many (<see cref="ISkipNavigation"/>) — out of scope for EF-117 — or when
-    /// the navigation crosses collection boundaries. The cross-collection case will
-    /// stop throwing as EF-117 stages 1–3 land their implementation.</exception>
     public static INavigation ClassifyIncludeNavigation(IncludeExpression includeExpression)
     {
-        // INavigationBase has exactly two implementations: INavigation (reference / collection)
-        // and ISkipNavigation (many-to-many). EF-117 covers only the former.
         if (includeExpression.Navigation is not INavigation navigation)
         {
             var skipNavigation = includeExpression.Navigation;
@@ -79,20 +72,94 @@ internal static class MongoIncludeCompiler
                 + "Many-to-many Include is tracked as a follow-up to EF-117.");
         }
 
-        if (!navigation.IsEmbedded())
-        {
-            // Cross-collection Include: full implementation lands in later EF-117 stages.
-            // The message string is intentionally kept compatible with the legacy text
-            // the provider has shipped — the ~500 specification-test overrides assert on
-            // "Including navigation 'Navigation' is not supported" verbatim. Stages 1–5
-            // remove individual overrides as each include shape starts translating.
-            throw new InvalidOperationException(
-                "Including navigation 'Navigation' is not supported as the navigation is not "
-                + "embedded in same resource. Cross-collection Include support is being added "
-                + $"incrementally under EF-117 (navigation: '{navigation.DeclaringEntityType.DisplayName()
-                }.{navigation.Name}').");
-        }
-
         return navigation;
     }
+
+    /// <summary>
+    /// <see langword="true"/> when the navigation crosses collection
+    /// boundaries — i.e. is not embedded in the principal's BSON document.
+    /// Cross-collection includes need a fan-out loader; embedded includes
+    /// traverse the same document and use the existing path.
+    /// </summary>
+    public static bool IsCrossCollection(INavigation navigation)
+        => !navigation.IsEmbedded();
+
+    /// <summary>
+    /// Resolves the CLR <see cref="PropertyInfo"/> for an EF property,
+    /// throwing a clear "not yet supported" error if the property is a
+    /// shadow property (no CLR representation). Stage 1 only supports
+    /// single-column CLR-backed keys; shadow / composite keys are
+    /// out-of-scope for now.
+    /// </summary>
+    public static PropertyInfo GetClrPropertyOrThrow(IProperty property, INavigation navigation)
+    {
+        var clr = property.PropertyInfo;
+        if (clr is null)
+        {
+            throw new NotSupportedException(
+                $"Cross-collection Include of '{navigation.DeclaringEntityType.DisplayName()
+                }.{navigation.Name}' requires a CLR-backed key/FK property; '{property.DeclaringType.DisplayName()
+                }.{property.Name}' is a shadow property. Shadow-key Include is tracked as a "
+                + "follow-up to EF-117.");
+        }
+        return clr;
+    }
+
+    /// <summary>
+    /// Runtime helper invoked from the compiled shaper. Loads the related
+    /// dependents of a single principal via a <c>$match</c> on the foreign
+    /// key, materialized through the standard driver-LINQ pipeline so that
+    /// MQL logging, transaction binding, and serializer registration all
+    /// flow through the existing infrastructure.
+    /// </summary>
+    public static IEnumerable<TRelated> LoadCollection<TPrincipal, TRelated>(
+        QueryContext queryContext,
+        TPrincipal? principal,
+        Func<TPrincipal, object?> principalKeyExtractor,
+        string foreignKeyClrPropertyName)
+        where TPrincipal : class
+        where TRelated : class
+    {
+        if (principal is null)
+        {
+            return [];
+        }
+
+        var pkValue = principalKeyExtractor(principal);
+        if (pkValue is null)
+        {
+            return [];
+        }
+
+        // Run the sub-query through EF's standard query pipeline (via DbContext.Set<TRelated>)
+        // rather than the raw driver. This way all EF mappings — element names, value
+        // converters, discriminator, owned-type nesting — apply identically to the
+        // include results and to a stand-alone DbSet query against the same type.
+        var mongoQueryContext = (MongoQueryContext)queryContext;
+        var dbContext = mongoQueryContext.Context;
+        var dbSet = dbContext.Set<TRelated>();
+
+        // Build: r => EF.Property<object>(r, foreignKeyClrPropertyName).Equals(pkValue)
+        // EF.Property handles both CLR-backed and shadow FK properties via standard
+        // translation.
+        var rParam = Expression.Parameter(typeof(TRelated), "r");
+        var efPropertyMethod = typeof(EF).GetMethod(nameof(EF.Property))!
+            .MakeGenericMethod(pkValue.GetType());
+        var fkAccess = Expression.Call(
+            efPropertyMethod,
+            rParam,
+            Expression.Constant(foreignKeyClrPropertyName));
+        var equality = Expression.Equal(fkAccess, Expression.Constant(pkValue, pkValue.GetType()));
+        var predicate = Expression.Lambda<Func<TRelated, bool>>(equality, rParam);
+
+        return dbSet.Where(predicate).ToList();
+    }
+
+    /// <summary>
+    /// Reflected handle for the <see cref="LoadCollection{TPrincipal, TRelated}"/>
+    /// helper, used by the shaper-stage visitor when generating the loader call.
+    /// </summary>
+    public static readonly MethodInfo LoadCollectionMethodInfo
+        = typeof(MongoIncludeCompiler).GetTypeInfo()
+            .GetDeclaredMethod(nameof(LoadCollection))!;
 }

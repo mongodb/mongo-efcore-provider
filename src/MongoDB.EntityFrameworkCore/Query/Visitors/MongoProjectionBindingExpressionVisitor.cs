@@ -159,6 +159,20 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 {
                     var includableNavigation = MongoIncludeCompiler.ClassifyIncludeNavigation(includeExpression);
 
+                    if (MongoIncludeCompiler.IsCrossCollection(includableNavigation))
+                    {
+                        // Cross-collection Include — preserve the IncludeExpression so the
+                        // shaper-stage visitor can emit our own loader call. We deliberately
+                        // do NOT visit the NavigationExpression (which is an EF-generated
+                        // sub-query against the related DbSet that the provider's translator
+                        // can't process); the loader gets everything it needs from the
+                        // navigation metadata instead.
+                        _includedNavigations.Push(includableNavigation);
+                        var visitedEntity = Visit(includeExpression.EntityExpression);
+                        _includedNavigations.Pop();
+                        return includeExpression.Update(visitedEntity, includeExpression.NavigationExpression);
+                    }
+
                     _includedNavigations.Push(includableNavigation);
                     var newIncludeExpression = base.VisitExtension(includeExpression);
                     _includedNavigations.Pop();

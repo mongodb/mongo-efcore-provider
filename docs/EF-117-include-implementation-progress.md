@@ -59,3 +59,125 @@ was verified, and any design notes that matter for the stages that follow.
   machinery so the classifier (and thence the loader) sees it.
 - `HasMany().WithMany()` builds cleanly through `MongoModelValidator` — no
   extra guard is needed for the M2M case; the classifier alone is enough.
+
+---
+
+## Stage 1 — Collection navigation, principal → dependents (core complete)
+
+> **Re-staged from the original plan.** Plan called this Stage 2 with
+> reference (dependent → principal) as Stage 1. A pre-implementation
+> probe showed EF Core's nav-expansion rewrites the reference case into
+> a synthetic `Queryable.Join` with a `TransparentIdentifier` result
+> selector — that JOIN never reaches the classifier and requires a
+> separate unwrap pass. Swapped the order so Stage 1 ships the smaller,
+> contained piece first; Stage 2 then handles the JOIN unwrap.
+> See `EF-117-include-implementation-plan.md` for the updated stages.
+
+### Changes
+
+- `src/.../Query/Visitors/MongoIncludeCompiler.cs` — added
+  `IsCrossCollection(INavigation)` discriminator,
+  `GetClrPropertyOrThrow` for shadow-FK rejection, and
+  `LoadCollection<TPrincipal, TRelated>(...)` runtime helper. The
+  loader runs the sub-query through `DbContext.Set<TRelated>().Where(...)`
+  so the full EF translation pipeline (element names, value converters,
+  discriminator, etc.) applies identically to include results as to a
+  stand-alone DbSet query.
+- `src/.../Query/Visitors/MongoProjectionBindingExpressionVisitor.cs` —
+  cross-collection `IncludeExpression`s are recognised but their
+  `NavigationExpression` (an EF-generated sub-query against the related
+  DbSet) is deliberately not visited. The loader gets everything from
+  the navigation metadata.
+- `src/.../Query/Visitors/MongoProjectionBindingRemovingExpressionVisitor.cs`
+  — `AddInclude` now dispatches on `IsCrossCollection`. Cross-collection
+  collection navigations emit a call to `LoadCollection` whose result is
+  threaded into the existing `IncludeCollection` helper for fixup +
+  `SetIsLoaded`. Constructor extended to receive the shaper's
+  `QueryContext` parameter and `BsonSerializerFactory`.
+- `src/.../Query/Visitors/MongoMixedProjectionBindingRemovingExpressionVisitor.cs`
+  — constructor mirrors the parent.
+- `src/.../Query/Visitors/MongoShapedQueryCompilingExpressionVisitor.cs`
+  — threads `QueryContextParameter` and `_bsonSerializerFactory` through
+  both shaper-compilation paths.
+- `tests/.../FunctionalTests/Query/IncludeTests.cs` — flipped the
+  collection test from placeholder to a materialization assertion (seed
+  Customer/Order, query with `.Include(c => c.Orders)`, assert orders
+  loaded and inverse navigation set). Per-test collection names so
+  parallel re-runs don't collide.
+
+### Verification (Debug EF10)
+
+| Suite | Result |
+|---|---|
+| New `IncludeTests` | 4 / 4 pass — collection Include materializes, reference still pending (Stage 2), M2M throws final error, ThenInclude loads outer only (Stage 3 pending) |
+| `OwnedEntityTests` | 70 / 70 pass — embedded include path preserved |
+| `UnitTests` | 260 / 260 pass |
+| Full `SpecificationTests` | 4299 / 4432 pass (14 skipped, 119 failed) — significant improvement from the post-implementation state of 167+ failing |
+
+### Spec-test override sweep
+
+Two passes:
+
+1. **Bulk pattern replacement.** A Python script replaced 157 instances
+   of the legacy "throws this exception with this message" override
+   pattern with `await base.X(async)` so the EF Core base test runs and
+   asserts result correctness against the in-memory model.
+2. **Baseline rewrite.** Ran the suite with
+   `EF_TEST_REWRITE_BASELINES=1` (multiple passes) so the
+   Roslyn-based baseline rewriter captured the actual MQL pipelines into
+   each test's `AssertMql(...)` call.
+
+What remains failing:
+
+- ~98 tests in the four `NorthwindInclude*QueryMongoTest` suites that
+  exercise sub-features Stage 1 doesn't cover: `ThenInclude` inner
+  loads (Stage 3), filtered Include (separate ticket), dependent →
+  principal reference (Stage 2), tracking duplicates when the same
+  entity is included via multiple paths, and a handful with
+  test-specific quirks (cyclic includes, complex projections).
+- ~21 tests in other Northwind suites (Set ops, Select, Where, Misc,
+  Compiled, Filters) that use Include as part of a larger query and
+  hit the same Stage 1 limitations.
+
+These follow the same shape: the override still asserts the legacy
+throw (replaced above) or asserts a stale MQL baseline. They need
+per-test investigation — either to update the assertion to match the
+actual partial-stage behavior, or to be fixed by a later stage's
+implementation. This is the bulk of what Stage 5's sweep was meant
+to do; it's been started early but isn't finished.
+
+### Design notes for later stages
+
+- **Stage 1 deliberately reuses the DbContext-level query path** rather
+  than building a sub-shaper directly. This was the second iteration of
+  the loader: a first attempt that bypassed EF (`IMongoCollection.Find`
+  with the driver's default class map) materialized fine for the
+  IncludeTests model but blew up on Northwind because the entity has
+  `OrderID` (not `Id`) as its key and the driver-default class map
+  didn't know about EF's `_id` mapping. Routing through
+  `DbContext.Set<TRelated>().Where(...)` gives Northwind the full EF
+  pipeline for free.
+- **Tracking-mode fixup** relies on EF's state manager: when a
+  cross-collection sub-query goes through `DbContext.Set`, tracked
+  queries auto-attach the related entities and the state manager wires
+  up the navigation property from matching FKs. `IncludeCollection`'s
+  tracking branch just enumerates the result to trigger that fixup.
+- **80 newly-failing spec tests** are overrides that previously
+  asserted the throw the classifier used to emit. Each one needs to
+  either (a) be deleted so the base test runs and asserts both result
+  shape and MQL, or (b) keep the override but flip to `AssertMql(...)`
+  with the captured baseline. This is the Stage 5 sweep starting early
+  — it's mechanical but voluminous and is the bulk of the remaining
+  Stage 1 work.
+- **ThenInclude is silently dropped at Stage 1**: when the outer
+  `IncludeExpression.NavigationExpression` carries a nested
+  `IncludeExpression` for the chained navigation, the loader-based
+  cross-collection path skips visiting `NavigationExpression`
+  entirely. Stage 3 wires recursion so the inner navigation is loaded.
+  The Stage 1 test `ThenInclude_chain_outer_collection_loads_inner_pending`
+  captures this — outer Orders load, inner Items don't — so the
+  behavior is at least known and asserted, not a silent surprise.
+- **Composite keys + shadow FK/PK** throw a clear "follow-up" error
+  via `GetClrPropertyOrThrow`. Both are mentioned in the plan as
+  out-of-scope corners; they get clean error messages today and will be
+  addressed in a later stage.

@@ -45,37 +45,44 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_with_last_no_orderby(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_last_no_orderby(async)))
-            .Message);
+        await base.Include_collection_with_last_no_orderby(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WOLZA" } }
+""");
     }
 
     public override async Task Include_collection_with_filter_reordered(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_filter_reordered(async)))
-            .Message);
+        await base.Include_collection_with_filter_reordered(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""");
     }
 
     public override async Task Include_collection_order_by_non_key_with_first_or_default(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Include_collection_order_by_non_key_with_first_or_default(async))).Message);
+        await base.Include_collection_order_by_non_key_with_first_or_default(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "CompanyName" : -1 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WOLZA" } }
+""");
     }
 
     public override async Task Include_with_cycle_does_not_throw_when_AsTracking_NoTrackingWithIdentityResolution(bool async)
@@ -90,13 +97,16 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_with_filter(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_filter(async))).Message);
+        await base.Include_collection_with_filter(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""");
     }
 
     public override async Task Include_references_then_include_multi_level(bool async)
@@ -110,11 +120,7 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_order_by_collection_column(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_collection_column(async)))
-            .Message);
+        await base.Include_collection_order_by_collection_column(async);
 
         AssertMql(
         );
@@ -122,24 +128,293 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_alias_generation(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_alias_generation(async))).Message);
+        await base.Include_collection_alias_generation(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10347 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10386 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10414 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10512 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10581 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10650 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10725 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10408 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10480 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10634 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10763 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10789 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10264 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10327 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10378 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10434 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10460 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10533 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10561 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10703 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10762 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10774 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10824 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10880 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10902 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10955 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10977 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10980 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10993 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11001 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11050 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10267 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10337 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10342 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10396 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10488 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10560 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10623 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10653 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10670 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10675 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10717 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10791 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10859 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10929 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11012 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10671 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10860 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10971 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10422 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10710 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10753 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10807 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11026 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11060 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10328 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10352 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10464 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10491 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10551 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10604 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10664 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10963 } }
+""");
     }
 
     public override async Task Include_collection_skip_take_no_order_by(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_skip_take_no_order_by(async)))
-            .Message);
+        await base.Include_collection_skip_take_no_order_by(async);
         AssertMql(
-        );
+            """
+Customers.{ "$skip" : 10 }, { "$limit" : 5 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BSBEV" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CACTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CENTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CHOPS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "COMMI" } }
+""");
     }
 
     public override async Task Include_collection_with_cross_join_clause_with_filter(bool async)
@@ -198,23 +473,57 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_order_by_non_key_with_take(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_non_key_with_take(async)))
-            .Message);
+        await base.Include_collection_order_by_non_key_with_take(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 10 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUEDE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SUPRD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LILAS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOTTM" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUICK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WARTH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VINET" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ROMEY" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HANAR" } }
+""");
     }
 
     public override async Task Include_collection_then_include_collection_predicate(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Include_collection_then_include_collection_predicate(async))).Message);
+        await base.Include_collection_then_include_collection_predicate(async);
 
         AssertMql(
         );
@@ -222,38 +531,88 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_take_no_order_by(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_take_no_order_by(async))).Message);
+        await base.Include_collection_take_no_order_by(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$limit" : 10 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BERGS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLAUS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BLONP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOLID" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BONAP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOTTM" } }
+""");
     }
 
     public override async Task Include_collection_principal_already_tracked(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_principal_already_tracked(async)))
-            .Message);
+        await base.Include_collection_principal_already_tracked(async);
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
-            """);
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""");
     }
 
     public override async Task Include_collection_OrderBy_object(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_object(async))).Message);
+        await base.Include_collection_OrderBy_object(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$sort" : { "_id" : 1 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10248 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10249 } }
+""");
     }
 
     public override async Task Include_duplicate_collection_result_operator2(bool async)
@@ -276,14 +635,12 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_single_or_default_no_result(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_single_or_default_no_result(async)))
-            .Message);
+        await base.Include_collection_single_or_default_no_result(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : "ALFKI ?" } }, { "$limit" : 2 }
+""");
     }
 
     public override async Task Include_collection_with_cross_apply_with_filter(bool async)
@@ -315,22 +672,49 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection(async))).Message);
+        await base.Include_collection(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLIG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""");
     }
 
     public override async Task Include_collection_then_include_collection_then_include_reference(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Include_collection_then_include_collection_then_include_reference(async))).Message);
+        await base.Include_collection_then_include_collection_then_include_reference(async);
 
         AssertMql(
         );
@@ -365,14 +749,24 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_OrderBy_list_does_not_contains(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Include_collection_OrderBy_list_does_not_contains(async))).Message);
+        await base.Include_collection_OrderBy_list_does_not_contains(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$not" : { "$in" : ["$_id", ["ALFKI"]] } } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""");
     }
 
     public override async Task Include_reference_dependent_already_tracked(bool async)
@@ -415,14 +809,36 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_order_by_non_key_with_skip(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_non_key_with_skip(async)))
-            .Message);
+        await base.Include_collection_order_by_non_key_with_skip(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$sort" : { "ContactTitle" : 1 } }, { "$skip" : 2 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""");
     }
 
     public override async Task Include_collection_on_join_clause_with_order_by_and_filter(bool async)
@@ -454,10 +870,7 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_then_reference(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_then_reference(async))).Message);
+        await base.Include_collection_then_reference(async);
 
         AssertMql(
         );
@@ -465,13 +878,44 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_order_by_key(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_key(async))).Message);
+        await base.Include_collection_order_by_key(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLIG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""");
     }
 
     public override async Task Include_collection_with_outer_apply_with_filter(bool async)
@@ -494,16 +938,20 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_dependent_already_tracked(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_dependent_already_tracked(async)))
-            .Message);
+        await base.Include_collection_dependent_already_tracked(async);
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""");
     }
 
     public override async Task Include_with_complex_projection_does_not_change_ordering_of_projection(bool async)
@@ -517,11 +965,7 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_multi_level_collection_and_then_include_reference_predicate(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Include_multi_level_collection_and_then_include_reference_predicate(async))).Message);
+        await base.Include_multi_level_collection_and_then_include_reference_predicate(async);
 
         AssertMql(
         );
@@ -538,14 +982,24 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_OrderBy_empty_list_contains(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_empty_list_contains(async)))
-            .Message);
+        await base.Include_collection_OrderBy_empty_list_contains(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$in" : ["$_id", []] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""");
     }
 
     public override async Task Include_references_and_collection_multi_level(bool async)
@@ -559,14 +1013,36 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_force_alias_uniquefication(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_force_alias_uniquefication(async)))
-            .Message);
+        await base.Include_collection_force_alias_uniquefication(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10643 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10692 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10702 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10835 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 10952 } }
+""",
+            //
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : 11011 } }
+""");
     }
 
     public override async Task Include_collection_with_outer_apply_with_filter_non_equality(bool async)
@@ -598,11 +1074,7 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_then_include_collection(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_then_include_collection(async)))
-            .Message);
+        await base.Include_collection_then_include_collection(async);
 
         AssertMql(
         );
@@ -729,14 +1201,24 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_OrderBy_list_contains(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_OrderBy_list_contains(async)))
-            .Message);
+        await base.Include_collection_OrderBy_list_contains(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$in" : ["$_id", ["ALFKI"]] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""");
     }
 
     public override async Task Multi_level_includes_are_applied_with_skip(bool async)
@@ -768,14 +1250,28 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_distinct_is_server_evaluated(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_distinct_is_server_evaluated(async)))
-            .Message);
+        await base.Include_collection_distinct_is_server_evaluated(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""");
     }
 
     public override async Task Include_reference_when_projection(bool async)
@@ -817,24 +1313,74 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_closes_reader(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_closes_reader(async))).Message);
+        await base.Include_closes_reader(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Products.
+""");
     }
 
     public override async Task Include_with_skip(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_with_skip(async))).Message);
+        await base.Include_with_skip(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "ContactName" : 1 } }, { "$skip" : 80 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ERNSH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RANCH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "NORTS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "DRACD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BSBEV" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CHOPS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HUNGC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAUGB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OCEAN" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WOLZA" } }
+""");
     }
 
     public override async Task Include_collection_Join_GroupBy_Select(bool async)
@@ -857,12 +1403,31 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_orderby_take(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_orderby_take(async))).Message);
+        await base.Include_collection_orderby_take(async);
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BERGS" } }
+""");
     }
 
     public override async Task Join_Include_collection_GroupBy_Select(bool async)
@@ -876,13 +1441,44 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_order_by_non_key(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_non_key(async))).Message);
+        await base.Include_collection_order_by_non_key(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$sort" : { "PostalCode" : 1 } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLIG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""");
     }
 
     public override async Task Include_when_result_operator(bool async)
@@ -942,25 +1538,38 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_with_last(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_last(async))).Message);
+        await base.Include_collection_with_last(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "CompanyName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WOLZA" } }
+""");
     }
 
     public override async Task Include_collection_OrderBy_empty_list_does_not_contains(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Include_collection_OrderBy_empty_list_does_not_contains(async))).Message);
+        await base.Include_collection_OrderBy_empty_list_does_not_contains(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$not" : { "$in" : ["$_id", []] } } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 1 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANATR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ANTON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""");
     }
 
     public override async Task Include_multiple_references_then_include_multi_level_reverse(bool async)
@@ -1002,10 +1611,7 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_order_by_subquery(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_order_by_subquery(async))).Message);
+        await base.Include_collection_order_by_subquery(async);
 
         AssertMql(
         );
@@ -1022,11 +1628,7 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Then_include_collection_order_by_collection_column(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Then_include_collection_order_by_collection_column(async))).Message);
+        await base.Then_include_collection_order_by_collection_column(async);
 
         AssertMql(
         );
@@ -1043,13 +1645,336 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_skip_no_order_by(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_skip_no_order_by(async))).Message);
+        await base.Include_collection_skip_no_order_by(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$skip" : 10 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BSBEV" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CACTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CENTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CHOPS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "COMMI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CONSH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "DRACD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "DUMON" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "EASTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ERNSH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLIG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GALED" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GODOS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GOURL" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GREAL" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "GROSR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HANAR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HILAA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HUNGC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HUNGO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ISLAT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "KOENE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LACOR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAMAI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAUGB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAZYK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LEHMS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LETSS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LILAS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LINOD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LONEP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MAGAA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MAISD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MEREP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "MORGK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "NORTS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OCEAN" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OLDWO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OTTIK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PARIS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PERIC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PICCO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "PRINI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUEDE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUEEN" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "QUICK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RANCH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RATTC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "REGGC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RICAR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RICSU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "ROMEY" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SANTG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SAVEA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SEVES" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SIMOB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SPECD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SPLIR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SUPRD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "THEBI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "THECR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TOMSP" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TORTU" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TRADH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "TRAIH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VAFFE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VICTE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VINET" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WANDK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WARTH" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WELLI" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WHITC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WILMK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WOLZA" } }
+""");
     }
 
     public override async Task Include_multi_level_reference_then_include_collection_predicate(bool async)
@@ -1081,13 +2006,52 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_with_take(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_with_take(async))).Message);
+        await base.Include_with_take(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "ContactName" : -1 } }, { "$limit" : 10 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "WOLZA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "OCEAN" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "LAUGB" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "HUNGC" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "CHOPS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BSBEV" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "AROUT" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "DRACD" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "NORTS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "RANCH" } }
+""");
     }
 
     public override async Task Include_multiple_references(bool async)
@@ -1101,10 +2065,7 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_list(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_list(async))).Message);
+        await base.Include_list(async);
 
         AssertMql(
         );
@@ -1130,14 +2091,44 @@ public class NorthwindStringIncludeQueryMongoTest : NorthwindStringIncludeQueryT
 
     public override async Task Include_collection_with_conditional_order_by(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_collection_with_conditional_order_by(async)))
-            .Message);
+        await base.Include_collection_with_conditional_order_by(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$cond" : { "if" : { "$eq" : [{ "$indexOfCP" : ["$_id", "S"] }, 0] }, "then" : 1, "else" : 2 } } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FAMIA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FISSA" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLIG" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FOLKO" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANK" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANR" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FRANS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "FURIB" } }
+""");
     }
 
     public override async Task Include_non_existing_navigation(bool async)

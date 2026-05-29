@@ -78,7 +78,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // Entity path: full BsonDocuments shaped into tracked/untracked entity instances
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             (bsonDoc, track) => new MongoProjectionBindingRemovingExpressionVisitor(
-                rootEntityType, mongoQueryExpression, bsonDoc, track));
+                rootEntityType, mongoQueryExpression, bsonDoc,
+                QueryCompilationContext.QueryContextParameter, _bsonSerializerFactory, track));
     }
 
     private MethodCallExpression VisitProjectedQuery(
@@ -113,7 +114,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             (bsonDoc, track) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
-                rootEntityType, mongoQueryExpression, bsonDoc, track));
+                rootEntityType, mongoQueryExpression, bsonDoc,
+                QueryCompilationContext.QueryContextParameter, _bsonSerializerFactory, track));
     }
 
     private MethodCallExpression CompileShapedQuery(
