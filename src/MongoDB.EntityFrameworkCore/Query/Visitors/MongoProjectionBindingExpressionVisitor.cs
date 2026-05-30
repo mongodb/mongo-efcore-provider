@@ -161,7 +161,17 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
                     if (MongoIncludeCompiler.IsCrossCollection(includableNavigation))
                     {
-                        // Cross-collection Include — preserve the IncludeExpression so the
+                        var strategy = MongoIncludeCompiler.ChooseStrategy(includeExpression, includableNavigation);
+                        if (strategy == IncludeStrategy.ServerLookup)
+                        {
+                            // Server-side $lookup — register the pending lookup so AppendLookupStages
+                            // emits the $lookup stage, and rewrite the navigation so the shaper reads
+                            // the materialized dependents from the `_lookup_<Nav>` array field.
+                            _queryExpression.AddLookup(new LookupExpression(includableNavigation));
+                            return RewriteCollectionIncludeForLookup(includeExpression, includableNavigation);
+                        }
+
+                        // Client-side fan-out — preserve the IncludeExpression so the
                         // shaper-stage visitor can emit our own loader call. We deliberately
                         // do NOT visit the NavigationExpression (which is an EF-generated
                         // sub-query against the related DbSet that the provider's translator
@@ -181,6 +191,55 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             default:
                 throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
         }
+    }
+
+    /// <summary>
+    /// Rewrites a top-level principal→dependent collection <see cref="IncludeExpression"/> so the
+    /// included collection is materialized from the server-side <c>$lookup</c> output array
+    /// (<c>_lookup_&lt;Nav&gt;</c>) instead of a client-side fan-out sub-query. The pending
+    /// <see cref="LookupExpression"/> is registered by the caller; here we bind the navigation to
+    /// its <see cref="ObjectArrayProjectionExpression"/>, add it to the projection so the shaper-stage
+    /// visitor can read the array, and replace the navigation with a
+    /// <see cref="CollectionShaperExpression"/>.
+    /// </summary>
+    private Expression RewriteCollectionIncludeForLookup(IncludeExpression includeExpression, INavigation navigation)
+    {
+        _includedNavigations.Push(navigation);
+        var visitedEntity = Visit(includeExpression.EntityExpression);
+        _includedNavigations.Pop();
+
+        EntityProjectionExpression outerEntityProjection;
+        if (visitedEntity is StructuralTypeShaperExpression { ValueBufferExpression: ProjectionBindingExpression { Index: int index } })
+        {
+            outerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[index].Expression;
+        }
+        else
+        {
+            // Couldn't resolve the outer entity projection — fall back to fan-out by preserving
+            // the original navigation expression (the loader path handles it from metadata).
+            return includeExpression.Update(visitedEntity, includeExpression.NavigationExpression);
+        }
+
+        // BindNavigation routes a cross-collection collection nav to an ObjectArrayProjectionExpression
+        // reading the `_lookup_<Nav>` field (shared with the producer via LookupExpression.GetAlias).
+        var objectArrayProjection = (ObjectArrayProjectionExpression)outerEntityProjection.BindNavigation(navigation);
+
+        var innerShaperExpression = new StructuralTypeShaperExpression(
+            navigation.TargetEntityType,
+            Expression.Convert(
+                Expression.Convert(objectArrayProjection.InnerProjection, typeof(object)),
+                typeof(ValueBuffer)),
+            nullable: true);
+
+        var collectionShaper = new CollectionShaperExpression(
+            objectArrayProjection,
+            innerShaperExpression,
+            navigation,
+            navigation.TargetEntityType.ClrType);
+
+        _queryExpression.AddToProjection(objectArrayProjection);
+
+        return includeExpression.Update(visitedEntity, collectionShaper);
     }
 
     /// <inheritdoc />

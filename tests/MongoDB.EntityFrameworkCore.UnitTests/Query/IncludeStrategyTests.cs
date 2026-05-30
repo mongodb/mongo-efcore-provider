@@ -58,7 +58,7 @@ public static class IncludeStrategyTests
     }
 
     [Fact]
-    public static void ChooseStrategy_returns_ClientFanOut_for_cross_collection_nav()
+    public static void ChooseStrategy_returns_ServerLookup_for_top_level_principal_collection_nav()
     {
         using var db = new TwoCollectionDbContext();
         var navigation = db.Model
@@ -66,9 +66,31 @@ public static class IncludeStrategyTests
             .FindNavigation(nameof(Customer.Orders))!;
 
         Assert.True(MongoIncludeCompiler.IsCrossCollection(navigation));
+        Assert.True(navigation.IsCollection);
+        Assert.False(navigation.IsOnDependent);
 
-        // Stage 0 ignores includeExpression
-        var strategy = MongoIncludeCompiler.ChooseStrategy(null!, navigation);
+        // EF-117 Task 2.2: a top-level principal→dependent collection Include (with no nested
+        // ThenInclude chain) now routes to a server-side $lookup. A null includeExpression means
+        // "no nested include", so the routing reduces to the navigation shape.
+        var strategy = MongoIncludeCompiler.ChooseStrategy(null, navigation);
+
+        Assert.Equal(IncludeStrategy.ServerLookup, strategy);
+    }
+
+    [Fact]
+    public static void ChooseStrategy_returns_ClientFanOut_for_dependent_side_reference_nav()
+    {
+        using var db = new TwoCollectionDbContext();
+        var navigation = db.Model
+            .FindEntityType(typeof(Order))!
+            .FindNavigation(nameof(Order.Customer))!;
+
+        Assert.True(MongoIncludeCompiler.IsCrossCollection(navigation));
+        Assert.False(navigation.IsCollection);
+        Assert.True(navigation.IsOnDependent);
+
+        // Reference (dependent→principal) navigations still fan out client-side.
+        var strategy = MongoIncludeCompiler.ChooseStrategy(null, navigation);
 
         Assert.Equal(IncludeStrategy.ClientFanOut, strategy);
     }

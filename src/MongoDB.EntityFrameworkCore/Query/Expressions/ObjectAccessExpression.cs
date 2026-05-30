@@ -82,7 +82,9 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
 
     public ObjectAccessExpression Update(Expression outerExpression)
         => outerExpression != AccessExpression
-            ? new ObjectAccessExpression(Navigation, outerExpression, Required)
+            // Preserve the explicit Name rather than re-deriving it via GetContainingElementName(),
+            // which throws for cross-collection $lookup projections (no embedded element name exists).
+            ? new ObjectAccessExpression(Navigation, outerExpression, Required, Name)
             : this;
 
     void IPrintableExpression.Print(ExpressionPrinter expressionPrinter)

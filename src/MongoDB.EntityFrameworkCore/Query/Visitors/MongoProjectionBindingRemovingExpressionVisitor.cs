@@ -489,7 +489,16 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         var fixup = GenerateFixup(
             includingClrType, relatedEntityClrType, navigation, inverseNavigation!);
 
-        var navigationExpression = MongoIncludeCompiler.IsCrossCollection(navigation)
+        // A cross-collection collection Include routed to a server-side $lookup has had its
+        // NavigationExpression rewritten (in the binding visitor) to read the `_lookup_<Nav>`
+        // array; the binding visitor also registered a pending LookupExpression for it. Such an
+        // include is processed like an embedded collection (visit it) rather than emitting a
+        // fan-out loader call. We key off PendingLookups — the authoritative, mutation-proof
+        // signal — because the post-injection NavigationExpression shape is no longer a bare
+        // CollectionShaperExpression. Reference / dependent-side / nested includes keep the
+        // original EF sub-query and fan out.
+        var routedToLookup = _queryExpression.PendingLookups.Any(l => l.Navigation == navigation);
+        var navigationExpression = MongoIncludeCompiler.IsCrossCollection(navigation) && !routedToLookup
             ? BuildCrossCollectionLoaderCall(includeExpression, navigation, instanceVariable)
             : Visit(includeExpression.NavigationExpression);
 

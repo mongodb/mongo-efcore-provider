@@ -98,11 +98,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
-""",
-            //
-            """
-Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$limit" : 1 }
 """);
     }
 

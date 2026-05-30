@@ -73,7 +73,9 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
         Expression accessExpression,
         EntityProjectionExpression innerProjection)
         => accessExpression != AccessExpression || innerProjection != InnerProjection
-            ? new ObjectArrayProjectionExpression(Navigation, accessExpression, innerProjection)
+            // Preserve the explicit Name rather than re-deriving it via GetContainingElementName(),
+            // which throws for cross-collection $lookup projections (no embedded element name exists).
+            ? new ObjectArrayProjectionExpression(Navigation, accessExpression, Name!, innerProjection)
             : this;
 
     void IPrintableExpression.Print(ExpressionPrinter expressionPrinter)

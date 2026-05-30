@@ -129,6 +129,48 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Include_collection_emits_single_lookup_query_and_materializes()
+    {
+        const string testName = nameof(Include_collection_emits_single_lookup_query_and_materializes);
+        // EF-117 Task 2.2: a top-level principal→dependent collection Include must
+        // run as a SINGLE server-side $lookup (into the `_lookup_<Nav>` field) rather
+        // than the client-side fan-out (one sub-query per principal).
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki" },
+            new Order { Id = "o2", CustomerId = "alfki" },
+            new Order { Id = "o3", CustomerId = "anatr" });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new CustomerOrderContext(MongoDatabase, testName, logs.Add);
+        var customers = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders)
+            .ToList();
+
+        // Materialization: each principal's dependents come back from the $lookup array.
+        Assert.Equal(2, customers.Count);
+        var alfki = customers.Single(c => c.Id == "alfki");
+        var anatr = customers.Single(c => c.Id == "anatr");
+        Assert.Equal(2, alfki.Orders.Count);
+        Assert.Single(anatr.Orders);
+
+        // Exactly one MQL query was executed, and it carries a $lookup into _lookup_Orders.
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        Assert.Single(mqlQueries);
+        var lookupQuery = mqlQueries[0];
+        Assert.Contains("$lookup", lookupQuery);
+        Assert.Contains("\"as\" : \"_lookup_Orders\"", lookupQuery);
+        // No fan-out sub-queries against the Orders collection (would be a second query).
+        Assert.DoesNotContain(logs, l => l.Contains("Executed MQL query") && l != lookupQuery);
+    }
+
+    [Fact]
     public void ThenInclude_chain_materializes()
     {
         const string testName = nameof(ThenInclude_chain_materializes);
@@ -345,16 +387,22 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         public Customer Customer { get; set; } = null!;
     }
 
-    private class CustomerOrderContext(IMongoDatabase mongoDatabase, string suffix) : DbContext
+    private class CustomerOrderContext(IMongoDatabase mongoDatabase, string suffix, Action<string>? log = null) : DbContext
     {
         public DbSet<Customer> Customers { get; set; } = null!;
         public DbSet<Order> Orders { get; set; } = null!;
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-            => base.OnConfiguring(optionsBuilder
+        {
+            base.OnConfiguring(optionsBuilder
                 .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
+            if (log != null)
+            {
+                optionsBuilder.LogTo(log).EnableSensitiveDataLogging();
+            }
+        }
 
         protected override void OnModelCreating(ModelBuilder mb)
         {

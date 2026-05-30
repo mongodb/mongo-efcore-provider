@@ -89,12 +89,32 @@ internal static class MongoIncludeCompiler
     /// <c>$lookup</c> or fall back to the client-side fan-out loader.
     /// Stage 0: always fan-out. Later stages enable shapes incrementally.
     /// </summary>
-    public static IncludeStrategy ChooseStrategy(IncludeExpression includeExpression, INavigation navigation)
+    public static IncludeStrategy ChooseStrategy(IncludeExpression? includeExpression, INavigation navigation)
     {
-        // Stage 0 placeholder — every shape still fans out. Do not add real
-        // routing here until the matching stage's $lookup path is implemented.
+        // Only a top-level principal→dependent collection Include routes to a
+        // server-side $lookup. Reference navigations, dependent-side navigations,
+        // and anything with a nested (ThenInclude / nested-collection) chain still
+        // fan out client-side until their matching $lookup stage lands.
+        if (IsCrossCollection(navigation)
+            && navigation.IsCollection
+            && !navigation.IsOnDependent
+            && !HasNestedInclude(includeExpression))
+        {
+            return IncludeStrategy.ServerLookup;
+        }
+
         return IncludeStrategy.ClientFanOut;
     }
+
+    /// <summary>
+    /// <see langword="true"/> when the include carries a nested ThenInclude /
+    /// nested-collection chain (encoded by EF nav-expansion inside the outer
+    /// <c>NavigationExpression</c>). Such shapes are not yet supported by the
+    /// $lookup path and must continue to fan out.
+    /// </summary>
+    private static bool HasNestedInclude(IncludeExpression? includeExpression)
+        => includeExpression?.NavigationExpression is { } navigationExpression
+           && EnumerateNestedIncludes(navigationExpression).Any();
 
     /// <summary>
     /// Extracts the chained ThenInclude navigations from an outer
@@ -109,12 +129,19 @@ internal static class MongoIncludeCompiler
     /// </summary>
     public static string? ExtractIncludeChainPath(IncludeExpression includeExpression)
     {
-        var chain = new List<string>();
-        WalkForNestedIncludes(includeExpression.NavigationExpression, chain);
+        var chain = EnumerateNestedIncludes(includeExpression.NavigationExpression).Select(n => n.Name).ToList();
         return chain.Count > 0 ? string.Join(".", chain) : null;
     }
 
-    private static void WalkForNestedIncludes(Expression expression, List<string> chain)
+    /// <summary>
+    /// Walks an outer Include's <c>NavigationExpression</c> yielding each nested
+    /// (ThenInclude / nested-collection) navigation in chain order. EF nav-expansion
+    /// encodes ThenInclude as a tail <c>Select(t =&gt; IncludeExpression(t, ..., nav))</c>
+    /// inside the (optionally <see cref="MaterializeCollectionNavigationExpression"/>-wrapped)
+    /// sub-query. Both <see cref="ExtractIncludeChainPath"/> (joins names) and
+    /// <c>HasNestedInclude</c> (tests <c>.Any()</c>) drive off this single walker.
+    /// </summary>
+    private static IEnumerable<INavigation> EnumerateNestedIncludes(Expression expression)
     {
         // Collection navigations wrap the sub-query in a
         // MaterializeCollectionNavigationExpression — unwrap to the inner query.
@@ -124,11 +151,6 @@ internal static class MongoIncludeCompiler
             expression = mcne.Subquery;
         }
 
-        // Look for: <source>.Select(t => IncludeExpression(t, ..., nav)) at the
-        // tail of the sub-query — the encoding nav-expansion uses for
-        // ThenInclude. Recurse into the nested IncludeExpression's own
-        // NavigationExpression so chains of any depth produce the full
-        // dot-separated path.
         if (expression is MethodCallExpression mc
             && mc.Method.IsGenericMethod
             && mc.Method.GetGenericMethodDefinition() == QueryableMethods.Select
@@ -137,8 +159,11 @@ internal static class MongoIncludeCompiler
             && selectorLambda.Body is IncludeExpression nestedInclude
             && nestedInclude.Navigation is INavigation nav)
         {
-            chain.Add(nav.Name);
-            WalkForNestedIncludes(nestedInclude.NavigationExpression, chain);
+            yield return nav;
+            foreach (var deeper in EnumerateNestedIncludes(nestedInclude.NavigationExpression))
+            {
+                yield return deeper;
+            }
         }
     }
 

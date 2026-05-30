@@ -3036,27 +3036,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$sort" : { "City" : 1, "_id" : 1 } }, { "$skip" : 40 }, { "$limit" : 5 }
-""",
-            //
-            """
-Orders.{ "$match" : { "CustomerID" : "NORTS" } }
-""",
-            //
-            """
-Orders.{ "$match" : { "CustomerID" : "SEVES" } }
-""",
-            //
-            """
-Orders.{ "$match" : { "CustomerID" : "BERGS" } }
-""",
-            //
-            """
-Orders.{ "$match" : { "CustomerID" : "VICTE" } }
-""",
-            //
-            """
-Orders.{ "$match" : { "CustomerID" : "BOLID" } }
+Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$sort" : { "City" : 1, "_id" : 1 } }, { "$skip" : 40 }, { "$limit" : 5 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 

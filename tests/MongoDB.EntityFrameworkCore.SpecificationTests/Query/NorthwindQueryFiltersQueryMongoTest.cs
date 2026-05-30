@@ -112,18 +112,26 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
     public override async Task Include_query(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216 — the query
-        // filter on Customer references a navigation to Order across a
-        // separate collection.
-        await AssertTranslationFailed(() => base.Include_query(async));
+        // EF-117 Task 2.2: a top-level principal→dependent collection Include now
+        // executes as a server-side $lookup, so this no longer fails to translate.
+        await base.Include_query(async);
+
+        AssertMql(
+            """
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Include_query_opt_out(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216 — even with
-        // IgnoreQueryFilters, the projection still resolves a cross-collection
-        // navigation.
-        await AssertTranslationFailed(() => base.Include_query_opt_out(async));
+        // EF-117 Task 2.2: a top-level principal→dependent collection Include now
+        // executes as a server-side $lookup, so this no longer fails to translate.
+        await base.Include_query_opt_out(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Included_many_to_one_query(bool async)
