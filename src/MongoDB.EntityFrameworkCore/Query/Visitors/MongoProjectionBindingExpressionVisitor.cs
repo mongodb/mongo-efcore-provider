@@ -164,10 +164,10 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                         var strategy = MongoIncludeCompiler.ChooseStrategy(includeExpression, includableNavigation);
                         if (strategy == IncludeStrategy.ServerLookup)
                         {
-                            // Server-side $lookup — register the pending lookup so AppendLookupStages
-                            // emits the $lookup stage, and rewrite the navigation so the shaper reads
-                            // the materialized dependents from the `_lookup_<Nav>` array field.
-                            _queryExpression.AddLookup(new LookupExpression(includableNavigation));
+                            // Server-side $lookup — rewrite the navigation so the shaper reads the
+                            // materialized dependents from the `_lookup_<Nav>` array field.
+                            // AddLookup is called INSIDE RewriteCollectionIncludeForLookup, only on
+                            // the success path, so a fallback to fan-out leaves no orphan lookup registered.
                             return RewriteCollectionIncludeForLookup(includeExpression, includableNavigation);
                         }
 
@@ -219,6 +219,11 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             // the original navigation expression (the loader path handles it from metadata).
             return includeExpression.Update(visitedEntity, includeExpression.NavigationExpression);
         }
+
+        // The rewrite is now committed to the $lookup path, so register the pending lookup here —
+        // not before the resolution above — so a fallback to fan-out leaves no orphan lookup registered
+        // (which would otherwise emit a $lookup whose `_lookup_<Nav>` output nothing reads).
+        _queryExpression.AddLookup(new LookupExpression(navigation));
 
         // BindNavigation routes a cross-collection collection nav to an ObjectArrayProjectionExpression
         // reading the `_lookup_<Nav>` field (shared with the producer via LookupExpression.GetAlias).
