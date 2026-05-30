@@ -105,6 +105,14 @@ roadmap. Record this caveat in `docs/EF-117-include-overview.md` in Stage 8.
 
 **Goal:** create the branch, add the strategy enum and a single routing decision point, and lock in current behavior with characterization tests so no regression slips through. No behavior change yet (classifier returns `ClientFanOut` for everything).
 
+> **Stage 0 floor (measured 2026-05-30 on `EF-117c`, tree identical to `ade279b`):**
+> | Config | Failed | Passed | Skipped |
+> |---|---|---|---|
+> | Debug EF10 (full spec project) | 0 | 4418 | 14 | — re-run in this environment (44 s) |
+> | Debug EF8 | 0 | 4714 | 11 | — from `ade279b` (identical tree; full `/test-all` at Stage 8) |
+> | Debug EF9 | 0 | 4858 | 11 | — from `ade279b` (identical tree; full `/test-all` at Stage 8) |
+> Plus `IncludeTests` 10/10, `OwnedEntityTests` 70/70, `UnitTests` 260/260. **0 failures is the floor at every later stage boundary.**
+
 ### Task 0.1: Create the working branch
 
 **Files:** none (git only).

@@ -6,6 +6,27 @@ In order to evolve the provider as we introduce new features, we will be using t
 
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 
+### Unsupported cross-collection `Include` shapes now throw `NotSupportedException`
+
+#### Old behavior
+
+Any `Include`/`ThenInclude` that crossed a collection boundary threw `InvalidOperationException` ("Including navigation '...' is not supported as the navigation is not embedded in same resource.") at translation time.
+
+#### New behavior
+
+Cross-collection `Include` is now supported in general (see EF-117). The shapes that remain unsupported throw more specific exceptions:
+
+- A cross-collection `Include` whose key/foreign-key is a **shadow property**, or which relies on a **composite key**, now throws `NotSupportedException` (previously `InvalidOperationException`).
+- A many-to-many (**skip navigation**) `Include` continues to throw `InvalidOperationException`, but with a new message referencing that many-to-many `Include` is not yet supported.
+
+#### Why
+
+Cross-collection `Include` support (EF-117) replaced the single blanket "not embedded" failure with per-shape handling. `NotSupportedException` more accurately describes a capability the provider does not yet implement (shadow/composite-key keys), distinct from a malformed query.
+
+#### Mitigations
+
+If you catch exceptions thrown by translating these specific `Include` shapes, update the catch to handle `NotSupportedException` (shadow/composite-key) in addition to `InvalidOperationException` (many-to-many). Configuring a CLR-backed key/foreign-key property avoids the shadow-key case.
+
 ### The element name for discriminators may have changed
 
 #### Old behavior
