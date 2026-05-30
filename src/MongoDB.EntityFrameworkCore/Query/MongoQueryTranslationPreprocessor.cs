@@ -51,6 +51,12 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
         // IncludeExpression. Lift those back to a plain Select(p => IncludeExpression(p, ..., nav))
         // so the rest of the provider sees a uniform Include shape (the loader path
         // built in EF-117 Stage 1 then picks up the reference case in Stage 2).
+        //
+        // This runs unconditionally on every query. A reliable pre-check (does the tree
+        // contain the Join+Select-over-IncludeExpression shape?) is itself a full tree
+        // walk, so it would not save any work over just running the unwrapper — whose
+        // VisitMethodCall match is narrow and a no-op when the shape is absent. We
+        // therefore accept the single always-on walk rather than adding a redundant one.
         query = IncludeJoinUnwrapper.Unwrap(query);
 
         return query;

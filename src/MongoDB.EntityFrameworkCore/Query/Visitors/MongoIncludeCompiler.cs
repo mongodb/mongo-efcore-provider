@@ -118,7 +118,8 @@ internal static class MongoIncludeCompiler
         // NavigationExpression so chains of any depth produce the full
         // dot-separated path.
         if (expression is MethodCallExpression mc
-            && mc.Method.Name == nameof(Queryable.Select)
+            && mc.Method.IsGenericMethod
+            && mc.Method.GetGenericMethodDefinition() == QueryableMethods.Select
             && mc.Arguments.Count == 2
             && Unquote(mc.Arguments[1]) is LambdaExpression selectorLambda
             && selectorLambda.Body is IncludeExpression nestedInclude
