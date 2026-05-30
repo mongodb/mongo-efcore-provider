@@ -176,7 +176,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var queryable = transaction == null ? collection.AsQueryable() : collection.AsQueryable(transaction.Session);
         var source = queryable.As((IBsonSerializer<TSource>)bsonSerializerFactory.GetEntitySerializer(entityType));
 
-        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression, bsonSerializerFactory);
+        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(
+            queryContext, source.Expression, bsonSerializerFactory, queryExpression.PendingLookups);
         var translatedQuery = translate(queryTranslator, queryExpression.CapturedExpression);
 
         var executableQuery = new MongoExecutableQuery(

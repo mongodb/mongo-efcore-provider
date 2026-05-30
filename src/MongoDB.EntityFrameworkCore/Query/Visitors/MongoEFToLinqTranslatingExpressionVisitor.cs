@@ -30,6 +30,7 @@ using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -45,16 +46,19 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
+    private readonly IReadOnlyList<LookupExpression> _pendingLookups;
     private EntityQueryRootExpression? _foundEntityQueryRootExpression;
 
     internal MongoEFToLinqTranslatingExpressionVisitor(
         QueryContext queryContext,
         Expression source,
-        BsonSerializerFactory bsonSerializerFactory)
+        BsonSerializerFactory bsonSerializerFactory,
+        IReadOnlyList<LookupExpression>? pendingLookups = null)
     {
         _queryContext = queryContext;
         _source = source;
         _bsonSerializerFactory = bsonSerializerFactory;
+        _pendingLookups = pendingLookups ?? Array.Empty<LookupExpression>();
     }
 
     public Dictionary<string, object> AdditionalState { get; } = new();
@@ -65,17 +69,20 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
     {
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
         {
-            return ApplyAsSerializer(_source, BsonDocumentSerializer.Instance, typeof(BsonDocument));
+            var source = AppendLookupStages(_source);
+            return ApplyAsSerializer(source, BsonDocumentSerializer.Instance, typeof(BsonDocument));
         }
 
         var query = (MethodCallExpression)Visit(efQueryExpression)!;
 
         if (resultCardinality == ResultCardinality.Enumerable)
         {
-            return ApplyAsSerializer(query, BsonDocumentSerializer.Instance, typeof(BsonDocument));
+            var withLookups = AppendLookupStages(query);
+            return ApplyAsSerializer(withLookups, BsonDocumentSerializer.Instance, typeof(BsonDocument));
         }
 
-        var documentQueryableSource = ApplyAsSerializer(query.Arguments[0], BsonDocumentSerializer.Instance, typeof(BsonDocument));
+        var withLookupsSingle = AppendLookupStages(query.Arguments[0]);
+        var documentQueryableSource = ApplyAsSerializer(withLookupsSingle, BsonDocumentSerializer.Instance, typeof(BsonDocument));
 
         return Expression.Call(
             null,
@@ -101,6 +108,85 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
 
     private static bool IsAsQueryableMethod(MethodInfo method)
         => method.Name == "AsQueryable" && method.DeclaringType == typeof(Queryable);
+
+    /// <summary>
+    /// Appends $lookup stages (and a $unwind for references) for cross-collection collection Includes.
+    /// Uses the same AppendStage pattern as VectorSearch. No-op when there are no pending lookups.
+    /// </summary>
+    private Expression AppendLookupStages(Expression query)
+    {
+        if (_pendingLookups.Count == 0)
+        {
+            return query;
+        }
+
+        var sourceType = query.Type.TryGetItemType() ?? _source.Type.TryGetItemType()!;
+        var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
+            .MakeGenericMethod(sourceType, sourceType);
+        var serializerType = typeof(IBsonSerializer<>).MakeGenericType(sourceType);
+        var stageDefinitionType = typeof(BsonDocumentPipelineStageDefinition<,>).MakeGenericType(sourceType, sourceType);
+        var stageConstructor = stageDefinitionType.GetConstructor([typeof(BsonDocument), serializerType])!;
+
+        foreach (var lookup in _pendingLookups)
+        {
+            BsonDocument lookupDoc;
+            if (lookup.HasPipeline)
+            {
+                // Pipeline form: used for filtered Includes (OrderBy, Skip, Take on the included collection).
+                var pipeline = new BsonArray
+                {
+                    new BsonDocument("$match",
+                        new BsonDocument("$expr",
+                            new BsonDocument("$eq", new BsonArray { $"${lookup.ForeignField}", "$$localField" })))
+                };
+                foreach (var stage in lookup.PipelineStages)
+                {
+                    pipeline.Add(stage);
+                }
+
+                lookupDoc = new BsonDocument("$lookup", new BsonDocument
+                {
+                    { "from", lookup.From },
+                    { "let", new BsonDocument("localField", $"${lookup.LocalField}") },
+                    { "pipeline", pipeline },
+                    { "as", lookup.As }
+                });
+            }
+            else
+            {
+                lookupDoc = new BsonDocument("$lookup", new BsonDocument
+                {
+                    { "from", lookup.From },
+                    { "localField", lookup.LocalField },
+                    { "foreignField", lookup.ForeignField },
+                    { "as", lookup.As }
+                });
+            }
+
+            query = Expression.Call(null, appendStageMethod, query,
+                Expression.New(stageConstructor,
+                    Expression.Constant(lookupDoc),
+                    Expression.Constant(null, serializerType)),
+                Expression.Constant(null, serializerType));
+
+            if (lookup.ShouldUnwind)
+            {
+                var unwindDoc = new BsonDocument("$unwind", new BsonDocument
+                {
+                    { "path", $"${lookup.As}" },
+                    { "preserveNullAndEmptyArrays", true }
+                });
+
+                query = Expression.Call(null, appendStageMethod, query,
+                    Expression.New(stageConstructor,
+                        Expression.Constant(unwindDoc),
+                        Expression.Constant(null, serializerType)),
+                    Expression.Constant(null, serializerType));
+            }
+        }
+
+        return query;
+    }
 
     public override Expression? Visit(Expression? expression)
     {
