@@ -251,6 +251,41 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Include_collection_then_include_collection_then_include_reference_materializes()
+    {
+        const string testName = nameof(Include_collection_then_include_collection_then_include_reference_materializes);
+        // Stage 3 regression check — Customer.Orders.Items.Product is a 3-level
+        // chain ending in a reference, mirroring the Northwind spec test
+        // Include_collection_then_include_collection_then_include_reference
+        // (Customer.Orders.OrderDetails.Product). Verifies our recursive
+        // Include(path) handles reference-at-end-of-chain correctly.
+        using var seed = new ThenIncludeContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Products.AddRange(
+            new ThenIncludeProduct { Id = "p1", Name = "Chai" },
+            new ThenIncludeProduct { Id = "p2", Name = "Chang" });
+        seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" });
+        seed.Items.AddRange(
+            new ThenIncludeItem { Id = "i1", OrderId = "o1", ProductId = "p1" },
+            new ThenIncludeItem { Id = "i2", OrderId = "o1", ProductId = "p2" });
+        seed.SaveChanges();
+
+        using var db = new ThenIncludeContext(MongoDatabase, testName);
+        var customers = db.Customers
+            .Include(c => c.Orders)
+            .ThenInclude(o => o.Items)
+            .ThenInclude(i => i.Product)
+            .ToList();
+
+        var alfki = Assert.Single(customers);
+        var order = Assert.Single(alfki.Orders);
+        Assert.Equal(2, order.Items.Count);
+        Assert.All(order.Items, i => Assert.NotNull(i.Product));
+        Assert.Equal(new[] { "Chai", "Chang" }, order.Items.Select(i => i.Product!.Name).OrderBy(n => n).ToArray());
+    }
+
+    [Fact]
     public void Include_skip_navigation_throws_not_supported()
     {
         // EF-117's scope explicitly excludes many-to-many (skip navigations).
@@ -321,6 +356,14 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         public string Id { get; set; } = null!;
         public string OrderId { get; set; } = null!;
         public ThenIncludeOrder Order { get; set; } = null!;
+        public string? ProductId { get; set; }
+        public ThenIncludeProduct? Product { get; set; }
+    }
+
+    private class ThenIncludeProduct
+    {
+        public string Id { get; set; } = null!;
+        public string Name { get; set; } = null!;
     }
 
     private class ThenIncludeContext(IMongoDatabase mongoDatabase, string suffix) : DbContext
@@ -328,6 +371,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         public DbSet<ThenIncludeCustomer> Customers { get; set; } = null!;
         public DbSet<ThenIncludeOrder> Orders { get; set; } = null!;
         public DbSet<ThenIncludeItem> Items { get; set; } = null!;
+        public DbSet<ThenIncludeProduct> Products { get; set; } = null!;
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => base.OnConfiguring(optionsBuilder
@@ -341,6 +385,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
             mb.Entity<ThenIncludeCustomer>().ToCollection($"ef117_{suffix}_customers");
             mb.Entity<ThenIncludeOrder>().ToCollection($"ef117_{suffix}_orders");
             mb.Entity<ThenIncludeItem>().ToCollection($"ef117_{suffix}_items");
+            mb.Entity<ThenIncludeProduct>().ToCollection($"ef117_{suffix}_products");
             mb.Entity<ThenIncludeCustomer>()
                 .HasMany(c => c.Orders)
                 .WithOne(o => o.Customer)
@@ -349,6 +394,10 @@ public class IncludeTests(TemporaryDatabaseFixture database)
                 .HasMany(o => o.Items)
                 .WithOne(i => i.Order)
                 .HasForeignKey(i => i.OrderId);
+            mb.Entity<ThenIncludeItem>()
+                .HasOne(i => i.Product)
+                .WithMany()
+                .HasForeignKey(i => i.ProductId);
         }
     }
 

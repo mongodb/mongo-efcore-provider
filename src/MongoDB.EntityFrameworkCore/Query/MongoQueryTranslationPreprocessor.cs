@@ -79,12 +79,15 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
             // Match: <something>.Select(o => IncludeExpression(o.Outer, o.Inner, nav))
-            // where <something> is a Queryable.Join with a TransparentIdentifier
-            // result selector.
+            // where <something> is a Queryable.Join or Queryable.LeftJoin with a
+            // TransparentIdentifier result selector. Nav-expansion emits LeftJoin
+            // (not Join) when the FK is nullable, e.g. for an optional reference
+            // navigation like Item.Product where ProductId is string?.
             if (node.Method.Name == nameof(Queryable.Select)
                 && node.Arguments.Count == 2
                 && node.Arguments[0] is MethodCallExpression joinCall
-                && joinCall.Method.Name == nameof(Queryable.Join)
+                && (joinCall.Method.Name == nameof(Queryable.Join)
+                    || joinCall.Method.Name == nameof(Queryable.LeftJoin))
                 && joinCall.Arguments.Count == 5
                 && Unquote(node.Arguments[1]) is LambdaExpression selectorLambda
                 && selectorLambda.Body is Microsoft.EntityFrameworkCore.Query.IncludeExpression includeExpr

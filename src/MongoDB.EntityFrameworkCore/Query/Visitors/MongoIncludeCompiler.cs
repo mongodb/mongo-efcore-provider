@@ -98,19 +98,25 @@ internal static class MongoIncludeCompiler
     public static string? ExtractIncludeChainPath(IncludeExpression includeExpression)
     {
         var chain = new List<string>();
-        var navExpr = includeExpression.NavigationExpression;
-        var subquery = navExpr switch
-        {
-            MaterializeCollectionNavigationExpression mcne => mcne.Subquery,
-            _ => navExpr
-        };
-        WalkForNestedIncludes(subquery, chain);
+        WalkForNestedIncludes(includeExpression.NavigationExpression, chain);
         return chain.Count > 0 ? string.Join(".", chain) : null;
     }
 
     private static void WalkForNestedIncludes(Expression expression, List<string> chain)
     {
-        // Look for: <source>.Select(t => IncludeExpression(t, ..., nav))
+        // Collection navigations wrap the sub-query in a
+        // MaterializeCollectionNavigationExpression — unwrap to the inner query.
+        // Reference navigations don't wrap, so we operate on the expression as-is.
+        if (expression is MaterializeCollectionNavigationExpression mcne)
+        {
+            expression = mcne.Subquery;
+        }
+
+        // Look for: <source>.Select(t => IncludeExpression(t, ..., nav)) at the
+        // tail of the sub-query — the encoding nav-expansion uses for
+        // ThenInclude. Recurse into the nested IncludeExpression's own
+        // NavigationExpression so chains of any depth produce the full
+        // dot-separated path.
         if (expression is MethodCallExpression mc
             && mc.Method.Name == nameof(Queryable.Select)
             && mc.Arguments.Count == 2
