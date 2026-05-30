@@ -58,7 +58,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
         _queryContext = queryContext;
         _source = source;
         _bsonSerializerFactory = bsonSerializerFactory;
-        _pendingLookups = pendingLookups ?? Array.Empty<LookupExpression>();
+        _pendingLookups = pendingLookups ?? [];
     }
 
     public Dictionary<string, object> AdditionalState { get; } = new();
@@ -69,20 +69,18 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
     {
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
         {
-            var source = AppendLookupStages(_source);
-            return ApplyAsSerializer(source, BsonDocumentSerializer.Instance, typeof(BsonDocument));
+            return ApplyAsSerializer(AppendLookupStages(_source), BsonDocumentSerializer.Instance, typeof(BsonDocument));
         }
 
         var query = (MethodCallExpression)Visit(efQueryExpression)!;
 
         if (resultCardinality == ResultCardinality.Enumerable)
         {
-            var withLookups = AppendLookupStages(query);
-            return ApplyAsSerializer(withLookups, BsonDocumentSerializer.Instance, typeof(BsonDocument));
+            return ApplyAsSerializer(AppendLookupStages(query), BsonDocumentSerializer.Instance, typeof(BsonDocument));
         }
 
-        var withLookupsSingle = AppendLookupStages(query.Arguments[0]);
-        var documentQueryableSource = ApplyAsSerializer(withLookupsSingle, BsonDocumentSerializer.Instance, typeof(BsonDocument));
+        var documentQueryableSource = ApplyAsSerializer(
+            AppendLookupStages(query.Arguments[0]), BsonDocumentSerializer.Instance, typeof(BsonDocument));
 
         return Expression.Call(
             null,
