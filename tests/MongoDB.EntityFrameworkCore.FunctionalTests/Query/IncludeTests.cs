@@ -97,6 +97,38 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Collection_include_materializes_regardless_of_strategy()
+    {
+        const string testName = nameof(Collection_include_materializes_regardless_of_strategy);
+        // Strategy-invariance anchor for EF-117 hybrid work: this test must
+        // keep passing when the collection Include is later routed through
+        // server-side $lookup instead of the current fan-out sub-query loader.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki" },
+            new Order { Id = "o2", CustomerId = "alfki" },
+            new Order { Id = "o3", CustomerId = "anatr" });
+        seed.SaveChanges();
+
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var customers = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders)
+            .ToList();
+
+        Assert.NotEmpty(customers);
+        Assert.All(customers, c => Assert.NotNull(c.Orders));
+        var alfki = customers.Single(c => c.Id == "alfki");
+        var anatr = customers.Single(c => c.Id == "anatr");
+        Assert.Equal(2, alfki.Orders.Count);
+        Assert.Single(anatr.Orders);
+    }
+
+    [Fact]
     public void ThenInclude_chain_materializes()
     {
         const string testName = nameof(ThenInclude_chain_materializes);
