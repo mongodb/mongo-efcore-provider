@@ -18,14 +18,28 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
         INavigation navigation,
         Expression accessExpression,
         EntityProjectionExpression? innerProjection = null)
+        : this(navigation, accessExpression,
+            navigation.TargetEntityType.GetContainingElementName()
+            ?? throw new InvalidOperationException(
+                $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity."),
+            innerProjection)
+    {
+    }
+
+    /// <summary>
+    /// Create an <see cref="ObjectArrayProjectionExpression"/> with an explicit field name.
+    /// Used for cross-collection $lookup results.
+    /// </summary>
+    public ObjectArrayProjectionExpression(
+        INavigation navigation,
+        Expression accessExpression,
+        string name,
+        EntityProjectionExpression? innerProjection = null)
     {
         var targetType = navigation.TargetEntityType;
         Type = typeof(IEnumerable<>).MakeGenericType(targetType.ClrType);
 
-        Name = targetType.GetContainingElementName()
-               ?? throw new InvalidOperationException(
-                   $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
-
+        Name = name;
         Navigation = navigation;
         AccessExpression = accessExpression;
         InnerProjection = innerProjection

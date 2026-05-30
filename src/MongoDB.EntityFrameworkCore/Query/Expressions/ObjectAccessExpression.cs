@@ -17,7 +17,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 internal sealed class ObjectAccessExpression : Expression, IPrintableExpression, IAccessExpression
 {
     /// <summary>
-    /// Create a <see cref="ObjectAccessExpression"/>.
+    /// Create a <see cref="ObjectAccessExpression"/> for an embedded entity navigation.
     /// </summary>
     /// <param name="navigation">The <see cref="INavigation"/> this object access relates to.</param>
     /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
@@ -30,11 +30,31 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
         INavigation navigation,
         Expression accessExpression,
         bool required)
+        : this(navigation, accessExpression, required,
+            navigation.TargetEntityType.GetContainingElementName() ??
+            throw new InvalidOperationException(
+                $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity."))
     {
-        Name = navigation.TargetEntityType.GetContainingElementName() ??
-               throw new InvalidOperationException(
-                   $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
+    }
 
+    /// <summary>
+    /// Create a <see cref="ObjectAccessExpression"/> with an explicit field name.
+    /// Used for cross-collection $lookup results.
+    /// </summary>
+    /// <param name="navigation">The <see cref="INavigation"/> this object access relates to.</param>
+    /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
+    /// <param name="required">
+    /// <see langword="true"/> if this object is required,
+    /// <see langword="false"/> if it is optional.
+    /// </param>
+    /// <param name="name">The explicit field name to access in the document.</param>
+    public ObjectAccessExpression(
+        INavigation navigation,
+        Expression accessExpression,
+        bool required,
+        string name)
+    {
+        Name = name;
         Navigation = navigation;
         AccessExpression = accessExpression;
         Required = required;

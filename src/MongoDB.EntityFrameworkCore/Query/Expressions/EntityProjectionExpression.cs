@@ -10,6 +10,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -76,11 +77,25 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
 
         if (!_navigationExpressionsMap.TryGetValue(navigation, out var expression))
         {
-            expression = navigation.IsCollection
-                ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression)
-                : new EntityProjectionExpression(
-                    navigation.TargetEntityType,
-                    new ObjectAccessExpression(navigation, ParentAccessExpression, navigation.ForeignKey.IsRequiredDependent));
+            if (navigation.IsEmbedded())
+            {
+                expression = navigation.IsCollection
+                    ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression)
+                    : new EntityProjectionExpression(
+                        navigation.TargetEntityType,
+                        new ObjectAccessExpression(navigation, ParentAccessExpression, navigation.ForeignKey.IsRequiredDependent));
+            }
+            else
+            {
+                // Cross-collection navigation: read from the $lookup output field.
+                // Shared with the producer so the written and read field names always agree.
+                var lookupAlias = LookupExpression.GetAlias(navigation);
+                expression = navigation.IsCollection
+                    ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression, lookupAlias)
+                    : new EntityProjectionExpression(
+                        navigation.TargetEntityType,
+                        new ObjectAccessExpression(navigation, ParentAccessExpression, false, lookupAlias));
+            }
 
             _navigationExpressionsMap[navigation] = expression;
         }

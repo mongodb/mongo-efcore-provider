@@ -54,8 +54,17 @@ internal sealed class LookupExpression
             ForeignField = GetFieldPath(foreignKey.Properties[0]);
         }
 
-        As = $"_lookup_{navigation.Name}";
+        As = GetAlias(navigation);
     }
+
+    /// <summary>
+    /// The single source of truth for the <c>$lookup</c> output field name for a navigation.
+    /// Both the producer (this expression's <see cref="As"/>) and the shaper-side consumer
+    /// (<c>EntityProjectionExpression.BindNavigation</c>) must use this so the field written by
+    /// the <c>$lookup</c> stage and the field the shaper reads always agree.
+    /// </summary>
+    public static string GetAlias(INavigation navigation)
+        => $"_lookup_{navigation.Name}";
 
     /// <summary>The navigation this lookup supports.</summary>
     public INavigation Navigation { get; }
