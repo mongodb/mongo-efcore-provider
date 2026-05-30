@@ -26,7 +26,6 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
@@ -38,7 +37,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// Translates an shaper expression tree to use <see cref="BsonDocument"/> and the right
 /// methods to obtain data instead of the <see cref="ValueBuffer"/> EF provides.
 /// </summary>
-internal class MongoProjectionBindingRemovingExpressionVisitor : System.Linq.Expressions.ExpressionVisitor
+internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisitor
 {
     private readonly MongoQueryExpression _queryExpression;
     private readonly IEntityType _rootEntityType;

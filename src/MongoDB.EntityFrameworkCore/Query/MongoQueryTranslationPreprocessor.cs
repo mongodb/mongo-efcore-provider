@@ -86,26 +86,25 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
         {
             // Match: <something>.Select(o => IncludeExpression(o.Outer, o.Inner, nav))
             // where <something> is a Queryable.Join or Queryable.LeftJoin with a
-            // TransparentIdentifier result selector. Nav-expansion emits LeftJoin
-            // (not Join) when the FK is nullable, e.g. for an optional reference
-            // navigation like Item.Product where ProductId is string?.
-            if (node.Method.Name == nameof(Queryable.Select)
+            // result selector whose parameter `o` is the join's transparent
+            // identifier (carrier of Outer and Inner). Nav-expansion emits
+            // LeftJoin (not Join) when the FK is nullable, e.g. for an optional
+            // reference navigation like Item.Product where ProductId is string?.
+            //
+            // Method-call matching uses canonical QueryableMethods constants
+            // (reference-equality on the generic-method-definition) where they
+            // exist; LeftJoin has no EF8/EF9 constant so it falls back to a
+            // string-name check guarded by a #if.
+            if (node.Method.IsGenericMethod
+                && node.Method.GetGenericMethodDefinition() == QueryableMethods.Select
                 && node.Arguments.Count == 2
                 && node.Arguments[0] is MethodCallExpression joinCall
-                && (joinCall.Method.Name == nameof(Queryable.Join)
-#if !EF8 && !EF9
-                    || joinCall.Method.Name == nameof(Queryable.LeftJoin)
-#else
-                    || joinCall.Method.Name == "LeftJoin"
-#endif
-                    )
+                && IsJoinOrLeftJoin(joinCall.Method)
                 && joinCall.Arguments.Count == 5
                 && Unquote(node.Arguments[1]) is LambdaExpression selectorLambda
                 && selectorLambda.Body is Microsoft.EntityFrameworkCore.Query.IncludeExpression includeExpr
-                && IsTransparentIdentifierFieldAccess(includeExpr.EntityExpression, "Outer", out var outerParam)
-                && IsTransparentIdentifierFieldAccess(includeExpr.NavigationExpression, "Inner", out var innerParam)
-                && outerParam == innerParam
-                && outerParam == selectorLambda.Parameters[0])
+                && IsFieldAccessOf(includeExpr.EntityExpression, selectorLambda.Parameters[0], "Outer")
+                && IsFieldAccessOf(includeExpr.NavigationExpression, selectorLambda.Parameters[0], "Inner"))
             {
                 var outerSource = joinCall.Arguments[0];
                 var outerType = outerSource.Type.GetGenericArguments()[0];
@@ -125,23 +124,45 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
             return base.VisitMethodCall(node);
         }
 
+        private static bool IsJoinOrLeftJoin(System.Reflection.MethodInfo method)
+        {
+            if (!method.IsGenericMethod)
+            {
+                return false;
+            }
+
+            var definition = method.GetGenericMethodDefinition();
+            if (definition == QueryableMethods.Join)
+            {
+                return true;
+            }
+
+#if !EF8 && !EF9
+            if (definition == QueryableMethods.LeftJoin)
+            {
+                return true;
+            }
+#else
+            // EF8/EF9 don't expose a canonical QueryableMethods.LeftJoin constant;
+            // fall back to a name match for the method nav-expansion emits.
+            if (method.Name == "LeftJoin")
+            {
+                return true;
+            }
+#endif
+            return false;
+        }
+
         private static Expression Unquote(Expression e)
             => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;
 
-        private static bool IsTransparentIdentifierFieldAccess(Expression e, string memberName, out ParameterExpression? param)
-        {
-            if (e is MemberExpression me
-                && me.Member.Name == memberName
-                && me.Expression is ParameterExpression p
-                && p.Type.IsGenericType
-                && p.Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
-            {
-                param = p;
-                return true;
-            }
-            param = null;
-            return false;
-        }
+        // Structural check: is `e` a `<expectedParam>.<memberName>` access on the
+        // join's transparent-identifier parameter? Replaces an earlier brittle
+        // check on the compiler-generated `TransparentIdentifier...` type name.
+        private static bool IsFieldAccessOf(Expression e, ParameterExpression expectedParam, string memberName)
+            => e is MemberExpression me
+               && me.Member.Name == memberName
+               && ReferenceEquals(me.Expression, expectedParam);
     }
 
     private sealed class VectorSearchExtractor : ExpressionVisitor
