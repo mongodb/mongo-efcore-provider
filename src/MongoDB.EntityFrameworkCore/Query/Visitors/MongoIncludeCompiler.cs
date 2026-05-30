@@ -27,6 +27,7 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -83,6 +84,18 @@ internal static class MongoIncludeCompiler
     /// </summary>
     public static bool IsCrossCollection(INavigation navigation)
         => !navigation.IsEmbedded();
+
+    /// <summary>
+    /// Decides whether a cross-collection include should use a server-side
+    /// <c>$lookup</c> or fall back to the client-side fan-out loader.
+    /// Stage 0: always fan-out. Later stages enable shapes incrementally.
+    /// </summary>
+    public static IncludeStrategy ChooseStrategy(IncludeExpression includeExpression, INavigation navigation)
+    {
+        // Stage 0 placeholder — every shape still fans out. Do not add real
+        // routing here until the matching stage's $lookup path is implemented.
+        return IncludeStrategy.ClientFanOut;
+    }
 
     /// <summary>
     /// Extracts the chained ThenInclude navigations from an outer
