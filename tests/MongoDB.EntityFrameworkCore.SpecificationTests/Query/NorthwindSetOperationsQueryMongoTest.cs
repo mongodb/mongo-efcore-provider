@@ -219,24 +219,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_Include(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Union_Include(async))).Message);
-
-        AssertMql(
-        );
-    }
-
-    public override async Task Include_Union(bool async)
-    {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_Union(async))).Message);
-
-        AssertMql(
-        );
+        await base.Union_Include(async);
     }
 
     public override async Task Select_Except_reference_projection(bool async)

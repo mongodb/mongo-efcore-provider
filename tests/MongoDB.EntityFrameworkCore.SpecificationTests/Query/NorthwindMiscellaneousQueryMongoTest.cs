@@ -3032,14 +3032,32 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Include_with_orderby_skip_preserves_ordering(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_with_orderby_skip_preserves_ordering(async)))
-            .Message);
+        await base.Include_with_orderby_skip_preserves_ordering(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$sort" : { "City" : 1, "_id" : 1 } }, { "$skip" : 40 }, { "$limit" : 5 }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "NORTS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "SEVES" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BERGS" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "VICTE" } }
+""",
+            //
+            """
+Orders.{ "$match" : { "CustomerID" : "BOLID" } }
+""");
     }
 
     public override async Task Int16_parameter_can_be_used_for_int_column(bool async)
