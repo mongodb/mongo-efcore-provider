@@ -27,7 +27,6 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Extensions;
-using MongoDB.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
