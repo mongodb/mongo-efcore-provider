@@ -29,6 +29,7 @@ internal sealed class MongoQueryExpression : Expression
 {
     private Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly List<ProjectionExpression> _projection = [];
+    private readonly List<LookupExpression> _pendingLookups = [];
 
     /// <summary>
     /// Create a <see cref="MongoQueryExpression"/> for the given entity type.
@@ -111,4 +112,17 @@ internal sealed class MongoQueryExpression : Expression
             _projectionMapping[projectionMember] = expression;
         }
     }
+
+    /// <summary>Pending $lookup stages for cross-collection Include operations.</summary>
+    public IReadOnlyList<LookupExpression> PendingLookups => _pendingLookups;
+
+    /// <summary>Register a $lookup stage (de-duplicated by output alias).</summary>
+    public void AddLookup(LookupExpression lookup)
+    {
+        if (_pendingLookups.All(l => l.As != lookup.As))
+            _pendingLookups.Add(lookup);
+    }
+
+    /// <summary>True for Include-generated LeftJoins (driver _outer/_inner fields present).</summary>
+    public bool UsesDriverJoinFields { get; set; }
 }
