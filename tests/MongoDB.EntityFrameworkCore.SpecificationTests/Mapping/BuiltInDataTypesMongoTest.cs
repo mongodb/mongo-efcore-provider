@@ -55,11 +55,8 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
             (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Optional_datetime_reading_null_from_database()))
             .Message);
     #else
-    // Fails: Include issue EF-117
     public override void Can_insert_and_read_back_with_string_key()
-        => Assert.Contains(
-            "Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.",
-            Assert.Throws<InvalidOperationException>(() => base.Can_insert_and_read_back_with_string_key()).Message);
+        => base.Can_insert_and_read_back_with_string_key();
 
     // Fails: Cross-document navigation access issue EF-216
     public override void Can_read_back_bool_mapped_as_int_through_navigation()

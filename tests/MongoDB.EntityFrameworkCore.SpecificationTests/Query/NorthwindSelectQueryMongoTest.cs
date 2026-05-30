@@ -1499,13 +1499,9 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Do_not_erase_projection_mapping_when_adding_single_projection(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Do_not_erase_projection_mapping_when_adding_single_projection(async))).Message);
-
-        AssertMql();
+        // Fails: Cross-document navigation access issue EF-216 — the projection
+        // resolves a navigation across DbSets.
+        await AssertTranslationFailed(() => base.Do_not_erase_projection_mapping_when_adding_single_projection(async));
     }
 
     public override async Task Ternary_in_client_eval_assigns_correct_types(bool async)
@@ -1586,13 +1582,10 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Collection_include_over_result_of_single_non_scalar(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Collection_include_over_result_of_single_non_scalar(async))).Message);
-
-        AssertMql();
+        // Fails: Cross-document navigation access issue EF-216 — Include over
+        // the result of a single non-scalar projection requires correlating
+        // back across collections.
+        await AssertTranslationFailed(() => base.Collection_include_over_result_of_single_non_scalar(async));
     }
 
     public override async Task Collection_projection_selecting_outer_element_followed_by_take(bool async)

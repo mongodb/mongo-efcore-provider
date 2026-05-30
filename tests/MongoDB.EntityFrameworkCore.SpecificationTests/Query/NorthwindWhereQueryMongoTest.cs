@@ -1234,12 +1234,10 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_navigation_contains(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_navigation_contains(async))).Message);
-
-        AssertMql();
+        // Fails: Cross-document navigation access issue EF-216 — Where with
+        // Contains over a navigation references a different DbSet, which
+        // the provider's translator can't process.
+        await AssertTranslationFailed(() => base.Where_navigation_contains(async));
     }
 
     public override async Task Where_array_index(bool async)

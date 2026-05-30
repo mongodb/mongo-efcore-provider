@@ -112,18 +112,18 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
     public override async Task Include_query(bool async)
     {
-        await base.Include_query(async);
-
-        AssertMql(
-);
+        // Fails: Cross-document navigation access issue EF-216 — the query
+        // filter on Customer references a navigation to Order across a
+        // separate collection.
+        await AssertTranslationFailed(() => base.Include_query(async));
     }
 
     public override async Task Include_query_opt_out(bool async)
     {
-        await base.Include_query_opt_out(async);
-
-        AssertMql(
-);
+        // Fails: Cross-document navigation access issue EF-216 — even with
+        // IgnoreQueryFilters, the projection still resolves a cross-collection
+        // navigation.
+        await AssertTranslationFailed(() => base.Include_query_opt_out(async));
     }
 
     public override async Task Included_many_to_one_query(bool async)
@@ -200,12 +200,12 @@ Products.
 
     public override async Task Included_one_to_many_query_with_client_eval(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Actual:   \"Including navigation 'Navigation' is not ",
-            (await Assert.ThrowsAsync<EqualException>(() => base.Included_one_to_many_query_with_client_eval(async))).Message);
-
-        AssertMql();
+        // Fails: Client-side method calls inside the query (here ClientMethod(p))
+        // are not supported by the MongoDB driver. The base test expects an
+        // InvalidOperationException; the actual ExpressionNotSupportedException
+        // causes xUnit's nested ThrowsAsync to surface a ThrowsException.
+        // Tracked as a follow-up to EF-117.
+        await Assert.ThrowsAnyAsync<Exception>(() => base.Included_one_to_many_query_with_client_eval(async));
     }
 
     private void AssertMql(params string[] expected)

@@ -222,6 +222,14 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
         await base.Union_Include(async);
     }
 
+    public override async Task Include_Union(bool async)
+    {
+        // Include after Union of two principal sets — works through Stages 1–4
+        // fan-out; MQL baseline omitted because the sub-query iteration order
+        // depends on the Union materialization order, which isn't guaranteed.
+        await base.Include_Union(async);
+    }
+
     public override async Task Select_Except_reference_projection(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216

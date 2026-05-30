@@ -87,7 +87,12 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
                 && node.Arguments.Count == 2
                 && node.Arguments[0] is MethodCallExpression joinCall
                 && (joinCall.Method.Name == nameof(Queryable.Join)
-                    || joinCall.Method.Name == nameof(Queryable.LeftJoin))
+#if !EF8 && !EF9
+                    || joinCall.Method.Name == nameof(Queryable.LeftJoin)
+#else
+                    || joinCall.Method.Name == "LeftJoin"
+#endif
+                    )
                 && joinCall.Arguments.Count == 5
                 && Unquote(node.Arguments[1]) is LambdaExpression selectorLambda
                 && selectorLambda.Body is Microsoft.EntityFrameworkCore.Query.IncludeExpression includeExpr

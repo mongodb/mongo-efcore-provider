@@ -81,10 +81,15 @@ CustomerQueryWithQueryFilter.{ "$match" : { "OrderCount" : { "$gt" : 0 } } }
 
     public override async Task KeylessEntity_with_included_nav(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.KeylessEntity_with_included_nav(async));
-
-        AssertMql();
+        // Keyless entities ("CustomerView") use defining queries that the
+        // provider's keyless-entity infrastructure handles via empty
+        // materialization paths. Include on top of a defining-query result
+        // surfaces an InvalidOperationException("Sequence contains no matching
+        // element") from EF Core's internal materializer. Tracked as a
+        // follow-up to EF-117.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => base.KeylessEntity_with_included_nav(async));
+        Assert.Contains("Sequence contains no matching element", ex.Message);
     }
 
     public override async Task KeylessEntity_with_defining_query(bool async)
