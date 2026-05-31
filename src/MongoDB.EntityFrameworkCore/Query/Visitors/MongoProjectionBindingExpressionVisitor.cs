@@ -220,7 +220,21 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         // The rewrite is now committed to the $lookup path, so register the pending lookup here —
         // not before the resolution above — so a fallback to fan-out leaves no orphan lookup registered
         // (which would otherwise emit a $lookup whose `_lookup_<Nav>` output nothing reads).
-        _queryExpression.AddLookup(new LookupExpression(navigation));
+        var lookup = new LookupExpression(navigation);
+
+        // FILTERED include (ordering / paging inside the include lambda): translate the navigation
+        // sub-query into element-name-aware $sort/$skip/$limit pipeline stages so the included
+        // collection is filtered/ordered/paged on the server via the pipeline form of $lookup.
+        // ChooseStrategy already rejected any filtered include we can't fully translate, so this
+        // extraction is expected to succeed for ServerLookup-routed filtered includes; it is
+        // harmless (leaves PipelineStages empty → simple $lookup) for unfiltered ones.
+        if (MongoIncludeCompiler.TryExtractFilteredCollectionPipeline(
+                includeExpression.NavigationExpression, navigation, out var pipelineStages))
+        {
+            lookup.PipelineStages.AddRange(pipelineStages);
+        }
+
+        _queryExpression.AddLookup(lookup);
 
         // BindNavigation routes a cross-collection collection nav to an ObjectArrayProjectionExpression
         // reading the `_lookup_<Nav>` field (shared with the producer via LookupExpression.GetAlias).

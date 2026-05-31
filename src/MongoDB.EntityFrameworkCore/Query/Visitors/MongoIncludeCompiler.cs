@@ -20,9 +20,11 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
@@ -102,6 +104,17 @@ internal static class MongoIncludeCompiler
             && navigation.ForeignKey.Properties.Count == 1
             && !HasNestedInclude(includeExpression))
         {
+            // A FILTERED collection include (ordering / paging inside the include lambda) routes to
+            // the pipeline-form $lookup only when its sub-query is fully translatable to
+            // element-name-aware $sort/$skip/$limit stages. A user Where filter (predicate→$match),
+            // a projecting Select, Distinct, or a non-constant Skip/Take count is NOT translated
+            // here and must stay on the client-side fan-out loader rather than emit wrong MQL.
+            if (IsFilteredCollectionInclude(includeExpression)
+                && !TryExtractFilteredCollectionPipeline(includeExpression!.NavigationExpression, navigation, out _))
+            {
+                return IncludeStrategy.ClientFanOut;
+            }
+
             return IncludeStrategy.ServerLookup;
         }
 
@@ -231,6 +244,285 @@ internal static class MongoIncludeCompiler
 
         return true;
     }
+
+    /// <summary>
+    /// <see langword="true"/> when a top-level collection include applies ORDERING or PAGING inside
+    /// its lambda (OrderBy / ThenBy / Skip / Take), which the pipeline-form <c>$lookup</c> realizes
+    /// as <c>$sort</c> / <c>$skip</c> / <c>$limit</c> stages.
+    /// </summary>
+    /// <remarks>
+    /// A bare extra <c>Where</c> on the navigation sub-query is deliberately NOT treated as a
+    /// filtered include here: it is either the join correlation (realized by the <c>$match $expr</c>)
+    /// or a GLOBAL QUERY FILTER injected by EF — both of which keep the pre-existing simple-<c>$lookup</c>
+    /// routing rather than being pushed into a pipeline we can't translate. (A user
+    /// <c>Where</c> filter with no ordering/paging is rare in the spec suite and likewise stays on
+    /// the existing path; only ordering/paging triggers the pipeline form.)
+    /// </remarks>
+    public static bool IsFilteredCollectionInclude(IncludeExpression? includeExpression)
+    {
+        if (includeExpression?.NavigationExpression
+            is not MaterializeCollectionNavigationExpression { Subquery: var subquery })
+        {
+            return false;
+        }
+
+        for (var current = subquery; current is MethodCallExpression { Method.IsGenericMethod: true } call;
+             current = call.Arguments[0])
+        {
+            var definition = call.Method.GetGenericMethodDefinition();
+            if (definition == QueryableMethods.OrderBy
+                || definition == QueryableMethods.OrderByDescending
+                || definition == QueryableMethods.ThenBy
+                || definition == QueryableMethods.ThenByDescending
+                || definition == QueryableMethods.Skip
+                || definition == QueryableMethods.Take)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Attempts to translate a FILTERED top-level collection Include's navigation sub-query into
+    /// element-name-aware <c>$lookup</c> pipeline stages (<c>$sort</c> / <c>$skip</c> / <c>$limit</c>),
+    /// which the emission side wraps after the correlation <c>$match</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EF nav-expansion encodes a filtered include as
+    /// <c>MaterializeCollectionNavigation(DbSet&lt;TDependent&gt;().Where(&lt;join&gt;).OrderBy(...).Skip(n).Take(m))</c>.
+    /// The outermost <c>Where</c> is the CORRELATION condition (it references the outer principal
+    /// shaper) and is already realized by the pipeline-form <c>$lookup</c>'s
+    /// <c>$match { $expr: { $eq: [...] } }</c>, so it is dropped here.
+    /// </para>
+    /// <para>
+    /// Only ordering and paging operators are translated — they map cleanly to element names via
+    /// <see cref="MongoPropertyExtensions.GetElementName"/>, requiring no predicate→<c>$match</c>
+    /// machinery. A USER <c>Where</c> filter (one that does not reference the outer principal), a
+    /// projecting <c>Select</c>, <c>Distinct</c>, a non-constant <c>Skip</c>/<c>Take</c> count, or an
+    /// ordering whose key is not a simple mapped scalar property all return <see langword="false"/>
+    /// so the caller falls back to the client-side fan-out loader rather than emitting wrong MQL.
+    /// </para>
+    /// </remarks>
+    public static bool TryExtractFilteredCollectionPipeline(
+        Expression? navigationExpression,
+        INavigation navigation,
+        out List<BsonDocument> stages)
+    {
+        stages = [];
+
+        if (navigationExpression is not MaterializeCollectionNavigationExpression { Subquery: var subquery })
+        {
+            return false;
+        }
+
+        var targetEntityType = navigation.TargetEntityType;
+
+        // Walk from the OUTERMOST operator inward, prepending each produced stage so the final list
+        // is in execution (innermost-first) order. ThenBy/ThenByDescending appear OUTSIDE their
+        // OrderBy when walking inward, so each ordering operator builds a fresh single-key $sort and
+        // a following ThenBy merges into the $sort it sits directly outside of — tracked via
+        // pendingSortKeys, the keys document of the $sort being built for the current ordering group.
+        var ordered = new List<BsonDocument>();
+        BsonDocument? pendingSortKeys = null;
+        var current = subquery;
+        var sawAny = false;
+
+        while (current is MethodCallExpression call && call.Method.IsGenericMethod)
+        {
+            var definition = call.Method.GetGenericMethodDefinition();
+
+            if (definition == QueryableMethods.OrderBy || definition == QueryableMethods.OrderByDescending)
+            {
+                if (!TryGetSortKey(call, targetEntityType, out var key))
+                {
+                    return false;
+                }
+
+                var direction = definition == QueryableMethods.OrderByDescending ? -1 : 1;
+                if (pendingSortKeys is null)
+                {
+                    pendingSortKeys = new BsonDocument();
+                    ordered.Add(new BsonDocument("$sort", pendingSortKeys));
+                }
+
+                // OrderBy is the PRIMARY key of its group — it must sort before any ThenBy already
+                // merged into the keys doc. Walking outermost-inward, ThenBy was seen first, so
+                // prepend OrderBy to keep document order = sort precedence.
+                pendingSortKeys.InsertAt(0, new BsonElement(key, direction));
+                pendingSortKeys = null; // group complete; a further ordering op starts a new $sort
+                sawAny = true;
+                current = call.Arguments[0];
+            }
+            else if (definition == QueryableMethods.ThenBy || definition == QueryableMethods.ThenByDescending)
+            {
+                if (!TryGetSortKey(call, targetEntityType, out var key))
+                {
+                    return false;
+                }
+
+                var direction = definition == QueryableMethods.ThenByDescending ? -1 : 1;
+                if (pendingSortKeys is null)
+                {
+                    pendingSortKeys = new BsonDocument();
+                    ordered.Add(new BsonDocument("$sort", pendingSortKeys));
+                }
+
+                // ThenBy is a SECONDARY key; it sorts after the (inner) OrderBy and after any
+                // earlier (more-outer) ThenBy already merged. Walking outermost-inward we see the
+                // last ThenBy first, so prepend to keep document order = sort precedence.
+                pendingSortKeys.InsertAt(0, new BsonElement(key, direction));
+                sawAny = true;
+                current = call.Arguments[0];
+            }
+            else if (definition == QueryableMethods.Skip)
+            {
+                if (call.Arguments[1] is not ConstantExpression { Value: int skip })
+                {
+                    return false;
+                }
+
+                pendingSortKeys = null;
+                ordered.Add(new BsonDocument("$skip", skip));
+                sawAny = true;
+                current = call.Arguments[0];
+            }
+            else if (definition == QueryableMethods.Take)
+            {
+                if (call.Arguments[1] is not ConstantExpression { Value: int take })
+                {
+                    return false;
+                }
+
+                pendingSortKeys = null;
+                ordered.Add(new BsonDocument("$limit", take));
+                sawAny = true;
+                current = call.Arguments[0];
+            }
+            else if (definition == QueryableMethods.Where)
+            {
+                // Only the correlation Where (references the outer principal shaper) is allowed —
+                // it is realized by the pipeline $lookup's $match $expr, so we drop it. A user
+                // filter predicate would need predicate→$match translation we don't do here; bail.
+                if (!IsCorrelationPredicate(call.Arguments[1]))
+                {
+                    return false;
+                }
+
+                pendingSortKeys = null;
+                current = call.Arguments[0];
+            }
+            else
+            {
+                // Any other operator (Select projection, Distinct, etc.) is not translatable here.
+                return false;
+            }
+        }
+
+        // The innermost expression must be the dependent DbSet root; anything else (a deeper
+        // sub-query the walk didn't recognize) means we can't safely translate.
+        if (sawAny && IsDependentSetRoot(current, targetEntityType))
+        {
+            // ordered is execution-order already because each stage was Add-ed while walking from the
+            // outermost operator inward — i.e. later (inner) operators were appended later. Reverse
+            // to get innermost-first (the order the server must apply them).
+            ordered.Reverse();
+            stages = ordered;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves the <c>$sort</c> field name for an OrderBy/ThenBy key selector, returning
+    /// <see langword="false"/> when the key is not a simple mapped scalar property (e.g. a computed
+    /// expression, a navigation, or a non-mapped member) — such keys can't be expressed as a plain
+    /// element-name <c>$sort</c> and must fall back to fan-out.
+    /// </summary>
+    private static bool TryGetSortKey(MethodCallExpression orderingCall, IEntityType entityType, out string elementName)
+    {
+        elementName = string.Empty;
+        if (Unquote(orderingCall.Arguments[1]) is not LambdaExpression lambda)
+        {
+            return false;
+        }
+
+        var body = lambda.Body;
+        while (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            body = convert.Operand;
+        }
+
+        // o => o.Member
+        if (body is MemberExpression { Expression: ParameterExpression } member)
+        {
+            var property = entityType.FindProperty(member.Member.Name);
+            if (property is not null && !property.IsShadowProperty())
+            {
+                elementName = property.GetElementName();
+                return true;
+            }
+
+            return false;
+        }
+
+        // o => EF.Property<T>(o, "Member")
+        if (body is MethodCallExpression { Arguments: [ParameterExpression, ConstantExpression { Value: string propName }] } efCall
+            && efCall.Method.IsEFPropertyMethod())
+        {
+            var property = entityType.FindProperty(propName);
+            if (property is not null)
+            {
+                elementName = property.GetElementName();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// <see langword="true"/> when a <c>Where</c> predicate is the include correlation condition
+    /// (it references the outer principal via a <see cref="StructuralTypeShaperExpression"/>) rather
+    /// than a user filter. The correlation is realized by the pipeline <c>$lookup</c>'s
+    /// <c>$match { $expr }</c>, so such a predicate is dropped from the extracted stages.
+    /// </summary>
+    private static bool IsCorrelationPredicate(Expression predicate)
+        => Unquote(predicate) is LambdaExpression lambda && ReferencesOuterShaper(lambda.Body);
+
+    private static bool ReferencesOuterShaper(Expression expression)
+    {
+        var finder = new OuterShaperFinder();
+        finder.Visit(expression);
+        return finder.Found;
+    }
+
+    private sealed class OuterShaperFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        public override Expression? Visit(Expression? node)
+        {
+            if (node is StructuralTypeShaperExpression)
+            {
+                Found = true;
+            }
+
+            return Found ? node : base.Visit(node);
+        }
+    }
+
+    /// <summary>
+    /// <see langword="true"/> when <paramref name="expression"/> is the dependent <c>DbSet</c> root
+    /// the filtered-include sub-query is built over (an <see cref="EntityQueryRootExpression"/> for
+    /// the navigation's target type).
+    /// </summary>
+    private static bool IsDependentSetRoot(Expression expression, IEntityType targetEntityType)
+        => expression is EntityQueryRootExpression root
+           && (root.EntityType == targetEntityType || root.EntityType.ClrType == targetEntityType.ClrType);
 
     private static Expression Unquote(Expression e)
         => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;

@@ -1482,11 +1482,15 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task Filtered_include_with_multiple_ordering(bool async)
     {
-        // Fails: Filtered Include (.Where/OrderBy/Skip/Take inside the include lambda)
-        // is not yet implemented. The lambda's filter/orderby/take are not applied to
-        // the loader sub-query, so the materialized graph differs from EF Core's
-        // expected result. Tracked as a follow-up to EF-117.
-        await Assert.ThrowsAnyAsync<Exception>(() => base.Filtered_include_with_multiple_ordering(async));
+        // Filtered collection Include translated to the pipeline form of $lookup: OrderBy/Skip/
+        // OrderByDescending become element-name-aware $sort/$skip/$sort stages applied server-side
+        // after the correlation $match.
+        await base.Filtered_include_with_multiple_ordering(async);
+
+        AssertMql(
+            """
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 1 }, { "$sort" : { "OrderDate" : -1 } }], "as" : "_lookup_Orders" } }
+            """);
     }
 
     public override async Task Include_specified_on_non_entity_not_supported(bool async)

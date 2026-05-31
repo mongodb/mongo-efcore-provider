@@ -171,6 +171,61 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Filtered_collection_Include_emits_pipeline_lookup_and_materializes_filtered_ordered_paged()
+    {
+        const string testName =
+            nameof(Filtered_collection_Include_emits_pipeline_lookup_and_materializes_filtered_ordered_paged);
+        // EF-117: a FILTERED collection Include (ordering + paging inside the include lambda)
+        // runs as a SINGLE server-side $lookup using the PIPELINE form — the OrderBy / Skip / Take
+        // become element-name-aware $sort / $skip / $limit stages applied after the correlation
+        // $match, so the included collection is ordered and paged on the server.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki" },
+            new Order { Id = "o2", CustomerId = "alfki" },
+            new Order { Id = "o3", CustomerId = "alfki" },
+            new Order { Id = "o4", CustomerId = "alfki" },
+            new Order { Id = "o5", CustomerId = "anatr" });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new CustomerOrderContext(MongoDatabase, testName, logs.Add);
+        var customers = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders.OrderByDescending(o => o.Id).Skip(1).Take(2))
+            .ToList();
+
+        // Materialization: alfki has 4 orders; ordered by Id desc => o4,o3,o2,o1, skip 1 => o3,o2,o1,
+        // take 2 => o3,o2. anatr has a single order which Skip(1) drops entirely.
+        Assert.Equal(2, customers.Count);
+        var alfki = customers.Single(c => c.Id == "alfki");
+        var anatr = customers.Single(c => c.Id == "anatr");
+        Assert.Equal(["o3", "o2"], alfki.Orders.Select(o => o.Id).ToArray());
+        Assert.Empty(anatr.Orders);
+
+        // Exactly one MQL query, carrying the PIPELINE form of $lookup (let/pipeline) with the
+        // $sort / $skip / $limit stages — not a simple localField/foreignField $lookup.
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        Assert.Single(mqlQueries);
+        var lookupQuery = mqlQueries[0];
+        Assert.Contains("$lookup", lookupQuery);
+        Assert.Contains("\"as\" : \"_lookup_Orders\"", lookupQuery);
+        Assert.Contains("\"let\"", lookupQuery);
+        Assert.Contains("\"pipeline\"", lookupQuery);
+        Assert.Contains("\"$sort\" : { \"_id\" : -1 }", lookupQuery);
+        Assert.Contains("\"$skip\" : 1", lookupQuery);
+        Assert.Contains("\"$limit\" : 2", lookupQuery);
+        // It is the pipeline form, so no simple foreignField on the $lookup.
+        Assert.DoesNotContain("\"foreignField\"", lookupQuery);
+        // No fan-out sub-queries against the Orders collection (would be a second query).
+        Assert.DoesNotContain(logs, l => l.Contains("Executed MQL query") && l != lookupQuery);
+    }
+
+    [Fact]
     public void ThenInclude_chain_materializes()
     {
         const string testName = nameof(ThenInclude_chain_materializes);
