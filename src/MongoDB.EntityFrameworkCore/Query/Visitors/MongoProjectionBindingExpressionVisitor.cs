@@ -282,7 +282,88 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                 typeof(ValueBuffer)),
             nullable: true);
 
-        return includeExpression.Update(visitedEntity, referenceShaper);
+        // Reference-ROOTED ThenInclude chain: the original NavigationExpression is itself a
+        // (nested) IncludeExpression carrying the chained navigation. Rewrite each nested level
+        // to a chained $lookup rooted INSIDE this reference's unwound output object, and rebuild
+        // the nested IncludeExpression tree so the shaper materializes every level.
+        var navigationExpression = (Expression)referenceShaper;
+        if (includeExpression.NavigationExpression is IncludeExpression nestedInclude)
+        {
+            navigationExpression = RewriteNestedChainForLookup(
+                nestedInclude, referenceEntityProjection, LookupExpression.GetAlias(navigation), referenceShaper);
+        }
+
+        return includeExpression.Update(visitedEntity, navigationExpression);
+    }
+
+    /// <summary>
+    /// Recursively rewrites the nested levels of a reference-rooted <c>ThenInclude</c> chain into
+    /// chained, dotted-path <c>$lookup</c> stages. Each child <see cref="LookupExpression"/> has its
+    /// <see cref="LookupExpression.LocalField"/> and <see cref="LookupExpression.As"/> prefixed with
+    /// the running dotted path of ancestor aliases (e.g. <c>_lookup_Customer._lookup_Orders</c>), so
+    /// the child join reads from — and writes back into — the unwound parent object rather than the
+    /// document root. The child projections are bound against <paramref name="parentEntityProjection"/>
+    /// (whose <c>ParentAccessExpression</c> is the parent lookup's access), so the existing recursive
+    /// shaper read (<c>doc["_lookup_Customer"]["_lookup_Orders"]</c>) resolves naturally.
+    /// </summary>
+    /// <param name="nestedInclude">The nested <see cref="IncludeExpression"/> for this level.</param>
+    /// <param name="parentEntityProjection">The parent level's bound entity projection.</param>
+    /// <param name="parentAlias">The running dotted alias path of the parent lookup (its <c>As</c>).</param>
+    /// <param name="parentShaper">The shaper for the parent entity — becomes this level's EntityExpression.</param>
+    private Expression RewriteNestedChainForLookup(
+        IncludeExpression nestedInclude,
+        EntityProjectionExpression parentEntityProjection,
+        string parentAlias,
+        Expression parentShaper)
+    {
+        var nestedNavigation = (INavigation)nestedInclude.Navigation;
+        var childAlias = $"{parentAlias}.{LookupExpression.GetAlias(nestedNavigation)}";
+
+        // Register the child $lookup with parent-dotted LocalField / As so it nests inside the
+        // unwound parent object. ForeignField is unchanged (it targets the child collection).
+        var childLookup = new LookupExpression(nestedNavigation)
+        {
+            As = childAlias
+        };
+        childLookup.LocalField = $"{parentAlias}.{childLookup.LocalField}";
+        _queryExpression.AddLookup(childLookup);
+
+        var boundChild = parentEntityProjection.BindNavigation(nestedNavigation);
+
+        Expression nestedNavigationExpression;
+        if (nestedNavigation.IsCollection)
+        {
+            var objectArrayProjection = (ObjectArrayProjectionExpression)boundChild;
+            var innerShaper = new StructuralTypeShaperExpression(
+                nestedNavigation.TargetEntityType,
+                Expression.Convert(
+                    Expression.Convert(objectArrayProjection.InnerProjection, typeof(object)),
+                    typeof(ValueBuffer)),
+                nullable: true);
+            nestedNavigationExpression = new CollectionShaperExpression(
+                objectArrayProjection,
+                innerShaper,
+                nestedNavigation,
+                nestedNavigation.TargetEntityType.ClrType);
+            _queryExpression.AddToProjection(objectArrayProjection);
+        }
+        else
+        {
+            var childEntityProjection = (EntityProjectionExpression)boundChild;
+            var childShaper = new StructuralTypeShaperExpression(
+                nestedNavigation.TargetEntityType,
+                Expression.Convert(
+                    Expression.Convert(childEntityProjection, typeof(object)),
+                    typeof(ValueBuffer)),
+                nullable: true);
+
+            // Deeper levels (ref -> ref -> ...) recurse, threading the dotted alias forward.
+            nestedNavigationExpression = nestedInclude.NavigationExpression is IncludeExpression deeperInclude
+                ? RewriteNestedChainForLookup(deeperInclude, childEntityProjection, childAlias, childShaper)
+                : childShaper;
+        }
+
+        return nestedInclude.Update(parentShaper, nestedNavigationExpression);
     }
 
     /// <summary>

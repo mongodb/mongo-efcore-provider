@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -90,11 +90,12 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders",
 
     public override async Task Include_references_then_include_multi_level(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Include_references_then_include_multi_level(async));
+        await base.Include_references_then_include_multi_level(async);
 
         AssertMql(
-        );
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$mod" : [23, 13] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Order._lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Order._lookup_Customer", "preserveNullAndEmptyArrays" : true } }
+""");
     }
 
     public override async Task Include_collection_order_by_collection_column(bool async)
@@ -602,11 +603,12 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 10963 } }, { "$lookup" : { "from" : 
 
     public override async Task Include_multiple_references_multi_level_reverse(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Include_multiple_references_multi_level_reverse(async));
+        await base.Include_multiple_references_multi_level_reverse(async);
 
         AssertMql(
-        );
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$mod" : [23, 13] } } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Order._lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Order._lookup_Customer", "preserveNullAndEmptyArrays" : true } }
+""");
     }
 
     public override async Task Include_collection_with_join_clause_with_filter(bool async)
@@ -858,11 +860,12 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Orde
 
     public override async Task Include_references_multi_level(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Include_references_multi_level(async));
+        await base.Include_references_multi_level(async);
 
         AssertMql(
-        );
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$mod" : [23, 13] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Order._lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Order._lookup_Customer", "preserveNullAndEmptyArrays" : true } }
+""");
     }
 
     public override async Task Include_collection_then_include_collection(bool async)
@@ -1250,11 +1253,12 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
     public override async Task Include_multiple_references_then_include_multi_level_reverse(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Include_multiple_references_then_include_multi_level_reverse(async));
+        await base.Include_multiple_references_then_include_multi_level_reverse(async);
 
         AssertMql(
-        );
+            """
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$mod" : [23, 13] } } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Order._lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Order._lookup_Customer", "preserveNullAndEmptyArrays" : true } }
+""");
     }
 
     public override async Task Include_reference_and_collection(bool async)

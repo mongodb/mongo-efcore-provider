@@ -102,16 +102,17 @@ internal static class MongoIncludeCompiler
             return IncludeStrategy.ServerLookup;
         }
 
-        // A single-level dependent→principal REFERENCE Include with a single-column
-        // foreign key routes to a server-side $lookup + $unwind
-        // (preserveNullAndEmptyArrays). Composite-key references (Properties.Count > 1),
-        // and references carrying a nested ThenInclude chain, stay fan-out for a later
-        // stage.
+        // A dependent→principal REFERENCE Include with a single-column foreign key routes to a
+        // server-side $lookup + $unwind (preserveNullAndEmptyArrays). Reference-ROOTED chains
+        // (Order.Customer.ThenInclude(...)) also route here when the whole nested chain is
+        // lookup-able — i.e. all single-FK references with AT MOST ONE terminal collection and
+        // no collection / composite FK in a non-terminal position (see IsNestedChainLookupable).
+        // Composite-key references at the root (Properties.Count > 1) stay fan-out for now.
         if (IsCrossCollection(navigation)
             && !navigation.IsCollection
             && navigation.IsOnDependent
             && navigation.ForeignKey.Properties.Count == 1
-            && !HasNestedInclude(includeExpression))
+            && (includeExpression is null || IsNestedChainLookupable(includeExpression)))
         {
             return IncludeStrategy.ServerLookup;
         }
@@ -156,6 +157,20 @@ internal static class MongoIncludeCompiler
     /// </summary>
     private static IEnumerable<INavigation> EnumerateNestedIncludes(Expression expression)
     {
+        // A reference-ROOTED ThenInclude chain (post ReferenceChainJoinUnwrapper) nests the
+        // child directly as the parent include's NavigationExpression — no Select wrapper.
+        if (expression is IncludeExpression directNestedInclude
+            && directNestedInclude.Navigation is INavigation directNav)
+        {
+            yield return directNav;
+            foreach (var deeper in EnumerateNestedIncludes(directNestedInclude.NavigationExpression))
+            {
+                yield return deeper;
+            }
+
+            yield break;
+        }
+
         // Collection navigations wrap the sub-query in a
         // MaterializeCollectionNavigationExpression — unwrap to the inner query.
         // Reference navigations don't wrap, so we operate on the expression as-is.
@@ -178,6 +193,40 @@ internal static class MongoIncludeCompiler
                 yield return deeper;
             }
         }
+    }
+
+    /// <summary>
+    /// Walks the nested-include chain (via <see cref="EnumerateNestedIncludes"/>) and decides
+    /// whether the whole chain can be served by chained <c>$lookup</c> stages. A chain is
+    /// lookup-able when every nested level is a single-column foreign key, references appear in
+    /// any position, and at most one collection appears — and only as the TERMINAL level (a
+    /// dotted path into a <c>$lookup</c> array output is clobbered server-side, so a collection
+    /// can never be an intermediate level). An empty chain is trivially lookup-able.
+    /// </summary>
+    public static bool IsNestedChainLookupable(IncludeExpression includeExpression)
+    {
+        var nestedNavigations = includeExpression.NavigationExpression is { } navigationExpression
+            ? EnumerateNestedIncludes(navigationExpression).ToList()
+            : [];
+
+        for (var i = 0; i < nestedNavigations.Count; i++)
+        {
+            var nav = nestedNavigations[i];
+
+            // Cross-collection only; composite FK levels stay on fan-out for now.
+            if (!IsCrossCollection(nav) || nav.ForeignKey.Properties.Count != 1)
+            {
+                return false;
+            }
+
+            // A collection may only be the terminal level — never followed by anything.
+            if (nav.IsCollection && i != nestedNavigations.Count - 1)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static Expression Unquote(Expression e)

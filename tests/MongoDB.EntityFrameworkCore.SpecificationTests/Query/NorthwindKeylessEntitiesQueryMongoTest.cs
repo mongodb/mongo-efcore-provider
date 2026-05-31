@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore.Query;
+﻿using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using Xunit.Abstractions;
 using Xunit.Sdk;
@@ -128,10 +128,13 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_with_included_navs_multi_level(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.KeylessEntity_with_included_navs_multi_level(async));
-
-        AssertMql();
+        // Same keyless limitation as KeylessEntity_with_included_nav: the reference-rooted
+        // chain (OrderQuery.Customer.Orders) now translates to nested $lookups, but Include on
+        // a defining-query (keyless) result surfaces an InvalidOperationException("Sequence
+        // contains no matching element") from the materializer. Tracked as a follow-up to EF-117.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => base.KeylessEntity_with_included_navs_multi_level(async));
+        Assert.Contains("Sequence contains no matching element", ex.Message);
     }
 
     public override async Task KeylessEntity_groupby(bool async)

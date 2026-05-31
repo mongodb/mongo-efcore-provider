@@ -246,6 +246,127 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Include_reference_then_include_collection_emits_nested_lookup_in_single_query_and_materializes()
+    {
+        const string testName = nameof(Include_reference_then_include_collection_emits_nested_lookup_in_single_query_and_materializes);
+        // EF-117 Task 4.2: a reference-ROOTED chain Order.Customer.ThenInclude(c => c.Orders)
+        // must run as ONE query: a $lookup + $unwind into _lookup_Customer, then a NESTED
+        // $lookup whose `as` (and localField) are prefixed with the parent's `as`
+        // (_lookup_Customer._lookup_Orders / _lookup_Customer._id), rooting the child array
+        // inside the unwound parent object.
+        using var seed = new ThenIncludeContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" },
+            new ThenIncludeOrder { Id = "o2", CustomerId = "alfki" });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new ThenIncludeContext(MongoDatabase, testName, logs.Add);
+        var orders = db.Orders
+            .OrderBy(o => o.Id)
+            .Include(o => o.Customer)
+            .ThenInclude(c => c.Orders)
+            .ToList();
+
+        Assert.Equal(2, orders.Count);
+        Assert.All(orders, o => Assert.NotNull(o.Customer));
+        // Identity resolution: both orders share the single Customer instance.
+        Assert.Same(orders[0].Customer, orders[1].Customer);
+        // The included Customer.Orders collection is materialized (both orders).
+        Assert.Equal(2, orders[0].Customer.Orders.Count);
+        Assert.Equal(new[] { "o1", "o2" }, orders[0].Customer.Orders.Select(o => o.Id).OrderBy(i => i).ToArray());
+
+        // ONE query, with a nested $lookup whose `as` is dotted under the parent lookup.
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        var query = Assert.Single(mqlQueries);
+        Assert.Contains("\"as\" : \"_lookup_Customer\"", query);
+        Assert.Contains("$unwind", query);
+        Assert.Contains("\"as\" : \"_lookup_Customer._lookup_Orders\"", query);
+        Assert.Contains("\"localField\" : \"_lookup_Customer._id\"", query);
+    }
+
+    [Fact]
+    public void Include_reference_then_include_reference_emits_nested_lookup_in_single_query_and_materializes()
+    {
+        const string testName = nameof(Include_reference_then_include_reference_emits_nested_lookup_in_single_query_and_materializes);
+        // EF-117 Task 4.2: an all-reference chain Item.Order.ThenInclude(o => o.Customer).
+        // Both levels are references → $lookup + $unwind at each level, the second nested
+        // (and unwound) under the first via a dotted `as`/localField.
+        using var seed = new ThenIncludeContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" });
+        seed.Items.AddRange(
+            new ThenIncludeItem { Id = "i1", OrderId = "o1" },
+            new ThenIncludeItem { Id = "i2", OrderId = "o1" });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new ThenIncludeContext(MongoDatabase, testName, logs.Add);
+        var items = db.Items
+            .OrderBy(i => i.Id)
+            .Include(i => i.Order)
+            .ThenInclude(o => o.Customer)
+            .ToList();
+
+        Assert.Equal(2, items.Count);
+        Assert.All(items, i => Assert.NotNull(i.Order));
+        Assert.All(items, i => Assert.NotNull(i.Order.Customer));
+        Assert.All(items, i => Assert.Equal("Alfreds", i.Order.Customer.Name));
+        // Identity resolution across the two items.
+        Assert.Same(items[0].Order, items[1].Order);
+        Assert.Same(items[0].Order.Customer, items[1].Order.Customer);
+
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        var query = Assert.Single(mqlQueries);
+        Assert.Contains("\"as\" : \"_lookup_Order\"", query);
+        Assert.Contains("\"as\" : \"_lookup_Order._lookup_Customer\"", query);
+        Assert.Contains("\"localField\" : \"_lookup_Order.CustomerId\"", query);
+    }
+
+    [Fact]
+    public void Include_reference_then_reference_then_collection_three_level_chain_emits_nested_lookups_and_materializes()
+    {
+        const string testName = nameof(Include_reference_then_reference_then_collection_three_level_chain_emits_nested_lookups_and_materializes);
+        // EF-117 Task 4.2: a 3-level reference-rooted chain ending in a collection:
+        // Item.Order.Customer.Orders (ref -> ref -> collection). Verifies the dotted-alias
+        // nesting generalizes past two levels: _lookup_Order, _lookup_Order._lookup_Customer,
+        // _lookup_Order._lookup_Customer._lookup_Orders.
+        using var seed = new ThenIncludeContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" },
+            new ThenIncludeOrder { Id = "o2", CustomerId = "alfki" });
+        seed.Items.AddRange(new ThenIncludeItem { Id = "i1", OrderId = "o1" });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new ThenIncludeContext(MongoDatabase, testName, logs.Add);
+        var items = db.Items
+            .Include(i => i.Order)
+            .ThenInclude(o => o.Customer)
+            .ThenInclude(c => c.Orders)
+            .ToList();
+
+        var item = Assert.Single(items);
+        Assert.NotNull(item.Order);
+        Assert.NotNull(item.Order.Customer);
+        Assert.Equal("Alfreds", item.Order.Customer.Name);
+        Assert.Equal(2, item.Order.Customer.Orders.Count);
+        Assert.Equal(new[] { "o1", "o2" }, item.Order.Customer.Orders.Select(o => o.Id).OrderBy(i => i).ToArray());
+
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        var query = Assert.Single(mqlQueries);
+        Assert.Contains("\"as\" : \"_lookup_Order\"", query);
+        Assert.Contains("\"as\" : \"_lookup_Order._lookup_Customer\"", query);
+        Assert.Contains("\"as\" : \"_lookup_Order._lookup_Customer._lookup_Orders\"", query);
+        Assert.Contains("\"localField\" : \"_lookup_Order._lookup_Customer._id\"", query);
+    }
+
+    [Fact]
     public void Include_collection_as_no_tracking_materializes()
     {
         const string testName = nameof(Include_collection_as_no_tracking_materializes);
