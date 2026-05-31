@@ -1005,7 +1005,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
             .Include(c => c.Orders.Where(o => o.Customer.Name == "Alfreds"));
 
         var ex = Assert.Throws<NotSupportedException>(() => query.ToList());
-        Assert.Contains("references another navigation", ex.Message);
+        Assert.Contains("navigation-referencing predicate", ex.Message);
         Assert.Contains("EF-117", ex.Message);
     }
 
@@ -1033,7 +1033,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
             .Include(c => c.Orders.Where(o => o.Customer.Name == "Alfreds").OrderBy(o => o.Id));
 
         var ex = Assert.Throws<NotSupportedException>(() => query.ToList());
-        Assert.Contains("references another navigation", ex.Message);
+        Assert.Contains("navigation-referencing predicate", ex.Message);
         Assert.Contains("EF-117", ex.Message);
     }
 
@@ -1070,6 +1070,75 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         // Server-side $lookup path (not fan-out, not throw).
         var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
         Assert.Contains(mqlQueries, q => q.Contains("_lookup_Orders"));
+    }
+
+    [Fact]
+    public void Nav_referencing_query_filter_plus_scalar_Where_Include_throws_with_accurate_message()
+    {
+        const string testName = nameof(Nav_referencing_query_filter_plus_scalar_Where_Include_throws_with_accurate_message);
+        // EF-117 (over-rejection / honest-message case): the DEPENDENT carries a navigation-referencing
+        // MODEL query filter (HasQueryFilter(o => o.Customer.Name != "Hidden")), which EF expands to a
+        // transparent-identifier Where in the include sub-query. Adding ANY include operator — here a
+        // plain SCALAR Where (o => o.Total > 10) that references NO navigation — pushes that filter's
+        // transparent-identifier Where OUTSIDE the FK correlation, so HasUntranslatableUserWhereInclude
+        // flags it and the include THROWS. This is acceptable (never silent wrong results), but the
+        // message must NOT falsely claim the USER wrote a nav-referencing predicate — it must also
+        // attribute the cause to a query filter on the dependent. Full support is the option-3 follow-up.
+        using var seed = new QueryFilterContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new Customer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki", Total = 5 },
+            new Order { Id = "o2", CustomerId = "alfki", Total = 15 });
+        seed.SaveChanges();
+
+        using var db = new QueryFilterContext(MongoDatabase, testName);
+        var query = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders.Where(o => o.Total > 10));
+
+        var ex = Assert.Throws<NotSupportedException>(() => query.ToList());
+        // Accurate message: attributes the cause to a query filter on the dependent type, NOT to a
+        // user-written nav-referencing predicate (the user's Where references only o.Total).
+        Assert.Contains("navigation-referencing predicate", ex.Message);
+        Assert.Contains(nameof(Order), ex.Message); // names the dependent type carrying the query filter
+        Assert.Contains("EF-117", ex.Message);
+    }
+
+    [Fact]
+    public void Scalar_Where_Include_without_nav_referencing_query_filter_still_fans_out_filtered()
+    {
+        const string testName = nameof(Scalar_Where_Include_without_nav_referencing_query_filter_still_fans_out_filtered);
+        // EF-117 (no-regression guard for the honest-message fix): the SAME plain scalar Where include,
+        // but on a context WITHOUT the navigation-referencing query filter, must STILL fan out and
+        // filter correctly — it must NOT throw. Confirms the throw only fires when a transparent-
+        // identifier nav-Where is actually present before the correlation, not for every scalar Where.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki", Total = 5 },
+            new Order { Id = "o2", CustomerId = "alfki", Total = 15 },
+            new Order { Id = "o3", CustomerId = "anatr", Total = 8 });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new CustomerOrderContext(MongoDatabase, testName, logs.Add);
+        var customers = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders.Where(o => o.Total > 10))
+            .ToList();
+
+        Assert.Equal(2, customers.Count);
+        var alfki = customers.Single(c => c.Id == "alfki");
+        Assert.Equal(["o2"], alfki.Orders.Select(o => o.Id).ToArray());
+        Assert.Empty(customers.Single(c => c.Id == "anatr").Orders);
+
+        // Fan-out path (not the simple/pipeline $lookup): no $lookup for the Orders nav.
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        Assert.DoesNotContain(mqlQueries, q => q.Contains("_lookup_Orders"));
     }
 
     private class QueryFilterContext(IMongoDatabase mongoDatabase, string suffix, Action<string>? log = null) : DbContext

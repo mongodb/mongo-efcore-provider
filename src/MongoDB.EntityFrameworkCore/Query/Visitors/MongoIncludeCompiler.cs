@@ -104,26 +104,36 @@ internal static class MongoIncludeCompiler
             && navigation.ForeignKey.Properties.Count == 1
             && !HasNestedInclude(includeExpression))
         {
-            // A USER Where predicate inside the include lambda that REFERENCES ANOTHER NAVIGATION
-            // (Include(c => c.Orders.Where(o => o.Customer.Name == "Alfreds"))) is expanded by EF over a
-            // TRANSPARENT-IDENTIFIER element type (a Join into the referenced nav), so it is NOT the
-            // simple Where-over-TDependent the fan-out path can recompose, and the provider has no
-            // predicate→$match renderer for it either. Such a predicate can be neither translated
-            // server-side nor composed onto fan-out, so FAIL LOUDLY rather than silently returning
-            // UNFILTERED results (cases that previously fell through to the simple $lookup, which
-            // ignores the predicate, or bailed to fan-out where TryBuildFanOutComposition returned null).
+            // A navigation-referencing Where over a TRANSPARENT-IDENTIFIER element type sitting OUTSIDE
+            // the FK correlation cannot be translated server-side (no predicate→$match renderer) nor
+            // recomposed onto the fan-out loader (it is not the simple Where-over-TDependent fan-out can
+            // rebuild). It arises from TWO distinct triggers — both rejected here:
+            //   (1) a USER Where inside the include lambda that references another navigation, e.g.
+            //       Include(c => c.Orders.Where(o => o.Customer.Name == "Alfreds")); or
+            //   (2) a navigation-referencing MODEL query filter on the DEPENDENT, e.g.
+            //       HasQueryFilter(o => o.Customer.Name != "Hidden"), COMBINED with any include operator
+            //       (even a plain scalar Where like o => o.Total > 10, or an OrderBy). The extra operator
+            //       pushes the query filter's transparent-identifier Where outside the correlation, so it
+            //       too gets flagged — an over-rejection of an otherwise-supportable shape.
+            // We FAIL LOUDLY rather than silently returning UNFILTERED results (cases that previously fell
+            // through to the simple $lookup, which ignores the predicate, or bailed to fan-out where
+            // TryBuildFanOutComposition returned null). The message must stay accurate for BOTH triggers —
+            // it must not falsely claim the user wrote a nav predicate when the cause is a query filter.
             //
-            // OPTION 3 / FOLLOW-UP: full support would translate/apply such a nav-referencing predicate
-            // on the fan-out path (re-running the Join + Where through DbContext.Set<TDependent>()).
-            // Tracked as a follow-up to EF-117; see docs/failing-spec-tests.md. Until then we throw.
+            // OPTION 3 / FOLLOW-UP: full support would translate/apply the nav-referencing predicate (user
+            // or query filter) on the fan-out path (re-running the Join + Where through
+            // DbContext.Set<TDependent>()). Tracked as a follow-up to EF-117; see docs/failing-spec-tests.md.
             if (HasUntranslatableUserWhereInclude(includeExpression, navigation))
             {
                 throw new NotSupportedException(
                     $"Filtered Include of '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name
-                    }' with a predicate that references another navigation is not yet supported by the "
-                    + "MongoDB EF Core provider (tracked as a follow-up to EF-117). Rewrite the predicate to "
-                    + "filter only on the included entity's own properties, or load and filter the related "
-                    + "data with a separate query.");
+                    }' could not be translated to a server-side $lookup because the included type combines a "
+                    + "navigation-referencing predicate (from the Include filter itself or from a query filter on '"
+                    + $"{navigation.TargetEntityType.DisplayName()}') with filtering, ordering, or paging. This "
+                    + "is not yet supported by the MongoDB EF Core provider (tracked as a follow-up to EF-117). "
+                    + "Rewrite any Include predicate to filter only on the included entity's own properties, "
+                    + "remove the navigation-referencing query filter, or load and filter the related data with "
+                    + "a separate query.");
             }
 
             // A USER Where predicate inside the include lambda (Include(c => c.Orders.Where(o => ...)))
