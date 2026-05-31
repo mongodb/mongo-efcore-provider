@@ -325,6 +325,43 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Include_self_referencing_reference_materializes_manager()
+    {
+        const string testName = nameof(Include_self_referencing_reference_materializes_manager);
+        // Stage 3.3 (review R8): a self-referencing dependent → principal reference
+        // navigation (Staff.Manager, FK ManagerId on the same Staff type). The
+        // server-side $lookup is on the SAME collection with localField (ManagerId)
+        // != foreignField (_id); it should "just work" via the ported
+        // LookupExpression with no special-casing.
+        using var seed = new StaffContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Staff.AddRange(
+            new Staff { Id = "boss", Name = "Big Boss", ManagerId = null },
+            new Staff { Id = "alice", Name = "Alice", ManagerId = "boss" },
+            new Staff { Id = "bob", Name = "Bob", ManagerId = "boss" });
+        seed.SaveChanges();
+
+        using var db = new StaffContext(MongoDatabase, testName);
+        var staff = db.Staff
+            .OrderBy(s => s.Id)
+            .Include(s => s.Manager)
+            .ToList();
+
+        Assert.Equal(3, staff.Count);
+        // alice -> boss, bob -> boss, boss -> null (no manager; dangling/absent FK).
+        var alice = staff.Single(s => s.Id == "alice");
+        var bob = staff.Single(s => s.Id == "bob");
+        var boss = staff.Single(s => s.Id == "boss");
+        Assert.NotNull(alice.Manager);
+        Assert.Equal("Big Boss", alice.Manager!.Name);
+        Assert.NotNull(bob.Manager);
+        Assert.Equal("Big Boss", bob.Manager!.Name);
+        Assert.Null(boss.Manager);
+        // Identity resolution: alice and bob share the same Manager instance (TrackAll).
+        Assert.Same(alice.Manager, bob.Manager);
+    }
+
+    [Fact]
     public void Include_collection_then_include_collection_then_include_reference_materializes()
     {
         const string testName = nameof(Include_collection_then_include_collection_then_include_reference_materializes);
@@ -512,6 +549,35 @@ public class IncludeTests(TemporaryDatabaseFixture database)
             mb.Entity<Post>().ToCollection($"ef117_{suffix}_posts");
             mb.Entity<Tag>().ToCollection($"ef117_{suffix}_tags");
             mb.Entity<Post>().HasMany(p => p.Tags).WithMany(t => t.Posts);
+        }
+    }
+
+    private class Staff
+    {
+        public string Id { get; set; } = null!;
+        public string Name { get; set; } = null!;
+        public string? ManagerId { get; set; }
+        public Staff? Manager { get; set; }
+    }
+
+    private class StaffContext(IMongoDatabase mongoDatabase, string suffix) : DbContext
+    {
+        public DbSet<Staff> Staff { get; set; } = null!;
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            => base.OnConfiguring(optionsBuilder
+                .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            base.OnModelCreating(mb);
+            mb.Entity<Staff>().ToCollection($"ef117_{suffix}_staff");
+            mb.Entity<Staff>()
+                .HasOne(s => s.Manager)
+                .WithMany()
+                .HasForeignKey(s => s.ManagerId);
         }
     }
 }

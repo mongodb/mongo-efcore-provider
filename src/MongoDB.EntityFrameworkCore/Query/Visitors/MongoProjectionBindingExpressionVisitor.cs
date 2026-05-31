@@ -165,10 +165,12 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                         if (strategy == IncludeStrategy.ServerLookup)
                         {
                             // Server-side $lookup — rewrite the navigation so the shaper reads the
-                            // materialized dependents from the `_lookup_<Nav>` array field.
-                            // AddLookup is called INSIDE RewriteCollectionIncludeForLookup, only on
-                            // the success path, so a fallback to fan-out leaves no orphan lookup registered.
-                            return RewriteCollectionIncludeForLookup(includeExpression, includableNavigation);
+                            // materialized related entity/entities from the `_lookup_<Nav>` field.
+                            // AddLookup is called INSIDE the rewrite helpers, only on the success
+                            // path, so a fallback to fan-out leaves no orphan lookup registered.
+                            return includableNavigation.IsCollection
+                                ? RewriteCollectionIncludeForLookup(includeExpression, includableNavigation)
+                                : RewriteReferenceIncludeForLookup(includeExpression, includableNavigation);
                         }
 
                         // Client-side fan-out — preserve the IncludeExpression so the
@@ -245,6 +247,52 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         _queryExpression.AddToProjection(objectArrayProjection);
 
         return includeExpression.Update(visitedEntity, collectionShaper);
+    }
+
+    /// <summary>
+    /// Rewrites a single-level dependent→principal reference <see cref="IncludeExpression"/> so the
+    /// included entity is materialized from the server-side <c>$lookup</c> + <c>$unwind</c> output
+    /// object (<c>_lookup_&lt;Nav&gt;</c>) instead of a client-side fan-out sub-query. Everything is
+    /// driven from the <see cref="INavigation"/> metadata: the original
+    /// <see cref="IncludeExpression.NavigationExpression"/> is a <c>default(TInner)</c> placeholder
+    /// (the provider's <c>IncludeJoinUnwrapper</c> dropped the synthetic join's inner sub-query), so
+    /// it is never read. <c>preserveNullAndEmptyArrays</c> on the <c>$unwind</c> leaves the navigation
+    /// null for null / dangling foreign keys.
+    /// </summary>
+    private Expression RewriteReferenceIncludeForLookup(IncludeExpression includeExpression, INavigation navigation)
+    {
+        _includedNavigations.Push(navigation);
+        var visitedEntity = Visit(includeExpression.EntityExpression);
+        _includedNavigations.Pop();
+
+        EntityProjectionExpression outerEntityProjection;
+        if (visitedEntity is StructuralTypeShaperExpression { ValueBufferExpression: ProjectionBindingExpression { Index: int index } })
+        {
+            outerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[index].Expression;
+        }
+        else
+        {
+            // Couldn't resolve the outer entity projection — fall back to fan-out by preserving
+            // the original navigation expression (the loader path handles it from metadata).
+            return includeExpression.Update(visitedEntity, includeExpression.NavigationExpression);
+        }
+
+        // The rewrite is now committed to the $lookup path, so register the pending lookup here —
+        // not before the resolution above — so a fallback to fan-out leaves no orphan lookup registered.
+        _queryExpression.AddLookup(new LookupExpression(navigation));
+
+        // BindNavigation routes a cross-collection reference nav to an EntityProjectionExpression
+        // reading the `_lookup_<Nav>` field (shared with the producer via LookupExpression.GetAlias).
+        var referenceEntityProjection = (EntityProjectionExpression)outerEntityProjection.BindNavigation(navigation);
+
+        var referenceShaper = new StructuralTypeShaperExpression(
+            navigation.TargetEntityType,
+            Expression.Convert(
+                Expression.Convert(referenceEntityProjection, typeof(object)),
+                typeof(ValueBuffer)),
+            nullable: true);
+
+        return includeExpression.Update(visitedEntity, referenceShaper);
     }
 
     /// <inheritdoc />

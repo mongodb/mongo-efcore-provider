@@ -78,7 +78,7 @@ public static class IncludeStrategyTests
     }
 
     [Fact]
-    public static void ChooseStrategy_returns_ClientFanOut_for_dependent_side_reference_nav()
+    public static void ChooseStrategy_returns_ServerLookup_for_single_level_single_key_dependent_reference_nav()
     {
         using var db = new TwoCollectionDbContext();
         var navigation = db.Model
@@ -88,10 +88,13 @@ public static class IncludeStrategyTests
         Assert.True(MongoIncludeCompiler.IsCrossCollection(navigation));
         Assert.False(navigation.IsCollection);
         Assert.True(navigation.IsOnDependent);
+        Assert.Equal(1, navigation.ForeignKey.Properties.Count);
 
-        // Reference (dependent→principal) navigations still fan out client-side.
+        // EF-117 Stage 3: a single-level dependent→principal reference Include with a
+        // single-column foreign key (and no nested ThenInclude chain) now routes to a
+        // server-side $lookup + $unwind. A null includeExpression means "no nested include".
         var strategy = MongoIncludeCompiler.ChooseStrategy(null, navigation);
 
-        Assert.Equal(IncludeStrategy.ClientFanOut, strategy);
+        Assert.Equal(IncludeStrategy.ServerLookup, strategy);
     }
 }
