@@ -977,4 +977,131 @@ public class IncludeTests(TemporaryDatabaseFixture database)
                 .HasPrincipalKey(o => o.OrderNo);
         }
     }
+
+    [Fact]
+    public void Filtered_collection_Include_with_nav_referencing_Where_throws_rather_than_under_filtering()
+    {
+        const string testName =
+            nameof(Filtered_collection_Include_with_nav_referencing_Where_throws_rather_than_under_filtering);
+        // EF-117: a filtered collection Include whose USER Where predicate REFERENCES ANOTHER
+        // NAVIGATION (Include(c => c.Orders.Where(o => o.Customer.Name == "Alfreds"))) is expanded by
+        // EF over a transparent-identifier element type (a Join into the referenced nav). The provider
+        // can neither render it server-side nor recompose it onto the fan-out loader, so it must FAIL
+        // LOUDLY rather than SILENTLY returning every dependent unfiltered. This is the no-ordering
+        // sub-case (previously fell through to the simple $lookup that ignores the predicate).
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki", Total = 5 },
+            new Order { Id = "o2", CustomerId = "anatr", Total = 8 });
+        seed.SaveChanges();
+
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var query = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders.Where(o => o.Customer.Name == "Alfreds"));
+
+        var ex = Assert.Throws<NotSupportedException>(() => query.ToList());
+        Assert.Contains("references another navigation", ex.Message);
+        Assert.Contains("EF-117", ex.Message);
+    }
+
+    [Fact]
+    public void Filtered_collection_Include_with_nav_referencing_Where_and_ordering_throws_rather_than_under_filtering()
+    {
+        const string testName =
+            nameof(Filtered_collection_Include_with_nav_referencing_Where_and_ordering_throws_rather_than_under_filtering);
+        // EF-117: same nav-referencing predicate but COMBINED WITH ordering. Previously this bailed to
+        // the fan-out path, where TryBuildFanOutComposition returned null (it cannot recompose a
+        // transparent-identifier Where), so the collection materialized UNFILTERED. It must throw too.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki", Total = 5 },
+            new Order { Id = "o2", CustomerId = "anatr", Total = 8 });
+        seed.SaveChanges();
+
+        using var db = new CustomerOrderContext(MongoDatabase, testName);
+        var query = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders.Where(o => o.Customer.Name == "Alfreds").OrderBy(o => o.Id));
+
+        var ex = Assert.Throws<NotSupportedException>(() => query.ToList());
+        Assert.Contains("references another navigation", ex.Message);
+        Assert.Contains("EF-117", ex.Message);
+    }
+
+    [Fact]
+    public void Model_query_filter_referencing_nav_on_dependent_still_includes_via_lookup()
+    {
+        const string testName = nameof(Model_query_filter_referencing_nav_on_dependent_still_includes_via_lookup);
+        // EF-117 regression guard: a MODEL-LEVEL query filter on the dependent that itself references a
+        // navigation (HasQueryFilter(o => o.Customer.Name != "Hidden")) ALSO expands to a
+        // transparent-identifier Where after nav-expansion (mirroring Northwind's Order filter). It must
+        // NOT be mistaken for a user nav-referencing include predicate — the include must still run via
+        // the server-side $lookup (NOT throw, NOT fan-out), exactly as before this fix.
+        using var seed = new QueryFilterContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki", Total = 5 },
+            new Order { Id = "o2", CustomerId = "anatr", Total = 8 });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new QueryFilterContext(MongoDatabase, testName, logs.Add);
+        var customers = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders)
+            .ToList();
+
+        Assert.Equal(2, customers.Count);
+        Assert.Single(customers.Single(c => c.Id == "alfki").Orders);
+        Assert.Single(customers.Single(c => c.Id == "anatr").Orders);
+
+        // Server-side $lookup path (not fan-out, not throw).
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        Assert.Contains(mqlQueries, q => q.Contains("_lookup_Orders"));
+    }
+
+    private class QueryFilterContext(IMongoDatabase mongoDatabase, string suffix, Action<string>? log = null) : DbContext
+    {
+        public DbSet<Customer> Customers { get; set; } = null!;
+        public DbSet<Order> Orders { get; set; } = null!;
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            base.OnConfiguring(optionsBuilder
+                .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
+            if (log != null)
+            {
+                optionsBuilder.LogTo(log).EnableSensitiveDataLogging();
+            }
+        }
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            base.OnModelCreating(mb);
+            mb.Entity<Customer>().ToCollection($"ef117_{suffix}_customers");
+            mb.Entity<Order>().ToCollection($"ef117_{suffix}_orders");
+            mb.Entity<Customer>()
+                .HasMany(c => c.Orders)
+                .WithOne(o => o.Customer)
+                .HasForeignKey(o => o.CustomerId);
+            // Model-level query filter on the DEPENDENT that REFERENCES a navigation
+            // (mirrors Northwind's Order filter referencing o.Customer). After nav-expansion
+            // this appears as a transparent-identifier Where in the include sub-query.
+            mb.Entity<Order>().HasQueryFilter(o => o.Customer.Name != "Hidden");
+        }
+    }
 }

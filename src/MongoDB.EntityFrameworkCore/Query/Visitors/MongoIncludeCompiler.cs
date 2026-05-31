@@ -104,6 +104,28 @@ internal static class MongoIncludeCompiler
             && navigation.ForeignKey.Properties.Count == 1
             && !HasNestedInclude(includeExpression))
         {
+            // A USER Where predicate inside the include lambda that REFERENCES ANOTHER NAVIGATION
+            // (Include(c => c.Orders.Where(o => o.Customer.Name == "Alfreds"))) is expanded by EF over a
+            // TRANSPARENT-IDENTIFIER element type (a Join into the referenced nav), so it is NOT the
+            // simple Where-over-TDependent the fan-out path can recompose, and the provider has no
+            // predicate→$match renderer for it either. Such a predicate can be neither translated
+            // server-side nor composed onto fan-out, so FAIL LOUDLY rather than silently returning
+            // UNFILTERED results (cases that previously fell through to the simple $lookup, which
+            // ignores the predicate, or bailed to fan-out where TryBuildFanOutComposition returned null).
+            //
+            // OPTION 3 / FOLLOW-UP: full support would translate/apply such a nav-referencing predicate
+            // on the fan-out path (re-running the Join + Where through DbContext.Set<TDependent>()).
+            // Tracked as a follow-up to EF-117; see docs/failing-spec-tests.md. Until then we throw.
+            if (HasUntranslatableUserWhereInclude(includeExpression, navigation))
+            {
+                throw new NotSupportedException(
+                    $"Filtered Include of '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name
+                    }' with a predicate that references another navigation is not yet supported by the "
+                    + "MongoDB EF Core provider (tracked as a follow-up to EF-117). Rewrite the predicate to "
+                    + "filter only on the included entity's own properties, or load and filter the related "
+                    + "data with a separate query.");
+            }
+
             // A USER Where predicate inside the include lambda (Include(c => c.Orders.Where(o => ...)))
             // cannot be rendered to a server-side $match (the provider has no predicate→BSON renderer),
             // so it MUST route to the client-side fan-out loader where the driver's LINQ translates the
@@ -348,6 +370,86 @@ internal static class MongoIncludeCompiler
            && call.Method.GetGenericMethodDefinition() == QueryableMethods.Where
            && call.Method.GetGenericArguments() is [var elementType] && elementType == dependentClrType
            && !ReferencesCorrelation(call.Arguments[1]);
+
+    /// <summary>
+    /// <see langword="true"/> when a top-level collection include carries a USER <c>Where</c> predicate
+    /// that the provider can NEITHER translate server-side NOR compose onto the client-side fan-out
+    /// loader — specifically a predicate that REFERENCES ANOTHER NAVIGATION
+    /// (<c>Include(c =&gt; c.Orders.Where(o =&gt; o.Customer.Name == "Alfreds"))</c>). EF nav-expansion
+    /// realizes such a predicate as a <c>Join</c> into the referenced navigation followed by a
+    /// <c>Where</c> over a TRANSPARENT-IDENTIFIER element type (≠ the dependent CLR type). The caller
+    /// throws on these rather than letting them fall through to the simple <c>$lookup</c> (which would
+    /// ignore the predicate) or to fan-out (where <see cref="TryBuildFanOutComposition"/> can't recompose
+    /// a transparent-identifier <c>Where</c>) — both of which silently return UNFILTERED results.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Disambiguation from a MODEL-level GLOBAL QUERY FILTER on the dependent (EF
+    /// <c>HasQueryFilter</c>) is by POSITION RELATIVE TO THE FK CORRELATION <c>Where</c>, which is
+    /// version-independent (it relies only on the expression shape, not on the
+    /// <c>GetQueryFilter()</c> API that differs across EF8/9/10):
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// EF injects a model query filter at the dependent DbSet ROOT, so its (transparent-identifier)
+    /// <c>Where</c> sits INSIDE — i.e. is applied BEFORE — the FK correlation <c>Where</c> that
+    /// collection-navigation expansion wraps around it. Such a <c>Where</c> stays on the existing
+    /// simple-/pipeline-<c>$lookup</c> path unchanged (EF applies the filter separately).
+    /// </description></item>
+    /// <item><description>
+    /// A USER predicate written inside the include lambda is applied AFTER the correlation, so its
+    /// <c>Where</c> sits OUTSIDE the correlation <c>Where</c>. A non-correlation <c>Where</c> over a
+    /// transparent-identifier element type in that OUTER position is the untranslatable nav-referencing
+    /// predicate this method targets.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// A user <c>Where</c> over the dependent CLR type directly (the scalar case
+    /// <c>o =&gt; o.Total &gt; 10</c>) is handled by <see cref="HasUserWhereInclude"/> → fan-out and is
+    /// deliberately NOT matched here.
+    /// </para>
+    /// </remarks>
+    public static bool HasUntranslatableUserWhereInclude(IncludeExpression? includeExpression, INavigation navigation)
+    {
+        if (includeExpression?.NavigationExpression
+            is not MaterializeCollectionNavigationExpression { Subquery: var subquery })
+        {
+            return false;
+        }
+
+        var dependentClrType = navigation.TargetEntityType.ClrType;
+
+        // Walk outermost → inner (via Arguments[0]). Operators we see BEFORE the FK correlation Where
+        // were applied AFTER it (they wrap it) — i.e. they sit OUTSIDE the correlation. Once we pass the
+        // correlation Where, subsequent Wheres are EF-internal (model query filter) and are left alone.
+        for (var current = subquery; current is MethodCallExpression { Method.IsGenericMethod: true } call;
+             current = call.Arguments[0])
+        {
+            if (call.Method.GetGenericMethodDefinition() != QueryableMethods.Where)
+            {
+                continue;
+            }
+
+            // The FK correlation Where (references the outer principal shaper / QueryContext) marks the
+            // boundary: anything inner (a model query filter applied at the DbSet root) is not a user
+            // predicate. Stop scanning once we reach it.
+            if (ReferencesCorrelation(call.Arguments[1]))
+            {
+                break;
+            }
+
+            // A non-correlation Where OUTSIDE the correlation whose element type is NOT the dependent
+            // CLR type is a user predicate over a transparent identifier — i.e. it references another
+            // navigation. That is the shape we cannot translate or compose; signal the throw.
+            // (A Where over the dependent CLR type is the scalar fan-out case handled elsewhere.)
+            if (call.Method.GetGenericArguments() is [var elementType] && elementType != dependentClrType)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// <see langword="true"/> when an ordering/paging operator call's SOURCE element type is the
