@@ -79,7 +79,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             (bsonDoc, track) => new MongoProjectionBindingRemovingExpressionVisitor(
                 rootEntityType, mongoQueryExpression, bsonDoc,
-                QueryCompilationContext.QueryContextParameter, _bsonSerializerFactory, track,
+                QueryCompilationContext.QueryContextParameter, track,
                 QueryCompilationContext.QueryTrackingBehavior));
     }
 
@@ -116,7 +116,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             (bsonDoc, track) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
                 rootEntityType, mongoQueryExpression, bsonDoc,
-                QueryCompilationContext.QueryContextParameter, _bsonSerializerFactory, track,
+                QueryCompilationContext.QueryContextParameter, track,
                 QueryCompilationContext.QueryTrackingBehavior));
     }
 

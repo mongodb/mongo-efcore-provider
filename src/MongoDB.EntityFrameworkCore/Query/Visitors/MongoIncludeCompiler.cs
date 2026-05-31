@@ -900,6 +900,9 @@ internal static class MongoIncludeCompiler
         // include results and to a stand-alone DbSet query against the same type.
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var dbContext = mongoQueryContext.Context;
+        // Fan-out-only: this sub-query is a SEPARATE materialization, so the outer query's tracking
+        // behavior must be re-applied here. The server-side $lookup path needs no such plumbing — it
+        // materializes in the single outer query and inherits its tracking implicitly.
         IQueryable<TRelated> query = ApplyTrackingBehavior(dbContext.Set<TRelated>(), queryTrackingBehavior);
 
         // Apply any chained ThenInclude path so the loader recursively materializes
@@ -972,6 +975,9 @@ internal static class MongoIncludeCompiler
 
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var dbContext = mongoQueryContext.Context;
+        // Fan-out-only: this sub-query is a SEPARATE materialization, so the outer query's tracking
+        // behavior must be re-applied here. The server-side $lookup path needs no such plumbing — it
+        // materializes in the single outer query and inherits its tracking implicitly.
         IQueryable<TRelated> query = ApplyTrackingBehavior(dbContext.Set<TRelated>(), queryTrackingBehavior);
 
         if (!string.IsNullOrEmpty(thenIncludeChainPath))

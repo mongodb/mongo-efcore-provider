@@ -707,6 +707,95 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Include_collection_then_include_collection_outer_fans_out_no_lookup_for_outer_collection()
+    {
+        const string testName = nameof(Include_collection_then_include_collection_outer_fans_out_no_lookup_for_outer_collection);
+        // EF-117 Stage 7 Task 1: a collection -> collection chain
+        // (Customer.Orders.ThenInclude(o => o.Items)) does NOT emit a server-side $lookup for the
+        // OUTER collection. The outer Customer.Orders is a top-level single-FK collection, but the
+        // nested ThenInclude pushes it to the client-side fan-out fallback (ChooseStrategy sees
+        // HasNestedInclude == true), so there is NO `_lookup_Orders`: a separate $match sub-query
+        // loads the orders per-customer instead.
+        //
+        // The fan-out loader then re-runs that orders sub-query through the full EF pipeline with
+        // `.Include("Items")` applied. Inside THAT sub-query, Order.Items is itself a top-level
+        // single-FK collection with no further nesting, so it legitimately routes BACK to a
+        // server-side $lookup (`_lookup_Items`) — this is correct and efficient, not a bug: the
+        // fan-out only owns the OUTER hop; nested levels re-enter normal routing. We therefore
+        // assert the outer collection fanned out (no `_lookup_Orders`) and that both levels
+        // materialize with correct inverse-navigation fixup.
+        using var seed = new ThenIncludeContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" },
+            new ThenIncludeOrder { Id = "o2", CustomerId = "alfki" });
+        seed.Items.AddRange(
+            new ThenIncludeItem { Id = "i1", OrderId = "o1" },
+            new ThenIncludeItem { Id = "i2", OrderId = "o1" },
+            new ThenIncludeItem { Id = "i3", OrderId = "o2" });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new ThenIncludeContext(MongoDatabase, testName, logs.Add);
+        var customers = db.Customers
+            .Include(c => c.Orders)
+            .ThenInclude(o => o.Items)
+            .ToList();
+
+        // Both levels materialize; inverse fixup wires each Item back to its owning Order.
+        var alfki = Assert.Single(customers);
+        Assert.Equal(2, alfki.Orders.Count);
+        var o1 = alfki.Orders.Single(o => o.Id == "o1");
+        var o2 = alfki.Orders.Single(o => o.Id == "o2");
+        Assert.Equal(2, o1.Items.Count);
+        Assert.Single(o2.Items);
+        Assert.All(o1.Items, i => Assert.Same(o1, i.Order));
+        Assert.All(o2.Items, i => Assert.Same(o2, i.Order));
+
+        // The OUTER Customer.Orders collection fanned out — no server-side $lookup for it.
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        Assert.DoesNotContain(mqlQueries, q => q.Contains("_lookup_Orders"));
+    }
+
+    [Fact]
+    public void Include_collection_then_include_collection_as_no_tracking_tracks_nothing()
+    {
+        const string testName = nameof(Include_collection_then_include_collection_as_no_tracking_tracks_nothing);
+        // EF-117 Stage 7 Task 3: AsNoTracking on a collection -> collection (fan-out FALLBACK) chain
+        // must track NOTHING — neither the root, the fanned-out Orders, nor the fanned-out Items.
+        // This exercises MongoIncludeCompiler.ApplyTrackingBehavior (fan-out-only plumbing): each
+        // separate sub-query has to re-apply the outer query's NoTracking, otherwise the related
+        // entities would attach to the DbContext anyway.
+        using var seed = new ThenIncludeContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" },
+            new ThenIncludeOrder { Id = "o2", CustomerId = "alfki" });
+        seed.Items.AddRange(
+            new ThenIncludeItem { Id = "i1", OrderId = "o1" },
+            new ThenIncludeItem { Id = "i2", OrderId = "o1" },
+            new ThenIncludeItem { Id = "i3", OrderId = "o2" });
+        seed.SaveChanges();
+
+        using var db = new ThenIncludeContext(MongoDatabase, testName);
+        var customers = db.Customers
+            .AsNoTracking()
+            .Include(c => c.Orders)
+            .ThenInclude(o => o.Items)
+            .ToList();
+
+        // Materialization still happens across both fan-out levels.
+        var alfki = Assert.Single(customers);
+        Assert.Equal(2, alfki.Orders.Count);
+        Assert.Equal(3, alfki.Orders.Sum(o => o.Items.Count));
+
+        // Nothing — at any level — should be tracked.
+        Assert.Empty(db.ChangeTracker.Entries());
+    }
+
+    [Fact]
     public void Include_collection_to_composite_primary_key_member_emits_id_dotted_lookup_and_materializes()
     {
         const string testName = nameof(Include_collection_to_composite_primary_key_member_emits_id_dotted_lookup_and_materializes);

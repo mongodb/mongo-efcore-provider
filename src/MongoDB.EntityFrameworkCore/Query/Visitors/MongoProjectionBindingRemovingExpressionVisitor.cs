@@ -43,7 +43,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     private readonly IEntityType _rootEntityType;
     private readonly ParameterExpression DocParameter;
     private readonly ParameterExpression _queryContextParameter;
-    private readonly BsonSerializerFactory _bsonSerializerFactory;
     private readonly bool _trackQueryResults;
     private readonly QueryTrackingBehavior _queryTrackingBehavior;
     private readonly Dictionary<ParameterExpression, Expression> _materializationContextBindings = new();
@@ -60,8 +59,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// <param name="docParameter">The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.</param>
     /// <param name="queryContextParameter">The parameter that will hold the <see cref="QueryContext"/> input
     /// parameter to the shaper — used by cross-collection include loaders.</param>
-    /// <param name="bsonSerializerFactory">Factory used to obtain related-entity serializers for include
-    /// sub-queries.</param>
     /// <param name="trackQueryResults">
     /// <see langword="true"/> if the results from this query are being tracked for changes,
     /// <see langword="false"/> if they are not.
@@ -75,7 +72,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         MongoQueryExpression queryExpression,
         ParameterExpression docParameter,
         ParameterExpression queryContextParameter,
-        BsonSerializerFactory bsonSerializerFactory,
         bool trackQueryResults,
         QueryTrackingBehavior queryTrackingBehavior)
     {
@@ -83,7 +79,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         _rootEntityType = rootEntityType;
         DocParameter = docParameter;
         _queryContextParameter = queryContextParameter;
-        _bsonSerializerFactory = bsonSerializerFactory;
         _trackQueryResults = trackQueryResults;
         _queryTrackingBehavior = queryTrackingBehavior;
     }
