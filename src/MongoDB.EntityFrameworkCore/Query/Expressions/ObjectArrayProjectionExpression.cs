@@ -14,6 +14,14 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableExpression, IAccessExpression
 {
+    /// <summary>
+    /// Create an <see cref="ObjectArrayProjectionExpression"/> for an embedded collection navigation,
+    /// deriving the field name from the navigation's containing element name.
+    /// </summary>
+    /// <param name="navigation">The <see cref="INavigation"/> this object array projection relates to.</param>
+    /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the array.</param>
+    /// <param name="innerProjection">The projection for each element, or <see langword="null"/> to build a default.</param>
+    /// <exception cref="InvalidOperationException">The navigation does not point to an embedded entity.</exception>
     public ObjectArrayProjectionExpression(
         INavigation navigation,
         Expression accessExpression,
@@ -30,6 +38,10 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
     /// Create an <see cref="ObjectArrayProjectionExpression"/> with an explicit field name.
     /// Used for cross-collection $lookup results.
     /// </summary>
+    /// <param name="navigation">The <see cref="INavigation"/> this object array projection relates to.</param>
+    /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the array.</param>
+    /// <param name="name">The explicit field name to access in the document.</param>
+    /// <param name="innerProjection">The projection for each element, or <see langword="null"/> to build a default.</param>
     public ObjectArrayProjectionExpression(
         INavigation navigation,
         Expression accessExpression,

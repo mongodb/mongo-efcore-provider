@@ -54,6 +54,113 @@ Why fan-out vs. server-side `$lookup`:
 The original staging plan called for `$lookup` as a later opt-in
 alongside fan-out. That follow-up is still planned but unstarted.
 
+> **NOTE — superseded by the server-side `$lookup` hybrid (see next
+> section).** The sections above describe the original fan-out-only
+> design and are kept for historical context. As of the later stages,
+> server-side `$lookup` is the **default** for most cross-collection
+> Include shapes; fan-out is now the *fallback*. Read the next section
+> for the current behavior. Where the two disagree, the next section wins.
+
+## Strategy update: the server-side `$lookup` hybrid (current)
+
+The bulk of the work since the sections above were written replaced
+fan-out-by-default with a **hybrid**: a cross-collection Include is
+served by a single server-side `$lookup` pipeline stage on the outer
+query whenever the shape allows, and only falls back to the client-side
+fan-out loader when it does not. There is no per-query opt-in — the
+provider classifies each top-level Include and routes it automatically.
+
+The routing decision lives in **`MongoIncludeCompiler.ChooseStrategy`**
+(returning `IncludeStrategy.ServerLookup` or `IncludeStrategy.ClientFanOut`),
+and the server-side materialization is built in
+`MongoProjectionBindingExpressionVisitor` (`RewriteCollectionIncludeForLookup`,
+`RewriteReferenceIncludeForLookup`, and the nested-chain builder
+`RewriteNestedChainForLookup`).
+
+### Served by server-side `$lookup`
+
+- **Collection, principal → dependents** (`Customer.Orders`) — a single
+  `$lookup` with the FK correlation, projecting a nested array per
+  principal. Single-column FK only.
+- **Reference, dependent → principal** (`Order.Customer`) — `$lookup`
+  followed by `$unwind` with `preserveNullAndEmptyArrays` (so a null /
+  dangling FK leaves the navigation null). Single-column FK only.
+- **Reference + collection on the same root**
+  (`Order.Include(o => o.Customer).Include(o => o.OrderDetails)`) —
+  two independent `$lookup`s, each classified on its own.
+- **Reference-rooted multi-level chains** (N-level, e.g.
+  `Order.Customer.ThenInclude(c => c.Orders)`) — nested `$lookup`s built
+  via dotted-path `LocalField` / `As` so each level nests inside the
+  unwound parent object. A chain is server-side only when every level is
+  a single-column FK and at most one collection appears, as the terminal
+  level (see `IsNestedChainLookupable` — a dotted path into a `$lookup`
+  array output cannot be an intermediate level).
+- **Composite-PK-member keys** — when the FK targets a member of a
+  composite primary key, the lookup keys off the `_id.<field>` sub-path.
+- **Server-side filtered includes** — ordering / paging inside the
+  include lambda (`OrderBy` / `ThenBy` / `Skip` / `Take`) is realized as
+  `$sort` / `$skip` / `$limit` pipeline stages inside the `$lookup`,
+  provided every key is a simple mapped scalar and the counts are
+  constants (see `TryExtractFilteredCollectionPipeline`).
+
+### Still falls back to client-side fan-out
+
+- **Collection-rooted / through-collection chains** — any `ThenInclude`
+  whose path passes *through* a collection in a non-terminal position
+  (the dotted-path lookup can't address into the array output).
+- **Many-to-many** (`ISkipNavigation`) — still throws a clear
+  "not yet supported" error (it does not silently fan out).
+- **Multi-column foreign keys** — composite-FK collection and reference
+  Includes route to fan-out (the single-field `$lookup` the server path
+  would emit, built from `Properties[0]` only, would be wrong).
+- **User-`Where` filtered includes** — a `Where` predicate inside the
+  include lambda (`Include(c => c.Orders.Where(o => o.Total > 10))`) has
+  no provider-side predicate→`$match` renderer, so it runs on fan-out
+  where the driver's LINQ translates it.
+
+### The convention decision (recorded explicitly)
+
+A change to `MongoRelationshipDiscoveryConvention.ShouldBeOwnedType`
+(prototyped in a parallel effort, "B") that would have altered default
+model discovery — making cross-collection related types *not* be
+auto-discovered as owned/embedded — was **deliberately NOT ported** into
+this feature. Default model-discovery / persisted-document-shape behavior
+is kept **frozen**: the feature works entirely via *explicit* relationship
+configuration (as Northwind and the provider's own tests do). Changing
+`ShouldBeOwnedType` would change which navigations are embedded vs.
+cross-collection by default, i.e. the **persisted document shape** — a
+behavior break under the provider's
+[versioning rules](../AGENTS.md#versioning-conventions). It is therefore
+recorded here as an **opt-in follow-up**, not part of this work.
+
+### Honest design caveat — server-side `$lookup` for collections
+
+The server-side `$lookup` materializes a **nested array per principal,
+server-side**, before the result is streamed back. On high-cardinality
+data (a principal with very many dependents) or deep chains, this nested
+document can approach MongoDB's **16 MB BSON document limit**, and it
+shifts cost from network round-trips to **cluster memory / CPU**. The
+client-side fan-out fallback (one sub-query per principal) is the escape
+hatch today; a future explicit `AsSplitQuery` opt-out (see follow-ups)
+would make the trade-off user-selectable.
+
+### Deferred follow-ups (server-side hybrid)
+
+- **Multi-column-FK `$lookup`** — a pipeline `$lookup` with an `$and` of
+  per-column equalities as the join condition. Currently throws / fans
+  out instead.
+- **Nav-referencing filtered-include predicates** *and* **filtered
+  includes of a type carrying a nav-referencing query filter** — both
+  currently **throw** (see `HasUntranslatableUserWhereInclude`). The
+  planned fix ("option 3") re-runs the `Join` + `Where` through
+  `DbContext.Set<TDependent>()` on the fan-out path so the predicate is
+  honored.
+- **Collection-rooted-chain server-side support** — addressing into a
+  `$lookup` array output for non-terminal collection levels.
+- **Explicit `AsSplitQuery()` / `AsSingleQuery()` operator** — let the
+  user force fan-out (split) or `$lookup` (single) per query, both as a
+  performance lever and as the escape hatch for the 16 MB caveat above.
+
 ## Architecture and call graph
 
 ```

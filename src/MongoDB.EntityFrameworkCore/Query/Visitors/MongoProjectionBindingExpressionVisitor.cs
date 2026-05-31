@@ -330,6 +330,9 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         string parentAlias,
         Expression parentShaper)
     {
+        // Safe cast: routing only reaches this rewrite when MongoIncludeCompiler.IsNestedChainLookupable
+        // (driven by EnumerateNestedIncludes, which yields INavigation) accepted the chain, so every
+        // nested level here is guaranteed to be an INavigation (never an ISkipNavigation).
         var nestedNavigation = (INavigation)nestedInclude.Navigation;
         var childAlias = $"{parentAlias}.{LookupExpression.GetAlias(nestedNavigation)}";
 

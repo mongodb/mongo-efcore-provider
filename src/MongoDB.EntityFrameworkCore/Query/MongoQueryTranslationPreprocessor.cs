@@ -78,6 +78,41 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
 
 #endif
 
+    // Shared between IncludeJoinUnwrapper and ReferenceChainJoinUnwrapper (both match the
+    // Queryable.Join / LeftJoin shape nav-expansion emits). Hoisted here so the join-detection
+    // logic — including the EF10+ canonical LeftJoin branch — lives in exactly one place.
+    private static bool IsJoinOrLeftJoin(System.Reflection.MethodInfo method)
+    {
+        if (!method.IsGenericMethod)
+        {
+            return false;
+        }
+
+        var definition = method.GetGenericMethodDefinition();
+        if (definition == QueryableMethods.Join)
+        {
+            return true;
+        }
+
+#if !EF8 && !EF9
+        if (definition == QueryableMethods.LeftJoin)
+        {
+            return true;
+        }
+#else
+        // EF8/EF9 don't expose a canonical QueryableMethods.LeftJoin constant;
+        // fall back to a name match for the method nav-expansion emits.
+        if (method.Name == "LeftJoin")
+        {
+            return true;
+        }
+#endif
+        return false;
+    }
+
+    private static Expression Unquote(Expression e)
+        => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;
+
     /// <summary>
     /// Rewrites the synthetic <c>Queryable.Join(...).Select(o =&gt; IncludeExpression(o.Outer, o.Inner, nav))</c>
     /// shape that EF Core's nav-expansion produces for dependent-to-principal reference
@@ -168,38 +203,6 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
             return false;
         }
 
-        private static bool IsJoinOrLeftJoin(System.Reflection.MethodInfo method)
-        {
-            if (!method.IsGenericMethod)
-            {
-                return false;
-            }
-
-            var definition = method.GetGenericMethodDefinition();
-            if (definition == QueryableMethods.Join)
-            {
-                return true;
-            }
-
-#if !EF8 && !EF9
-            if (definition == QueryableMethods.LeftJoin)
-            {
-                return true;
-            }
-#else
-            // EF8/EF9 don't expose a canonical QueryableMethods.LeftJoin constant;
-            // fall back to a name match for the method nav-expansion emits.
-            if (method.Name == "LeftJoin")
-            {
-                return true;
-            }
-#endif
-            return false;
-        }
-
-        private static Expression Unquote(Expression e)
-            => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;
-
         // Structural check: is `e` a `<expectedParam>.<memberName>` access on the
         // join's transparent-identifier parameter? Replaces an earlier brittle
         // check on the compiler-generated `TransparentIdentifier...` type name.
@@ -253,7 +256,8 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
     /// </summary>
     /// <remarks>
     /// The provider materializes these chains with nested <c>$lookup</c> stages
-    /// (see <c>MongoProjectionBindingExpressionVisitor.RewriteReferenceIncludeForLookup</c>),
+    /// (see <c>MongoProjectionBindingExpressionVisitor.RewriteNestedChainForLookup</c>, which
+    /// builds the per-level dotted-path lookups for the nested chain),
     /// so the joins are not needed on the data path. This visitor collapses the whole join
     /// chain to <c>&lt;rootSource&gt;.Select(p =&gt; &lt;rebuilt include tree&gt;)</c>, where the rebuilt
     /// tree preserves the original <see cref="IncludeExpression"/> nodes (navigations + SetLoaded)
@@ -345,36 +349,6 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
 
             return include.Update(Expression.Default(include.EntityExpression.Type), navExpr);
         }
-
-        private static bool IsJoinOrLeftJoin(System.Reflection.MethodInfo method)
-        {
-            if (!method.IsGenericMethod)
-            {
-                return false;
-            }
-
-            var definition = method.GetGenericMethodDefinition();
-            if (definition == QueryableMethods.Join)
-            {
-                return true;
-            }
-
-#if !EF8 && !EF9
-            if (definition == QueryableMethods.LeftJoin)
-            {
-                return true;
-            }
-#else
-            if (method.Name == "LeftJoin")
-            {
-                return true;
-            }
-#endif
-            return false;
-        }
-
-        private static Expression Unquote(Expression e)
-            => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;
     }
 
     private sealed class VectorSearchExtractor : ExpressionVisitor

@@ -644,11 +644,14 @@ internal static class MongoIncludeCompiler
             body = convert.Operand;
         }
 
-        // o => o.Member
+        // o => o.Member. A CLR member access can only resolve to a CLR-backed (non-shadow)
+        // property, so no explicit shadow guard is needed here — a shadow property is reachable
+        // only via the EF.Property<T>(...) branch below, where it is intentionally sortable
+        // (a mapped shadow property is stored and can back a $sort).
         if (body is MemberExpression { Expression: ParameterExpression } member)
         {
             var property = entityType.FindProperty(member.Member.Name);
-            if (property is not null && !property.IsShadowProperty())
+            if (property is not null)
             {
                 elementName = property.GetElementName();
                 return true;
@@ -657,7 +660,8 @@ internal static class MongoIncludeCompiler
             return false;
         }
 
-        // o => EF.Property<T>(o, "Member")
+        // o => EF.Property<T>(o, "Member") — may target a mapped shadow property, which is
+        // intentionally sortable (see the member-branch note above).
         if (body is MethodCallExpression { Arguments: [ParameterExpression, ConstantExpression { Value: string propName }] } efCall
             && efCall.Method.IsEFPropertyMethod())
         {
@@ -744,6 +748,9 @@ internal static class MongoIncludeCompiler
         => expression is EntityQueryRootExpression root
            && (root.EntityType == targetEntityType || root.EntityType.ClrType == targetEntityType.ClrType);
 
+    // Intentionally duplicated from MongoQueryTranslationPreprocessor.Unquote: this is a
+    // trivial one-liner and the two live in different classes/namespaces, so sharing would
+    // force an awkward cross-class dependency for no real benefit.
     private static Expression Unquote(Expression e)
         => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;
 
