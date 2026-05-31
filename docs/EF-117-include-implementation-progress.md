@@ -568,3 +568,222 @@ baseline override:
 All three EF version targets ship with a green spec-test suite. The
 skipped tests are pre-existing unrelated skips (vector-search edge
 cases, etc.) — not related to EF-117.
+
+---
+
+## Stage 4 — multi-level Include design spike
+
+> Investigation + throwaway prototype only. No feature code was committed for
+> this spike; the prototype aggregation test was run against a local server and
+> discarded. (The "Stage 4" / "Stage 5" sections above predate this spike and
+> cover tracking-mode propagation and the spec sweep; this design-spike section
+> is the multi-level-Include investigation requested under ticket EF-117c.)
+
+### Question
+
+Single-level cross-collection `Include` already ships on this branch: a
+collection include emits `$lookup` → `_lookup_<Nav>` (array); a reference
+include emits `$lookup` + `$unwind {preserveNullAndEmptyArrays:true}` →
+`_lookup_<Nav>` (object). The shaper reads those via
+`EntityProjectionExpression.BindNavigation` →
+`ObjectArrayProjectionExpression` / `ObjectAccessExpression` keyed on the
+`_lookup_<Nav>` alias.
+
+For multi-level chains (`Order.Include(o => o.Customer).ThenInclude(c => c.Orders)`,
+reference+collection on the same root, etc.) there are two candidate designs:
+
+- **(A) Directly chained `$lookup` stages** — keep the existing
+  `_lookup_<Nav>` convention; each subsequent `$lookup` reads `from` a *nested
+  path into the previous lookup's output field* and writes its result back
+  into a nested path. **No driver `LeftJoin`, no `_outer`/`_inner` reshaping.**
+- **(B) Port `damieng/poc-include`'s driver-`LeftJoin` approach** — keep the
+  MongoDB driver's LINQ `LeftJoin` in the tree (producing `_outer`/`_inner`
+  documents) and prefix each subsequent `$lookup`'s `localField`/`as` with
+  `_outer.` / `_inner.` depending on which side the navigation's declaring type
+  sits on.
+
+### Prototype — server semantics
+
+A throwaway xUnit test (`ScratchChainedLookupSpike`, not committed) hand-built
+raw `BsonDocument[]` pipelines and ran them via
+`IMongoCollection<BsonDocument>.Aggregate`, bypassing EF, against freshly seeded
+throwaway collections. **Server: MongoDB 8.3.0-rc5** (local, via `MONGODB_URI`).
+
+#### (a) reference → collection — WORKS
+
+Root `Orders`, `Include(o => o.Customer).ThenInclude(c => c.Orders)`:
+
+```
+[
+  { $lookup: { from: "Customers", localField: "CustomerId",
+               foreignField: "_id", as: "_lookup_Customer" } },
+  { $unwind: { path: "$_lookup_Customer", preserveNullAndEmptyArrays: true } },
+  { $lookup: { from: "Orders", localField: "_lookup_Customer._id",
+               foreignField: "CustomerId", as: "_lookup_Customer._lookup_Orders" } }
+]
+```
+
+Observed document (one per order):
+
+```
+{ "_id": 100, "CustomerId": 1,
+  "_lookup_Customer": {
+    "_id": 1, "Name": "Alice",
+    "_lookup_Orders": [ { "_id":100,... }, { "_id":101,... } ] } }
+```
+
+The second `$lookup`'s `localField` reads a **nested path into the unwound
+first-level result** (`_lookup_Customer._id`), and its `as` **nests the array
+inside that same object** (`_lookup_Customer._lookup_Orders`). This is exactly
+the shape the existing recursive shaper expects.
+
+#### (b) reference + collection on the same root — WORKS
+
+Root `Orders`, `Include(o => o.Customer)` AND `Include(o => o.LineItems)`. Two
+independent top-level `$lookup`s (the reference one followed by `$unwind`), each
+rooted at the original document's fields. They coexist cleanly:
+
+```
+{ "_id": 100, "CustomerId": 1,
+  "_lookup_Customer": { "_id": 1, "Name": "Alice" },
+  "_lookup_LineItems": [ {...}, {...} ] }
+```
+
+#### (c) collection → collection — IMPORTANT CONSTRAINT (does NOT nest element-wise)
+
+Root `Customers`, `Include(c => c.Orders).ThenInclude(o => o.LineItems)`. The
+first lookup produces an **array** (no unwind). Using
+`localField: "_lookup_Orders._id"` / `as: "_lookup_Orders._lookup_LineItems"`
+**does not** push line-items into each order element. Instead the server
+**clobbers** `_lookup_Orders`, replacing the whole array with a single document
+and flattening all matched children together:
+
+```
+{ "_id": 1, "Name": "Alice",
+  "_lookup_Orders": { "_lookup_LineItems": [ all line items, flattened ] } }
+```
+
+The original `Orders` array is lost. **A dotted `localField`/`as` path into an
+*array* field is not applied element-wise** — it only behaves as intended when
+the prior stage produced an *object* (i.e. after `$unwind`).
+
+### Shaper readability
+
+The existing shaper already chains: `EntityProjectionExpression` holds a
+`ParentAccessExpression`, and `ObjectAccessExpression` /
+`ObjectArrayProjectionExpression` hold an `AccessExpression` that points at
+their parent. `MongoProjectionBindingRemovingExpressionVisitor.CreateGetValueExpression`
+resolves a value by **recursively resolving its parent access first**
+(`ObjectAccessExpression docAccessExpression => CreateGetValueExpression(docAccessExpression.AccessExpression, ...)`),
+so a second-level navigation whose parent access is the first-level
+`_lookup_Customer` object naturally produces a nested read
+`doc["_lookup_Customer"]["_lookup_Orders"]`.
+
+`EntityProjectionExpression.BindNavigation` already builds the child access
+rooted at `ParentAccessExpression` with the `_lookup_<Nav>` alias. For
+design (A) the second-level `BindNavigation` is invoked on the *target*
+entity-projection of the first-level navigation, whose parent access is already
+the first-level `_lookup_Customer` `ObjectAccessExpression`. **No new shaper
+plumbing is required for the reference→collection shape** — the nested
+`ParentAccessExpression` / `AccessExpression` chain already models it, and the
+observed BSON in (a) matches the read path exactly.
+
+By contrast, design (B) requires the shaper to read through `_outer`/`_inner`
+sub-documents and requires porting `LeftJoinResult<TOuter,TInner>`,
+`StripOuterSelectForJoin`, `RewriteLeftJoinResultSelectors`, the
+`TransparentIdentifierToLeftJoinResultRewriter`, the `_innerSources` map, and
+the `UsesDriverJoinFields` `_outer.`/`_inner.` prefixing block — ~400+ lines of
+join-result rewriting in `MongoEFToLinqTranslatingExpressionVisitor` plus the
+prefixing in `MongoProjectionBindingExpressionVisitor`.
+
+### Fit with `PendingLookups` / `AppendLookupStages`
+
+This branch's `AppendLookupStages` already iterates `MongoQueryExpression.PendingLookups`
+and emits chained `$lookup` (+ `$unwind` for references) directly via
+`MongoQueryable.AppendStage` — **there is no driver `LeftJoin` anywhere on the
+data path**. The single-level reference case reaches this path because
+`IncludeJoinUnwrapper` (in `MongoQueryTranslationPreprocessor`) already strips
+EF's synthetic `Join`/`LeftJoin`+`Select`-over-`IncludeExpression` back into a
+plain `Select(p => IncludeExpression(...))`. The nested-include walkers
+(`EnumerateNestedIncludes`, `ExtractIncludeChainPath`) already exist.
+
+Design (A) therefore maps cleanly: register one `LookupExpression` per level
+with `LocalField`/`As` carrying a **nested field path** rooted at the parent
+lookup's `As`. `LookupExpression.LocalField` and `As` are already mutable
+`set` properties, and the `_lookup_<Nav>` alias is centralized in
+`LookupExpression.GetAlias` (shared by producer and shaper).
+
+`UsesDriverJoinFields` is currently a dead property on `MongoQueryExpression`
+(declared, never set or read on this branch). Design (A) deletes it; design (B)
+would resurrect and depend on it.
+
+### Decision — Recommend (A): directly chained `$lookup`
+
+Reasons:
+
+1. **Server feasibility confirmed** for the two key shapes the spike targeted:
+   reference→collection nests correctly, and reference+collection on the same
+   root coexists.
+2. **Shaper requires no new plumbing** for those shapes — the existing
+   `ParentAccessExpression`/`AccessExpression` recursion already reads nested
+   chained-lookup results.
+3. **Fits the existing pipeline** (`PendingLookups` + `AppendLookupStages` +
+   `IncludeJoinUnwrapper`) which is already `LeftJoin`-free. (B) would re-add
+   the driver join the branch deliberately unwound, and `IncludeJoinUnwrapper`
+   would actively fight it — it unconditionally strips the single-level
+   `Join`/`LeftJoin`+`Select`-over-`IncludeExpression` shape, so a (B) design
+   that relied on keeping that join would need `IncludeJoinUnwrapper` taught to
+   distinguish single-level (strip) from multi-level (keep) joins. That is
+   exactly the kind of fragile shape-matching (A) avoids.
+4. **Far less code and risk**: (A) reuses what exists; (B) ports ~400+ lines of
+   `_outer`/`_inner` rewriting.
+
+### Sketch of the (A) chaining scheme
+
+For an include chain `root → nav1 → nav2 → …`:
+
+- Level 1: `LookupExpression(nav1)` as today — `As = "_lookup_<nav1>"`,
+  `LocalField`/`ForeignField` from the FK. If `nav1` is a **reference**, follow
+  with `$unwind` on `$_lookup_<nav1>`.
+- Level 2: `LookupExpression(nav2)` whose `LocalField` and `As` are **prefixed
+  with the parent's `As`**:
+  - `LocalField = "<parentAs>." + GetFieldPath(localKey)`  (e.g. `_lookup_Customer._id`)
+  - `As = "<parentAs>." + GetAlias(nav2)`  (e.g. `_lookup_Customer._lookup_Orders`)
+- Generalize recursively: each level's prefix is the running dotted path of
+  ancestor `As` aliases.
+
+Required shaper change: **none for reference→collection** — the nested
+`ParentAccessExpression` chain already produces the matching nested read.
+
+### Key risk of (A) — collection → collection (deeper than reference→collection)
+
+The (c) result is the blocker for chains that pass *through a collection*
+(`Include(collection).ThenInclude(...)`): a dotted path into an **array**
+`$lookup` output clobbers the array rather than nesting per element. Mitigations
+to design/prototype in the implementation ticket (out of scope for this spike,
+which only had to settle A vs B):
+
+- **`$unwind` the intermediate collection, lookup, then `$group` to re-nest** —
+  the standard MongoDB idiom for per-element child lookups; preserves the parent
+  array while attaching children to each element. More stages, and `$group`
+  must faithfully reconstruct the root document and any sibling lookups.
+- **Sub-pipeline `$lookup`** — push the child `$lookup` into the *first*
+  lookup's `pipeline` (the branch already has a pipeline form of `$lookup` for
+  filtered includes), so the child join runs inside the array-producing lookup
+  and nests naturally per element. This looks like the cleanest fit and reuses
+  the existing `LookupExpression.PipelineStages` mechanism; it is what
+  `damieng/poc-include`'s `ExtractNestedIncludePipeline` does for
+  collection-then-collection (it adds the nested `$lookup` to the parent
+  lookup's `PipelineStages`). Notably, B's branch *also* uses sub-pipeline
+  nesting for the collection path — confirming the array-clobber constraint is
+  inherent to `$lookup` and not specific to either design.
+
+Either mitigation lives entirely within design (A)'s chained-`$lookup` /
+`PendingLookups` model and does not require the driver `LeftJoin`.
+
+### Status
+
+DONE. Recommendation: **(A) directly chained `$lookup`**. Reference→collection
+and reference+collection-on-same-root are server-confirmed and need no new
+shaper plumbing; collection-as-an-*intermediate* level needs the sub-pipeline
+`$lookup` (or `$unwind`+`$group`) idiom, still within the chained-lookup model.
