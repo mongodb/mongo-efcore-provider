@@ -201,6 +201,51 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Include_reference_and_collection_emits_two_lookups_in_single_query_and_materializes()
+    {
+        const string testName = nameof(Include_reference_and_collection_emits_two_lookups_in_single_query_and_materializes);
+        // EF-117 Task 4.1: a root that carries BOTH a dependent→principal reference Include
+        // (Order.Customer) AND a principal→dependent collection Include (Order.Items) must run
+        // as ONE query emitting two independent top-level lookups — a $lookup + $unwind into
+        // _lookup_Customer and a $lookup into _lookup_Items — with both navigations materialized.
+        using var seed = new ThenIncludeContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new ThenIncludeCustomer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new ThenIncludeOrder { Id = "o1", CustomerId = "alfki" },
+            new ThenIncludeOrder { Id = "o2", CustomerId = "alfki" });
+        seed.Items.AddRange(
+            new ThenIncludeItem { Id = "i1", OrderId = "o1" },
+            new ThenIncludeItem { Id = "i2", OrderId = "o1" },
+            new ThenIncludeItem { Id = "i3", OrderId = "o2" });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new ThenIncludeContext(MongoDatabase, testName, logs.Add);
+        var orders = db.Orders
+            .OrderBy(o => o.Id)
+            .Include(o => o.Customer)
+            .Include(o => o.Items)
+            .ToList();
+
+        // Materialization: both the reference and the collection come back populated.
+        Assert.Equal(2, orders.Count);
+        Assert.All(orders, o => Assert.NotNull(o.Customer));
+        Assert.All(orders, o => Assert.Equal("Alfreds", o.Customer.Name));
+        // Identity resolution: both orders share the single Customer instance.
+        Assert.Same(orders[0].Customer, orders[1].Customer);
+        Assert.Equal(2, orders[0].Items.Count);
+        Assert.Single(orders[1].Items);
+
+        // Exactly ONE MQL query was executed, carrying both lookups (no client-side fan-out).
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        var query = Assert.Single(mqlQueries);
+        Assert.Contains("\"as\" : \"_lookup_Customer\"", query);
+        Assert.Contains("$unwind", query);
+        Assert.Contains("\"as\" : \"_lookup_Items\"", query);
+    }
+
+    [Fact]
     public void Include_collection_as_no_tracking_materializes()
     {
         const string testName = nameof(Include_collection_as_no_tracking_materializes);
@@ -483,7 +528,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         public string Name { get; set; } = null!;
     }
 
-    private class ThenIncludeContext(IMongoDatabase mongoDatabase, string suffix) : DbContext
+    private class ThenIncludeContext(IMongoDatabase mongoDatabase, string suffix, Action<string>? log = null) : DbContext
     {
         public DbSet<ThenIncludeCustomer> Customers { get; set; } = null!;
         public DbSet<ThenIncludeOrder> Orders { get; set; } = null!;
@@ -491,10 +536,16 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         public DbSet<ThenIncludeProduct> Products { get; set; } = null!;
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-            => base.OnConfiguring(optionsBuilder
+        {
+            base.OnConfiguring(optionsBuilder
                 .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
+            if (log != null)
+            {
+                optionsBuilder.LogTo(log).EnableSensitiveDataLogging();
+            }
+        }
 
         protected override void OnModelCreating(ModelBuilder mb)
         {

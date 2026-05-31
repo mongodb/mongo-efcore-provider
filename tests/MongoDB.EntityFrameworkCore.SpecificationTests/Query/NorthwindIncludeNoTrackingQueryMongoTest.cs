@@ -1259,11 +1259,12 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
     public override async Task Include_reference_and_collection(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Include_reference_and_collection(async));
+        await base.Include_reference_and_collection(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }
+""");
     }
 
     public override async Task Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression(bool async)

@@ -210,12 +210,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         var visitedEntity = Visit(includeExpression.EntityExpression);
         _includedNavigations.Pop();
 
-        EntityProjectionExpression outerEntityProjection;
-        if (visitedEntity is StructuralTypeShaperExpression { ValueBufferExpression: ProjectionBindingExpression { Index: int index } })
-        {
-            outerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[index].Expression;
-        }
-        else
+        if (!TryResolveOuterEntityProjection(visitedEntity, out var outerEntityProjection))
         {
             // Couldn't resolve the outer entity projection — fall back to fan-out by preserving
             // the original navigation expression (the loader path handles it from metadata).
@@ -265,12 +260,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         var visitedEntity = Visit(includeExpression.EntityExpression);
         _includedNavigations.Pop();
 
-        EntityProjectionExpression outerEntityProjection;
-        if (visitedEntity is StructuralTypeShaperExpression { ValueBufferExpression: ProjectionBindingExpression { Index: int index } })
-        {
-            outerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[index].Expression;
-        }
-        else
+        if (!TryResolveOuterEntityProjection(visitedEntity, out var outerEntityProjection))
         {
             // Couldn't resolve the outer entity projection — fall back to fan-out by preserving
             // the original navigation expression (the loader path handles it from metadata).
@@ -293,6 +283,34 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             nullable: true);
 
         return includeExpression.Update(visitedEntity, referenceShaper);
+    }
+
+    /// <summary>
+    /// Recovers the root entity's <see cref="EntityProjectionExpression"/> from a visited
+    /// entity sub-expression so a server-side <c>$lookup</c> rewrite can bind its navigation
+    /// against it. The visited entity is a <see cref="StructuralTypeShaperExpression"/> for a
+    /// single top-level include, but when the same root carries multiple independent
+    /// top-level includes EF nests them — the second include's visited entity is the first
+    /// (already-rewritten) <see cref="IncludeExpression"/> wrapping the shaper. We therefore
+    /// descend through any such include layers (all of which bind the same root entity) to
+    /// reach the shaper and its projection binding.
+    /// </summary>
+    private bool TryResolveOuterEntityProjection(Expression visitedEntity, out EntityProjectionExpression outerEntityProjection)
+    {
+        var current = visitedEntity;
+        while (current is IncludeExpression nestedInclude)
+        {
+            current = nestedInclude.EntityExpression;
+        }
+
+        if (current is StructuralTypeShaperExpression { ValueBufferExpression: ProjectionBindingExpression { Index: int index } })
+        {
+            outerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[index].Expression;
+            return true;
+        }
+
+        outerEntityProjection = null;
+        return false;
     }
 
     /// <inheritdoc />

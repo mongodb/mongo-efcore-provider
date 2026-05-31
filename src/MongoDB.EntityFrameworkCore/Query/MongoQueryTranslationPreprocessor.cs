@@ -77,6 +77,20 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
     /// the cross-collection loader path (EF-117) materializes the related entity via a
     /// per-principal sub-query.
     /// </summary>
+    /// <remarks>
+    /// When the same root carries a reference Include AND one or more collection Includes
+    /// (e.g. <c>Order.Include(o =&gt; o.Customer).Include(o =&gt; o.OrderDetails)</c>),
+    /// nav-expansion nests the collection <c>IncludeExpression</c>(s) <em>around</em> the
+    /// join-based reference include: the Select body is
+    /// <c>IncludeExpression(IncludeExpression(o.Outer, o.Inner, refNav), collectionSubquery, collNav)</c>.
+    /// The reference include therefore is not the body's root but sits at the innermost
+    /// <c>EntityExpression</c>. We locate it, rewrite it to
+    /// <c>IncludeExpression(p, default(TInner), refNav)</c>, and replace every other
+    /// reference to <c>o.Outer</c> in the body (the collection sub-queries key off it) with
+    /// the new parameter <c>p</c>. Each independent top-level Include then classifies on its
+    /// own in <c>MongoIncludeCompiler.ChooseStrategy</c>, yielding two independent
+    /// <c>$lookup</c>s.
+    /// </remarks>
     private sealed class IncludeJoinUnwrapper : ExpressionVisitor
     {
         public static Expression Unwrap(Expression expression)
@@ -84,12 +98,14 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
-            // Match: <something>.Select(o => IncludeExpression(o.Outer, o.Inner, nav))
-            // where <something> is a Queryable.Join or Queryable.LeftJoin with a
-            // result selector whose parameter `o` is the join's transparent
-            // identifier (carrier of Outer and Inner). Nav-expansion emits
-            // LeftJoin (not Join) when the FK is nullable, e.g. for an optional
-            // reference navigation like Item.Product where ProductId is string?.
+            // Match: <something>.Select(o => <body>) where <something> is a Queryable.Join
+            // or Queryable.LeftJoin with a result selector whose parameter `o` is the join's
+            // transparent identifier (carrier of Outer and Inner), and <body> contains the
+            // reference IncludeExpression(o.Outer, o.Inner, refNav) — either as the body root
+            // (reference-only) or nested at the innermost EntityExpression beneath one or more
+            // wrapping collection IncludeExpressions (reference + collection on one root).
+            // Nav-expansion emits LeftJoin (not Join) when the FK is nullable, e.g. for an
+            // optional reference navigation like Item.Product where ProductId is string?.
             //
             // Method-call matching uses canonical QueryableMethods constants
             // (reference-equality on the generic-method-definition) where they
@@ -102,26 +118,45 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
                 && IsJoinOrLeftJoin(joinCall.Method)
                 && joinCall.Arguments.Count == 5
                 && Unquote(node.Arguments[1]) is LambdaExpression selectorLambda
-                && selectorLambda.Body is Microsoft.EntityFrameworkCore.Query.IncludeExpression includeExpr
-                && IsFieldAccessOf(includeExpr.EntityExpression, selectorLambda.Parameters[0], "Outer")
-                && IsFieldAccessOf(includeExpr.NavigationExpression, selectorLambda.Parameters[0], "Inner"))
+                && ContainsReferenceJoinInclude(selectorLambda.Body, selectorLambda.Parameters[0]))
             {
+                var transparentParam = selectorLambda.Parameters[0];
                 var outerSource = joinCall.Arguments[0];
                 var outerType = outerSource.Type.GetGenericArguments()[0];
 
-                // Build new selector: p => IncludeExpression(p, default(TInner), nav)
+                // Replace the transparent identifier `o` with the outer entity `p`:
+                //  - the reference include's join-sourced parts (o.Outer, o.Inner) collapse to
+                //    IncludeExpression(p, default(TInner), refNav);
+                //  - any other o.Outer reference (e.g. collection-include sub-query FK predicates)
+                //    becomes a plain reference to p.
                 var newParam = Expression.Parameter(outerType, "p");
-                var newInclude = includeExpr.Update(
-                    newParam,
-                    Expression.Default(includeExpr.NavigationExpression.Type));
-                var newSelector = Expression.Lambda(newInclude, newParam);
+                var newBody = new ReferenceJoinIncludeRewriter(transparentParam, newParam).Visit(selectorLambda.Body);
+                var newSelector = Expression.Lambda(newBody, newParam);
 
                 var selectMethod = node.Method.GetGenericMethodDefinition()
-                    .MakeGenericMethod(outerType, newInclude.Type);
+                    .MakeGenericMethod(outerType, newBody.Type);
                 return Expression.Call(selectMethod, Visit(outerSource), Expression.Quote(newSelector));
             }
 
             return base.VisitMethodCall(node);
+        }
+
+        // True when `body` is, or transitively wraps (through collection-include
+        // EntityExpressions), the reference IncludeExpression(o.Outer, o.Inner, refNav).
+        private static bool ContainsReferenceJoinInclude(Expression body, ParameterExpression transparentParam)
+        {
+            while (body is Microsoft.EntityFrameworkCore.Query.IncludeExpression include)
+            {
+                if (IsFieldAccessOf(include.EntityExpression, transparentParam, "Outer")
+                    && IsFieldAccessOf(include.NavigationExpression, transparentParam, "Inner"))
+                {
+                    return true;
+                }
+
+                body = include.EntityExpression;
+            }
+
+            return false;
         }
 
         private static bool IsJoinOrLeftJoin(System.Reflection.MethodInfo method)
@@ -163,6 +198,39 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
             => e is MemberExpression me
                && me.Member.Name == memberName
                && ReferenceEquals(me.Expression, expectedParam);
+
+        /// <summary>
+        /// Rebinds a Select body that contains the join-based reference include onto the
+        /// plain outer-entity parameter <c>p</c>. The reference
+        /// <c>IncludeExpression(o.Outer, o.Inner, refNav)</c> collapses to
+        /// <c>IncludeExpression(p, default(TInner), refNav)</c> (dropping the join's inner
+        /// sub-query, which the reference loader / <c>$lookup</c> rebuilds from metadata), and
+        /// every other <c>o.Outer</c> access — e.g. in a sibling collection-include sub-query's
+        /// FK predicate — is replaced with <c>p</c>.
+        /// </summary>
+        private sealed class ReferenceJoinIncludeRewriter(
+            ParameterExpression transparentParam,
+            ParameterExpression outerParam) : ExpressionVisitor
+        {
+            protected override Expression VisitExtension(Expression node)
+            {
+                if (node is Microsoft.EntityFrameworkCore.Query.IncludeExpression include
+                    && IsFieldAccessOf(include.EntityExpression, transparentParam, "Outer")
+                    && IsFieldAccessOf(include.NavigationExpression, transparentParam, "Inner"))
+                {
+                    return include.Update(
+                        outerParam,
+                        Expression.Default(include.NavigationExpression.Type));
+                }
+
+                return base.VisitExtension(node);
+            }
+
+            protected override Expression VisitMember(MemberExpression node)
+                => node.Member.Name == "Outer" && ReferenceEquals(node.Expression, transparentParam)
+                    ? outerParam
+                    : base.VisitMember(node);
+        }
     }
 
     private sealed class VectorSearchExtractor : ExpressionVisitor

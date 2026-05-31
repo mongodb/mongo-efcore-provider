@@ -108,11 +108,12 @@ Customers.
 
     public override async Task Include_reference_and_collection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Include_reference_and_collection(async));
+        await base.Include_reference_and_collection(async);
 
         AssertMql(
-);
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }
+""");
     }
 
     public override async Task Applied_to_body_clause(bool async)
