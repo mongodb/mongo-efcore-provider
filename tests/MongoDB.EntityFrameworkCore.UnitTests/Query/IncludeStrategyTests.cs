@@ -88,7 +88,7 @@ public static class IncludeStrategyTests
         Assert.True(MongoIncludeCompiler.IsCrossCollection(navigation));
         Assert.False(navigation.IsCollection);
         Assert.True(navigation.IsOnDependent);
-        Assert.Equal(1, navigation.ForeignKey.Properties.Count);
+        Assert.Single(navigation.ForeignKey.Properties);
 
         // EF-117 Stage 3: a single-level dependent→principal reference Include with a
         // single-column foreign key (and no nested ThenInclude chain) now routes to a
