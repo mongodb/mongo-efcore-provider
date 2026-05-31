@@ -226,6 +226,81 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Filtered_collection_Include_with_Where_predicate_fans_out_and_materializes_only_matching()
+    {
+        const string testName =
+            nameof(Filtered_collection_Include_with_Where_predicate_fans_out_and_materializes_only_matching);
+        // EF-117: a filtered collection Include carrying a USER Where predicate
+        // (Include(c => c.Orders.Where(o => o.Total > N))) cannot be rendered to a server-side
+        // $match, so it routes to the CLIENT-SIDE FAN-OUT loader, which re-runs the sub-query
+        // through DbContext.Set<Order>() where the driver translates the predicate. Assert the
+        // included collection contains ONLY the matching dependents, and that NO $lookup for the
+        // Orders nav is emitted (it is fan-out, not the simple/pipeline $lookup).
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(
+            new Customer { Id = "alfki", Name = "Alfreds" },
+            new Customer { Id = "anatr", Name = "Ana Trujillo" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki", Total = 5 },
+            new Order { Id = "o2", CustomerId = "alfki", Total = 15 },
+            new Order { Id = "o3", CustomerId = "alfki", Total = 25 },
+            new Order { Id = "o4", CustomerId = "anatr", Total = 8 });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new CustomerOrderContext(MongoDatabase, testName, logs.Add);
+        var customers = db.Customers
+            .OrderBy(c => c.Id)
+            .Include(c => c.Orders.Where(o => o.Total > 10))
+            .ToList();
+
+        // Filtering correctness: only orders with Total > 10 are materialized.
+        Assert.Equal(2, customers.Count);
+        var alfki = customers.Single(c => c.Id == "alfki");
+        var anatr = customers.Single(c => c.Id == "anatr");
+        Assert.Equal(["o2", "o3"], alfki.Orders.OrderBy(o => o.Id).Select(o => o.Id).ToArray());
+        Assert.Empty(anatr.Orders); // anatr's only order (Total 8) is filtered out
+
+        // Fan-out: no $lookup for the Orders nav anywhere; the dependents come from a separate
+        // sub-query against the Orders collection.
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        Assert.DoesNotContain(mqlQueries, q => q.Contains("_lookup_Orders"));
+    }
+
+    [Fact]
+    public void Filtered_collection_Include_with_Where_and_ordering_paging_fans_out_filtered_ordered_paged()
+    {
+        const string testName =
+            nameof(Filtered_collection_Include_with_Where_and_ordering_paging_fans_out_filtered_ordered_paged);
+        // EF-117: a filtered collection Include combining a USER Where predicate WITH ordering/paging
+        // runs end-to-end on the fan-out path so the predicate is honored. The composition applies
+        // Where → OrderBy/ThenBy → Skip → Take in EF semantic order.
+        using var seed = new CustomerOrderContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Customers.AddRange(new Customer { Id = "alfki", Name = "Alfreds" });
+        seed.Orders.AddRange(
+            new Order { Id = "o1", CustomerId = "alfki", Total = 5 },
+            new Order { Id = "o2", CustomerId = "alfki", Total = 15 },
+            new Order { Id = "o3", CustomerId = "alfki", Total = 25 },
+            new Order { Id = "o4", CustomerId = "alfki", Total = 35 });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new CustomerOrderContext(MongoDatabase, testName, logs.Add);
+        var customers = db.Customers
+            .Include(c => c.Orders.Where(o => o.Total > 10).OrderByDescending(o => o.Id).Skip(1).Take(1))
+            .ToList();
+
+        // Total > 10 => o2,o3,o4; order by Id desc => o4,o3,o2; skip 1 => o3,o2; take 1 => o3.
+        var alfki = Assert.Single(customers);
+        Assert.Equal(["o3"], alfki.Orders.Select(o => o.Id).ToArray());
+
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        Assert.DoesNotContain(mqlQueries, q => q.Contains("_lookup_Orders"));
+    }
+
+    [Fact]
     public void ThenInclude_chain_materializes()
     {
         const string testName = nameof(ThenInclude_chain_materializes);
@@ -687,6 +762,7 @@ public class IncludeTests(TemporaryDatabaseFixture database)
     {
         public string Id { get; set; } = null!;
         public string CustomerId { get; set; } = null!;
+        public int Total { get; set; }
         public Customer Customer { get; set; } = null!;
     }
 

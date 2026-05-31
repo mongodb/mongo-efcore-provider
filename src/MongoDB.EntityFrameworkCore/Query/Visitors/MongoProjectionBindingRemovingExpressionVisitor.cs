@@ -543,11 +543,12 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         var chainPath = MongoIncludeCompiler.ExtractIncludeChainPath(includeExpression);
 
         return navigation.IsCollection
-            ? BuildCollectionLoaderCall(navigation, instanceVariable, chainPath)
+            ? BuildCollectionLoaderCall(includeExpression, navigation, instanceVariable, chainPath)
             : BuildReferenceLoaderCall(navigation, instanceVariable, chainPath);
     }
 
-    private Expression BuildCollectionLoaderCall(INavigation navigation, Expression instanceVariable, string? chainPath)
+    private Expression BuildCollectionLoaderCall(
+        IncludeExpression includeExpression, INavigation navigation, Expression instanceVariable, string? chainPath)
     {
         // navigation.DeclaringEntityType is the principal (e.g. Customer)
         // navigation.TargetEntityType is the dependent (e.g. Order)
@@ -567,6 +568,16 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             Expression.Convert(pkAccess, typeof(object)),
             principalParam).Compile();
 
+        // For a FILTERED collection include routed to fan-out (user Where and/or ordering/paging),
+        // capture the include lambda's operators as a Func<IQueryable<TRelated>, IQueryable<TRelated>>
+        // that the loader composes onto the FK-correlated query (after the FK match, before ToList()),
+        // so the included collection is filtered/ordered/paged. Null for a plain collection include.
+        var filterComposition =
+            MongoIncludeCompiler.TryBuildFanOutComposition(includeExpression.NavigationExpression, relatedClrType);
+        var compositionFuncType = typeof(Func<,>).MakeGenericType(
+            typeof(IQueryable<>).MakeGenericType(relatedClrType),
+            typeof(IQueryable<>).MakeGenericType(relatedClrType));
+
         return Expression.Call(
             MongoIncludeCompiler.LoadCollectionMethodInfo.MakeGenericMethod(principalClrType, relatedClrType),
             _queryContextParameter,
@@ -574,7 +585,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             Expression.Constant(pkExtractor, typeof(Func<,>).MakeGenericType(principalClrType, typeof(object))),
             Expression.Constant(fkProperty.Name),
             Expression.Constant(chainPath, typeof(string)),
-            Expression.Constant(_queryTrackingBehavior));
+            Expression.Constant(_queryTrackingBehavior),
+            Expression.Constant(filterComposition, compositionFuncType));
     }
 
     private Expression BuildReferenceLoaderCall(INavigation navigation, Expression instanceVariable, string? chainPath)

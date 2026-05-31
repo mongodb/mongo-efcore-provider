@@ -104,11 +104,23 @@ internal static class MongoIncludeCompiler
             && navigation.ForeignKey.Properties.Count == 1
             && !HasNestedInclude(includeExpression))
         {
+            // A USER Where predicate inside the include lambda (Include(c => c.Orders.Where(o => ...)))
+            // cannot be rendered to a server-side $match (the provider has no predicate→BSON renderer),
+            // so it MUST route to the client-side fan-out loader where the driver's LINQ translates the
+            // predicate. This takes precedence over the ordering/paging pipeline check — a filtered
+            // include that ALSO orders/pages is run end-to-end on fan-out so the predicate is honored.
+            // (Without this, a Where-only include would fall through to the simple $lookup below and
+            // SILENTLY IGNORE the predicate — a correctness hole.)
+            if (HasUserWhereInclude(includeExpression, navigation))
+            {
+                return IncludeStrategy.ClientFanOut;
+            }
+
             // A FILTERED collection include (ordering / paging inside the include lambda) routes to
             // the pipeline-form $lookup only when its sub-query is fully translatable to
-            // element-name-aware $sort/$skip/$limit stages. A user Where filter (predicate→$match),
-            // a projecting Select, Distinct, or a non-constant Skip/Take count is NOT translated
-            // here and must stay on the client-side fan-out loader rather than emit wrong MQL.
+            // element-name-aware $sort/$skip/$limit stages. A projecting Select, Distinct, or a
+            // non-constant Skip/Take count is NOT translated here and must stay on the client-side
+            // fan-out loader rather than emit wrong MQL.
             if (IsFilteredCollectionInclude(includeExpression)
                 && !TryExtractFilteredCollectionPipeline(includeExpression!.NavigationExpression, navigation, out _))
             {
@@ -251,12 +263,11 @@ internal static class MongoIncludeCompiler
     /// as <c>$sort</c> / <c>$skip</c> / <c>$limit</c> stages.
     /// </summary>
     /// <remarks>
-    /// A bare extra <c>Where</c> on the navigation sub-query is deliberately NOT treated as a
-    /// filtered include here: it is either the join correlation (realized by the <c>$match $expr</c>)
-    /// or a GLOBAL QUERY FILTER injected by EF — both of which keep the pre-existing simple-<c>$lookup</c>
-    /// routing rather than being pushed into a pipeline we can't translate. (A user
-    /// <c>Where</c> filter with no ordering/paging is rare in the spec suite and likewise stays on
-    /// the existing path; only ordering/paging triggers the pipeline form.)
+    /// This intentionally tests ONLY ordering/paging. A user <c>Where</c> predicate is handled
+    /// separately by <see cref="HasUserWhereInclude"/> (it routes to fan-out, where the driver
+    /// translates the predicate); a bare correlation <c>Where</c> (realized by the <c>$match $expr</c>)
+    /// or an EF-injected GLOBAL QUERY FILTER is neither ordering/paging nor a user filter and so does
+    /// not trigger the pipeline form here.
     /// </remarks>
     public static bool IsFilteredCollectionInclude(IncludeExpression? includeExpression)
     {
@@ -283,6 +294,71 @@ internal static class MongoIncludeCompiler
 
         return false;
     }
+
+    /// <summary>
+    /// <see langword="true"/> when a top-level collection include's navigation sub-query carries a
+    /// USER <c>Where</c> predicate — i.e. a <c>Where</c> whose lambda does NOT reference the outer
+    /// principal shaper (that one is the FK CORRELATION condition, realized by the simple/pipeline
+    /// <c>$lookup</c>). Such a predicate cannot be rendered to a server-side <c>$match</c>, so the
+    /// include must run on the client-side fan-out loader, where the driver's LINQ translates it.
+    /// </summary>
+    /// <remarks>
+    /// EF nav-expansion wraps the sub-query in a <see cref="MaterializeCollectionNavigationExpression"/>
+    /// and emits the FK correlation as the innermost <c>Where</c> (references the outer
+    /// <see cref="StructuralTypeShaperExpression"/> / the threaded <see cref="QueryContext"/>); a user
+    /// filter is an ADDITIONAL <c>Where</c> directly over <c>IQueryable&lt;TDependent&gt;</c> whose lambda
+    /// references only the dependent. <see cref="IsUserWhereOnDependent"/> distinguishes the two and ALSO
+    /// excludes EF-internal Wheres introduced by other rewrites — most importantly a model-level GLOBAL
+    /// QUERY FILTER, which EF expands over a TRANSPARENT IDENTIFIER element type (e.g. when the filter
+    /// touches a navigation) rather than over <c>TDependent</c>. Such filters stay on the existing
+    /// simple-/pipeline-<c>$lookup</c> routing (EF applies the global filter separately), so this method
+    /// targets ONLY a genuine user predicate written inside the include lambda.
+    /// </remarks>
+    public static bool HasUserWhereInclude(IncludeExpression? includeExpression, INavigation navigation)
+    {
+        if (includeExpression?.NavigationExpression
+            is not MaterializeCollectionNavigationExpression { Subquery: var subquery })
+        {
+            return false;
+        }
+
+        var dependentClrType = navigation.TargetEntityType.ClrType;
+        for (var current = subquery; current is MethodCallExpression { Method.IsGenericMethod: true } call;
+             current = call.Arguments[0])
+        {
+            if (IsUserWhereOnDependent(call, dependentClrType))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// <see langword="true"/> when <paramref name="call"/> is a <c>Queryable.Where</c> whose single
+    /// generic type argument is exactly the dependent CLR type AND whose predicate is self-contained
+    /// (no correlation / <see cref="QueryContext"/> reference). This is the only <c>Where</c> shape the
+    /// fan-out path captures and recomposes onto <c>DbContext.Set&lt;TDependent&gt;()</c>: the FK
+    /// correlation <c>Where</c>, and any EF-internal <c>Where</c> over a transparent-identifier element
+    /// type (e.g. a global query filter spanning a navigation), are both excluded.
+    /// </summary>
+    private static bool IsUserWhereOnDependent(MethodCallExpression call, Type dependentClrType)
+        => call.Method.IsGenericMethod
+           && call.Method.GetGenericMethodDefinition() == QueryableMethods.Where
+           && call.Method.GetGenericArguments() is [var elementType] && elementType == dependentClrType
+           && !ReferencesCorrelation(call.Arguments[1]);
+
+    /// <summary>
+    /// <see langword="true"/> when an ordering/paging operator call's SOURCE element type is the
+    /// dependent CLR type — i.e. its first generic type argument is <paramref name="dependentClrType"/>
+    /// (<c>OrderBy</c>/<c>ThenBy</c> carry the element type first, then the key type; <c>Skip</c>/<c>Take</c>
+    /// carry only the element type). Operators over a transparent-identifier element type (EF rewrites)
+    /// return <see langword="false"/> and are not recomposed onto the stand-alone dependent query.
+    /// </summary>
+    private static bool IsOperatorOnDependent(MethodCallExpression call, Type dependentClrType)
+        => call.Method.IsGenericMethod
+           && call.Method.GetGenericArguments() is [var elementType, ..] && elementType == dependentClrType;
 
     /// <summary>
     /// Attempts to translate a FILTERED top-level collection Include's navigation sub-query into
@@ -516,6 +592,38 @@ internal static class MongoIncludeCompiler
     }
 
     /// <summary>
+    /// <see langword="true"/> when an operator's argument (a quoted lambda or a constant) carries a
+    /// CORRELATION reference — to the outer principal (<see cref="StructuralTypeShaperExpression"/>) or
+    /// to the <see cref="QueryContext"/> parameter EF threads through a navigation sub-query. Such an
+    /// argument cannot be recomposed onto a stand-alone <c>DbContext.Set&lt;TRelated&gt;()</c> query and
+    /// must not be treated as a user filter. This is a superset of <see cref="IsCorrelationPredicate"/>
+    /// (which the Stage 6.1 pipeline path uses for shaper-only detection) and is used by the fan-out
+    /// routing/composition so the FK correlation in either encoding is reliably excluded.
+    /// </summary>
+    private static bool ReferencesCorrelation(Expression operatorArgument)
+    {
+        var finder = new CorrelationFinder();
+        finder.Visit(Unquote(operatorArgument));
+        return finder.Found;
+    }
+
+    private sealed class CorrelationFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        public override Expression? Visit(Expression? node)
+        {
+            if (node is StructuralTypeShaperExpression
+                || (node is ParameterExpression p && typeof(QueryContext).IsAssignableFrom(p.Type)))
+            {
+                Found = true;
+            }
+
+            return Found ? node : base.Visit(node);
+        }
+    }
+
+    /// <summary>
     /// <see langword="true"/> when <paramref name="expression"/> is the dependent <c>DbSet</c> root
     /// the filtered-include sub-query is built over (an <see cref="EntityQueryRootExpression"/> for
     /// the navigation's target type).
@@ -526,6 +634,103 @@ internal static class MongoIncludeCompiler
 
     private static Expression Unquote(Expression e)
         => e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: var inner } ? inner : e;
+
+    /// <summary>
+    /// Builds (and compiles) the filtered-include composition for a top-level collection Include that
+    /// routes to the client-side fan-out loader: a delegate that, given the FK-correlated
+    /// <c>IQueryable&lt;TRelated&gt;</c>, re-applies the include lambda's USER <c>Where</c> predicate(s),
+    /// <c>OrderBy</c>/<c>ThenBy</c>, <c>Skip</c> and <c>Take</c> — in the SAME order the user wrote them
+    /// (EF semantic order: Where → OrderBy/ThenBy → Skip → Take). Returns <see langword="null"/> when the
+    /// include carries no such operators (a plain, unfiltered collection include).
+    /// </summary>
+    /// <remarks>
+    /// Each operator is replayed by reusing the ORIGINAL sub-query <see cref="MethodCallExpression"/>'s
+    /// <see cref="MethodCallExpression.Method"/> and argument lambdas verbatim, substituting only the
+    /// source (<c>Arguments[0]</c>) with the running query. This avoids any predicate/key rewriting:
+    /// the lambdas reference only the dependent parameter, so they recompose cleanly onto
+    /// <c>DbContext.Set&lt;TRelated&gt;()</c>, where the driver's LINQ translates them. The innermost FK
+    /// CORRELATION <c>Where</c> (references the outer principal shaper) is dropped — the loader already
+    /// applies the FK match. A projecting <c>Select</c>, <c>Distinct</c>, or any other operator falls
+    /// outside the recognized set and is left in place: the build returns the partial composition it
+    /// could form and lets EF/driver translation surface any unsupported residue at execution.
+    /// </remarks>
+    public static Delegate? TryBuildFanOutComposition(Expression? navigationExpression, Type relatedClrType)
+    {
+        if (navigationExpression is not MaterializeCollectionNavigationExpression { Subquery: var subquery })
+        {
+            return null;
+        }
+
+        // Walk outermost → inner, recording each recognized operator. We re-apply them innermost-first
+        // (reverse of the walk) so the running query rebuilds in the order the user authored them.
+        var operators = new List<MethodCallExpression>();
+        for (var current = subquery; current is MethodCallExpression { Method.IsGenericMethod: true } call;
+             current = call.Arguments[0])
+        {
+            var definition = call.Method.GetGenericMethodDefinition();
+            if (definition == QueryableMethods.Where)
+            {
+                // Keep only a self-contained USER predicate over IQueryable<TRelated> (see
+                // IsUserWhereOnDependent). The FK correlation Where (references the outer principal /
+                // QueryContext — realized by the loader's FK match) and any EF-internal Where over a
+                // transparent-identifier element type (e.g. a global query filter spanning a navigation)
+                // are skipped: the former is already applied, the latter is re-applied by EF when the
+                // sub-query re-runs through DbContext.Set<TRelated>().
+                if (IsUserWhereOnDependent(call, relatedClrType))
+                {
+                    operators.Add(call);
+                }
+            }
+            else if (definition == QueryableMethods.OrderBy
+                     || definition == QueryableMethods.OrderByDescending
+                     || definition == QueryableMethods.ThenBy
+                     || definition == QueryableMethods.ThenByDescending
+                     || definition == QueryableMethods.Skip
+                     || definition == QueryableMethods.Take)
+            {
+                // Only recompose ordering/paging that sits directly on IQueryable<TRelated> with a
+                // self-contained key/count. Anything over a transparent-identifier element type, or a
+                // correlation/context reference (rare), can't be recomposed onto a stand-alone DbSet
+                // query — bail so the include materializes unfiltered rather than crashing.
+                if (!IsOperatorOnDependent(call, relatedClrType) || ReferencesCorrelation(call.Arguments[1]))
+                {
+                    return null;
+                }
+
+                operators.Add(call);
+            }
+
+            // Any other operator (Select projection, Distinct, etc.) is simply not recorded — it is
+            // neither a user filter nor ordering/paging we recompose; the unfiltered FK-matched query
+            // is materialized in that case (the routing layer only sends recognizable shapes here).
+        }
+
+        if (operators.Count == 0)
+        {
+            return null;
+        }
+
+        operators.Reverse();
+
+        var queryParam = Expression.Parameter(typeof(IQueryable<>).MakeGenericType(relatedClrType), "q");
+        Expression running = queryParam;
+        foreach (var op in operators)
+        {
+            // Reuse the original generic method and the original argument lambda(s)/constant(s); only
+            // the source operand changes to the running query.
+            var args = new Expression[op.Arguments.Count];
+            args[0] = running;
+            for (var i = 1; i < op.Arguments.Count; i++)
+            {
+                args[i] = op.Arguments[i];
+            }
+
+            running = Expression.Call(op.Method, args);
+        }
+
+        var funcType = typeof(Func<,>).MakeGenericType(queryParam.Type, queryParam.Type);
+        return Expression.Lambda(funcType, running, queryParam).Compile();
+    }
 
     /// <summary>
     /// Resolves the CLR <see cref="PropertyInfo"/> for an EF property,
@@ -561,7 +766,8 @@ internal static class MongoIncludeCompiler
         Func<TPrincipal, object?> principalKeyExtractor,
         string foreignKeyClrPropertyName,
         string? thenIncludeChainPath,
-        QueryTrackingBehavior queryTrackingBehavior)
+        QueryTrackingBehavior queryTrackingBehavior,
+        Func<IQueryable<TRelated>, IQueryable<TRelated>>? filterComposition)
         where TPrincipal : class
         where TRelated : class
     {
@@ -603,7 +809,18 @@ internal static class MongoIncludeCompiler
         var equality = Expression.Equal(fkAccess, Expression.Constant(pkValue, pkValue.GetType()));
         var predicate = Expression.Lambda<Func<TRelated, bool>>(equality, rParam);
 
-        return query.Where(predicate).ToList();
+        // FK correlation first (scopes the dependents to THIS principal), then the user's
+        // filtered-include composition (Where → OrderBy/ThenBy → Skip → Take) so the included
+        // collection is filtered/ordered/paged exactly as the include lambda specified. Composing
+        // through DbContext.Set<TRelated> means the driver's LINQ translates the user predicate —
+        // no provider-side BSON rendering is needed.
+        var filtered = query.Where(predicate);
+        if (filterComposition is not null)
+        {
+            filtered = filterComposition(filtered);
+        }
+
+        return filtered.ToList();
     }
 
     /// <summary>
