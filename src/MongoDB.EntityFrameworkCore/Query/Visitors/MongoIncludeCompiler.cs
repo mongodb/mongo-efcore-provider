@@ -91,12 +91,15 @@ internal static class MongoIncludeCompiler
     /// </summary>
     public static IncludeStrategy ChooseStrategy(IncludeExpression? includeExpression, INavigation navigation)
     {
-        // A top-level principal→dependent collection Include routes to a
-        // server-side $lookup. Anything with a nested (ThenInclude /
-        // nested-collection) chain still fans out client-side.
+        // A top-level principal→dependent collection Include with a single-column foreign key
+        // routes to a server-side $lookup. Anything with a nested (ThenInclude /
+        // nested-collection) chain still fans out client-side. A composite (multi-column) FK
+        // must fall through to fan-out — the single-field $lookup the ServerLookup path emits
+        // (built from Properties[0] only) would be wrong — mirroring the reference branch below.
         if (IsCrossCollection(navigation)
             && navigation.IsCollection
             && !navigation.IsOnDependent
+            && navigation.ForeignKey.Properties.Count == 1
             && !HasNestedInclude(includeExpression))
         {
             return IncludeStrategy.ServerLookup;

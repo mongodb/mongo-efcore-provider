@@ -532,8 +532,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         {
             throw new NotSupportedException(
                 $"Cross-collection Include of '{navigation.DeclaringEntityType.DisplayName()
-                }.{navigation.Name}' requires a single-column foreign key. Composite keys are tracked "
-                + "as a follow-up to EF-117.");
+                }.{navigation.Name}' uses a multi-column foreign key, which is not yet supported "
+                + "(tracked as a follow-up to EF-117).");
         }
 
         // Extract any chained ThenInclude path from the outer's NavigationExpression

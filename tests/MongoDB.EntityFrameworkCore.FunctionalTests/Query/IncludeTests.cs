@@ -576,6 +576,51 @@ public class IncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("not yet supported", ex.Message);
     }
 
+    [Fact]
+    public void Include_collection_to_composite_primary_key_member_emits_id_dotted_lookup_and_materializes()
+    {
+        const string testName = nameof(Include_collection_to_composite_primary_key_member_emits_id_dotted_lookup_and_materializes);
+        // EF-117 composite-PK-member regression guard (mirrors the Northwind Order.OrderDetails
+        // shape). OrderDetail has a composite primary key {OrderId, ProductId} stored under _id,
+        // and OrderId is ALSO the single-column FK back to Order. The principal collection nav
+        // Order.OrderDetails therefore derives its $lookup foreignField from a composite-PK
+        // member, which LookupExpression.GetFieldPath must nest as "_id.OrderId" (not bare
+        // "OrderId"). This is a single-column FK, so it stays on the ServerLookup path and is
+        // unaffected by the new composite-FK collection-routing guard — it must keep working.
+        using var seed = new CompositeKeyContext(MongoDatabase, testName);
+        seed.Database.EnsureCreated();
+        seed.Orders.AddRange(
+            new CompositeOrder { Id = "10248", OrderNo = 10248 },
+            new CompositeOrder { Id = "10249", OrderNo = 10249 });
+        seed.OrderDetails.AddRange(
+            new OrderDetail { OrderId = 10248, ProductId = 11, Quantity = 12 },
+            new OrderDetail { OrderId = 10248, ProductId = 42, Quantity = 10 },
+            new OrderDetail { OrderId = 10249, ProductId = 14, Quantity = 9 });
+        seed.SaveChanges();
+
+        List<string> logs = [];
+        using var db = new CompositeKeyContext(MongoDatabase, testName, logs.Add);
+        var orders = db.Orders
+            .OrderBy(o => o.OrderNo)
+            .Include(o => o.OrderDetails)
+            .ToList();
+
+        // Materialization: each Order resolves its dependents via the composite-PK member.
+        Assert.Equal(2, orders.Count);
+        Assert.Equal(2, orders[0].OrderDetails.Count);
+        Assert.Single(orders[1].OrderDetails);
+        Assert.Equal(new[] { 10, 12 }, orders[0].OrderDetails.Select(d => d.Quantity).OrderBy(q => q).ToArray());
+
+        // The single query carries a $lookup whose foreignField is the _id-dotted path into the
+        // composite key — proving GetFieldPath nested the composite-PK member under _id.
+        var mqlQueries = logs.Where(l => l.Contains("Executed MQL query")).ToList();
+        Assert.Single(mqlQueries);
+        var lookupQuery = mqlQueries[0];
+        Assert.Contains("$lookup", lookupQuery);
+        Assert.Contains("\"as\" : \"_lookup_OrderDetails\"", lookupQuery);
+        Assert.Contains("\"foreignField\" : \"_id.OrderId\"", lookupQuery);
+    }
+
     private class Customer
     {
         public string Id { get; set; } = null!;
@@ -750,6 +795,55 @@ public class IncludeTests(TemporaryDatabaseFixture database)
                 .HasOne(s => s.Manager)
                 .WithMany()
                 .HasForeignKey(s => s.ManagerId);
+        }
+    }
+
+    private class CompositeOrder
+    {
+        public string Id { get; set; } = null!;
+        public int OrderNo { get; set; }
+        public List<OrderDetail> OrderDetails { get; set; } = [];
+    }
+
+    private class OrderDetail
+    {
+        public int OrderId { get; set; }
+        public int ProductId { get; set; }
+        public int Quantity { get; set; }
+        public CompositeOrder Order { get; set; } = null!;
+    }
+
+    private class CompositeKeyContext(IMongoDatabase mongoDatabase, string suffix, Action<string>? log = null) : DbContext
+    {
+        public DbSet<CompositeOrder> Orders { get; set; } = null!;
+        public DbSet<OrderDetail> OrderDetails { get; set; } = null!;
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            base.OnConfiguring(optionsBuilder
+                .UseMongoDB(mongoDatabase.Client, mongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
+            if (log != null)
+            {
+                optionsBuilder.LogTo(log).EnableSensitiveDataLogging();
+            }
+        }
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            base.OnModelCreating(mb);
+            mb.Entity<CompositeOrder>().ToCollection($"ef117_{suffix}_orders");
+            mb.Entity<OrderDetail>().ToCollection($"ef117_{suffix}_orderdetails");
+            // OrderDetail's primary key is composite {OrderId, ProductId} (stored under _id), and
+            // OrderId is also the FK to CompositeOrder.OrderNo. The collection nav therefore looks
+            // up dependents by a composite-PK member → foreignField "_id.OrderId".
+            mb.Entity<OrderDetail>().HasKey(x => new { x.OrderId, x.ProductId });
+            mb.Entity<CompositeOrder>()
+                .HasMany(o => o.OrderDetails)
+                .WithOne(d => d.Order)
+                .HasForeignKey(d => d.OrderId)
+                .HasPrincipalKey(o => o.OrderNo);
         }
     }
 }
