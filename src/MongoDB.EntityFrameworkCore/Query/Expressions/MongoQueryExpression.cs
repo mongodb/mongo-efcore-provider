@@ -120,9 +120,8 @@ internal sealed class MongoQueryExpression : Expression
     public void AddLookup(LookupExpression lookup)
     {
         if (_pendingLookups.All(l => l.As != lookup.As))
+        {
             _pendingLookups.Add(lookup);
+        }
     }
-
-    /// <summary>True for Include-generated LeftJoins (driver _outer/_inner fields present).</summary>
-    public bool UsesDriverJoinFields { get; set; }
 }

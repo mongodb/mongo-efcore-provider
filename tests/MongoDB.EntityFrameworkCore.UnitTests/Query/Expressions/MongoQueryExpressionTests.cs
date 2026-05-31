@@ -137,26 +137,4 @@ public static class MongoQueryExpressionTests
         Assert.Equal(2, queryExpression.PendingLookups.Count);
     }
 
-    [Fact]
-    public static void UsesDriverJoinFields_defaults_to_false()
-    {
-        using var db = new LookupDbContext();
-        var customerType = db.Model.FindEntityType(typeof(Customer))!;
-
-        var queryExpression = new MongoQueryExpression(customerType);
-
-        Assert.False(queryExpression.UsesDriverJoinFields);
-    }
-
-    [Fact]
-    public static void UsesDriverJoinFields_can_be_set_to_true()
-    {
-        using var db = new LookupDbContext();
-        var customerType = db.Model.FindEntityType(typeof(Customer))!;
-
-        var queryExpression = new MongoQueryExpression(customerType);
-        queryExpression.UsesDriverJoinFields = true;
-
-        Assert.True(queryExpression.UsesDriverJoinFields);
-    }
 }

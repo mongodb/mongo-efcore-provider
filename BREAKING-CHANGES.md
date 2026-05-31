@@ -14,10 +14,11 @@ Any `Include`/`ThenInclude` that crossed a collection boundary threw `InvalidOpe
 
 #### New behavior
 
-Cross-collection `Include` is now supported in general (see EF-117). The shapes that remain unsupported throw more specific exceptions:
+Cross-collection `Include` is now supported in general (see EF-117). Supported includes are translated to a single server-side MongoDB `$lookup` aggregation stage (with `$unwind` for reference navigations; pipeline-form `$lookup` for ordered or paged collection navigations), falling back to client-side per-principal sub-queries for shapes that `$lookup` cannot express. The shapes that remain unsupported throw more specific exceptions:
 
 - A cross-collection `Include` whose key/foreign-key is a **shadow property**, or which relies on a **composite key**, now throws `NotSupportedException` (previously `InvalidOperationException`).
 - A many-to-many (**skip navigation**) `Include` continues to throw `InvalidOperationException`, but with a new message referencing that many-to-many `Include` is not yet supported.
+- A filtered `Include` whose predicate **references another navigation** (or an `Include` of a type that has a query filter referencing a navigation) now throws `NotSupportedException`, because the server-side `$lookup` pipeline cannot resolve cross-document navigation references inside a filter expression.
 
 #### Why
 
