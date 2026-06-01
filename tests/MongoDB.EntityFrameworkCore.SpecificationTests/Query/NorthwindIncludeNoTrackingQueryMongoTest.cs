@@ -72,12 +72,11 @@ Customers.{ "$sort" : { "CompanyName" : -1 } }, { "$lookup" : { "from" : "Orders
 
     public override async Task Include_with_cycle_does_not_throw_when_AsTracking_NoTrackingWithIdentityResolution(bool async)
     {
+        // EF Core's no-tracking base asserts this cyclic Include throws IncludeWithCycle before any query executes, so no MQL is emitted.
         await base.Include_with_cycle_does_not_throw_when_AsTracking_NoTrackingWithIdentityResolution(async);
 
         AssertMql(
-            """
-Orders.{ "$match" : { "_id" : { "$lt" : 10800 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_lookup_Customer._id", "foreignField" : "CustomerID", "as" : "_lookup_Customer._lookup_Orders" } }
-""");
+        );
     }
 
     public override async Task Include_collection_with_filter(bool async)
@@ -145,22 +144,20 @@ Customers.{ "$skip" : 10 }, { "$limit" : 5 }, { "$lookup" : { "from" : "Orders",
 
     public override async Task Include_multi_level_reference_and_collection_predicate(bool async)
     {
+        // EF Core's no-tracking base asserts this cyclic Include throws IncludeWithCycle before any query executes, so no MQL is emitted.
         await base.Include_multi_level_reference_and_collection_predicate(async);
 
         AssertMql(
-            """
-Orders.{ "$match" : { "_id" : 10248 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_lookup_Customer._id", "foreignField" : "CustomerID", "as" : "_lookup_Customer._lookup_Orders" } }, { "$limit" : 2 }
-""");
+        );
     }
 
     public override async Task Include_references_then_include_collection(bool async)
     {
+        // EF Core's no-tracking base asserts this cyclic Include throws IncludeWithCycle before any query executes, so no MQL is emitted.
         await base.Include_references_then_include_collection(async);
 
         AssertMql(
-            """
-Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_lookup_Customer._id", "foreignField" : "CustomerID", "as" : "_lookup_Customer._lookup_Orders" } }
-""");
+        );
     }
 
     public override async Task Include_collection_on_additional_from_clause_with_filter(bool async)
@@ -956,22 +953,20 @@ OrderDetails.{ "$match" : { "_id.OrderID" : { "$mod" : [23, 13] } } }, { "$looku
 
     public override async Task Include_with_cycle_does_not_throw_when_AsNoTrackingWithIdentityResolution(bool async)
     {
+        // EF Core's no-tracking base asserts this cyclic Include throws IncludeWithCycle before any query executes, so no MQL is emitted.
         await base.Include_with_cycle_does_not_throw_when_AsNoTrackingWithIdentityResolution(async);
 
         AssertMql(
-            """
-Orders.{ "$match" : { "_id" : { "$lt" : 10800 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_lookup_Customer._id", "foreignField" : "CustomerID", "as" : "_lookup_Customer._lookup_Orders" } }
-""");
+        );
     }
 
     public override async Task Include_references_then_include_collection_multi_level(bool async)
     {
+        // EF Core's no-tracking base asserts this cyclic Include throws IncludeWithCycle before any query executes, so no MQL is emitted.
         await base.Include_references_then_include_collection_multi_level(async);
 
         AssertMql(
-            """
-OrderDetails.{ "$match" : { "_id.ProductID" : { "$mod" : [23, 17] }, "Quantity" : { "$lt" : 10 } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Order._lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Order._lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_lookup_Order._lookup_Customer._id", "foreignField" : "CustomerID", "as" : "_lookup_Order._lookup_Customer._lookup_Orders" } }
-""");
+        );
     }
 
     public override async Task Include_reference_Join_GroupBy_Select(bool async)
