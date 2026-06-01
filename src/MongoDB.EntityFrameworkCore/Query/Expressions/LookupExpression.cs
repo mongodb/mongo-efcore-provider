@@ -32,7 +32,13 @@ internal sealed class LookupExpression
     /// </summary>
     /// <param name="navigation">The <see cref="INavigation"/> that requires a $lookup.</param>
     /// <param name="forceUnwind">Force $unwind even for collection navigations (used for explicit Join).</param>
-    public LookupExpression(INavigation navigation, bool forceUnwind = false)
+    /// <param name="parentAlias">
+    /// Optional running dotted alias path of an ancestor lookup (e.g. <c>_lookup_Customer</c>) when this
+    /// lookup is a nested child of a reference-rooted <c>ThenInclude</c> chain. When non-null, both
+    /// <see cref="LocalField"/> and <see cref="As"/> are prefixed with this path so the join reads from
+    /// — and writes back into — the unwound parent object rather than the document root.
+    /// </param>
+    public LookupExpression(INavigation navigation, bool forceUnwind = false, string? parentAlias = null)
     {
         Navigation = navigation;
         ForceUnwind = forceUnwind;
@@ -41,20 +47,31 @@ internal sealed class LookupExpression
         var targetEntityType = navigation.TargetEntityType;
         From = targetEntityType.GetCollectionName();
 
+        string localField;
         if (navigation.IsOnDependent)
         {
             // e.g., Order.Customer where FK (CustomerId) is on Order
-            LocalField = GetFieldPath(foreignKey.Properties[0]);
+            localField = GetFieldPath(foreignKey.Properties[0]);
             ForeignField = GetFieldPath(foreignKey.PrincipalKey.Properties[0]);
         }
         else
         {
             // e.g., Customer.Orders where FK (CustomerId) is on Order
-            LocalField = GetFieldPath(foreignKey.PrincipalKey.Properties[0]);
+            localField = GetFieldPath(foreignKey.PrincipalKey.Properties[0]);
             ForeignField = GetFieldPath(foreignKey.Properties[0]);
         }
 
-        As = GetAlias(navigation);
+        var alias = GetAlias(navigation);
+        if (parentAlias is not null)
+        {
+            LocalField = $"{parentAlias}.{localField}";
+            As = $"{parentAlias}.{alias}";
+        }
+        else
+        {
+            LocalField = localField;
+            As = alias;
+        }
     }
 
     /// <summary>
@@ -73,13 +90,13 @@ internal sealed class LookupExpression
     public string From { get; }
 
     /// <summary>The field on the local document to match.</summary>
-    public string LocalField { get; set; }
+    public string LocalField { get; }
 
     /// <summary>The field on the foreign document to match.</summary>
     public string ForeignField { get; }
 
     /// <summary>The output array field name in the resulting document.</summary>
-    public string As { get; set; }
+    public string As { get; }
 
     /// <summary>
     /// Get the full MongoDB field path for a property, accounting for composite keys

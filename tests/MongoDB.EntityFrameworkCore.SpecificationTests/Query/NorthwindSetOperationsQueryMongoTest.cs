@@ -219,6 +219,9 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_Include(bool async)
     {
+        // Union of two principal sets followed by Include — works through Stages 1–4
+        // fan-out; MQL baseline omitted because the sub-query iteration order
+        // depends on the Union materialization order, which isn't guaranteed.
         await base.Union_Include(async);
     }
 

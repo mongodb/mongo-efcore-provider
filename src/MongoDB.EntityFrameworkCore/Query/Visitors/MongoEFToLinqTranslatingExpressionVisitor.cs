@@ -118,7 +118,9 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
             return query;
         }
 
-        var sourceType = query.Type.TryGetItemType() ?? _source.Type.TryGetItemType()!;
+        var sourceType = query.Type.TryGetItemType() ?? _source.Type.TryGetItemType()
+            ?? throw new InvalidOperationException(
+                $"Cannot determine item type for $lookup pipeline source (query type '{query.Type}', source type '{_source.Type}').");
         var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
             .MakeGenericMethod(sourceType, sourceType);
         var serializerType = typeof(IBsonSerializer<>).MakeGenericType(sourceType);

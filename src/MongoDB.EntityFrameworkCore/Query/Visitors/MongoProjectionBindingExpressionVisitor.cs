@@ -334,15 +334,10 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
         // (driven by EnumerateNestedIncludes, which yields INavigation) accepted the chain, so every
         // nested level here is guaranteed to be an INavigation (never an ISkipNavigation).
         var nestedNavigation = (INavigation)nestedInclude.Navigation;
-        var childAlias = $"{parentAlias}.{LookupExpression.GetAlias(nestedNavigation)}";
 
         // Register the child $lookup with parent-dotted LocalField / As so it nests inside the
         // unwound parent object. ForeignField is unchanged (it targets the child collection).
-        var childLookup = new LookupExpression(nestedNavigation)
-        {
-            As = childAlias
-        };
-        childLookup.LocalField = $"{parentAlias}.{childLookup.LocalField}";
+        var childLookup = new LookupExpression(nestedNavigation, parentAlias: parentAlias);
         _queryExpression.AddLookup(childLookup);
 
         var boundChild = parentEntityProjection.BindNavigation(nestedNavigation);
@@ -376,7 +371,7 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
             // Deeper levels (ref -> ref -> ...) recurse, threading the dotted alias forward.
             nestedNavigationExpression = nestedInclude.NavigationExpression is IncludeExpression deeperInclude
-                ? RewriteNestedChainForLookup(deeperInclude, childEntityProjection, childAlias, childShaper)
+                ? RewriteNestedChainForLookup(deeperInclude, childEntityProjection, childLookup.As, childShaper)
                 : childShaper;
         }
 
