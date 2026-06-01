@@ -136,7 +136,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task Included_many_to_one_query(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — the Order query filter references the Customer navigation, untranslatable even for a plain Include(o => o.Customer).
         await AssertTranslationFailed(() => base.Included_many_to_one_query(async));
 
         AssertMql(
@@ -145,7 +145,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task Project_reference_that_itself_has_query_filter_with_another_reference(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — projects a cross-document reference (od.Order) whose query filter references another navigation.
         await AssertTranslationFailed(() => base.Project_reference_that_itself_has_query_filter_with_another_reference(async));
 
         AssertMql(
@@ -154,7 +154,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task Navs_query(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — chained navigation SelectMany (Customer->Orders->OrderDetails).
         await AssertTranslationFailed(() => base.Navs_query(async));
 
         AssertMql(
@@ -199,7 +199,7 @@ Products.
 
     public override async Task Included_many_to_one_query2(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — the Order query filter references the Customer navigation, untranslatable even for a plain Include(o => o.Customer).
         await AssertTranslationFailed(() => base.Included_many_to_one_query2(async));
 
         AssertMql(

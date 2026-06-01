@@ -34,7 +34,7 @@ public class NorthwindEFPropertyIncludeQueryMongoTest : NorthwindEFPropertyInclu
 
     public override async Task Include_collection_with_right_join_clause_with_filter(bool async)
     {
-        // Fails: Include (joins) issue EF-117
+        // Fails: cross-collection right join; the Include is incidental. EF-X016.
         await AssertTranslationFailed(() => base.Include_collection_with_right_join_clause_with_filter(async));
 
         AssertMql();
@@ -129,7 +129,7 @@ Customers.{ "$skip" : 10 }, { "$limit" : 5 }, { "$lookup" : { "from" : "Orders",
 
     public override async Task Include_collection_with_cross_join_clause_with_filter(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — a cross join (uncorrelated SelectMany into Orders); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_with_cross_join_clause_with_filter(async));
 
         AssertMql(
@@ -138,7 +138,7 @@ Customers.{ "$skip" : 10 }, { "$limit" : 5 }, { "$lookup" : { "from" : "Orders",
 
     public override async Task Join_Include_reference_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy after a cross-collection Join; the Include is incidental.
         await AssertTranslationFailed(() => base.Join_Include_reference_GroupBy_Select(async));
 
         AssertMql(
@@ -167,7 +167,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F"
 
     public override async Task Include_collection_on_additional_from_clause_with_filter(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — an additional from-clause (Customers x Customers); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_on_additional_from_clause_with_filter(async));
 
         AssertMql(
@@ -176,7 +176,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F"
 
     public override async Task Include_duplicate_reference3(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — a Cartesian self-join (SelectMany into a second Orders root); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_duplicate_reference3(async));
 
         AssertMql(
@@ -243,7 +243,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$sort" : { "_id" : 1 } }
 
     public override async Task Include_duplicate_collection_result_operator2(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — a Cartesian self-join (SelectMany into a second Customers root); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_duplicate_collection_result_operator2(async));
 
         AssertMql(
@@ -252,7 +252,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$sort" : { "_id" : 1 } }
 
     public override async Task Repro9735(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — OrderBy over Order->Customer; the Include is incidental.
         await AssertTranslationFailed(() => base.Repro9735(async));
 
         AssertMql(
@@ -271,7 +271,7 @@ Customers.{ "$match" : { "_id" : "ALFKI ?" } }, { "$lookup" : { "from" : "Orders
 
     public override async Task Include_collection_with_cross_apply_with_filter(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Subquery selection EF-X001 — CROSS APPLY (correlated SelectMany into Orders, o.CustomerID == c.CustomerID); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_with_cross_apply_with_filter(async));
 
         AssertMql(
@@ -280,7 +280,7 @@ Customers.{ "$match" : { "_id" : "ALFKI ?" } }, { "$lookup" : { "from" : "Orders
 
     public override async Task Include_collection_with_left_join_clause_with_filter(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: cross-collection left join (GroupJoin+SelectMany+DefaultIfEmpty); the Include is incidental. EF-X016.
         await AssertTranslationFailed(() => base.Include_collection_with_left_join_clause_with_filter(async));
 
         AssertMql(
@@ -289,7 +289,7 @@ Customers.{ "$match" : { "_id" : "ALFKI ?" } }, { "$lookup" : { "from" : "Orders
 
     public override async Task Include_duplicate_collection(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — a Cartesian self-join (SelectMany into a second Customers root); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_duplicate_collection(async));
 
         AssertMql(
@@ -602,7 +602,7 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 10963 } }, { "$lookup" : { "from" : 
 
     public override async Task Include_reference_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy(...).Select(g => g.FirstOrDefault()); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_reference_GroupBy_Select(async));
 
         AssertMql(
@@ -621,7 +621,7 @@ OrderDetails.{ "$match" : { "_id.OrderID" : { "$mod" : [23, 13] } } }, { "$looku
 
     public override async Task Include_collection_with_join_clause_with_filter(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: cross-collection inner Join (Customers join Orders); the Include is incidental. EF-X016.
         await AssertTranslationFailed(() => base.Include_collection_with_join_clause_with_filter(async));
 
         AssertMql(
@@ -664,7 +664,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Cust
 
     public override async Task Include_duplicate_reference(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — a Cartesian self-join (SelectMany into a second Orders root); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_duplicate_reference(async));
 
         AssertMql(
@@ -673,7 +673,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Cust
 
     public override async Task Include_with_complex_projection(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — projects Order->Customer.CustomerID; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_with_complex_projection(async));
 
         AssertMql(
@@ -692,7 +692,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task Include_collection_on_join_clause_with_order_by_and_filter(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: cross-collection inner Join (Customers join Orders); the Include is incidental. EF-X016.
         await AssertTranslationFailed(() => base.Include_collection_on_join_clause_with_order_by_and_filter(async));
 
         AssertMql(
@@ -701,7 +701,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task Multi_level_includes_are_applied_with_take(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — collection-rooted multi-level Include (Customer->Orders->OrderDetails) projecting c.Orders.ToList() with Take; the provider does not yet compose paging over a through-collection ThenInclude chain.
         await AssertTranslationFailed(() => base.Multi_level_includes_are_applied_with_take(async));
 
         AssertMql(
@@ -760,7 +760,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task Include_collection_with_outer_apply_with_filter(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Subquery selection EF-X001 — OUTER APPLY (correlated SelectMany+DefaultIfEmpty, o.CustomerID == c.CustomerID); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_with_outer_apply_with_filter(async));
 
         AssertMql(
@@ -769,7 +769,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task Include_collection_on_additional_from_clause2(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — an additional from-clause (Customers x Customers); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_on_additional_from_clause2(async));
 
         AssertMql(
@@ -792,7 +792,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders",
 
     public override async Task Include_with_complex_projection_does_not_change_ordering_of_projection(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — projects a cross-document navigation member; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_with_complex_projection_does_not_change_ordering_of_projection(async));
 
         AssertMql(
@@ -815,7 +815,7 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 10248 } }, { "$lookup" : { "from" : 
 
     public override async Task Multi_level_includes_are_applied_with_skip_take(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — collection-rooted multi-level Include (Customer->Orders->OrderDetails) projecting c.Orders.ToList() with Skip+Take; the provider does not yet compose paging over a through-collection ThenInclude chain.
         await AssertTranslationFailed(() => base.Multi_level_includes_are_applied_with_skip_take(async));
 
         AssertMql(
@@ -854,7 +854,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Orde
 
     public override async Task Include_collection_with_outer_apply_with_filter_non_equality(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Subquery selection EF-X001 — OUTER APPLY with a non-equality correlation (o.CustomerID != c.CustomerID); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_with_outer_apply_with_filter_non_equality(async));
 
         AssertMql(
@@ -863,7 +863,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Orde
 
     public override async Task Include_in_let_followed_by_FirstOrDefault(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Subquery selection EF-X001 — a `let` runs a correlated cross-collection sub-query (Customers->Orders) selected into the projection; the inner Include is incidental.
         await AssertTranslationFailed(() => base.Include_in_let_followed_by_FirstOrDefault(async));
 
         AssertMql(
@@ -924,7 +924,7 @@ Orders.{ "$match" : { "CustomerID" : "FURIB" } }, { "$lookup" : { "from" : "Orde
 
     public override async Task Include_collection_with_multiple_conditional_order_by(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — ThenBy over Order->Customer.City; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_with_multiple_conditional_order_by(async));
 
         AssertMql(
@@ -933,7 +933,7 @@ Orders.{ "$match" : { "CustomerID" : "FURIB" } }, { "$lookup" : { "from" : "Orde
 
     public override async Task Include_reference_when_entity_in_projection(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — Include(o => o.Customer) carried through an entity-reshaping projection (Select(o => new { o, o.CustomerID })) is not composed.
         await AssertTranslationFailed(() => base.Include_reference_when_entity_in_projection(async));
 
         AssertMql(
@@ -982,7 +982,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : { "$mod" : [23, 17] }, "Quantity" 
 
     public override async Task Include_reference_Join_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy after a cross-collection Join; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_reference_Join_GroupBy_Select(async));
 
         AssertMql(
@@ -1001,7 +1001,7 @@ Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
 
     public override async Task Include_reference_SelectMany_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy after a cross-collection SelectMany; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_reference_SelectMany_GroupBy_Select(async));
 
         AssertMql(
@@ -1010,7 +1010,7 @@ Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
 
     public override async Task Include_multiple_references_then_include_collection_multi_level(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — a reference->reference->collection ThenInclude chain plus a sibling reference Include is not yet composed.
         await AssertTranslationFailed(() => base.Include_multiple_references_then_include_collection_multi_level(async));
 
         AssertMql(
@@ -1019,7 +1019,7 @@ Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
 
     public override async Task Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: cross-collection left join (GroupJoin+SelectMany); the Include is incidental. EF-X016.
         await AssertTranslationFailed(() => base.Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join(async));
 
         AssertMql(
@@ -1028,7 +1028,7 @@ Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
 
     public override async Task SelectMany_Include_reference_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy after a cross-collection SelectMany; the Include is incidental.
         await AssertTranslationFailed(() => base.SelectMany_Include_reference_GroupBy_Select(async));
 
         AssertMql(
@@ -1037,7 +1037,7 @@ Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
 
     public override async Task Include_collection_SelectMany_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy after a cross-collection SelectMany; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_SelectMany_GroupBy_Select(async));
 
         AssertMql(
@@ -1056,7 +1056,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
     public override async Task Multi_level_includes_are_applied_with_skip(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — collection-rooted multi-level Include (Customer->Orders->OrderDetails) projecting c.Orders.ToList() with Skip; the provider does not yet compose paging over a through-collection ThenInclude chain.
         await AssertTranslationFailed(() => base.Multi_level_includes_are_applied_with_skip(async));
 
         AssertMql(
@@ -1065,7 +1065,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
     public override async Task Include_collection_on_additional_from_clause(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — an additional from-clause (Customers x Customers); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_on_additional_from_clause(async));
 
         AssertMql(
@@ -1098,7 +1098,7 @@ Orders.{ "$project" : { "_v" : "$CustomerID", "_id" : 0 } }
 
     public override async Task Include_duplicate_collection_result_operator(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — a Cartesian self-join (SelectMany into a second Customers root); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_duplicate_collection_result_operator(async));
 
         AssertMql(
@@ -1151,7 +1151,7 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$skip" : 80 }, { "$lookup" : {
 
     public override async Task Include_collection_Join_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy after a cross-collection Join; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_Join_GroupBy_Select(async));
 
         AssertMql(
@@ -1160,7 +1160,7 @@ Customers.{ "$sort" : { "ContactName" : 1 } }, { "$skip" : 80 }, { "$lookup" : {
 
     public override async Task Include_collection_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy(...).Select(g => g.FirstOrDefault()); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_collection_GroupBy_Select(async));
 
         AssertMql(
@@ -1178,7 +1178,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }, { "$lookup" : { "from" 
 
     public override async Task Join_Include_collection_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy after a cross-collection Join; the Include is incidental.
         await AssertTranslationFailed(() => base.Join_Include_collection_GroupBy_Select(async));
 
         AssertMql(
@@ -1207,7 +1207,7 @@ Customers.{ "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
 
     public override async Task Include_duplicate_reference2(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Multiple query roots issue EF-220 — a Cartesian self-join (SelectMany into a second Orders root); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_duplicate_reference2(async));
 
         AssertMql(
@@ -1216,7 +1216,7 @@ Customers.{ "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
 
     public override async Task Include_collection_and_reference(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — include ORDER matters: collection-first (Include(o.OrderDetails).Include(o.Customer)) is not composed, while the reference-first sibling Include_reference_and_collection works.
         await AssertTranslationFailed(() => base.Include_collection_and_reference(async));
 
         AssertMql(
@@ -1225,7 +1225,7 @@ Customers.{ "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
 
     public override async Task Include_multiple_references_multi_level(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — two multi-level reference Includes from one root (od.Order.Customer and od.Product) are not yet composed.
         await AssertTranslationFailed(() => base.Include_multiple_references_multi_level(async));
 
         AssertMql(
@@ -1244,7 +1244,7 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 10248 } }, { "$lookup" : { "from" : 
 
     public override async Task SelectMany_Include_collection_GroupBy_Select(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: GroupBy issue EF-149 — entity GroupBy after a cross-collection SelectMany; the Include is incidental.
         await AssertTranslationFailed(() => base.SelectMany_Include_collection_GroupBy_Select(async));
 
         AssertMql(
@@ -1293,7 +1293,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F"
 
     public override async Task Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Client eval in final projection EF-250 — the projection calls ClientMethod(e); the Include is incidental.
         await AssertTranslationFailed(() => base.Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression(async));
 
         AssertMql(
@@ -1334,7 +1334,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F"
 
     public override async Task Include_multiple_references_then_include_multi_level(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — a ThenInclude reference chain plus a sibling reference Include from one root is not yet composed.
         await AssertTranslationFailed(() => base.Include_multiple_references_then_include_multi_level(async));
 
         AssertMql(
@@ -1363,7 +1363,7 @@ Orders.{ "$match" : { "_id" : 10248 } }, { "$lookup" : { "from" : "Customers", "
 
     public override async Task Include_multiple_references_and_collection_multi_level(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — a reference->reference->collection chain (od.Order.Customer.Orders) plus a sibling reference Include is not yet composed.
         await AssertTranslationFailed(() => base.Include_multiple_references_and_collection_multi_level(async));
 
         AssertMql(
@@ -1372,7 +1372,7 @@ Orders.{ "$match" : { "_id" : 10248 } }, { "$lookup" : { "from" : "Customers", "
 
     public override async Task Include_where_skip_take_projection(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216 — projects OrderDetail->Order.CustomerID; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_where_skip_take_projection(async));
 
         AssertMql(
@@ -1391,7 +1391,7 @@ Customers.{ "$sort" : { "ContactName" : -1 } }, { "$limit" : 10 }, { "$lookup" :
 
     public override async Task Include_multiple_references(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include issue EF-117 — two reference Includes from one root (OrderDetail->Order and OrderDetail->Product) are not yet composed into a single query.
         await AssertTranslationFailed(() => base.Include_multiple_references(async));
 
         AssertMql(
@@ -1418,7 +1418,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 73 } }, { "$lookup" : { "from" : "
 
     public override async Task Include_empty_reference_sets_IsLoaded(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Entity equality issue EF-202 — First(e => e.Manager == null) compares a navigation to null; the Include is incidental.
         await AssertTranslationFailed(() => base.Include_empty_reference_sets_IsLoaded(async));
 
         AssertMql(

@@ -54,7 +54,7 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task Entity_mapped_to_view_on_right_side_of_join(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: cross-collection left join (GroupJoin+SelectMany+DefaultIfEmpty) from Orders to the keyless ProductView; no Include here. EF-X016 (cf. EF-X007 views).
         await AssertTranslationFailed(() => base.Entity_mapped_to_view_on_right_side_of_join(async));
 
         AssertMql();

@@ -544,7 +544,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Join_with_default_if_empty_on_both_sources(bool async)
     {
-        // Fails: Include (joins) issue EF-117
+        // Fails: cross-collection left join (GroupJoin+DefaultIfEmpty) on both sources not translated (the provider does not support multi-source joins); EF-X016.
         await AssertTranslationFailed(() => base.Join_with_default_if_empty_on_both_sources(async));
     }
 
@@ -1404,7 +1404,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Join_Where_Count(bool async)
     {
-        // Fails: Include (joins) issue EF-117
+        // Fails: cross-collection Join (Customers join Orders) + Where + Count not translated (the provider does not support multi-source joins); EF-X016.
         await AssertTranslationFailed(() => base.Join_Where_Count(async));
     }
 

@@ -63,7 +63,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 
     public override void Tags_on_subquery()
     {
-        // Fails: Include issue EF-117
+        // Fails: Subquery selection EF-X001 — a correlated SelectMany sub-query from Customers into Orders; no Include here.
         Assert.Contains(
             "The LINQ expression",
             Assert.Throws<InvalidOperationException>(() => base.Tags_on_subquery()).Message);
