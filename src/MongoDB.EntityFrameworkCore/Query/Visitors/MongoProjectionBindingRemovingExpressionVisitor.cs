@@ -119,24 +119,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                             : Expression.Convert(valueExpression, projectionBindingExpression.Type);
                     }
 
-                    // For genuinely non-property expressions (arithmetic, constants, Mql.Field) the
-                    // push-down result document has the alias as its BSON element name — read it raw.
-                    // When projection.Expression is null (EF key-property binding via BindProperty)
-                    // there is no source expression to inspect; fall through to the property-lookup
-                    // path so the alias is resolved against the declared entity type, which gives us
-                    // the correct BSON element name (e.g. OrderID → _id).
-                    if (projection.Expression != null)
-                    {
-                        return BsonBinding.CreateGetElementValue(
-                            DocParameter,
-                            projection.Alias,
-                            projectionBindingExpression.Type);
-                    }
-
-                    return CreateGetValueExpression(
+                    // For non-property expressions (arithmetic, constants, Mql.Field) — and for
+                    // key-property bindings — the push-down result document carries the value under
+                    // the projection alias as its BSON element name (e.g. `{ OrderID: "$_id" }`), so
+                    // read it raw by that alias. projection.Expression is non-nullable (see
+                    // ProjectionExpression), so there is no null-source path to handle here.
+                    return BsonBinding.CreateGetElementValue(
                         DocParameter,
                         projection.Alias,
-                        !projectionBindingExpression.Type.IsNullableType(),
                         projectionBindingExpression.Type);
                 }
 
