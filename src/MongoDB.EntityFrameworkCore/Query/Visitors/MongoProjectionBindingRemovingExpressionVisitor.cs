@@ -104,11 +104,19 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                 "may produce values that cannot be cast to the binding's outer type.");
                         }
 
-                        return BsonBinding.CreateGetValueExpression(
+                        var valueExpression = BsonBinding.CreateGetValueExpression(
                             DocParameter,
                             projection.Alias,
                             fieldAccess.Property,
                             projectionBindingExpression.Type);
+
+                        // The read expression's type is the property's CLR type widened to nullable when
+                        // the property is nullable; the assert above permits the binding type to be the
+                        // non-nullable form, so convert to the exact binding type to keep the shaper's
+                        // expression tree well-typed.
+                        return valueExpression.Type == projectionBindingExpression.Type
+                            ? valueExpression
+                            : Expression.Convert(valueExpression, projectionBindingExpression.Type);
                     }
 
                     // For genuinely non-property expressions (arithmetic, constants, Mql.Field) the

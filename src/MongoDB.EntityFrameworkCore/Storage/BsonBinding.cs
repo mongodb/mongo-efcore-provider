@@ -223,6 +223,11 @@ internal static class BsonBinding
     internal static T? GetPropertyValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
     {
         var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+
+        // Intentionally drop any ElementPath from the source serialization info: in a projection the
+        // value lives at the flat alias name in the projected document, not at the property's original
+        // (possibly nested, e.g. ["_id", name] for a composite key) path. Re-introducing the path here
+        // would break aliased projections of composite-key parts.
         var projectedSerializationInfo = new BsonSerializationInfo(
             elementName,
             serializationInfo.Serializer,
