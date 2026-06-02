@@ -2478,138 +2478,148 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
     public override async Task Select_expression_long_to_string(bool async)
     {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "The property 'Order.ShipName' could not be found.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Select_expression_long_to_string(async))).Message);
-
+        await base.Select_expression_long_to_string(async);
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : { "$toString" : { "$toLong" : "$_id" } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_int_to_string(bool async)
     {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "The property 'Order.ShipName' could not be found.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Select_expression_int_to_string(async))).Message);
-
+        await base.Select_expression_int_to_string(async);
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : { "$toString" : "$_id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task ToString_with_formatter_is_evaluated_on_the_client(bool async)
     {
-        // Fails: Client eval in final projection EF-250
         Assert.Contains(
-            "The property 'Order.ShipName' could not be found.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            "Expression not supported: o.OrderID.ToString(",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
                 base.ToString_with_formatter_is_evaluated_on_the_client(async))).Message);
-
-        AssertMql(
-        );
     }
 
     public override async Task Select_expression_other_to_string(bool async)
-    {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "The property 'Order.ShipName' could not be found.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Select_expression_other_to_string(async))).Message);
+        => await base.Select_expression_other_to_string(async);
 
-        AssertMql(
-        );
-    }
+    // The driver translates DateAdd/Sub but the resulting Bson DateTime loses the .NET
+    // DateTimeKind (returned as UTC) so the base test's exact-value comparison fails. The
+    // assertions below pin the failure type and a stable message portion so unrelated
+    // regressions surface as a different exception rather than silently passing.
 
     public override async Task Select_expression_date_add_year(bool async)
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "DateTime",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_date_add_year(async))).Message);
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_date_add_year(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "year", "amount" : 1 } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_datetime_add_month(bool async)
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "DateTime",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_month(async))).Message);
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_month(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "month", "amount" : 1 } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_datetime_add_hour(bool async)
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "DateTime",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_hour(async))).Message);
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_hour(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "hour", "amount" : 1.0 } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_datetime_add_minute(bool async)
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "DateTime",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_minute(async))).Message);
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_minute(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "minute", "amount" : 1.0 } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_datetime_add_second(bool async)
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "DateTime",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_second(async))).Message);
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_second(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "second", "amount" : 1.0 } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_date_add_milliseconds_above_the_range(bool async)
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "DateTime",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_date_add_milliseconds_above_the_range(async)))
-            .Message);
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_date_add_milliseconds_above_the_range(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1000000000000.0 } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_date_add_milliseconds_below_the_range(bool async)
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "DateTime",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_date_add_milliseconds_below_the_range(async)))
-            .Message);
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_date_add_milliseconds_below_the_range(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : -1000000000000.0 } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_date_add_milliseconds_large_number_divided(bool async)
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "Rewriting child expression",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            "Cannot deserialize a 'Int32' from BsonType 'DateTime'",
+            (await Assert.ThrowsAsync<FormatException>(() =>
                 base.Select_expression_date_add_milliseconds_large_number_divided(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "day", "amount" : { "$divide" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "unit" : "millisecond", "amount" : { "$mod" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Add_minutes_on_constant_value(bool async)
@@ -3556,16 +3566,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
     }
 
     public override async Task Convert_to_nullable_on_nullable_value_is_ignored(bool async)
-    {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "Rewriting child expression",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Convert_to_nullable_on_nullable_value_is_ignored(async))).Message);
-
-        AssertMql(
-        );
-    }
+        => await base.Convert_to_nullable_on_nullable_value_is_ignored(async);
 
     public override async Task Navigation_inside_interpolated_string_is_expanded(bool async)
     {
@@ -4315,11 +4316,14 @@ Customers.
     {
         // Fails: Unsupported by driver EF-X003
         Assert.Contains(
-            "DateTime",
-            (await Assert.ThrowsAsync<ArgumentException>(() => base.Select_expression_datetime_add_ticks(async))).Message);
+            "Assert.Equal() Failure",
+            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
+                () => base.Select_expression_datetime_add_ticks(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1.0 } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Where_subquery_expression_same_parametername(bool async)

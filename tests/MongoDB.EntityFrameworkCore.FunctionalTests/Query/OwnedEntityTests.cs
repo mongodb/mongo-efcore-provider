@@ -414,6 +414,108 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         }
     }
 
+    [Fact]
+    public void OwnedEntity_projection_alias_with_bson_representation_uses_owned_property_serializer()
+    {
+        var collection = database.CreateCollection<PersonWithLocation>();
+
+        var id = ObjectId.GenerateNewId();
+        var expectedLocation = new Location { latitude = 1.234m, longitude = 1.567m };
+
+        var modelBuilder = (ModelBuilder mb) =>
+        {
+            mb.Entity<PersonWithLocation>(p =>
+            {
+                p.OwnsOne(e => e.location, f =>
+                {
+                    f.HasElementName("Location");
+                    f.Property(g => g.longitude)
+                        .HasElementName("Longitude")
+                        .HasBsonRepresentation(BsonType.String);
+                });
+            });
+        };
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            dbContext.Entities.Add(new PersonWithLocation
+            {
+                _id = id,
+                name = Guid.NewGuid().ToString(),
+                location = expectedLocation
+            });
+            dbContext.SaveChanges();
+        }
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            var found = dbContext.Entities.AsNoTracking()
+                .Where(e => e._id == id)
+                .Select(e => new { Alias = e.location.longitude })
+                .Single();
+
+            Assert.Equal(expectedLocation.longitude, found.Alias);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_projection_alias_with_bson_representation_uses_owned_property_serializer()
+    {
+        var collection = database.CreateCollection<PersonWithMultipleLocations>();
+
+        var id = ObjectId.GenerateNewId();
+        var expectedLocations = new[]
+        {
+            new Location { latitude = 1.234m, longitude = 1.567m },
+            new Location { latitude = 2.345m, longitude = 2.678m }
+        };
+
+        var modelBuilder = (ModelBuilder mb) =>
+        {
+            mb.Entity<PersonWithMultipleLocations>(p =>
+            {
+                p.OwnsMany(e => e.locations, f =>
+                {
+                    f.HasElementName("Locations");
+                    f.Property(g => g.longitude)
+                        .HasElementName("Longitude")
+                        .HasBsonRepresentation(BsonType.String);
+                });
+            });
+        };
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            dbContext.Entities.Add(new PersonWithMultipleLocations
+            {
+                _id = id,
+                name = "A",
+                locations = [.. expectedLocations]
+            });
+            dbContext.SaveChanges();
+        }
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            var actual = dbContext.Entities
+                .AsNoTracking()
+                .Where(e => e._id == id)
+                .Select(e => new
+                {
+                    e.name,
+                    e.locations,
+                    Longitudes = e.locations
+                        .Select(l => new { Alias = l.longitude })
+                        .ToList()
+                })
+                .Single();
+
+            Assert.Equal("A", actual.name);
+            Assert.Equal(expectedLocations.Length, actual.locations.Count);
+            Assert.Equal(expectedLocations.Select(l => l.longitude), actual.Longitudes.Select(l => l.Alias));
+        }
+    }
+
     class SimpleNonNullableCollection
     {
         public ObjectId _id { get; set; }

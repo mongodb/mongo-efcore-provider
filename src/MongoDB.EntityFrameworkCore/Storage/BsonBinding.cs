@@ -86,6 +86,49 @@ internal static class BsonBinding
         throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, declaredType.DisplayName()));
     }
 
+    /// <summary>
+    /// Create the expression which will obtain a projected element using the serializer metadata
+    /// from the source property rather than resolving metadata from the projected alias.
+    /// </summary>
+    /// <param name="bsonDocExpression">The expression to obtain the current <see cref="BsonDocument"/>.</param>
+    /// <param name="name">The projected element name in the current document.</param>
+    /// <param name="property">The source model property that defines serializer/nullability metadata.</param>
+    /// <param name="mappedType">What <see cref="Type"/> the value is to be treated as.</param>
+    /// <remarks>
+    /// Callers must ensure <paramref name="mappedType"/> matches <paramref name="property"/>'s CLR
+    /// type (modulo nullability). The generated call casts the deserialized value to
+    /// <paramref name="mappedType"/>; if it differs from the property's CLR type the cast can
+    /// throw because the property's serializer produces values of its own type.
+    /// </remarks>
+    /// <returns>A compilable expression the shaper can use to obtain this value.</returns>
+    public static Expression CreateGetValueExpression(
+        Expression bsonDocExpression,
+        string? name,
+        IProperty property,
+        Type mappedType)
+    {
+        if (name is null)
+        {
+            return bsonDocExpression;
+        }
+
+        if (mappedType == typeof(BsonArray))
+        {
+            return CreateGetBsonArray(bsonDocExpression, name);
+        }
+
+        if (mappedType == typeof(BsonDocument))
+        {
+            return CreateGetBsonDocument(bsonDocExpression, name, !property.IsNullable, property.DeclaringType);
+        }
+
+        return CreateGetPropertyValueAtElement(
+            bsonDocExpression,
+            Expression.Constant(name),
+            Expression.Constant(property),
+            property.IsNullable ? mappedType.MakeNullable() : mappedType);
+    }
+
     private static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
@@ -132,12 +175,28 @@ internal static class BsonBinding
         CreateGetPropertyValue(Expression bsonDocExpression, Expression propertyExpression, Type resultType) =>
         Expression.Call(null, GetPropertyValueMethodInfo.MakeGenericMethod(resultType), bsonDocExpression, propertyExpression);
 
+    private static MethodCallExpression CreateGetPropertyValueAtElement(
+        Expression bsonDocExpression,
+        Expression elementNameExpression,
+        Expression propertyExpression,
+        Type resultType)
+        => Expression.Call(
+            null,
+            GetPropertyValueAtElementMethodInfo.MakeGenericMethod(resultType),
+            bsonDocExpression,
+            elementNameExpression,
+            propertyExpression);
+
     internal static MethodCallExpression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
         Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
     private static readonly MethodInfo GetPropertyValueMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetPropertyValue));
+
+    private static readonly MethodInfo GetPropertyValueAtElementMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetPropertyValueAtElement));
 
     private static readonly MethodInfo GetElementValueMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
@@ -150,8 +209,7 @@ internal static class BsonBinding
         {
             if (value == null && !property.IsNullable)
             {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name
-                }'.");
+                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
             }
 
             return value;
@@ -160,6 +218,34 @@ internal static class BsonBinding
         if (property.IsNullable) return default;
 
         throw new InvalidOperationException($"Document element is missing for required non-nullable property '{property.Name}'.");
+    }
+
+    internal static T? GetPropertyValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
+    {
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+
+        // Intentionally drop any ElementPath from the source serialization info: in a projection the
+        // value lives at the flat alias name in the projected document, not at the property's original
+        // (possibly nested, e.g. ["_id", name] for a composite key) path. Re-introducing the path here
+        // would break aliased projections of composite-key parts.
+        var projectedSerializationInfo = new BsonSerializationInfo(
+            elementName,
+            serializationInfo.Serializer,
+            serializationInfo.NominalType);
+
+        if (TryReadElementValue(document, projectedSerializationInfo, out T? value))
+        {
+            if (value == null && !property.IsNullable)
+            {
+                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
+            }
+
+            return value;
+        }
+
+        if (property.IsNullable) return default;
+
+        throw new InvalidOperationException($"Document element '{elementName}' is missing for required non-nullable property '{property.Name}'.");
     }
 
     internal static T? GetElementValue<T>(BsonDocument document, string elementName)
