@@ -40,7 +40,7 @@ The `/test-all` skill runs all three EF versions in parallel — invoking it aft
 ## Pass discipline
 
 - Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Do not run tests in this pass — `/test-all` and other multi-EF builds are too slow to fit in a reviewer slot. If a `#if` change makes multi-EF verification worth running, tag the finding `[external-action]` and name `/test-all` explicitly so the user can run it.
+- Verify functional findings before reporting them. Reproduce any runtime-behavior claim against a single EF configuration with a minimal failing test or small `dotnet run` repro and run it — the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test -c "Debug EF10"` always runs here — and include the repro and observed output. The genuine exception for this area is **multi-EF divergence**: a claim that behavior differs across EF8/EF9/EF10 needs the full `/test-all` matrix, which is too slow for a reviewer slot — tag that `[external-action]` and name `/test-all` explicitly. A behavior bug you can reproduce on one EF config, though, you must reproduce, not defer.
 - Worth running every pass: scan changed files for `#if EF8|EF9|EF10` and read each branch; grep `MongoServiceCollectionExtensions.AddEntityFrameworkMongoDB()` if a new service replacement is in the diff; grep `MongoAnnotationNames` if a new annotation is in the diff.
 
 ## Escalate to user (do not auto-approve) when

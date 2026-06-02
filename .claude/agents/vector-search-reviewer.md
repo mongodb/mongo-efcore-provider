@@ -30,7 +30,7 @@ Read root `AGENTS.md` for build/test commands. Then skim the relevant area `AGEN
 ## Pass discipline
 
 - Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Do not run tests in this pass. If a test would be useful to settle a concern (multi-EF coverage, Atlas-dependent path, encryption infra), tag the finding `[external-action]` and describe what test the user should run.
+- Verify functional findings before reporting them. Reproduce any runtime-behavior claim by adding a minimal failing test (or a small `dotnet run` repro) and running it — the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test` always runs on this machine. Note this area is the common exception: vector search runs only against Atlas, which a local testcontainer can't provide — when the configured environment has no Atlas connection, tag such a finding `[external-action]` and name the exact test/command the user should run against Atlas. Non-Atlas findings (index metadata, `BinaryVector` serialization, expression-tree handling) can and should still be reproduced locally; include the repro and observed output in the report.
 
 ## Escalate to user (do not auto-approve) when
 

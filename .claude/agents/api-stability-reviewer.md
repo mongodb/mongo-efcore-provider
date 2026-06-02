@@ -24,7 +24,17 @@ What counts as the public surface:
 - Default values for parameters and options (`AutoTransactionBehavior`, `QueryableEncryptionSchemaMode`, etc.) — silent defaults flow into user code.
 - Behavior of unchanged signatures — silent semantic shifts are particularly bad here because there's no `[Obsolete]` mitigation for them.
 
-`InternalsVisibleTo` grants visibility to `MongoDB.EntityFrameworkCore.UnitTests` and `MongoDB.EntityFrameworkCore.SpecificationTests` only (see `MongoDB.EntityFrameworkCore.csproj`). Internal types stay internal for the SemVer surface regardless.
+`InternalsVisibleTo` grants visibility to `MongoDB.EntityFrameworkCore.UnitTests` and `MongoDB.EntityFrameworkCore.SpecificationTests` only (see `MongoDB.EntityFrameworkCore.csproj`). **Changes to anything `internal` are never breaking — regardless of `InternalsVisibleTo`.** That a test assembly can see an internal type does not make it part of the public surface; do not flag internal signature, behavior, or visibility changes as breaks. The public surface is strictly what an external consumer can reference without `InternalsVisibleTo`.
+
+## Baseline: the latest released version, not `main`
+
+Breaking changes are measured against the **latest released version of the assembly** (the most recent published NuGet package), **not** against the current state of `main`. The practical consequence: a public API that was added, then changed or removed, *within the current unreleased development cycle* (i.e. it does not exist in the last release) is **not** a break — it never shipped, so no consumer depends on it. Only differences observable to someone upgrading from the last released version count.
+
+**Finding the baseline.** Releases are tagged `v<major>.<minor>.<patch>` (optional `-preview.N`), one line per EF major (`v8.*`, `v9.*`, `v10.*` ship in parallel). Do **not** rely on local `git tag` — a clone's tags are frequently stale and miss recent releases. Use the GitHub release list:
+- Absolute latest: `gh release list --limit 1 --json tagName,isLatest`.
+- Latest on the EF-major line relevant to the change: the highest non-preview `v<major>.*` from `gh release list --limit 100 --json tagName` (e.g. assess an EF8-only change against the latest `v8.*`).
+
+When in doubt whether a symbol shipped, compare against that tag rather than `main`: `git -C "<diff-repo>" fetch --tags` (if the tag isn't local), then `git -C "<diff-repo>" show <tag>:<path>` or `git -C "<diff-repo>" diff <tag> -- <path>`. If a public symbol is absent at the baseline tag, changing or removing it now is not a break.
 
 ## Review focus
 
@@ -36,7 +46,7 @@ What counts as the public surface:
 - **Annotation-key renames** — `MongoAnnotationNames` values are part of the contract. Renames are breaks for compiled models. Add new keys; don't rename.
 - **`MongoEventId` renumbering / reordering / removal** — break for `DiagnosticSource` subscribers.
 - **Default-value changes** — `AutoTransactionBehavior` (was changed in 8.1.0), `QueryableEncryptionSchemaMode`, Guid representation, discriminator-element-name behavior. Each historical default-change is in `BREAKING-CHANGES.md`.
-- **Exception-type changes** for documented exceptions.
+- **Exception-type changes** for documented exceptions. **Exception:** changing the exception type thrown for an *unsupported* feature (e.g. a not-yet-implemented LINQ operator, an unsupported mapping, a guard that exists only to reject something the provider does not support) is **not** a break — the thrown type for an unsupported path is not part of the contract. Only the exception type of a *supported, documented* operation matters.
 - **Enum value renames / numeric-value changes.**
 - **Nullability tightening** under `<Nullable>enable</Nullable>` (the provider has nullable enabled in `src/`).
 - **`[Obsolete]` additions** — confirm a replacement is documented. `[Obsolete]` is the tool for introducing a replacement overload, *not* for in-place behavior changes (those still need a doc break).
@@ -45,7 +55,7 @@ What counts as the public surface:
 ## Pass discipline
 
 - Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Do not run tests in this pass. Any "would be good to write a test for X" suggestion is `[external-action]`.
+- Most of your findings are source-level (signatures, visibility, annotation keys) and need no runtime check. But any **behavior-change** finding (a silent semantic shift on an unchanged signature, a changed default that alters runtime behavior) is a functional claim — reproduce it with a minimal test or small `dotnet run` repro before reporting it (the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test` always runs here), and include the repro and observed output. Only defer to `[external-action]` when the repro genuinely can't run locally (Atlas-only, encryption infra, or multi-EF divergence needing `/test-all`).
 - The two read-only checks worth running every pass: `git -C "<diff-repo>" diff <base>...<head> -- src/` to inspect every signature change, and a grep over `MongoAnnotationNames` / `MongoEventId` to confirm no values were renamed, renumbered, or removed.
 - If observable public-surface behavior changed without a `BREAKING-CHANGES.md` update, tag that as `[external-action]` (only the user can write the doc).
 
@@ -58,3 +68,9 @@ What counts as the public surface:
 - Rename / removal of a `MongoAnnotationNames` constant.
 - Renumber / reorder / removal of a `MongoEventId` member.
 - Public surface change without a corresponding `BREAKING-CHANGES.md` update (in which case ask the user to add one).
+
+Do **not** escalate (these are not breaks — see the definitions above):
+
+- Changes to anything `internal`, regardless of `InternalsVisibleTo`.
+- A public API added and then changed/removed within the current unreleased cycle — it never shipped, so measure against the latest released version, not `main`.
+- A change to the exception type thrown for an unsupported feature (unimplemented operator, unsupported mapping, reject-guard). Only the exception type of a supported, documented operation is contractual.
