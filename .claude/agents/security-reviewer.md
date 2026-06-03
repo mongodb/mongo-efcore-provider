@@ -31,7 +31,7 @@ Read root `AGENTS.md` for build/test commands. Security touchpoints in this prov
 ## Pass discipline
 
 - Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Do not run tests in this pass. Any "worth a redaction test" suggestion is `[external-action]`.
+- Verify functional findings before reporting them. A claim that a secret reaches a log, that redaction doesn't fire, or that sensitive data is exposed is a runtime-behavior claim — reproduce it with a minimal failing test or small `dotnet run` repro and run it (the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test` always runs here), then include the repro and the observed log/output. If the repro doesn't reproduce the exposure, don't report it. Only defer to `[external-action]` when the repro genuinely can't run locally (Atlas-only, missing encryption infra, or multi-EF divergence needing `/test-all`).
 - Always grep the diff for likely-secret patterns — this is the one read-only check worth running every pass and any hit is an immediate `[blocking]` finding:
   - Generic shapes: `password\s*=`, `passwd\s*=`, `apiKey`, `secret`, `token`, `Bearer\s+`.
   - PEM / private keys: `BEGIN PRIVATE KEY`, `BEGIN RSA PRIVATE KEY`, `BEGIN OPENSSH PRIVATE KEY`.

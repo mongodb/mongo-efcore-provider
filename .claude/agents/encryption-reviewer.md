@@ -32,7 +32,7 @@ Driver-side: CSFLE/QE plumbing (KMS providers, the `crypt_shared` library, mongo
 ## Pass discipline
 
 - Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Do not run tests in this pass. If a test would be useful to settle a concern (multi-EF coverage, Atlas-dependent path, encryption infra), tag the finding `[external-action]` and describe what test the user should run.
+- Verify functional findings before reporting them. Reproduce any runtime-behavior claim by adding a minimal failing test (or a small `dotnet run` repro) and running it — the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test` always runs on this machine. If the repro doesn't reproduce the issue, don't report it; include the repro and observed output in the report. Tag a test-needing concern `[external-action]` only when it genuinely can't run here — for this area that especially includes encryption paths needing `CRYPT_SHARED_LIB_PATH` (unset ⇒ `SupportsEncryption` is false and the tests skip), as well as Atlas-only features and multi-EF divergence needing `/test-all` — and then name the exact test/command.
 - Grep the diff for likely-secret patterns (`BEGIN PRIVATE KEY`, `AKIA[0-9A-Z]{16}`, `mongodb+srv://[^/]+:[^@]+@`, service-account JSON, etc.) — any hit is an immediate `[blocking]` finding regardless of how plausible it looks in context. This grep is the one read-only check worth running every pass.
 
 ## Escalate to user (do not auto-approve) when
