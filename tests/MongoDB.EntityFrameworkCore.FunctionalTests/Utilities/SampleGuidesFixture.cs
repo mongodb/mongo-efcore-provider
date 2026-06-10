@@ -31,3 +31,14 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
         SampleGuides.Populate(MongoDatabase);
     }
 }
+
+// Atlas-connected variant for tests that need Atlas search capabilities (e.g. vector search).
+// Connects via ATLAS_URI rather than the default MONGODB_URI server.
+public class AtlasSampleGuidesFixture : AtlasTemporaryDatabaseFixture
+{
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        SampleGuides.Populate(MongoDatabase);
+    }
+}

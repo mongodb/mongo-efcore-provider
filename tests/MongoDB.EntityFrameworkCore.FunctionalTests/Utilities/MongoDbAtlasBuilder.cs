@@ -41,7 +41,15 @@ public sealed class MongoDbAtlasBuilder : ContainerBuilder<MongoDbAtlasBuilder, 
     {
         Validate();
 
-        var builder = WithWaitStrategy(Wait.ForUnixContainer().AddCustomWaitStrategy(new WaitIndicateReadiness()));
+        // The mongodb-atlas-local image starts mongod, then SIGTERMs and restarts it a couple of
+        // seconds later to inject the mongot/search wiring (mongotHost + searchIndexManagementHostAndPort).
+        // Until that restart completes, a vector query either hits the node mid-shutdown
+        // (MongoNodeIsRecoveringException, ShutdownInProgress) or finds mongot's query port (27027) not yet
+        // serving (Connection refused). Wait for the image's own healthcheck first - it only reports healthy
+        // after the restart and mongot wiring complete - then run the search-index probe as a final check.
+        var builder = WithWaitStrategy(Wait.ForUnixContainer()
+            .UntilContainerIsHealthy()
+            .AddCustomWaitStrategy(new WaitIndicateReadiness()));
 
         return new(builder.DockerResourceConfiguration);
     }
@@ -69,13 +77,13 @@ public sealed class MongoDbAtlasBuilder : ContainerBuilder<MongoDbAtlasBuilder, 
 
             using var client = new MongoClient(connectionString);
             var databaseName = Guid.NewGuid().ToString();
-            var weGood = false;
+            var ready = false;
 
             try
             {
                 var database = client.GetDatabase(databaseName);
                 var collectionName = Guid.NewGuid().ToString();
-                await database.CreateCollectionAsync(collectionName);
+                await database.CreateCollectionAsync(collectionName).ConfigureAwait(false);
 
                 var model = new CreateSearchIndexModel(
                     Guid.NewGuid().ToString(),
@@ -94,25 +102,26 @@ public sealed class MongoDbAtlasBuilder : ContainerBuilder<MongoDbAtlasBuilder, 
                     }
                     """));
 
-                await database.GetCollection<BsonDocument>(collectionName).SearchIndexes.CreateOneAsync(model);
-                using var _ = await database.GetCollection<BsonDocument>(collectionName).SearchIndexes.ListAsync();
-                weGood = true;
+                var collection = database.GetCollection<BsonDocument>(collectionName);
+                await collection.SearchIndexes.CreateOneAsync(model).ConfigureAwait(false);
+                using var _ = await collection.SearchIndexes.ListAsync().ConfigureAwait(false);
+                ready = true;
             }
-            catch
+            catch (Exception ex) when (ex is MongoException or TimeoutException)
             {
-                // Intentionally ignored.
+                // Container/search-index service not yet ready - will be retried on the next poll.
             }
 
             try
             {
-                await client.DropDatabaseAsync(databaseName);
+                await client.DropDatabaseAsync(databaseName).ConfigureAwait(false);
             }
-            catch
+            catch (Exception ex) when (ex is MongoException or TimeoutException)
             {
-                // Intentionally ignored.
+                // Best-effort cleanup of the throwaway readiness database.
             }
 
-            return weGood;
+            return ready;
         }
     }
 }

@@ -28,12 +28,13 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 [XUnitCollection("StorageTests")]
 public class MongoDatabaseCreatorTests
 {
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task EnsureCreated_returns_true_and_seeds_when_database_did_not_exist(bool async)
     {
-        var database = await TemporaryDatabaseFixture.CreateInitializedAsync();
+        // GuidesDbContext defines a vector index, so EnsureCreated issues Atlas Search commands.
+        var database = await AtlasTemporaryDatabaseFixture.CreateInitializedAsync();
 
         await using var db = GuidesDbContext.Create(database.MongoDatabase);
 
@@ -50,12 +51,13 @@ public class MongoDatabaseCreatorTests
         Assert.Contains("PURPLE DINOSAUR", planets[0].parkingCars.Select(e => e.reg));
     }
 
-    [Theory]
+    [AtlasTheory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task EnsureCreated_returns_false_and_does_not_seed_when_database_already_exists(bool async)
     {
-        var database = await TemporaryDatabaseFixture.CreateInitializedAsync();
+        // GuidesDbContext defines a vector index, so EnsureCreated issues Atlas Search commands.
+        var database = await AtlasTemporaryDatabaseFixture.CreateInitializedAsync();
 
         await using var db = GuidesDbContext.Create(database.MongoDatabase);
 
