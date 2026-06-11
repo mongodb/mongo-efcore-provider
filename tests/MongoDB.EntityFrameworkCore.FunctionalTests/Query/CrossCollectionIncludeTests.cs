@@ -284,37 +284,45 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 #endif
 
     [Fact]
-    public void Filtered_collection_include_predicate_is_not_silently_dropped()
+    public void Filtered_collection_include_predicate_is_translated_to_sub_pipeline_match()
     {
-        // A user filtered-Include predicate (.Include(c => c.Orders.Where(...))) lowers to a Where inside
-        // the collection subquery. The provider does not yet translate that predicate into the $lookup
-        // sub-pipeline $match. It must fail loudly (translation failure) rather than silently drop the
-        // predicate and return ALL of the customer's orders.
+        // A user filtered-Include predicate (.Include(c => c.Orders.Where(...))) lowers to a Where inside the
+        // collection subquery and is translated into the $lookup sub-pipeline $match (EF-X021), so the
+        // included collection is correctly filtered rather than returning ALL of the customer's orders.
         var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
 
         using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
 
-        Assert.Throws<InvalidOperationException>(() =>
-            db.Customers
-                .Include(c => c.Orders.Where(o => o.OrderDescription == "Order 1"))
-                .First(c => c.FullName == "Alice"));
+        // Alice has "Order 1" and "Order 2"; the filter must keep only "Order 1".
+        var alice = db.Customers
+            .Include(c => c.Orders.Where(o => o.OrderDescription == "Order 1"))
+            .First(c => c.FullName == "Alice");
+
+        Assert.Equal("Order 1", Assert.Single(alice.Orders).OrderDescription);
     }
 
     [Fact]
-    public void Query_filter_on_collection_include_target_is_not_silently_dropped()
+    public void Query_filter_on_collection_include_target_is_translated_to_sub_pipeline_match()
     {
-        // A HasQueryFilter on the dependent entity (e.g. soft-delete / multi-tenant) also lowers to a Where
-        // inside the collection-Include subquery. The provider does not yet translate it into the $lookup
-        // sub-pipeline $match, so it must fail loudly rather than silently bypass the filter and return
-        // soft-deleted rows.
+        // A HasQueryFilter on the dependent entity (soft-delete) also lowers to a Where inside the
+        // collection-Include subquery and is translated into the $lookup sub-pipeline $match (EF-X021), so
+        // soft-deleted ("tombstone") rows are excluded rather than silently returned.
         var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
+
+        // Add a soft-deleted order for Alice (alongside her "Order 1"/"Order 2") that the filter must exclude.
+        var aliceId = database.MongoDatabase.GetCollection<BsonDocument>(customersCollection)
+            .Find(new BsonDocument("name", "Alice")).First()["_id"].AsObjectId;
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersCollection)
+            .InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "tombstone" }, { "cust_id", aliceId } });
 
         using var db = new SoftDeleteOrderCustomerDbContext(database, ordersCollection, customersCollection);
 
-        Assert.Throws<InvalidOperationException>(() =>
-            db.Customers
-                .Include(c => c.Orders)
-                .First(c => c.FullName == "Alice"));
+        var alice = db.Customers
+            .Include(c => c.Orders)
+            .First(c => c.FullName == "Alice");
+
+        Assert.Equal(2, alice.Orders.Count);
+        Assert.DoesNotContain(alice.Orders, o => o.OrderDescription == "tombstone");
     }
 
     // BSON uses: desc, cust_id for Orders; name for Customers

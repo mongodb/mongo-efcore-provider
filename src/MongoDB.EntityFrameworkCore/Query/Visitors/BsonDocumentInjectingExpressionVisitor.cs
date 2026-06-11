@@ -77,6 +77,16 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
 
                     AllVariables.Add(arrayVariable);
 
+                    // Guard nested entities materialized per collection element — in particular cross-collection
+                    // reference ThenIncludes read from "_lookup_<Nav>" sub-documents — with the "joined document
+                    // is null => null entity" check. Without this the nested reference's key-presence test reads a
+                    // missing key as the value type's default (e.g. 0) and materializes a phantom entity instead
+                    // of null. Only the ThenInclude navigation entities are wrapped; the collection ELEMENT itself
+                    // reads from a real array element (never null) and must keep its direct binding. EF-X023/X024.
+                    var updatedCollectionShaper = collectionShaperExpression.Update(
+                        collectionShaperExpression.Projection,
+                        WrapNestedNavigations(collectionShaperExpression.InnerShaper));
+
                     var expressions = new List<Expression>
                     {
                         Expression.Assign(
@@ -87,7 +97,7 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
                         Expression.Condition(
                             Expression.Equal(arrayVariable, Expression.Constant(null, arrayVariable.Type)),
                             Expression.Constant(null, collectionShaperExpression.Type),
-                            collectionShaperExpression)
+                            updatedCollectionShaper)
                     };
 
                     return Expression.Block(
@@ -99,4 +109,19 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
 
         return base.VisitExtension(extensionExpression);
     }
+
+    /// <summary>
+    /// Wrap the ThenInclude navigation entities of a collection element's inner shaper with the
+    /// "joined document is null => null entity" guard, without wrapping the element entity itself. The inner
+    /// shaper is an <see cref="IncludeExpression"/> chain whose innermost <c>EntityExpression</c> is the
+    /// collection element (read from a real array element — never null, keeps its direct binding) and whose
+    /// <c>NavigationExpression</c>s are the cross-collection reference/collection ThenIncludes that need the
+    /// guard. EF-X023/X024.
+    /// </summary>
+    private Expression WrapNestedNavigations(Expression innerShaper)
+        => innerShaper is IncludeExpression include
+            ? include.Update(
+                WrapNestedNavigations(include.EntityExpression),
+                Visit(include.NavigationExpression))
+            : innerShaper;
 }

@@ -198,6 +198,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                             {
                                 lookup.LocalField = $"_inner.{lookup.LocalField}";
                                 lookup.As = $"_inner.{lookup.As}";
+                                // The "_inner" parent is the driver-native LeftJoin reference Include
+                                // currently on the include stack. Only an OPTIONAL reference can be unmatched
+                                // and so be wrongly synthesized by this nested $lookup; normalize it so the
+                                // unmatched case is re-nulled. Required references always match (no synthesis).
+                                // Default to normalizing if the parent reference cannot be identified. EF-X024.
+                                var parentReference = _includedNavigations.FirstOrDefault(
+                                    n => !n.IsCollection && n.TargetEntityType == declaringType);
+                                lookup.NormalizeParent =
+                                    parentReference == null || IsOptionalReferenceNavigation(parentReference);
                             }
                         }
                         else

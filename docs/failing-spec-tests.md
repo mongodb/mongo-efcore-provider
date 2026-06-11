@@ -25,11 +25,11 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | Ticket | Comment subject | Description | Count |
 | --- | --- | --- | --- |
 | [EF-117](https://jira.mongodb.org/browse/EF-117) | _(no remaining `// Fails:` tags)_ | Cross-collection **Include**/`ThenInclude` is now implemented for the tested shapes. The five tests formerly tagged here were re-investigated: `Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join` (tracking + no-tracking) now **passes**; `Collection_include_over_result_of_single_non_scalar` and `Do_not_erase_projection_mapping_when_adding_single_projection` actually fail on cross-`DbSet` subquery translation (re-tagged **EF-X001**); `Included_one_to_many_query_with_client_eval` fails on driver client-evaluation (re-tagged **EF-X003**); and Include on a keyless entity (incl. multi-level) is a genuine PK-less `$lookup` gap (re-tagged **EF-X019**). EF-117 no longer has any active `// Fails:` tags. (Join/GroupJoin/SelectMany/RightJoin/subquery failures formerly tagged here were re-categorized — see EF-X001/EF-216/EF-220/EF-X016/EF-X017/EF-X018.) | 0 |
-| [EF-149](https://jira.mongodb.org/browse/EF-149) | `GroupBy issue EF-149` | `GroupBy` translation is severely limited; most non-trivial group-by shapes fail to translate. | 246 |
+| [EF-149](https://jira.mongodb.org/browse/EF-149) | `GroupBy issue EF-149` | `GroupBy` translation is severely limited; most non-trivial group-by shapes fail to translate. | 266 |
 | [EF-153](https://jira.mongodb.org/browse/EF-153) | `TagWith EF-153` | `TagWith(...)` content is silently dropped — does not appear in the emitted MQL. | 9 |
 | [EF-164](https://jira.mongodb.org/browse/EF-164) | `Missing property values issue EF-164` / `Projections issue EF-164` | BSON documents that omit a required scalar (or required navigation) throw on materialization — `Project_root_with_missing_scalars`, `Project_root_entity_with_missing_required_navigation`, etc. | 3 |
 | [EF-202](https://jira.mongodb.org/browse/EF-202) | `Entity equality issue EF-202` | Comparing two entities (`entity1 == entity2` / `Contains(entity)`) is not lowered to a key-equality comparison. | 4 |
-| [EF-216](https://jira.mongodb.org/browse/EF-216) | `Cross-document navigation access issue EF-216` / `Navigations issue EF-216` | Navigations that cross collection boundaries cannot be translated; surfaces as `Unsupported cross-DbSet query between ...`. Documented at the helper `AssertNoMultiCollectionQuerySupport`. | 265 |
+| [EF-216](https://jira.mongodb.org/browse/EF-216) | `Cross-document navigation access issue EF-216` / `Navigations issue EF-216` | Navigations that cross collection boundaries cannot be translated; surfaces as `Unsupported cross-DbSet query between ...`. Documented at the helper `AssertNoMultiCollectionQuerySupport`. | 270 |
 | [EF-217](https://jira.mongodb.org/browse/EF-217) | `Call ToString on DateTimeOffset EF-217` | `DateTimeOffset.ToString()` cannot be translated. | 2 |
 | [EF-218](https://jira.mongodb.org/browse/EF-218) | `Projecting DateTimeOffset members EF-218` | Projecting individual members of a `DateTimeOffset` (e.g. `.Year`, `.Hour`) is not supported. | 2 |
 | [EF-220](https://jira.mongodb.org/browse/EF-220) | `Multiple query roots issue EF-220` | Queries that reference more than one `DbSet<>` (Cartesian product / cross-join) are not translatable. Includes `SelectMany` across DbSets and tautology-predicate cross-joins. | 10 |
@@ -52,7 +52,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-246](https://jira.mongodb.org/browse/EF-246) | `DateTime subtraction issue EF-246` | `(dateA - dateB).TotalDays / TotalHours / TotalSeconds / TotalMilliseconds` is not translated. | 1 |
 | [EF-247](https://jira.mongodb.org/browse/EF-247) | `Regex with non-constant pattern issue EF-247` | `Regex.IsMatch` with a non-constant pattern is not translated. | 1 |
 | [EF-248](https://jira.mongodb.org/browse/EF-248) | `Translate String.FirstOrDefault and String.LastOrDefault issue EF-248` | `String.FirstOrDefault()` / `LastOrDefault()` (LINQ-on-string) is not translated. | 2 |
-| [EF-249](https://jira.mongodb.org/browse/EF-249) | `checked issue EF-249` | `checked { ... }` arithmetic is not honored — the `Checked_context_with_arithmetic_does_not_fail` test sees a different exception than EF expects. | 1 |
+| [EF-249](https://jira.mongodb.org/browse/EF-249) | `checked issue EF-249` | `checked { ... }` arithmetic is not honored — the `Checked_context_with_arithmetic_does_not_fail` test sees a different exception than EF expects. | 2 |
 | [EF-252](https://jira.mongodb.org/browse/EF-252) | `Concurrency detector tests broken EF-252` | `Throws_on_concurrent_query_first/list` — the concurrency detector does not fire as the EF base test expects. | 2 |
 | [EF-253](https://jira.mongodb.org/browse/EF-253) | `Multiple ordering issue EF-253` | `OrderBy(x).ThenBy(x)` on the same column with different directions does not emit the expected MQL. | 1 |
 | [EF-254](https://jira.mongodb.org/browse/EF-254) | `Take zero EF-254` | `.Skip(0).Take(0)` with a parameter does not produce the expected empty result. | 1 |
@@ -80,7 +80,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 
 | Temp ticket | Subject | Count |
 | --- | --- | --- |
-| EF-X001 | Sub-query selection across DbSets is not translated | 144 |
+| EF-X001 | Sub-query selection across DbSets is not translated | 198 |
 | EF-X002 | Provider throws a different exception than the EF translation-failure message | 44 |
 | EF-X003 | Driver-level feature gaps surfaced as test failures | 19 |
 | EF-X004 | Float `Sum`/`Average` truncation (likely duplicate of EF-228) | 1 |
@@ -99,8 +99,12 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X017 | Join shapes not translated | 5 |
 | EF-X018 | RightJoin not supported | 1 |
 | EF-X019 | Include on keyless entity not supported (no primary key for $lookup join) | 2 |
-| EF-X020 | Cross-collection Include/join/navigation not translated on EF8/EF9 (works on EF10) | 168 |
-| EF-X021 | Filtered Include / query filter on cross-collection target not translated | 0 |
+| EF-X020 | Cross-collection Include/join/navigation not translated on EF8/EF9 (works on EF10) | 193 |
+| EF-X021 | Filtered Include / query-filter predicate on cross-collection target — translated (top-level, nested-target, and best-effort query filters) | 0 (resolved) |
+| EF-X022 | Cross-collection filtered Include returns wrong data (included collection not limited) | 0 (resolved) |
+| EF-X023 | Cross-collection multiple / self-ref / required Include returns wrong data — **deferred to EF-317** (needs depth-aware join model + FK-based nav resolution) | 5 |
+| EF-X024 | Cross-collection reference Include (multi-include / self-ref / nested) returns wrong data / throws "Document element is missing for required non-nullable property" — **deferred to EF-317** | 5 |
+| EF-X025 | Merged Include chains on one navigation with interleaved collection + reference ThenIncludes dropped a branch | 0 (resolved) |
 
 ### EF-X001 — Sub-query selection across DbSets is not translated
 Comment patterns: `// Fails: Subquery selection EF-X001`, `// Fails: Subqueries not supported EF-X001`, `// Fails: No subquery support EF-X001`.
@@ -182,7 +186,7 @@ Affected: 2 tests (`NorthwindKeylessEntitiesQueryMongoTest.KeylessEntity_with_in
 ### EF-X020 — Cross-collection Include/join/navigation not translated on EF8/EF9
 Comment pattern: `// Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020`.
 Test-body pattern: the override is wrapped in `#if EF8 || EF9` / `#else`. The `#if EF8 || EF9` branch asserts the translation failure (`AssertTranslationFailed(() => base.X(...))`); the `#else` branch keeps the working EF10 baseline (the real `base` call plus its `AssertMql(...)`).
-Affected: 168 tests across `NorthwindEFPropertyIncludeQueryMongoTest`, `NorthwindStringIncludeQueryMongoTest`, `NorthwindIncludeQueryMongoTest`, `NorthwindIncludeNoTrackingQueryMongoTest`, `NorthwindNavigationsQueryMongoTest`, `NorthwindMiscellaneousQueryMongoTest`, `NorthwindJoinQueryMongoTest`, `NorthwindAggregateOperatorsQueryMongoTest`, `NorthwindAsNoTrackingQueryMongoTest`, `NorthwindKeylessEntitiesQueryMongoTest`, `NorthwindSelectQueryMongoTest`, `NorthwindSetOperationsQueryMongoTest`, `NorthwindWhereQueryMongoTest`, and `BuiltInDataTypesMongoTest`. These are the cross-collection Include/`ThenInclude`/join/navigation shapes implemented for the EF10-targeted query pipeline. On EF8/EF9 the upstream nav-expansion / query pipeline produces a different expression shape (e.g. an extra `.OrderBy(o => o.OrderID)` injected during navigation expansion) that the EF10-targeted translator does not handle, so translation fails with EF Core's `InvalidOperationException` "could not be translated" (a few also throw the provider's `ExpressionNotSupportedException`); the same query translates and runs on EF10. The provider's local `AssertTranslationFailed` helper swallows whichever exception is thrown, so both shapes are covered. Four `Include_reference_dependent_already_tracked` overrides (in the four Include suites) emit MQL from a first principal query *before* the Include sub-query fails to translate, so their `#if EF8 || EF9` branch asserts only the translation failure and omits the empty `AssertMql()`. `BuiltInDataTypesMongoTest.Can_read_back_bool_mapped_as_int_through_navigation` is split three ways (a nested `#if EF9` inside the file's `#if !EF8` branch, plus the `#else` EF8 branch) because that file uses async signatures on EF9/EF10 and sync `void` signatures on EF8.
+Affected: 190 tests across `NorthwindEFPropertyIncludeQueryMongoTest`, `NorthwindStringIncludeQueryMongoTest`, `NorthwindIncludeQueryMongoTest`, `NorthwindIncludeNoTrackingQueryMongoTest`, `NorthwindNavigationsQueryMongoTest`, `NorthwindMiscellaneousQueryMongoTest`, `NorthwindJoinQueryMongoTest`, `NorthwindAggregateOperatorsQueryMongoTest`, `NorthwindAsNoTrackingQueryMongoTest`, `NorthwindKeylessEntitiesQueryMongoTest`, `NorthwindSelectQueryMongoTest`, `NorthwindSetOperationsQueryMongoTest`, `NorthwindWhereQueryMongoTest`, `BuiltInDataTypesMongoTest`, and `ComplexNavigationsCollectionsQueryMongoTest` (22 — reference/optional/multiple Include shapes that run on EF10 but throw `ArgumentOutOfRangeException`/translation failure on the EF8/EF9 nav-expansion pipeline). These are the cross-collection Include/`ThenInclude`/join/navigation shapes implemented for the EF10-targeted query pipeline. On EF8/EF9 the upstream nav-expansion / query pipeline produces a different expression shape (e.g. an extra `.OrderBy(o => o.OrderID)` injected during navigation expansion) that the EF10-targeted translator does not handle, so translation fails with EF Core's `InvalidOperationException` "could not be translated" (a few also throw the provider's `ExpressionNotSupportedException`); the same query translates and runs on EF10. The provider's local `AssertTranslationFailed` helper swallows whichever exception is thrown, so both shapes are covered. Four `Include_reference_dependent_already_tracked` overrides (in the four Include suites) emit MQL from a first principal query *before* the Include sub-query fails to translate, so their `#if EF8 || EF9` branch asserts only the translation failure and omits the empty `AssertMql()`. `BuiltInDataTypesMongoTest.Can_read_back_bool_mapped_as_int_through_navigation` is split three ways (a nested `#if EF9` inside the file's `#if !EF8` branch, plus the `#else` EF8 branch) because that file uses async signatures on EF9/EF10 and sync `void` signatures on EF8.
 
 ### EF-216 — wrong-data on EF10 (cross-collection navigation), unsupported on EF8/EF9
 
@@ -209,20 +213,167 @@ multi-hop navigation lowering is fixed.
 
 ---
 
-### EF-X021 — Filtered Include / query filter on cross-collection target not translated
+### EF-X021 — Filtered Include / query filter on cross-collection target (mostly translated)
 Comment pattern: `// Fails: Filtered Include / query-filter predicate on a cross-collection $lookup target is not translated EF-X021`.
-Affected: 0 spec overrides today (no specification test currently exercises a *filtered* cross-collection Include
-with a predicate, nor a `HasQueryFilter` on a cross-collection dependent — `Filtered_include_with_multiple_ordering`
-only uses OrderBy/Skip/Take, which *are* translated). Tracked because the provider now **fails loudly** for these
-shapes instead of silently dropping the predicate. A user filtered-Include predicate
-(`.Include(c => c.Orders.Where(o => ...))`) and a dependent-side `HasQueryFilter` (soft-delete / multi-tenant) both
-lower to a `Where` inside the collection-Include subquery; that `Where` is **not** the synthetic FK-correlation join
-condition and is not yet translated into the `$lookup` sub-pipeline `$match`. Previously it was silently dropped
-(returning *all* dependents and bypassing the filter — wrong data); the provider now throws a translation failure
-(`CoreStrings.TranslationFailed`). Translating the predicate into the sub-pipeline `$match` is the follow-up feature
-this ticket tracks. Functional coverage:
-`CrossCollectionIncludeTests.Filtered_collection_include_predicate_is_not_silently_dropped` and
-`CrossCollectionIncludeTests.Query_filter_on_collection_include_target_is_not_silently_dropped`.
+
+A user filtered-Include predicate (`.Include(c => c.Orders.Where(o => ...))`) and a dependent-side `HasQueryFilter`
+(soft-delete / multi-tenant) both lower to a `Where` inside the collection-Include subquery. That `Where` is **not** the
+synthetic FK-correlation join condition; it is now **translated into the `$lookup` sub-pipeline `$match`** by rendering
+the predicate through the EF entity serializer via the driver (the same mechanism the VectorSearch pre-filter uses) — see
+`MongoEFToLinqTranslatingExpressionVisitor.EmitLookupStages` / `RenderFilterPredicateMatch` and the captured
+`LookupExpression.FilterPredicates`. The `$match` is emitted after the FK-correlation `$match` and before any paging
+(`$sort`/`$skip`/`$limit`). Top-level filtered Includes (`Filtered_include_basic_Where(_EF_Property)`,
+`Filtered_include_after_reference_navigation`, `Filtered_include_on_ThenInclude(_EF_Property)`,
+`Filtered_include_and_non_filtered_include_on_same_navigation{1,2}`, `Filtered_include_same_filter_set_on_same_navigation_twice`,
+`Filtered_include_after_different_filtered_include_same_level`, `Filtered_include_variable_used_inside_filter`,
+`Filtered_include_context_accessed_inside_filter`) now translate on EF10. **Nested**-ThenInclude-target filters
+(`Filtered_include_after_different_filtered_include_different_level`) are also translated: the hand-assembled nested
+`$lookup` cannot render a `$match` itself, so its predicate is captured on `LookupExpression.PendingNestedFilterRenders`
+and rendered (in place into the nested sub-pipeline `BsonArray`) by `EmitLookupStages`. The reference-`ThenInclude`-target
+cases are EF10-only (the broader cross-collection Include is unsupported on EF8/EF9 — see EF-X020 — so their overrides
+split with `#if EF8 || EF9`).
+
+A source-side query filter reached *after* the walk descends through a ThenInclude's `Select`/`Join` is captured as a
+**best-effort** predicate (`LookupExpression.BestEffortFilterPredicates`): rendered into the sub-pipeline `$match` when the
+lookup already uses the pipeline form and the driver can express it, otherwise dropped — preserving the pre-EF-X021
+behavior for redundant query filters that may reference a navigation with no `$lookup` representation (e.g.
+`NorthwindQueryFiltersQueryMongoTest`). Functional coverage:
+`CrossCollectionIncludeTests.Filtered_collection_include_predicate_is_translated_to_sub_pipeline_match` and
+`CrossCollectionIncludeTests.Query_filter_on_collection_include_target_is_translated_to_sub_pipeline_match`.
+
+All filtered-Include / query-filter predicate cases are now translated; EF-X021 has no remaining `// Fails:` tags.
+Three formerly-tagged overrides were re-tagged to their true root cause: `Filtered_include_outer_parameter_used_inside_filter`
+→ **EF-X001** (a `Select`-projected correlated cross-DbSet subquery whose filter references the outer parameter,
+`x => x.Id != l1.Id` — not a filtered-Include predicate), and `Include_collection_multiple_with_filter(_EF_Property)`
+→ **EF-216** (a root-level `Where(... .Count() > 0)` correlated cross-collection subquery).
+
+### EF-X022 — Cross-collection filtered Include returns wrong data (included collection not limited) — RESOLVED
+The filtered-Include `Skip`/`Take`/`OrderBy` were dropped from the `$lookup` sub-pipeline **when the filtered Include
+was combined with a `ThenInclude`**: the ThenInclude lowers the collection subquery to
+`Select(<filtered source>.LeftJoin/Join(<thenInclude target>), e => Include(e, …))`, and
+`ExtractFilteredIncludePipeline` (in `MongoProjectionBindingExpressionVisitor`) stopped at the outermost `Select`
+(hitting its `default` branch) before reaching the inner `OrderBy`/`Skip`/`Take`, so the included collection was
+over-populated (e.g. expected 4, actual 5). Fixed by descending the walk through `Select`/`Join`/`LeftJoin` into their
+source so the paging operators below are collected (a `Where` reached *after* descending is treated as a stop boundary
+so plain query-filtered includes are not newly re-interpreted). Of the original 6 tests:
+`Filtered_include_complex_three_level_with_middle_having_filter1`/`2` are now green;
+`Filtered_include_Take_with_another_Take_on_top_level`,
+`Filtered_include_and_non_filtered_include_followed_by_then_include_on_same_navigation`,
+`Filtered_include_with_Take_without_order_by_followed_by_ThenInclude_and_FirstOrDefault_on_top_level` and
+`..._and_unordered_Take_on_top_level` now apply the paging correctly but still fail on the **reference ThenInclude
+materialization** and so moved to [EF-X024](#ef-x024--cross-collection-reference-include-returns-wrong-data--missing-required-element).
+
+### EF-X023 — Cross-collection multiple / self-ref / required Include returns wrong data
+Comment pattern: `// Fails: Cross-collection multiple/self-ref/required Include returns wrong data EF-X023`.
+Affected: 5 tests in `ComplexNavigationsCollectionsQueryMongoTest` — `Include_collection_multiple`,
+`Multiple_complex_includes_self_ref(_EF_Property)`, `Required_navigation_with_Include`,
+`Required_navigation_with_Include_ThenInclude`. The query runs but a navigation is mis-populated (boolean/identity
+assertions differ, e.g. expected `True`, actual `False`) — multiple sibling collection Includes, self-referencing
+Includes, and required-reference Includes across collections do not all materialize correctly. Not baseline-able (base
+asserts correct data); the override asserts the current failure. (`Include_collection_then_reference`,
+`Include_collection_followed_by_include_reference` and `Include_collection_ThenInclude_two_references` — the
+collection-then-reference shapes — are now **fixed** by the nested-navigation null guard described under EF-X024.)
+
+**Disposition — deferred to [EF-317](https://jira.mongodb.org/browse/EF-317).** A scoping pass confirmed these are not a
+localized shaper/null-key bug but the same structural deficit as EF-X024 (see the shared disposition under EF-X024): the
+`$lookup` join-emulation models cross-collection joins with a single global `UsesDriverJoinFields` boolean and two reserved
+field names (`_outer` root, `_inner` "the one reference"), and resolves intermediate navigations by *first navigation whose
+target type matches* (`MongoQueryableMethodTranslatingExpressionVisitor.cs:442-443,485-490`). Self-ref and
+multiple-navigations-to-the-same-type therefore bind the wrong FK, and >1 reference hop produces a document shape
+(`_outer._outer…` or a flat `_lookup_<Nav>` chain) the single-level shaper deref cannot read. Correcting these requires a
+depth/per-navigation-aware join document model and FK-based navigation resolution — i.e. rebuilding the join-emulation that
+EF-317 (native driver `LeftJoin`) is slated to replace. The overrides assert the failure via `AssertTranslationFailed`.
+
+### EF-X024 — Cross-collection reference Include returns wrong data / missing required element
+Comment patterns: `// Fails: Cross-collection reference Include missing required element on materialization EF-X024` and
+`// Fails: Cross-collection reference ThenInclude returns wrong data (filtered paging now applied; reference not materialized) EF-X024`.
+Root cause (one mechanism, two symptoms): an optional cross-collection reference lowers to `$lookup` +
+`$unwind {preserveNullAndEmptyArrays:true}`. When the reference has no match `_inner` should be absent, but a *later*
+`$lookup` writing a dotted `as` path (`_inner._lookup_<Nav>`, for a collection/reference nested under the reference)
+makes MongoDB **synthesise the parent `_inner`** document containing only the nested array — so `_inner` is
+present-but-keyless. The non-nullable EF materializer then reads the missing required key and throws
+`InvalidOperationException: Document element is missing for required non-nullable property '...'` (typically the joined
+dependent's `Id`), or builds a wrong/empty entity that fixup attaches → an `AssertInclude` data diff.
+
+**Partially fixed (pipeline-level, EF-X024):** a shaper-level fix (key-presence guard / probe-leniency) was first tried
+but had an unacceptable blast radius (regressed ~130 unrelated materialization tests). The committed fix instead emits,
+after a `$lookup` whose `as` writes under an OPTIONAL driver-join reference parent (`_inner` /
+`_lookup_<RefNav>`), a `$set` that re-nulls that parent when its `_id` is missing — so the synthesized-but-keyless
+document becomes absent and the existing left-join null guard nulls the entity (see
+`MongoEFToLinqTranslatingExpressionVisitor.EmitLookupStages` + `LookupExpression.NormalizeParent`). This greens the
+single reference-then-collection cases (`Include_reference_followed_by_include_collection`,
+`Include_reference_and_collection_order_by`, `Include_reference_ThenInclude_collection_order_by`,
+`Include_reference_collection_order_by_reference_navigation`, `Optional_navigation_with_Include_and_order`,
+`Optional_navigation_with_order_by_and_Include`).
+
+**Also fixed (nested-navigation null guard):** a second class of failure was a cross-collection REFERENCE materialized
+*inside a collection element* (`Include(collection).ThenInclude(reference)`). `BsonDocumentInjectingExpressionVisitor`
+wraps each entity shaper with a `joined document is null => null entity` guard, but it did not recurse into a
+`CollectionShaperExpression`'s element shaper — so the nested reference's key-presence test read a missing `_lookup_<Nav>`
+key as the value type's default (e.g. `0`) and materialized a **phantom entity** (`Id = 0`) instead of null. Fixed by
+having that visitor wrap the ThenInclude navigation entities of a collection element (its `IncludeExpression`'s
+`NavigationExpression`s), while leaving the element entity itself directly bound. This greens the
+collection-then-reference and filtered-include-with-reference shapes
+(`Include_collection_then_reference`, `Include_collection_followed_by_include_reference`,
+`Include_collection_ThenInclude_two_references`, `Filtered_include_Take_with_another_Take_on_top_level`,
+`Filtered_include_and_non_filtered_include_followed_by_then_include_on_same_navigation`,
+`Filtered_include_with_Take_without_order_by_followed_by_ThenInclude_and_FirstOrDefault_on_top_level`,
+`..._and_unordered_Take_on_top_level`).
+
+**Also fixed (driver-join nested-reference field name):** in driver-join mode (`_outer`/`_inner`, used when the query
+also has a top-level reference Include) a cross-collection reference nested under a *collection* element was read from
+the driver-join `_inner` field (the single top-level reference) instead of its own `_lookup_<Nav>` alias —
+`GetCrossCollectionFieldName` blanket-returned `"_inner"` whenever `UsesDriverJoinFields`. Fixed by mirroring
+`GetCrossCollectionRootDocument`'s nesting test: a reference whose parent is a collection element (not the query root)
+reads its `_lookup_<Nav>` alias. Greens `Multiple_complex_includes(_EF_Property)`, `Multiple_complex_include_select`,
+`Include_nested_with_optional_navigation`, `Optional_navigation_with_Include_ThenInclude`.
+
+Still affected: 5 tests (EF-X024) in `ComplexNavigationsCollectionsQueryMongoTest` — multi-optional / partial-build
+shapes that still throw the missing-element error via flat-mode synthesis or deeper nesting:
+`Multiple_optional_navigation_with_Include(_string_based)`,
+`Include_partially_added_before_Where_and_then_build_upon(_with_filtered_include)`,
+`Complex_multi_include_with_order_by_and_paging_joins_on_correct_key`. Same family as
+[EF-164](https://jira.mongodb.org/browse/EF-164). The overrides assert the failure via `AssertTranslationFailed`.
+
+**Disposition — deferred to [EF-317](https://jira.mongodb.org/browse/EF-317).** A scoping pass (covering the 5 EF-X024
+tests above plus the 5 EF-X023 tests — they share one root cause) concluded the remaining failures are **not** fixable by a
+bounded shaper / `$set` change, and deferred them. Findings:
+- The committed `NormalizeParent` `$set` re-null is **necessary but not sufficient**: a prototype extending it to the flat
+  `_lookup_<Nav>` path stopped the crash but data stayed wrong. A shaper-side "treat a present-but-keyless joined
+  sub-document as null" guard (moving the key-presence test into `BsonDocumentInjectingExpressionVisitor` / `BsonBinding` so
+  it does not depend on the pipeline removing the field) is similarly bounded but addresses only the single-level
+  unmatched-optional symptom.
+- Two structural deficits block the rest, neither localized: **(1)** the join document model carries a single global
+  `UsesDriverJoinFields` boolean and exactly two reserved names (`_outer` root, `_inner` the lone reference), and the shaper
+  derefs `_outer` only once (`MongoProjectionBindingRemovingExpressionVisitor.cs:589-591`) — so a 2nd reference hop
+  (`_outer._outer…`, emitted as a doubled `{$project:{_outer:$$ROOT}}`) or a flat `_lookup_<Nav>` chain is unreadable;
+  **(2)** intermediate navigations are resolved target-type-first
+  (`MongoQueryableMethodTranslatingExpressionVisitor.cs:442-443,485-490`), so self-ref and multiple-navs-to-the-same-type
+  bind the wrong FK (the wrong-FK aliases visible in the `Required_navigation_with_Include` / self-ref baselines).
+- Correcting these requires a **depth/per-navigation-aware join document model + FK-based navigation resolution** — i.e.
+  rebuilding the manual `$lookup`/`$unwind` join-emulation that the `TODO(EF-317)` headers in
+  `MongoProjectionBindingExpressionVisitor.Lookup.cs` and `MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs` say is the
+  stopgap to be removed when the C# driver ships native `LeftJoin`. Low ROI to rebuild ahead of that.
+
+One genuinely bounded prerequisite was identified but **greens 0 of the 10 on its own**: replacing the target-type-first
+navigation resolution with FK-based resolution (mirroring `ResolveCollectionNavigation`,
+`MongoProjectionBindingExpressionVisitor.Lookup.cs:333`), which closes a latent silent-wrong-navigation hazard. Best folded
+into the EF-317 work rather than shipped standalone.
+
+### EF-X025 — Merged Include chains dropped an interleaved ThenInclude branch — RESOLVED
+When two Include chains are merged on the same first-level collection navigation but carry **different** ThenInclude
+targets — e.g. `.Include(l1.OneToMany_Optional1.Where(...).Take(2)).ThenInclude(l2.OneToMany_Optional2)` (nested
+collection) together with `.Include(l1.OneToMany_Optional1).ThenInclude(l2.OneToOne_Required_FK2)` (nested reference) —
+EF lowers them to **interleaved** collection and reference `IncludeExpression`s in the merged subquery selector.
+`ExtractThenIncludesFromSubquery` previously walked them with two sequential, type-gated loops (all collections, then
+all references), so whichever kind was nested under the other was silently dropped from the `$lookup` pipeline —
+returning wrong data (`AssertInclude` mismatch). (The earlier `ArgumentNullException` characterization was stale; by the
+time this was fixed the filter-predicate gap was already handled under EF-X021, leaving only the dropped branch.)
+
+Fixed by replacing the two loops with a single walk that dispatches each nested `IncludeExpression` by navigation kind,
+emitting all branches regardless of interleaving order
+(`MongoProjectionBindingExpressionVisitor.ExtractThenIncludesFromSubquery` / `AddCollectionLookupStages`). Also fixed
+`Filtered_include_same_filter_set_on_same_navigation_twice_followed_by_ThenIncludes`, which had the same latent drop.
 
 ## Audit findings — tagging hygiene
 

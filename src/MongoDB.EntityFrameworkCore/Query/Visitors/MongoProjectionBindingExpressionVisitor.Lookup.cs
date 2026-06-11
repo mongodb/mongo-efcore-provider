@@ -541,6 +541,18 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // Recurse for deeper nesting
             ExtractNestedIncludePipeline(nestedInclude.NavigationExpression, nestedLookup, nestedNav.TargetEntityType);
 
+            // Bubble deferred filter renders discovered in deeper nesting up toward the root lookup.
+            parentLookup.PendingNestedFilterRenders.AddRange(nestedLookup.PendingNestedFilterRenders);
+
+            // This nested $lookup is emitted in localField/foreignField form (no sub-pipeline), so a user filter
+            // predicate on it cannot be carried as a $match here and there is no access to the EF→driver-LINQ
+            // visitor / serializer to render one. Fail loudly rather than silently dropping it. Filtered nested
+            // ThenIncludes that DO use the pipeline form are handled in ExtractThenIncludesFromSubquery. EF-X021.
+            if (nestedLookup.FilterPredicates.Count > 0)
+            {
+                throw new InvalidOperationException(CoreStrings.TranslationFailed(navigationExpression.Print()));
+            }
+
             parentLookup.PipelineStages.Add(new BsonDocument("$lookup", new BsonDocument
             {
                 { "from", nestedLookup.From },
@@ -579,64 +591,94 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (selectorArg is not LambdaExpression { Body: IncludeExpression includeExpr })
             return;
 
-        // Walk nested IncludeExpressions
+        // Walk every nested IncludeExpression, dispatching each by navigation kind. A single walk (rather than
+        // a collection loop followed by a separate reference loop) is required because merging two Include
+        // chains on the same collection navigation — e.g. .Include(c.Orders).ThenInclude(o.Lines) and
+        // .Include(c.Orders).ThenInclude(o.Customer) — lowers to INTERLEAVED collection and reference
+        // ThenIncludes (the reference often outermost). Type-gated sequential loops would drop whichever kind
+        // is nested under the other. EF-X025.
         var current = (Expression)includeExpr;
         while (current is IncludeExpression nested
                && nested.Navigation is INavigation nav
-               && !nav.IsEmbedded() && nav.IsCollection)
+               && !nav.IsEmbedded())
         {
-            var nestedLookup = new LookupExpression(nav);
-
-            // Check for deeper nesting inside this ThenInclude's NavigationExpression
-            if (nested.NavigationExpression is MaterializeCollectionNavigationExpression innerMaterialize)
+            if (nav.IsCollection)
             {
-                ExtractThenIncludesFromSubquery(innerMaterialize.Subquery, nestedLookup);
-                ExtractFilteredIncludePipeline(innerMaterialize.Subquery, nestedLookup, nav.TargetEntityType);
+                AddCollectionLookupStages(parentLookup, nav, nested);
+            }
+            else
+            {
+                // Reference ThenInclude on a collection item (e.g. Product.OrderDetails.ThenInclude(od => od.Order)).
+                // EF lowers the reference to a Join inside the collection subquery; emit it as a nested
+                // $lookup + $unwind inside the parent lookup's pipeline so each collection element carries
+                // its single referenced document under "_lookup_<RefNav>".
+                AddReferenceLookupStages(parentLookup, nav);
             }
 
-            var nestedLookupDoc = new BsonDocument("$lookup", new BsonDocument
-            {
-                { "from", nestedLookup.From },
-                { "localField", nestedLookup.LocalField },
-                { "foreignField", nestedLookup.ForeignField },
-                { "as", nestedLookup.As }
-            });
-
-            if (nestedLookup.HasPipeline)
-            {
-                // Use pipeline form for nested lookups with their own stages
-                var pipeline = new BsonArray
-                {
-                    new BsonDocument("$match",
-                        new BsonDocument("$expr",
-                            new BsonDocument("$eq", new BsonArray { $"${nestedLookup.ForeignField}", "$$localField" })))
-                };
-                foreach (var stage in nestedLookup.PipelineStages)
-                    pipeline.Add(stage);
-
-                nestedLookupDoc = new BsonDocument("$lookup", new BsonDocument
-                {
-                    { "from", nestedLookup.From },
-                    { "let", new BsonDocument("localField", $"${nestedLookup.LocalField}") },
-                    { "pipeline", pipeline },
-                    { "as", nestedLookup.As }
-                });
-            }
-
-            parentLookup.PipelineStages.Add(nestedLookupDoc);
             current = nested.EntityExpression;
         }
+    }
 
-        // Reference ThenInclude on a collection item (e.g. Product.OrderDetails.ThenInclude(od => od.Order)).
-        // EF lowers the reference to a Join inside the collection subquery; emit it as a nested
-        // $lookup + $unwind inside the parent lookup's pipeline so each collection element carries
-        // its single referenced document under "_lookup_<RefNav>".
-        while (current is IncludeExpression { Navigation: INavigation refNav } nestedRef
-               && !refNav.IsEmbedded() && !refNav.IsCollection)
+    /// <summary>
+    /// Add the nested $lookup stages for a collection ThenInclude (with any filtered-Include pipeline and
+    /// deeper nested ThenIncludes) into the parent lookup's pipeline.
+    /// </summary>
+    private static void AddCollectionLookupStages(
+        LookupExpression parentLookup, INavigation nav, IncludeExpression nested)
+    {
+        var nestedLookup = new LookupExpression(nav);
+
+        // Check for deeper nesting inside this ThenInclude's NavigationExpression
+        if (nested.NavigationExpression is MaterializeCollectionNavigationExpression innerMaterialize)
         {
-            AddReferenceLookupStages(parentLookup, refNav);
-            current = nestedRef.EntityExpression;
+            ExtractThenIncludesFromSubquery(innerMaterialize.Subquery, nestedLookup);
+            ExtractFilteredIncludePipeline(innerMaterialize.Subquery, nestedLookup, nav.TargetEntityType);
         }
+
+        var nestedLookupDoc = new BsonDocument("$lookup", new BsonDocument
+        {
+            { "from", nestedLookup.From },
+            { "localField", nestedLookup.LocalField },
+            { "foreignField", nestedLookup.ForeignField },
+            { "as", nestedLookup.As }
+        });
+
+        if (nestedLookup.HasPipeline)
+        {
+            // Use pipeline form for nested lookups with their own stages
+            var pipeline = new BsonArray
+            {
+                new BsonDocument("$match",
+                    new BsonDocument("$expr",
+                        new BsonDocument("$eq", new BsonArray { $"${nestedLookup.ForeignField}", "$$localField" })))
+            };
+
+            // A user filter predicate on this nested ThenInclude target cannot be rendered here (no access
+            // to the EF→driver-LINQ visitor / serializer). Defer it: EmitLookupStages mutates this pipeline
+            // in place, inserting the rendered $match after the FK-correlation $match (index 1) and before
+            // the paging stages added below. Never silently dropped. EF-X021.
+            if (nestedLookup.FilterPredicates.Count > 0)
+            {
+                parentLookup.PendingNestedFilterRenders.Add(
+                    (pipeline, 1, nestedLookup.FilterPredicates, nestedLookup.Navigation.TargetEntityType));
+            }
+
+            foreach (var stage in nestedLookup.PipelineStages)
+                pipeline.Add(stage);
+
+            nestedLookupDoc = new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", nestedLookup.From },
+                { "let", new BsonDocument("localField", $"${nestedLookup.LocalField}") },
+                { "pipeline", pipeline },
+                { "as", nestedLookup.As }
+            });
+        }
+
+        // Bubble deferred filter renders discovered in deeper nesting up toward the root lookup.
+        parentLookup.PendingNestedFilterRenders.AddRange(nestedLookup.PendingNestedFilterRenders);
+
+        parentLookup.PipelineStages.Add(nestedLookupDoc);
     }
 
     /// <summary>
@@ -675,6 +717,17 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         var stages = new List<BsonDocument>();
         var current = navigationExpression;
 
+        // Index of the first filter predicate this call appends (the lookup may already carry some from an
+        // earlier extraction pass); only this call's slice is reversed to execution order at the end.
+        var predicatesStart = lookup.FilterPredicates.Count;
+
+        // Whether the walk has descended through a ThenInclude's Select/Join. A user filtered-Include predicate
+        // sits ABOVE that descent (captured as a must-render predicate); a Where reached AFTER descending is the
+        // source-side query filter (e.g. a dependent HasQueryFilter), which is frequently redundant and may
+        // reference a navigation that cannot be expressed in a $lookup sub-pipeline — captured best-effort
+        // (rendered if possible, otherwise dropped, matching the pre-EF-X021 behavior for those shapes).
+        var descended = false;
+
         while (current is MethodCallExpression methodCall)
         {
             var methodName = methodCall.Method.Name;
@@ -707,20 +760,46 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                     break;
 
                 case "Where":
-                    // A collection-Include subquery contains a Where for the synthetic FK-correlation
-                    // predicate (the join condition), which the $lookup localField/foreignField already
-                    // handles, so that one is dropped. But a user filtered-Include predicate
-                    // (.Include(c => c.Orders.Where(...))) and a HasQueryFilter on the dependent entity
-                    // ALSO lower to a Where here. Those are NOT yet translated into the $lookup
-                    // sub-pipeline $match, so silently dropping them would return wrong data (e.g. bypass a
-                    // soft-delete / multi-tenant filter). Fail loudly for those instead of dropping them.
+                    // The synthetic FK-correlation predicate (the join condition) is handled by the $lookup
+                    // localField/foreignField, so it is dropped.
                     if (IsFkCorrelationPredicate(methodCall.Arguments[1].UnwrapLambdaFromQuote()))
                     {
                         current = methodCall.Arguments[0];
                         break;
                     }
 
-                    throw new InvalidOperationException(CoreStrings.TranslationFailed(navigationExpression.Print()));
+                    if (descended)
+                    {
+                        // A Where below a ThenInclude's Select/Join: the source-side query filter. Capture it
+                        // best-effort (rendered into the sub-pipeline $match if the driver can express it,
+                        // otherwise dropped) and stop — matching the pre-EF-X021 behavior so a redundant query
+                        // filter that references a navigation does not break translation. EF-X021.
+                        lookup.BestEffortFilterPredicates.Add(methodCall.Arguments[1].UnwrapLambdaFromQuote());
+                        current = null;
+                        break;
+                    }
+
+                    // A user filtered-Include predicate (.Include(c => c.Orders.Where(...))). Capture it for the
+                    // driver to render into a sub-pipeline $match when the $lookup is emitted (see
+                    // MongoEFToLinqTranslatingExpressionVisitor.EmitLookupStages) — never silently dropped; an
+                    // unrenderable predicate here fails loudly. Collected outermost-first. EF-X021.
+                    lookup.FilterPredicates.Add(methodCall.Arguments[1].UnwrapLambdaFromQuote());
+                    current = methodCall.Arguments[0];
+                    break;
+
+                case "Select":
+                case "Join":
+                case "LeftJoin":
+                    // A filtered Include followed by ThenInclude lowers the collection subquery to
+                    // Select(<filtered source>.LeftJoin/Join(<thenInclude target>, ...), e => Include(e, ...)):
+                    // the outermost call is the entity-materialization Select, below it a Join/LeftJoin for the
+                    // reference ThenInclude, and the filtered OrderBy/Skip/Take live in the join's OUTER source
+                    // (Arguments[0]). These structural operators emit no filtered-pipeline stage of their own
+                    // (the ThenInclude $lookups are appended separately by ExtractThenIncludesFromSubquery);
+                    // descend into the source so the filtered operators/predicates underneath are collected.
+                    descended = true;
+                    current = methodCall.Arguments[0];
+                    break;
 
                 default:
                     // Hit the base (EntityQueryRootExpression or similar) — stop.
@@ -732,7 +811,24 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         // Stages were collected outermost-first; reverse so they execute in the right order.
         stages.Reverse();
         lookup.PipelineStages.AddRange(stages);
+
+        // Filter predicates were likewise collected outermost-first; reverse for a stable, source-order
+        // sequence of $match stages (their relative order is semantically irrelevant — all are ANDed).
+        if (predicatesStart < lookup.FilterPredicates.Count)
+        {
+            lookup.FilterPredicates.Reverse(predicatesStart, lookup.FilterPredicates.Count - predicatesStart);
+        }
     }
+
+    /// <summary>
+    /// Whether a reference navigation can be absent after a left-join — i.e. its left-joined document may be
+    /// missing. A reference on the dependent side is optional when its foreign key is not required; a
+    /// reference on the principal side (1:1 inverse) is optional when the dependent is not required.
+    /// </summary>
+    private static bool IsOptionalReferenceNavigation(INavigation navigation)
+        => navigation.IsOnDependent
+            ? !navigation.ForeignKey.IsRequired
+            : !navigation.ForeignKey.IsRequiredDependent;
 
     /// <summary>
     /// Determines whether a Where predicate lowered into a collection-Include subquery is the synthetic

@@ -503,7 +503,21 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// </list>
     /// </summary>
     private string GetCrossCollectionFieldName(ObjectAccessExpression accessExpression)
-        => _queryExpression.UsesDriverJoinFields ? "_inner" : accessExpression.Name;
+    {
+        // A reference nested under a collection element is read from that element's own "_lookup_<Nav>" field
+        // (the alias baked into the access node) — NOT the driver-join "_inner" field, which names only the
+        // single top-level left-joined reference at the query root. Mirror GetCrossCollectionRootDocument's
+        // nesting test so the field name and the document it is read from stay in agreement; otherwise a
+        // collection element's ThenInclude reference would be read from the unrelated "_inner" field. EF-X024.
+        if (accessExpression.AccessExpression is RootReferenceExpression { EntityType: var parentType }
+            && parentType != _queryExpression.CollectionExpression.EntityType
+            && _projectionBindings.ContainsKey(accessExpression.AccessExpression))
+        {
+            return accessExpression.Name;
+        }
+
+        return _queryExpression.UsesDriverJoinFields ? "_inner" : accessExpression.Name;
+    }
 
     /// <summary>
     /// Determine the <see cref="BsonDocument"/> a cross-collection Include result is read from. For a

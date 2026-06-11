@@ -656,6 +656,21 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return query;
         }
 
+        // Render deferred filter predicates for NESTED ThenInclude targets, mutating each nested sub-pipeline
+        // (a BsonArray captured by reference during projection binding) in place before it is serialized — the
+        // rendered $match is inserted after the FK-correlation $match and before paging. EF-X021.
+        foreach (var lookup in lookupList)
+        {
+            foreach (var (nestedPipeline, index, predicates, targetEntityType) in lookup.PendingNestedFilterRenders)
+            {
+                var insertAt = index;
+                foreach (var predicate in predicates)
+                {
+                    nestedPipeline.Insert(insertAt++, RenderFilterPredicateMatch(predicate, targetEntityType));
+                }
+            }
+        }
+
         var sourceType = query.Type.TryGetItemType() ?? _source.Type.TryGetItemType()!;
         var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
             .MakeGenericMethod(sourceType, sourceType);
@@ -668,13 +683,33 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             BsonDocument lookupDoc;
             if (lookup.HasPipeline)
             {
-                // Pipeline form: used for filtered Includes (OrderBy, Skip, Take on the included collection).
+                // Pipeline form: used for filtered Includes (OrderBy, Skip, Take, user Where on the included
+                // collection).
                 var pipeline = new BsonArray
                 {
                     new BsonDocument("$match",
                         new BsonDocument("$expr",
                             new BsonDocument("$eq", new BsonArray { $"${lookup.ForeignField}", "$$localField" })))
                 };
+
+                // Render any user filtered-Include predicates to a $match, immediately after the FK-correlation
+                // $match and before paging ($sort/$skip/$limit). These fail loudly if unrenderable. EF-X021.
+                foreach (var predicate in lookup.FilterPredicates)
+                {
+                    pipeline.Add(RenderFilterPredicateMatch(predicate, lookup.Navigation.TargetEntityType));
+                }
+
+                // Best-effort predicates (source-side query filters below a ThenInclude descent): render where
+                // possible, otherwise drop — they are frequently redundant and may reference a navigation that
+                // has no sub-pipeline representation. EF-X021.
+                foreach (var predicate in lookup.BestEffortFilterPredicates)
+                {
+                    if (TryRenderFilterPredicateMatch(predicate, lookup.Navigation.TargetEntityType, out var match))
+                    {
+                        pipeline.Add(match);
+                    }
+                }
+
                 foreach (var stage in lookup.PipelineStages)
                 {
                     pipeline.Add(stage);
@@ -719,8 +754,105 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         Expression.Constant(null, serializerType)),
                     Expression.Constant(null, serializerType));
             }
+
+            // When this $lookup writes into a dotted `as` path nested under a cross-collection REFERENCE that
+            // was left-joined with preserveNullAndEmptyArrays (e.g. "_inner._lookup_<Nav>" or
+            // "_lookup_<RefNav>._lookup_<Nav>"), MongoDB synthesises the parent sub-document to hold the result
+            // even when the reference had no match — producing a present-but-keyless parent (missing its
+            // "_id"). That defeats the shaper's "joined document is null => null entity" left-join guard and
+            // makes the non-nullable materializer read the absent required key. Re-null the parent when its key
+            // element is missing so it is treated as absent. Only emitted when the parent is an OPTIONAL
+            // reference (LookupExpression.NormalizeParent): required references always match (no synthesis) and
+            // the root wrapper ("_outer") is never absent, so those need no normalization. EF-X024.
+            var lastDot = lookup.As.LastIndexOf('.');
+            if (lookup.NormalizeParent && lastDot > 0)
+            {
+                var parentPath = lookup.As[..lastDot];
+                var normalizeDoc = new BsonDocument("$set", new BsonDocument(parentPath,
+                    new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray
+                        {
+                            new BsonDocument("$type", $"${parentPath}._id"),
+                            "missing"
+                        }),
+                        "$$REMOVE",
+                        $"${parentPath}"
+                    })));
+
+                query = Expression.Call(null, appendStageMethod, query,
+                    Expression.New(stageConstructor,
+                        Expression.Constant(normalizeDoc),
+                        Expression.Constant(null, serializerType)),
+                    Expression.Constant(null, serializerType));
+            }
         }
 
         return query;
+    }
+
+    /// <summary>
+    /// Renders a captured filtered-Include / query-filter predicate lambda to a <c>$match</c> stage for a
+    /// cross-collection <c>$lookup</c> sub-pipeline. The predicate is first run through this visitor
+    /// (<c>EF.Property</c> → <c>Mql.Field</c>, query-parameter/closure substitution, entity-equality lowering)
+    /// exactly like the VectorSearch pre-filter, then handed to the DRIVER as an
+    /// <see cref="ExpressionFilterDefinition{TDocument}"/> and rendered with the EF entity serializer (which
+    /// knows the element-name mapping, e.g. <c>Id</c> → <c>_id</c>). The provider never hand-builds the
+    /// predicate BSON. If the driver cannot render the predicate, fail loudly with a translation failure rather
+    /// than silently dropping the filter. EF-X021.
+    /// </summary>
+    private BsonDocument RenderFilterPredicateMatch(LambdaExpression predicate, IEntityType targetEntityType)
+    {
+        try
+        {
+            var visited = Visit(predicate)!;
+            var serializer = _bsonSerializerFactory.GetEntitySerializer(targetEntityType);
+            return (BsonDocument)RenderFilterMatchMethod
+                .MakeGenericMethod(targetEntityType.ClrType)
+                .Invoke(null, [visited, serializer])!;
+        }
+        catch (Exception exception)
+        {
+            // Never silently drop a filter — surface an untranslatable predicate as a translation failure.
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(predicate.Print()), exception);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort variant of <see cref="RenderFilterPredicateMatch"/>: returns <see langword="false"/> instead
+    /// of throwing when the predicate cannot be rendered (e.g. it references a navigation that has no $lookup
+    /// sub-pipeline representation), so the caller can drop it. Used for source-side query filters reached after
+    /// a ThenInclude descent, preserving the pre-EF-X021 behavior for those shapes. EF-X021.
+    /// </summary>
+    private bool TryRenderFilterPredicateMatch(
+        LambdaExpression predicate, IEntityType targetEntityType, out BsonDocument match)
+    {
+        try
+        {
+            var visited = Visit(predicate)!;
+            var serializer = _bsonSerializerFactory.GetEntitySerializer(targetEntityType);
+            match = (BsonDocument)RenderFilterMatchMethod
+                .MakeGenericMethod(targetEntityType.ClrType)
+                .Invoke(null, [visited, serializer])!;
+            return true;
+        }
+        catch
+        {
+            match = null!;
+            return false;
+        }
+    }
+
+    private static readonly MethodInfo RenderFilterMatchMethod =
+        typeof(MongoEFToLinqTranslatingExpressionVisitor).GetMethod(
+            nameof(RenderFilterMatch), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static BsonDocument RenderFilterMatch<TElement>(Expression visitedPredicate, IBsonSerializer serializer)
+    {
+        var filter = new ExpressionFilterDefinition<TElement>((Expression<Func<TElement, bool>>)visitedPredicate);
+        var rendered = filter.Render(
+            new RenderArgs<TElement>((IBsonSerializer<TElement>)serializer, BsonSerializer.SerializerRegistry));
+        return new BsonDocument("$match", rendered);
     }
 }
