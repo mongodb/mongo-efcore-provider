@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -115,47 +116,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 rootEntityType, mongoQueryExpression, bsonDoc, behavior));
     }
 
-    private MethodCallExpression CompileShapedQuery(
-        ShapedQueryExpression shapedQueryExpression,
-        MongoQueryExpression mongoQueryExpression,
-        IEntityType rootEntityType,
-        Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor> createBindingRemover)
-    {
-        var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
-        var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
-
-        var shaperBody = shapedQueryExpression.ShaperExpression;
-        shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
-#if EF8 || EF9
-        shaperBody = InjectEntityMaterializers(shaperBody);
-#else
-        shaperBody = InjectStructuralTypeMaterializers(shaperBody);
-#endif
-        shaperBody = createBindingRemover(bsonDocParameter, trackingBehavior).Visit(shaperBody);
-
-        var shaperLambda = Expression.Lambda(
-            shaperBody,
-            QueryCompilationContext.QueryContextParameter,
-            bsonDocParameter);
-        var compiledShaper = shaperLambda.Compile();
-
-        var projectedType = shaperLambda.ReturnType;
-        var standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
-                                     QueryTrackingBehavior.NoTrackingWithIdentityResolution;
-
-        return Expression.Call(null,
-            ExecuteShapedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType, projectedType),
-            QueryCompilationContext.QueryContextParameter,
-            Expression.Constant(rootEntityType),
-            Expression.Constant(_bsonSerializerFactory),
-            Expression.Constant(mongoQueryExpression),
-            Expression.Constant(compiledShaper),
-            Expression.Constant(_contextType),
-            Expression.Constant(standAloneStateManager),
-            Expression.Constant(_threadSafetyChecksEnabled),
-            Expression.Constant(shapedQueryExpression.ResultCardinality));
-    }
-
+    /// <summary>
+    /// Remove the projection <c>Select</c> from the captured query chain so the shaper runs client-side
+    /// over full <see cref="BsonDocument"/>s. The Select may be the outermost node, or wrapped by a single
+    /// no-arg cardinality terminator (e.g. <c>First</c>, <c>Single</c>) emitted by EF Core for cardinality
+    /// reducers such as <c>AssertFirst</c>. The terminal operator is preserved with its generic argument
+    /// retargeted to the Select's source element type.
+    /// </summary>
     private static Expression? StripPushedDownSelect(Expression? captured)
     {
         if (captured is not MethodCallExpression call || call.Method.DeclaringType != typeof(Queryable))
@@ -185,6 +152,58 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return captured;
     }
 
+    private MethodCallExpression CompileShapedQuery(
+        ShapedQueryExpression shapedQueryExpression,
+        MongoQueryExpression mongoQueryExpression,
+        IEntityType rootEntityType,
+        Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor> createBindingRemover)
+    {
+        var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
+        var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
+
+        var shaperBody = shapedQueryExpression.ShaperExpression;
+        var bsonInjector = new BsonDocumentInjectingExpressionVisitor();
+        shaperBody = bsonInjector.Visit(shaperBody);
+#if EF8 || EF9
+        shaperBody = InjectEntityMaterializers(shaperBody);
+#else
+        shaperBody = InjectStructuralTypeMaterializers(shaperBody);
+#endif
+        shaperBody = createBindingRemover(bsonDocParameter, trackingBehavior).Visit(shaperBody);
+
+        // Lift all BsonDocument/BsonArray variables to the lambda level so they are
+        // accessible across entity boundaries in join projections.
+        if (bsonInjector.AllVariables.Count > 0)
+        {
+            shaperBody = Expression.Block(
+                shaperBody.Type,
+                bsonInjector.AllVariables,
+                shaperBody);
+        }
+
+        var shaperLambda = Expression.Lambda(
+            shaperBody,
+            QueryCompilationContext.QueryContextParameter,
+            bsonDocParameter);
+        var compiledShaper = shaperLambda.Compile();
+
+        var projectedType = shaperLambda.ReturnType;
+        var standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
+                                     QueryTrackingBehavior.NoTrackingWithIdentityResolution;
+
+        return Expression.Call(null,
+            ExecuteShapedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType, projectedType),
+            QueryCompilationContext.QueryContextParameter,
+            Expression.Constant(rootEntityType),
+            Expression.Constant(_bsonSerializerFactory),
+            Expression.Constant(mongoQueryExpression),
+            Expression.Constant(compiledShaper),
+            Expression.Constant(_contextType),
+            Expression.Constant(standAloneStateManager),
+            Expression.Constant(_threadSafetyChecksEnabled),
+            Expression.Constant(shapedQueryExpression.ResultCardinality));
+    }
+
     private static (MongoQueryContext, MongoExecutableQuery) TranslateQuery<TSource>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
@@ -200,7 +219,18 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var queryable = transaction == null ? collection.AsQueryable() : collection.AsQueryable(transaction.Session);
         var source = queryable.As((IBsonSerializer<TSource>)bsonSerializerFactory.GetEntitySerializer(entityType));
 
-        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression, bsonSerializerFactory);
+        var innerSources = new Dictionary<IEntityType, Expression>();
+        if (queryExpression.IsJoinQuery)
+        {
+            foreach (var (innerEntityType, innerCollectionExpression) in queryExpression.InnerCollections)
+            {
+                innerSources[innerEntityType] = CreateInnerSource(
+                    mongoQueryContext, bsonSerializerFactory, innerEntityType, innerCollectionExpression.CollectionName, transaction);
+            }
+        }
+
+        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(
+            queryContext, source.Expression, bsonSerializerFactory, queryExpression.GetPendingLookups(), innerSources);
         var translatedQuery = translate(queryTranslator, queryExpression.CapturedExpression);
 
         var executableQuery = new MongoExecutableQuery(
@@ -244,7 +274,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         var (mongoQueryContext, executableQuery) = TranslateQuery<TSource>(
             queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
-            (translator, expression) => translator.Visit(expression)!);
+            (translator, expression) => translator.TranslateProjected(expression));
 
         return new QueryingEnumerable<TResult, TResult>(
             mongoQueryContext,
@@ -292,4 +322,43 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             .GetTypeInfo()
             .DeclaredMethods
             .Single(m => m.Name == nameof(ExecuteProjectedQuery));
+
+    private static readonly MethodInfo CreateInnerSourceMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .GetDeclaredMethod(nameof(CreateInnerSourceTyped))!;
+
+    private static Expression CreateInnerSource(
+        MongoQueryContext mongoQueryContext,
+        BsonSerializerFactory bsonSerializerFactory,
+        IReadOnlyEntityType innerEntityType,
+        string collectionName,
+        MongoTransaction? transaction)
+    {
+        return (Expression)CreateInnerSourceMethodInfo
+            .MakeGenericMethod(innerEntityType.ClrType)
+            .Invoke(null, [mongoQueryContext, bsonSerializerFactory, innerEntityType, collectionName, transaction])!;
+    }
+
+    private static Expression CreateInnerSourceTyped<TInner>(
+        MongoQueryContext mongoQueryContext,
+        BsonSerializerFactory bsonSerializerFactory,
+        IReadOnlyEntityType innerEntityType,
+        string collectionName,
+        MongoTransaction? transaction)
+    {
+        // The driver's Join/GroupJoin pipeline translator requires the inner operand to be a bare
+        // IMongoQueryable backed by a collection (a ConstantExpression). It rejects an operand wrapped
+        // in .As(serializer) (a MethodCallExpression), so we cannot use .As(...) here as we do for the
+        // outer source. Instead we wrap the collection so its DocumentSerializer returns EF's entity
+        // serializer; the driver derives the inner pipeline-input serializer from collection.DocumentSerializer,
+        // which keeps EF's element-name / discriminator / BsonRepresentation mappings on the inner side.
+        var innerCollection = new SerializerOverrideCollection<TInner>(
+            mongoQueryContext.MongoClient.GetCollection<TInner>(collectionName),
+            (IBsonSerializer<TInner>)bsonSerializerFactory.GetEntitySerializer(innerEntityType));
+        var innerQueryable = transaction == null
+            ? innerCollection.AsQueryable()
+            : innerCollection.AsQueryable(transaction.Session);
+        return innerQueryable.Expression;
+    }
 }

@@ -30,24 +30,33 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     private readonly GuidesDbContext _db = GuidesDbContext.Create(database.MongoDatabase);
 
     [Fact]
-    public void Join_cannot_be_translated()
+    public void Join_can_be_translated()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-            _db.Planets.Join(_db.Moons, p => p._id, m => m.planetId, (p, m) => new { p, m }).ToList());
-        Assert.Contains(".Join(", ex.Message);
-        Assert.Contains(" could not be translated", ex.Message);
+        var result = _db.Planets.Join(_db.Moons, p => p._id, m => m.planetId, (p, m) => new { p, m }).ToList();
+
+        // An inner join must materialize matched pairs on both sides; a broken translation that
+        // returned an empty set would still satisfy Assert.NotNull, so assert real rows.
+        Assert.NotEmpty(result);
+        Assert.All(result, r =>
+        {
+            Assert.NotNull(r.p);
+            Assert.NotNull(r.m);
+        });
     }
 
 #if !EF8 && !EF9
 
     [Fact]
-    public void LeftJoin_throws_not_supported_exception()
+    public void LeftJoin_can_be_translated()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => _db.Planets.LeftJoin(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList());
+        var result = _db.Planets.LeftJoin(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList();
 
-        Assert.Contains(".LeftJoin(", ex.Message);
-        Assert.Contains(" could not be translated", ex.Message);
+        // Left-join semantics: every outer (planet) row is present, and at least one planet without a
+        // matching moon must yield a null inner element. Asserting the null inner guards against a
+        // regression to inner-join semantics that Assert.NotNull would silently pass.
+        Assert.NotEmpty(result);
+        Assert.All(result, r => Assert.NotNull(r.p));
+        Assert.Contains(result, r => r.m == null);
     }
 
 #endif
@@ -84,15 +93,12 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     }
 
     [Fact]
-    public void Select_cannot_select_foreign_navigation()
+    public void Select_can_select_foreign_navigation()
     {
         using var db = new ClientContext(database.MongoDatabase);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.Clients.Select(p => p.Company).ToList());
-
-        Assert.Contains(".Select(", ex.Message);
-        Assert.Contains(" could not be translated", ex.Message);
-        Assert.Contains("p.Company", ex.Message);
+        var result = db.Clients.Select(p => p.Company).ToList();
+        Assert.NotNull(result);
     }
 
     [Fact]

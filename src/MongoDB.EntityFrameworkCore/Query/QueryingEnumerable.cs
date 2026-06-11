@@ -183,7 +183,11 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
             if (hasNext)
             {
-                Current = _shaper(_queryContext, _enumerator.Current);
+                // A null source row (e.g. SingleOrDefault/FirstOrDefault with no match, returned as a
+                // single null by the scalar path) must not be passed to the entity shaper, which would
+                // dereference a null BsonDocument. Yield default(TTarget); a projected identity shaper
+                // would produce the same null, so scalar/aggregate results are unaffected.
+                Current = _enumerator.Current is null ? default! : _shaper(_queryContext, _enumerator.Current);
 
                 if (!_gotResults)
                 {

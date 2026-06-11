@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 // Derived from EFCore.Cosmos ObjectAccessExpression.
@@ -7,50 +7,58 @@ using System;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
-using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents access to an object within the BsonDocument result tree.
+/// Represents access to an object within the BsonDocument result tree. The concrete subtype depends on
+/// whether the access is described by an <see cref="INavigation"/>
+/// (<see cref="NavigationObjectAccessExpression"/>) or by an <see cref="IEntityType"/> with no navigation,
+/// as for an explicit cross-collection Join (<see cref="EntityTypeObjectAccessExpression"/>).
 /// </summary>
-internal sealed class ObjectAccessExpression : Expression, IPrintableExpression, IAccessExpression
+internal abstract class ObjectAccessExpression : Expression, IPrintableExpression, IAccessExpression
 {
     /// <summary>
-    /// Create a <see cref="ObjectAccessExpression"/>.
+    /// Create an <see cref="ObjectAccessExpression"/>.
     /// </summary>
-    /// <param name="navigation">The <see cref="INavigation"/> this object access relates to.</param>
     /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
     /// <param name="required">
     /// <see langword="true"/> if this object is required,
     /// <see langword="false"/> if it is optional.
     /// </param>
-    /// <exception cref="InvalidOperationException"></exception>
-    public ObjectAccessExpression(
-        INavigation navigation,
+    /// <param name="name">The field name to access in the document.</param>
+    protected ObjectAccessExpression(
         Expression accessExpression,
-        bool required)
+        bool required,
+        string name)
     {
-        Name = navigation.TargetEntityType.GetContainingElementName() ??
-               throw new InvalidOperationException(
-                   $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
-
-        Navigation = navigation;
         AccessExpression = accessExpression;
         Required = required;
+        Name = name;
     }
+
+    /// <summary>
+    /// The <see cref="INavigation"/> this object access relates to, or <see langword="null"/> when the
+    /// access is not described by a navigation.
+    /// </summary>
+    public virtual INavigation? Navigation
+        => null;
+
+    /// <summary>
+    /// The <see cref="IEntityType"/> this object access relates to when there is no navigation, otherwise
+    /// <see langword="null"/>.
+    /// </summary>
+    internal virtual IEntityType? EntityType
+        => null;
 
     /// <inheritdoc />
     public override ExpressionType NodeType
         => ExpressionType.Extension;
 
     /// <inheritdoc />
-    public override Type Type
-        => Navigation.ClrType;
+    public abstract override Type Type { get; }
 
     public string Name { get; }
-
-    public INavigation Navigation { get; }
 
     public Expression AccessExpression { get; }
 
@@ -60,10 +68,12 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
     protected override Expression VisitChildren(ExpressionVisitor visitor)
         => Update(visitor.Visit(AccessExpression));
 
-    public ObjectAccessExpression Update(Expression outerExpression)
-        => outerExpression != AccessExpression
-            ? new ObjectAccessExpression(Navigation, outerExpression, Required)
-            : this;
+    /// <summary>
+    /// Create a copy of this expression with the given parent access expression, or return this
+    /// instance unchanged when the parent access expression is unchanged.
+    /// </summary>
+    /// <param name="outerExpression">The <see cref="Expression"/> of the parent containing the object.</param>
+    public abstract ObjectAccessExpression Update(Expression outerExpression);
 
     void IPrintableExpression.Print(ExpressionPrinter expressionPrinter)
         => expressionPrinter.Append(ToString());
@@ -76,15 +86,21 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
     public override bool Equals(object? obj)
         => obj != null
            && (ReferenceEquals(this, obj)
-               || (obj is ObjectAccessExpression objectAccessExpression
+               || (obj.GetType() == GetType()
+                   && obj is ObjectAccessExpression objectAccessExpression
                    && Equals(objectAccessExpression)));
 
-    private bool Equals(ObjectAccessExpression objectAccessExpression)
-        => Navigation == objectAccessExpression.Navigation
+    /// <summary>
+    /// Compare the members common to all <see cref="ObjectAccessExpression"/> subtypes. The caller has
+    /// already established that <paramref name="objectAccessExpression"/> is of the same runtime type, so
+    /// overrides can safely cast to add their distinguishing member.
+    /// </summary>
+    protected virtual bool Equals(ObjectAccessExpression objectAccessExpression)
+        => Name == objectAccessExpression.Name
            && AccessExpression.Equals(objectAccessExpression.AccessExpression)
            && Required == objectAccessExpression.Required;
 
     /// <inheritdoc />
     public override int GetHashCode()
-        => HashCode.Combine(Navigation, AccessExpression, Required);
+        => HashCode.Combine(Name, AccessExpression, Required);
 }

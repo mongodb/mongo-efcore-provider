@@ -10,6 +10,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -76,11 +77,24 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
 
         if (!_navigationExpressionsMap.TryGetValue(navigation, out var expression))
         {
-            expression = navigation.IsCollection
-                ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression)
-                : new EntityProjectionExpression(
-                    navigation.TargetEntityType,
-                    new ObjectAccessExpression(navigation, ParentAccessExpression, navigation.ForeignKey.IsRequiredDependent));
+            if (navigation.IsEmbedded())
+            {
+                expression = navigation.IsCollection
+                    ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression)
+                    : new EntityProjectionExpression(
+                        navigation.TargetEntityType,
+                        new NavigationObjectAccessExpression(navigation, ParentAccessExpression, navigation.ForeignKey.IsRequiredDependent));
+            }
+            else
+            {
+                // Cross-collection navigation: use lookup alias as the field name
+                var lookupAlias = LookupExpression.GetLookupAlias(navigation);
+                expression = navigation.IsCollection
+                    ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression, lookupAlias)
+                    : new EntityProjectionExpression(
+                        navigation.TargetEntityType,
+                        new NavigationObjectAccessExpression(navigation, ParentAccessExpression, false, lookupAlias));
+            }
 
             _navigationExpressionsMap[navigation] = expression;
         }
@@ -168,9 +182,10 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
 
     private bool Equals(EntityProjectionExpression entityProjectionExpression)
         => Equals(EntityType, entityProjectionExpression.EntityType)
+           && string.Equals(Name, entityProjectionExpression.Name, StringComparison.Ordinal)
            && ParentAccessExpression.Equals(entityProjectionExpression.ParentAccessExpression);
 
     /// <inheritdoc />
     public override int GetHashCode()
-        => HashCode.Combine(EntityType, ParentAccessExpression);
+        => HashCode.Combine(EntityType, Name, ParentAccessExpression);
 }

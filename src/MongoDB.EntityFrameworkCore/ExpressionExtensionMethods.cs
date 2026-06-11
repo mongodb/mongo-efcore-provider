@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore;
 
@@ -28,10 +29,22 @@ internal static class ExpressionExtensionMethods
             ? (T)constantExpression.Value!
             : throw new InvalidOperationException();
 
+    /// <summary>
+    /// Strips any <see cref="ExpressionType.Quote"/> wrappers, returning the quoted operand (typically a
+    /// <see cref="LambdaExpression"/>). Returns the expression unchanged when it is not quoted.
+    /// </summary>
+    internal static Expression UnwrapQuote(this Expression expression)
+    {
+        while (expression is UnaryExpression { NodeType: ExpressionType.Quote } quote)
+        {
+            expression = quote.Operand;
+        }
+
+        return expression;
+    }
+
     internal static LambdaExpression UnwrapLambdaFromQuote(this Expression expression)
-        => (LambdaExpression)(expression is UnaryExpression unary && expression.NodeType == ExpressionType.Quote
-            ? unary.Operand
-            : expression);
+        => (LambdaExpression)expression.UnwrapQuote();
 
     internal static IReadOnlyList<TMemberInfo> GetMemberAccess<TMemberInfo>(this LambdaExpression memberAccessExpression)
         where TMemberInfo : MemberInfo
@@ -87,4 +100,33 @@ internal static class ExpressionExtensionMethods
         => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
             ? RemoveConvert(unaryExpression.Operand)
             : expression;
+
+    /// <summary>
+    /// Removes a single boxing conversion to <see cref="object"/> if present. Unlike
+    /// <see cref="RemoveConvert"/>, this strips only one level and only an <see cref="object"/>-typed
+    /// <see cref="ExpressionType.Convert"/> / <see cref="ExpressionType.ConvertChecked"/>, leaving numeric
+    /// or widening conversions intact.
+    /// </summary>
+    internal static Expression RemoveObjectConvert(this Expression expression)
+        => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
+           && unaryExpression.Type == typeof(object)
+            ? unaryExpression.Operand
+            : expression;
+
+    /// <summary>
+    /// Extracts the simple member/property name from a key-selector-style expression — a member access
+    /// (<c>o.CustomerId</c>) or an <c>EF.Property(o, "CustomerId")</c> call — after stripping any
+    /// <see cref="ExpressionType.Convert"/> / <see cref="ExpressionType.ConvertChecked"/> wrappers. Returns
+    /// <see langword="null"/> when the expression is not a simple member or <c>EF.Property</c> access.
+    /// </summary>
+    internal static string? TryGetSimplePropertyName(this Expression expression)
+        => expression.RemoveConvert() switch
+        {
+            MemberExpression member => member.Member.Name,
+            MethodCallExpression methodCall
+                when methodCall.Method.IsEFPropertyMethod()
+                     && methodCall.Arguments.Count == 2
+                     && methodCall.Arguments[1] is ConstantExpression { Value: string name } => name,
+            _ => null
+        };
 }

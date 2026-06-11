@@ -209,9 +209,17 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Projection_of_multiple_entity_types_into_object_array(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(
-            () => base.Projection_of_multiple_entity_types_into_object_array(async));
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Projection_of_multiple_entity_types_into_object_array(async));
+        AssertMql();
+#else
+        await base.Projection_of_multiple_entity_types_into_object_array(async);
+        AssertMql(
+            """
+Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Projection_of_entity_type_into_object_list(bool async)
@@ -436,10 +444,12 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Select_nested_collection_count_using_anonymous_type(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Select_nested_collection_count_using_anonymous_type(async));
+        await base.Select_nested_collection_count_using_anonymous_type(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "Count" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+""");
     }
 
     public override async Task New_date_time_in_anonymous_type_works(bool async)
@@ -903,10 +913,17 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Anonymous_projection_with_repeated_property_being_ordered_2(bool async)
     {
-        // Fails: Subquery selection EF-X001
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.Anonymous_projection_with_repeated_property_being_ordered_2(async));
-
         AssertMql();
+#else
+        await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
+        AssertMql(
+            """
+Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "A" : "$_v._inner._id", "B" : "$_v._outer.CustomerID", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Select_GetValueOrDefault_on_DateTime(bool async)
@@ -925,10 +942,22 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Select_GetValueOrDefault_on_DateTime_with_null_values(bool async)
     {
+#if EF8 || EF9
         // Fails: Unsupported by driver EF-X003
         await AssertTranslationFailed(() => base.Select_GetValueOrDefault_on_DateTime_with_null_values(async));
 
         AssertMql();
+#else
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Select_GetValueOrDefault_on_DateTime_with_null_values(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+#endif
     }
 
     public override async Task Cast_on_top_level_projection_brings_explicit_Cast(bool async)
@@ -1128,10 +1157,17 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Select_entity_compared_to_null(bool async)
     {
-        // Fails: Subquery selection EF-X001
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.Select_entity_compared_to_null(async));
-
         AssertMql();
+#else
+        await base.Select_entity_compared_to_null(async);
+        AssertMql(
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Explicit_cast_in_arithmetic_operation_is_preserved(bool async)
@@ -1170,8 +1206,13 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task ToList_Count_in_projection_works(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.ToList_Count_in_projection_works(async));
+        // Fails: mixed entity-and-count projection (new { c, c.Orders.ToList().Count() }) is the mixed path
+        // (the entity `c` is projected too), which does not route through the scalar collection-navigation
+        // count push-down, and is not supported. EF-X001
+        Assert.Contains(
+            "The property 'Customer.Count' could not be found",
+            (await Assert.ThrowsAsync<InvalidOperationException>(
+                () => base.ToList_Count_in_projection_works(async))).Message);
 
         AssertMql();
     }
@@ -1323,34 +1364,70 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Reverse_in_join_outer(bool async)
     {
-        // Fails: Reverse not supported CSHARP-5836
-        await AssertTranslationFailed(() => base.Reverse_in_join_outer(async));
+        // Fails: Reverse not supported by driver CSHARP-5836
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Reverse_in_join_outer(async))).Message);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.
+""");
     }
 
     public override async Task Reverse_in_join_outer_with_take(bool async)
     {
-        // Fails: Reverse not supported CSHARP-5836
-        await AssertTranslationFailed(() => base.Reverse_in_join_outer_with_take(async));
+        // Fails: Reverse not supported by driver CSHARP-5836
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Reverse_in_join_outer_with_take(async))).Message);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.
+""");
     }
 
     public override async Task Reverse_in_join_inner(bool async)
     {
+#if EF8 || EF9
         // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_join_inner(async));
 
         AssertMql();
+#else
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Reverse_in_join_inner(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+#endif
     }
 
     public override async Task Reverse_in_join_inner_with_skip(bool async)
     {
+#if EF8 || EF9
         // Fails: Reverse not supported CSHARP-5836
         await AssertTranslationFailed(() => base.Reverse_in_join_inner_with_skip(async));
 
         AssertMql();
+#else
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Reverse_in_join_inner_with_skip(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+#endif
     }
 
     public override async Task Reverse_in_SelectMany(bool async)
@@ -1421,10 +1498,20 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Custom_projection_reference_navigation_PK_to_FK_optimization(bool async)
     {
+#if EF8 || EF9
         // Fails: Subquery selection EF-X001
         await AssertTranslationFailed(() => base.Custom_projection_reference_navigation_PK_to_FK_optimization(async));
 
         AssertMql();
+#else
+        Assert.Contains(
+            "Operation is not valid due to the current",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Custom_projection_reference_navigation_PK_to_FK_optimization(async))).Message);
+
+        AssertMql(
+        );
+#endif
     }
 
     public override async Task Projecting_Length_of_a_string_property_after_FirstOrDefault_on_correlated_collection(bool async)
@@ -1438,18 +1525,22 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Projecting_count_of_navigation_which_is_generic_list(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Projecting_count_of_navigation_which_is_generic_list(async));
+        await base.Projecting_count_of_navigation_which_is_generic_list(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Projecting_count_of_navigation_which_is_generic_collection(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Projecting_count_of_navigation_which_is_generic_collection(async));
+        await base.Projecting_count_of_navigation_which_is_generic_collection(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Projecting_count_of_navigation_which_is_generic_collection_using_convert(bool async)
@@ -1499,11 +1590,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Do_not_erase_projection_mapping_when_adding_single_projection(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Do_not_erase_projection_mapping_when_adding_single_projection(async))).Message);
+        // Fails: Subquery selection EF-X001
+        await AssertTranslationFailed(() => base.Do_not_erase_projection_mapping_when_adding_single_projection(async));
 
         AssertMql();
     }
@@ -1586,11 +1674,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Collection_include_over_result_of_single_non_scalar(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported as the navigation is not embedded in same resource.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Collection_include_over_result_of_single_non_scalar(async))).Message);
+        // Fails: Subquery selection EF-X001
+        await AssertTranslationFailed(() => base.Collection_include_over_result_of_single_non_scalar(async));
 
         AssertMql();
     }

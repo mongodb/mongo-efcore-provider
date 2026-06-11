@@ -4,6 +4,36 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+## Breaking changes in 8.5.0 / 9.2.0 / 10.1.0
+
+### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
+
+#### Old behavior
+
+When an entity type was reached by a reference or collection navigation, it was always configured as an *owned* (embedded) type — stored as a sub-document inside the principal document — even when that same type had its own `DbSet<T>` on the context. A navigation to such a type therefore produced a nested/embedded document rather than a relationship between two collections.
+
+#### New behavior
+
+When the navigated type is already registered in the model as an independent (non-owned) entity — typically because it has its own `DbSet<T>` — it is no longer auto-configured as owned. It is instead treated as a separate entity stored in its own collection, with a foreign key introduced on the dependent. This is what enables cross-collection `Include` / navigation support.
+
+Types that do **not** have their own `DbSet`, and types you explicitly configure with `OwnsOne` / `OwnsMany`, continue to be embedded exactly as before.
+
+The public helper `MongoRelationshipDiscoveryConvention.ShouldBeOwnedType(Type, IConventionModel)` reflects this change: it now returns `false` for a type that is already present in the model as a non-owned (root) entity.
+
+#### Why
+
+To support relationships that span MongoDB collections (the cross-collection `Include` feature). A type that has its own `DbSet` is, by the application's own configuration, a root collection; also embedding it is ambiguous and prevents querying it as a separate collection.
+
+#### Mitigations
+
+If you relied on the previous embed-by-default behavior for a type that *also* has a `DbSet`, configure the relationship explicitly as owned so it continues to be embedded:
+
+```c#
+modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress);
+```
+
+(or `OwnsMany` for collection navigations). If you want the new separate-collection behavior, no change is required. Models whose embedded types never had their own `DbSet` are unaffected, and the stored documents for those types are unchanged.
+
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 
 ### The element name for discriminators may have changed

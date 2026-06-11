@@ -25,6 +25,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -33,7 +34,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// <summary>
 /// Visits an expression tree translating various types of binding expressions.
 /// </summary>
-internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisitor
+internal sealed partial class MongoProjectionBindingExpressionVisitor : ExpressionVisitor
 {
     private readonly Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly Stack<ProjectionMember> _projectionMembers = new();
@@ -141,8 +142,18 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
                     var projectionBindingExpression =
                         (ProjectionBindingExpression)structuralTypeShaperExpression.ValueBufferExpression;
 
-                    var entityProjection = (EntityProjectionExpression)_queryExpression.GetMappedProjection(
-                        projectionBindingExpression.ProjectionMember);
+                    EntityProjectionExpression entityProjection;
+                    if (projectionBindingExpression.Index is int existingIndex
+                        && projectionBindingExpression.QueryExpression == _queryExpression)
+                    {
+                        // Already bound by index to our query expression (e.g., from join rebinding)
+                        entityProjection = (EntityProjectionExpression)_queryExpression.Projection[existingIndex].Expression;
+                    }
+                    else
+                    {
+                        entityProjection = (EntityProjectionExpression)_queryExpression.GetMappedProjection(
+                            projectionBindingExpression.ProjectionMember);
+                    }
 
                     return structuralTypeShaperExpression.Update(
                         new ProjectionBindingExpression(
@@ -157,12 +168,81 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
 
             case IncludeExpression includeExpression:
                 {
-                    if (!(includeExpression.Navigation is INavigation includableNavigation && includableNavigation.IsEmbedded()))
+                    if (includeExpression.Navigation is not INavigation includableNavigation)
                     {
                         throw new InvalidOperationException(
                             $"Including navigation '{
                                 nameof(includeExpression.Navigation)
-                            }' is not supported as the navigation is not embedded in same resource.");
+                            }' is not supported.");
+                    }
+
+                    if (!includableNavigation.IsEmbedded() && includableNavigation.IsCollection)
+                    {
+                        var lookup = new LookupExpression(includableNavigation);
+
+                        // For multi-level Include where the declaring entity is a cross-collection
+                        // reference (handled by LeftJoin producing _outer/_inner), the $lookup
+                        // localField must be prefixed to reference the inner sub-document.
+                        // When a LeftJoin restructures the document (_outer/_inner),
+                        // $lookup fields must be prefixed with the correct sub-document path.
+                        if (_queryExpression.UsesDriverJoinFields)
+                        {
+                            var declaringType = includableNavigation.DeclaringEntityType;
+                            var rootType = _queryExpression.CollectionExpression.EntityType;
+                            if (declaringType == rootType || declaringType.IsOwned())
+                            {
+                                lookup.LocalField = $"_outer.{lookup.LocalField}";
+                                lookup.As = $"_outer.{lookup.As}";
+                            }
+                            else
+                            {
+                                lookup.LocalField = $"_inner.{lookup.LocalField}";
+                                lookup.As = $"_inner.{lookup.As}";
+                            }
+                        }
+                        else
+                        {
+                            // Flat multi-lookup mode: when two or more cross-collection reference
+                            // navigations were chained (e.g. OrderDetail.Order.Customer.Orders), the
+                            // reference chain is emitted as a series of root-level $lookup+$unwind
+                            // stages aliased "_lookup_<Nav>" rather than the driver's _outer/_inner
+                            // shape. A trailing collection Include whose declaring entity is one of
+                            // those unwound intermediates must match against that intermediate's
+                            // sub-document, so its $lookup localField needs the "_lookup_<Nav>." prefix.
+                            // The output "as" is nested under the same intermediate sub-document because
+                            // the shaper reads the collection array relative to the intermediate's
+                            // ParentAccessExpression (i.e. "_lookup_<Nav>._lookup_<Collection>").
+                            var declaringType = includableNavigation.DeclaringEntityType;
+                            var intermediateMatches = _queryExpression.GetPendingLookups().Where(
+                                l => l.IsReference
+                                     && l.ForceUnwind
+                                     && l.Navigation.TargetEntityType == declaringType).ToList();
+
+                            // The intermediate is matched by its target entity type, not by its alias. When
+                            // more than one reference lookup targets the same entity type — e.g. two reference
+                            // navigations to the same type, or a self-referential chain — the match is
+                            // ambiguous: there is no basis here to tell which intermediate sub-document this
+                            // collection Include is nested under, and choosing arbitrarily would prefix the
+                            // $lookup with the wrong "_lookup_<Nav>." path and silently return wrong results.
+                            // Fail translation cleanly instead.
+                            if (intermediateMatches.Count > 1)
+                            {
+                                throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
+                            }
+
+                            var intermediateLookup = intermediateMatches.Count == 1 ? intermediateMatches[0] : null;
+                            if (intermediateLookup != null)
+                            {
+                                lookup.LocalField = $"{intermediateLookup.As}.{lookup.LocalField}";
+                                lookup.As = $"{intermediateLookup.As}.{lookup.As}";
+                            }
+                        }
+
+                        // Extract filtered Include pipeline stages (OrderBy, Skip, Take)
+                        // and nested ThenInclude $lookups from the NavigationExpression.
+                        ExtractNestedIncludePipeline(includeExpression.NavigationExpression, lookup, includableNavigation.TargetEntityType);
+                        _queryExpression.AddLookup(lookup);
+                        return RewriteCollectionIncludeForLookup(includeExpression, includableNavigation);
                     }
 
                     _includedNavigations.Push(includableNavigation);
@@ -178,6 +258,25 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
     /// <inheritdoc />
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
+        // A projected cross-collection collection navigation (e.g. select new { ..., Orders = c.Orders.ToList() }).
+        // EF Core lowers this to Enumerable.ToList(Queryable.Select(Queryable.Where(DbSet<Target>(), joinPred), selector)).
+        // There is no enclosing IncludeExpression to set up the $lookup, so bind it here to a CollectionShaperExpression
+        // that reads from a dedicated "_lookup_<Nav>" array, mirroring the cross-collection Include path.
+        if (TryBindProjectedCollectionNavigation(methodCallExpression, out var boundCollection))
+        {
+            return boundCollection;
+        }
+
+        // A projected cross-collection collection-navigation Count (e.g. select new { ..., c.Orders.Count }).
+        // EF Core lowers this to Queryable.Count(Queryable.Where(DbSet<Target>(), joinPred)) with no enclosing
+        // IncludeExpression. Register a "_lookup_<Nav>" $lookup (injected right after the root source) and bind
+        // the count as a scalar projection; the EF-to-driver translator rewrites the subtree into a server-side
+        // { $size: "$_lookup_<Nav>" }.
+        if (TryBindProjectedCollectionNavigationCount(methodCallExpression, out var boundCount))
+        {
+            return boundCount;
+        }
+
         if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))
         {
             var visitedSource = Visit(source);
@@ -232,7 +331,8 @@ internal sealed class MongoProjectionBindingExpressionVisitor : ExpressionVisito
             if (navigation == null)
             {
                 navigationProjection = innerEntityProjection.BindMember(memberName, visitedSource.Type, out var propertyBase);
-                if (propertyBase is not INavigation projectedNavigation || !projectedNavigation.IsEmbedded())
+                if (propertyBase is not INavigation projectedNavigation
+                    || (!projectedNavigation.IsEmbedded() && !_includedNavigations.Contains(projectedNavigation)))
                 {
                     return null;
                 }

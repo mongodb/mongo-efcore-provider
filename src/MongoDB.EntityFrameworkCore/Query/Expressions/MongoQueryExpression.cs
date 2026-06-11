@@ -25,7 +25,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <summary>
 /// Represents a top-level MongoDB-specific collection for querying server-side.
 /// </summary>
-internal sealed class MongoQueryExpression : Expression
+internal sealed partial class MongoQueryExpression : Expression
 {
     private Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly List<ProjectionExpression> _projection = [];

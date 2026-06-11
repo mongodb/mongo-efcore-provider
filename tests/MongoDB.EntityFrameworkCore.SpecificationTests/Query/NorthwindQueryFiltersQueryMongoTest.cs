@@ -112,47 +112,62 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
     public override async Task Include_query(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_query(async))).Message);
-
+        await base.Include_query(async);
         AssertMql(
-);
+            """
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Include_query_opt_out(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_query_opt_out(async))).Message);
-
+        await base.Include_query_opt_out(async);
         AssertMql(
-);
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Included_many_to_one_query(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Included_many_to_one_query(async));
+        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query(async));
 
         AssertMql(
-);
+        );
+#else
+        await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query(async));
+
+        AssertMql(
+            """
+Orders.
+""");
+#endif
     }
 
     public override async Task Project_reference_that_itself_has_query_filter_with_another_reference(bool async)
     {
-        // Fails: Include issue EF-117
+#if EF8 || EF9
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Project_reference_that_itself_has_query_filter_with_another_reference(async));
 
         AssertMql(
 );
+#else
+        Assert.Contains(
+            "is not defined for type",
+            (await Assert.ThrowsAsync<ArgumentException>(() =>
+                base.Project_reference_that_itself_has_query_filter_with_another_reference(async))).Message);
+
+        AssertMql(
+        );
+#endif
     }
 
     public override async Task Navs_query(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Navs_query(async));
 
         AssertMql(
@@ -175,11 +190,23 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
     public override async Task Entity_Equality(bool async)
     {
+#if EF8 || EF9
         // Fails: Entity equality issue EF-202
         await AssertTranslationFailed(() => base.Entity_Equality(async));
 
         AssertMql(
 );
+#else
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Entity_Equality(async))).Message);
+
+        AssertMql(
+            """
+Orders.
+""");
+#endif
     }
 
     public override async Task Client_eval(bool async)
@@ -197,21 +224,35 @@ Products.
 
     public override async Task Included_many_to_one_query2(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Included_many_to_one_query2(async));
+        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query2(async));
 
         AssertMql(
-);
+        );
+#else
+        await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query2(async));
+
+        AssertMql(
+            """
+Orders.
+""");
+#endif
     }
 
     public override async Task Included_one_to_many_query_with_client_eval(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Limited support on client evaluation EF-X003
+        var exception = await Assert.ThrowsAnyAsync<System.Exception>(
+            () => base.Included_one_to_many_query_with_client_eval(async));
         Assert.Contains(
-            "Actual:   \"Including navigation 'Navigation' is not ",
-            (await Assert.ThrowsAsync<EqualException>(() => base.Included_one_to_many_query_with_client_eval(async))).Message);
+            "Expression not supported",
+            (exception.InnerException ?? exception).Message);
 
-        AssertMql();
+        AssertMql(
+            """
+            Products.
+            """);
     }
 
     private void AssertMql(params string[] expected)
