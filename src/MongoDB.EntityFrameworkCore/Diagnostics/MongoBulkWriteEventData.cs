@@ -46,6 +46,33 @@ public class MongoBulkWriteEventData : EventData
         long insertCount,
         long deleteCount,
         long modifyCount)
+        : this(eventDefinition, messageGenerator, elapsed, collectionNamespace, insertCount, deleteCount, modifyCount, targetCount: null)
+    {
+    }
+
+    /// <summary>
+    /// Constructs the event payload for a two-phase bulk operation.
+    /// </summary>
+    /// <param name="eventDefinition">The event definition.</param>
+    /// <param name="messageGenerator">A delegate that generates a log message for this event.</param>
+    /// <param name="elapsed">The time elapsed since the command was sent to the database.</param>
+    /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> being operated upon.</param>
+    /// <param name="insertCount">The number of documents to insert in this bulk write operation.</param>
+    /// <param name="deleteCount">The number of documents to delete by this bulk write operation.</param>
+    /// <param name="modifyCount">The number of documents to modify by this bulk write operation.</param>
+    /// <param name="targetCount">
+    /// For a two-phase bulk delete/update — the number of documents identified in phase one to be acted on
+    /// by <c>_id</c>; <see langword="null" /> for single-command bulk writes.
+    /// </param>
+    public MongoBulkWriteEventData(
+        EventDefinitionBase eventDefinition,
+        Func<EventDefinitionBase, EventData, string> messageGenerator,
+        TimeSpan elapsed,
+        CollectionNamespace collectionNamespace,
+        long insertCount,
+        long deleteCount,
+        long modifyCount,
+        int? targetCount)
         : base(eventDefinition, messageGenerator)
     {
         Elapsed = elapsed;
@@ -53,6 +80,7 @@ public class MongoBulkWriteEventData : EventData
         InsertCount = insertCount;
         DeleteCount = deleteCount;
         ModifyCount = modifyCount;
+        TargetCount = targetCount;
     }
 
     /// <summary>
@@ -79,4 +107,10 @@ public class MongoBulkWriteEventData : EventData
     /// The number of documents to modify by this bulk write operation.
     /// </summary>
     public long ModifyCount { get; }
+
+    /// <summary>
+    /// For a two-phase bulk delete/update — the number of documents identified in phase one to be acted on
+    /// by <c>_id</c>; <see langword="null" /> for single-command bulk writes.
+    /// </summary>
+    public int? TargetCount { get; }
 }

@@ -27,6 +27,16 @@ internal class MongoLoggingDefinitions : LoggingDefinitions
     public EventDefinitionBase? LogExecutingBulkWrite;
     public EventDefinitionBase? LogExecutedBulkWrite;
 
+#if !EF8
+    public EventDefinitionBase? LogExecutingBulkDelete;
+    public EventDefinitionBase? LogExecutingBulkDeleteTwoPhase;
+    public EventDefinitionBase? LogExecutedBulkDelete;
+
+    public EventDefinitionBase? LogExecutingBulkUpdate;
+    public EventDefinitionBase? LogExecutingBulkUpdateTwoPhase;
+    public EventDefinitionBase? LogExecutedBulkUpdate;
+#endif
+
     public EventDefinitionBase? LogBeginningTransaction;
     public EventDefinitionBase? LogBeganTransaction;
 

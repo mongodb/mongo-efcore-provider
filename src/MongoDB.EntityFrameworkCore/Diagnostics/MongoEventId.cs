@@ -51,6 +51,10 @@ public static class MongoEventId
         VectorSearchReturnedZeroResults,
         WaitingForVectorIndex,
         WaitingForSearchIndex,
+        ExecutingBulkDelete,
+        ExecutedBulkDelete,
+        ExecutingBulkUpdate,
+        ExecutedBulkUpdate,
     }
 
     private static EventId MakeDatabaseCommandId(Id id)
@@ -236,4 +240,48 @@ public static class MongoEventId
     ///     <para>This event uses the <see cref="TimeSpanEventData" /> payload when used with a <see cref="DiagnosticSource" />.</para>
     /// </remarks>
     public static readonly EventId WaitingForSearchIndex = MakeDatabaseId(Id.WaitingForSearchIndex);
+
+    /// <summary>
+    /// A bulk delete (server-side <c>ExecuteDelete</c>) is being executed.
+    /// </summary>
+    /// <remarks>
+    /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
+    /// <para>
+    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// </para>
+    /// </remarks>
+    public static readonly EventId ExecutingBulkDelete = MakeUpdateId(Id.ExecutingBulkDelete);
+
+    /// <summary>
+    /// A bulk delete (server-side <c>ExecuteDelete</c>) has been executed.
+    /// </summary>
+    /// <remarks>
+    /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
+    /// <para>
+    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// </para>
+    /// </remarks>
+    public static readonly EventId ExecutedBulkDelete = MakeUpdateId(Id.ExecutedBulkDelete);
+
+    /// <summary>
+    /// A bulk update (server-side <c>ExecuteUpdate</c>) is being executed.
+    /// </summary>
+    /// <remarks>
+    /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
+    /// <para>
+    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// </para>
+    /// </remarks>
+    public static readonly EventId ExecutingBulkUpdate = MakeUpdateId(Id.ExecutingBulkUpdate);
+
+    /// <summary>
+    /// A bulk update (server-side <c>ExecuteUpdate</c>) has been executed.
+    /// </summary>
+    /// <remarks>
+    /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
+    /// <para>
+    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// </para>
+    /// </remarks>
+    public static readonly EventId ExecutedBulkUpdate = MakeUpdateId(Id.ExecutedBulkUpdate);
 }

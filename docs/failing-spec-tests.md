@@ -81,7 +81,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | Temp ticket | Subject | Count |
 | --- | --- | --- |
 | EF-X001 | Sub-query selection across DbSets is not translated | 144 |
-| EF-X002 | Provider throws a different exception than the EF translation-failure message | 44 |
+| EF-X002 | Provider throws a different exception than the EF translation-failure message | 46 |
 | EF-X003 | Driver-level feature gaps surfaced as test failures | 19 |
 | EF-X004 | Float `Sum`/`Average` truncation (likely duplicate of EF-228) | 1 |
 | EF-X005 | BSON document missing nested required reference (AdHoc JSON) | 2 |
@@ -101,6 +101,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X019 | Include on keyless entity not supported (no primary key for $lookup join) | 2 |
 | EF-X020 | Cross-collection Include/join/navigation not translated on EF8/EF9 (works on EF10) | 168 |
 | EF-X021 | Filtered Include / query filter on cross-collection target not translated | 0 |
+| EF-X016 | Bulk `ExecuteUpdate`/`ExecuteDelete` source restricted to a single collection scoped by `Where` | 47 |
 
 ### EF-X001 — Sub-query selection across DbSets is not translated
 Comment patterns: `// Fails: Subquery selection EF-X001`, `// Fails: Subqueries not supported EF-X001`, `// Fails: No subquery support EF-X001`.
@@ -109,7 +110,7 @@ Affected: ~140 tests across `NorthwindAggregateOperators`, `NorthwindMiscellaneo
 
 ### EF-X002 — Provider throws a different exception than the EF translation-failure message
 Comment patterns: `// Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002`, `// Fails: Not throwing expected translation failed exception from EF. EF-X002`, `// Fails: Does not throw expected unable to translate exception EF-X002`, `// Fails: Does not use translation failed message EF-X002`, `// Fails: Throws different exception, but still throws EF-X002`.
-Affected: ~34 tests. EF's base tests expect `InvalidOperationException` with EF's "could not be translated" message; the provider currently throws `ExpressionNotSupportedException` / `MongoCommandException` / `NotSupportedException` instead. Aligning the messages would let EF-level diagnostics work without provider-specific overrides.
+Affected: ~36 tests. EF's base tests expect `InvalidOperationException` with EF's "could not be translated" message; the provider currently throws `ExpressionNotSupportedException` / `MongoCommandException` / `NotSupportedException` instead. Aligning the messages would let EF-level diagnostics work without provider-specific overrides. Two of these are bulk-update shapes in `NorthwindBulkUpdatesMongoTest` — `Update_Concat_set_constant` / `Update_Union_set_constant`, asserted with `Assert.ThrowsAnyAsync<Exception>`. These are a **test-harness/transaction artifact rather than a bulk-path defect**: the conformance asserter's before/after snapshot query mirrors the `Concat`/`Union` source as `$unionWith`, which the server forbids inside the rollback transaction the fixture enlists (`MongoCommandException: Stage not supported inside of a multi-document transaction: $unionWith`) — so it fails before the provider's own clean bulk rejection. (The two GroupBy bulk shapes that previously sat here — `Delete_Where_predicate_with_GroupBy_aggregate`, `Delete_GroupBy_Where_Select_2` — now reject with the canonical translation-failure message via the bulk translation guard and are tracked under EF-X016.)
 
 ### EF-X003 — Driver-level feature gaps surfaced as test failures
 Comment patterns: `// Fails: Unsupported by driver EF-X003`, `// Fails: Reverse not supported by driver EF-X003`, `// Fails: Limited support on client evaluation EF-X003`.
@@ -162,6 +163,26 @@ Affected: 1 test (`NorthwindSelectQueryMongoTest.Select_bool_closure_with_order_
 ### EF-X015 — Sub-second `DateTime` component translation (nanosecond/microsecond)
 Comment pattern: `// Fails: Sub-second DateTime component translation EF-X015`.
 Affected: 1 test (`NorthwindMiscellaneousQueryMongoTest.Where_nanosecond_and_microsecond_component`). `DateTime.Nanosecond` and `DateTime.Microsecond` (added in .NET 7) are not translated; the provider throws `ExpressionNotSupportedException`.
+
+### EF-X016 — Bulk `ExecuteUpdate`/`ExecuteDelete` source restricted to a single collection scoped by `Where`
+Comment pattern: `// Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; <shape> unsupported EF-X016`.
+Test-body pattern: `AssertTranslationFailed(() => base.X(...))`.
+Affected: 47 tests in `NorthwindBulkUpdatesMongoTest.cs`. By design, the provider supports bulk `ExecuteUpdate`/`ExecuteDelete` only against a single collection scoped by `Where`, with constant / parameter / self-referencing scalar setters (see README "What is supported" and EF-107). The EF conformance suite exercises shapes outside that subset — joins / correlated subqueries, set operations (`Except`/`Intersect`), `GroupBy`, `SelectMany`, cross-document navigation predicates, non-entity projection sources, and multiple-collection updates — and the provider rejects them during translation with an `InvalidOperationException` whose message reports the LINQ expression could not be translated. This is a documented limitation rather than a bug to fix; the ticket tracks the boundary so any future expansion of the supported subset (or a behavior change) is detected. Most shapes are rejected by compile-time bulk-source validation; a few (e.g. a `GroupBy` subquery inside the `Where` predicate) only fail when the filter is built at execution time, where a translation guard (`TranslateBulkOrThrow` in `MongoShapedQueryCompilingExpressionVisitor`) converts the raw driver/expression exception into the same canonical non-query translation failure. A handful of sibling shapes surface differently and are tagged separately: cross-DbSet `GroupBy` rejections under [EF-216](https://jira.mongodb.org/browse/EF-216), and the `$unionWith`-in-transaction `Concat`/`Union` cases under `EF-X002`.
+
+**Remaining unsupported shapes — grouped by root cause.** The unifying cause: two-phase execution only works when the *source query is translatable as a read*, because phase 1 must be able to project the target `_id`s. Every group below fails because the source shape itself cannot be translated — so neither phase 1 nor a single-command filter can be built. (Delete has the analogous cases; the `Update_*` methods are enumerated here since they are the larger set.)
+
+- **Joins / correlated subqueries** — `Join` / `LeftJoin` / `RightJoin` / `GroupJoin`, cross-apply, outer-apply. The read path doesn't translate joins (the `Translate*Join` overrides return null / route to a clean "not supported"), so phase 1 cannot project `_id`s. Unblocking requires net-new read-side join translation (ultimately a driver `$lookup`/`$group` + `$merge` capability) and is out of scope for EF-107. Update cases: `Update_Where_Join_set_property_from_joined_single_result_scalar`, `Update_Where_Join_set_property_from_joined_single_result_table`, `Update_Where_Join_set_property_from_joined_table`, `Update_with_join_set_constant`, `Update_with_two_inner_joins`, `Update_with_left_join_set_constant`, `Update_with_cross_join_set_constant`, `Update_with_cross_apply_set_constant`, `Update_with_outer_apply_set_constant`, `Update_with_cross_join_cross_apply_set_constant`, `Update_with_cross_join_left_join_set_constant`, `Update_with_cross_join_outer_apply_set_constant`, `Update_with_PK_pushdown_and_join_and_multiple_setters`, plus EF10-only `Update_with_LeftJoin`, `Update_with_LeftJoin_via_flattened_GroupJoin`, `Update_with_RightJoin`.
+- **Set operations — `Except` / `Intersect`** — MongoDB has no cross-collection intersect/except (only `$unionWith`), so the source cannot be expressed and is rejected at translation. Update cases: `Update_Except_set_constant`, `Update_Intersect_set_constant`.
+- **`SelectMany`** — the read path has no cross-document flattening, so the source cannot be translated. Update cases: `Update_Where_SelectMany_set_null`, `Update_Where_SelectMany_subquery_set_null`.
+- **Cross-document navigation predicates** — predicates traversing navigations across collections aren't translatable. Update cases: `Update_Where_using_navigation_2_set_constant`, `Update_Where_using_navigation_set_null`.
+- **Multiple-collection update** — a relational table-sharing concept with no document-model meaning; rejected by design regardless of phase strategy. Update case: `Update_multiple_tables_throws`.
+
+**Related shapes that surface as a different failure mode** (cross-referenced, not under the canonical translation-failure pattern above):
+
+- **`Concat` / `Union` (`EF-X002`)** — these lower to `$unionWith`, which the server forbids inside the multi-document transaction the conformance asserter (and the two-phase path) run in, so they throw a runtime `MongoCommandException` *before* the provider's clean bulk rejection. Update cases: `Update_Concat_set_constant`, `Update_Union_set_constant`. Unblocking requires the server to allow `$unionWith` inside a transaction.
+- **`GroupBy`-scoped (`EF-216`)** — `GroupBy` isn't translatable; these surface as the provider's `Unsupported cross-DbSet query` rejection and are asserted via `AssertNoMultiCollectionQuerySupport` rather than a `// Fails:` `AssertTranslationFailed`. Update cases: `Update_Where_GroupBy_First_set_constant`, `Update_Where_GroupBy_First_set_constant_2`, `Update_Where_GroupBy_First_set_constant_3`, `Update_Where_GroupBy_aggregate_set_constant`.
+
+**Two-phase bulk support (EF-107):** `OrderBy`/`Skip`/`Take`/`Distinct`-scoped bulk delete and update are now supported via a transactional two-phase execution strategy: phase 1 projects the matching `_id` values (including composite-key entities) into a temporary in-memory set; phase 2 issues the actual `deleteMany`/`updateMany` scoped to that `_id` set. The corresponding conformance tests (`Delete_Where_OrderBy*`, `Delete_Where_Skip*`, `Delete_Where_Take*`, `Delete_Where_Distinct`, `Update_Where_OrderBy*`, `Update_Where_Skip*`, `Update_Where_Take*`, `Update_Where_Distinct_set_constant`, `Delete_Where_Skip_Take_Skip_Take_causing_subquery`, `Update_Where_OrderBy_Skip_Take_Skip_Take_set_constant`) have been promoted from `AssertTranslationFailed` to `base.*` and are no longer tracked under this ticket.
 
 ### EF-X016 — GroupJoin shapes not translated
 Comment pattern: `// Fails: GroupJoin shape not translated EF-X016`.
@@ -262,4 +283,5 @@ grep -rEho "(EF-X?[0-9]+|CSHARP-[0-9]+)" tests/.../SpecificationTests --include=
   | sort | uniq -c | sort -rn
 ```
 
-returns 49 distinct ticket ids, including 15 temporary `EF-X###` placeholders. The static audit (lookback-5 search for `// Fails:` above any `AssertTranslationFailed` / `Assert.Throws*` / `AssertGroupByUnsupported` callsite, excluding helper definitions and single-mode helper callers) reports zero remaining holes among Mongo-failure cases.
+returns 50 distinct ticket ids, including 16 temporary `EF-X###` placeholders (`EF-X016` was
+added for the `NorthwindBulkUpdatesMongoTest` out-of-subset rejections). The static audit (lookback-5 search for `// Fails:` above any `AssertTranslationFailed` / `Assert.Throws*` / `AssertGroupByUnsupported` callsite, excluding helper definitions and single-mode helper callers) reports zero remaining holes among Mongo-failure cases.

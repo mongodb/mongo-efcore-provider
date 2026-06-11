@@ -14,6 +14,8 @@
  */
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -79,6 +81,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
         var method = methodCallExpression.Method;
+#if !EF8
+        // ExecuteDelete / ExecuteUpdate marker methods are declared on EntityFrameworkQueryableExtensions.
+        // Let them through to the base, which dispatches to TranslateExecuteDelete / TranslateExecuteUpdate.
+        if (method.DeclaringType == typeof(EntityFrameworkQueryableExtensions))
+            return base.VisitMethodCall(methodCallExpression);
+#endif
         if (!AllowedQueryableExtensions.Contains(method.DeclaringType))
             return QueryCompilationContext.NotTranslatedExpression;
 
@@ -176,6 +184,248 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 new ProjectionBindingExpression(queryExpression, new ProjectionMember(), typeof(ValueBuffer)),
                 false));
     }
+
+#if !EF8
+    protected override Expression? TranslateExecuteDelete(ShapedQueryExpression source)
+    {
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        var strategy = ClassifyBulkSource(mongoQueryExpression);
+        return new MongoNonQueryExpression(mongoQueryExpression, strategy);
+    }
+
+#if EF10
+    protected override Expression? TranslateExecuteUpdate(
+        ShapedQueryExpression source,
+        IReadOnlyList<ExecuteUpdateSetter> setters)
+    {
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        var strategy = ClassifyBulkSource(mongoQueryExpression);
+        var parsed = setters
+            .Select(s => BuildSetter(mongoQueryExpression, s.PropertySelector, s.ValueExpression))
+            .ToList();
+        return new MongoNonQueryExpression(mongoQueryExpression, parsed, strategy);
+    }
+#else
+    protected override Expression? TranslateExecuteUpdate(
+        ShapedQueryExpression source,
+        LambdaExpression setPropertyCalls)
+    {
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        var strategy = ClassifyBulkSource(mongoQueryExpression);
+
+        var parsed = new List<MongoNonQueryExpression.Setter>();
+        var body = setPropertyCalls.Body;
+        // The chain is built outer-to-inner: s.SetProperty(a).SetProperty(b) parses as
+        // (s.SetProperty(a)).SetProperty(b) — so walk Object inward, inserting at the front
+        // to preserve the user's authored order.
+        while (body is MethodCallExpression { Method.Name: "SetProperty" } call)
+        {
+            var selector = call.Arguments[0].UnwrapLambdaFromQuote();
+            // For the self-referencing SetProperty overload the value arg is a quoted Func<T,TProp>
+            // lambda; for the constant overload it is the value expression directly.
+            var value = call.Arguments[1];
+            parsed.Insert(0, BuildSetter(mongoQueryExpression, selector, value));
+            body = call.Object!;
+        }
+
+        // EF10 validates "at least one SetProperty" before reaching the provider, but EF9 hands the raw
+        // lambda straight through — so a setter lambda with no SetProperty call (e.g. an empty body or an
+        // unrelated invocation) must be rejected here rather than silently running a no-op updateMany.
+        if (parsed.Count == 0)
+        {
+            AddTranslationErrorDetails(
+                "An 'ExecuteUpdate' call must specify at least one 'SetProperty' invocation, "
+                + "to indicate the properties to be updated.");
+            throw new InvalidOperationException(
+                CoreStrings.NonQueryTranslationFailedWithDetails(
+                    mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails));
+        }
+
+        return new MongoNonQueryExpression(mongoQueryExpression, parsed, strategy);
+    }
+#endif
+
+    /// <summary>
+    /// Parses a single <c>SetProperty(selector, value)</c> into a <see cref="MongoNonQueryExpression.Setter"/>.
+    /// The selector must target a mapped root scalar property of the entity; the value is classified as
+    /// self-referencing (references the entity) or a constant. Unsupported targets (owned / navigation /
+    /// unmapped) produce EF's canonical non-query translation failure.
+    /// </summary>
+    private MongoNonQueryExpression.Setter BuildSetter(
+        MongoQueryExpression mongoQueryExpression,
+        LambdaExpression propertySelector,
+        Expression valueExpression)
+    {
+        var entityType = mongoQueryExpression.CollectionExpression.EntityType;
+
+        var selectorBody = propertySelector.Body;
+        while (selectorBody is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            selectorBody = convert.Operand;
+        }
+
+        IProperty? property = null;
+        if (selectorBody is MemberExpression { Expression: var memberSource } member
+            && memberSource != null
+            && propertySelector.Parameters.Count == 1
+            && IsParameterReference(memberSource, propertySelector.Parameters[0]))
+        {
+            property = entityType.FindProperty(member.Member.Name);
+        }
+        // Also accept an EF.Property<TProperty>(entity, "Name") selector, e.g.
+        // SetProperty(c => EF.Property<string>(c, "ContactName"), ...).
+        else if (selectorBody is MethodCallExpression efPropertyCall
+                 && efPropertyCall.Method.IsEFPropertyMethod()
+                 && propertySelector.Parameters.Count == 1
+                 && IsParameterReference(efPropertyCall.Arguments[0], propertySelector.Parameters[0])
+                 && efPropertyCall.Arguments[1] is ConstantExpression { Value: string efPropertyName })
+        {
+            property = entityType.FindProperty(efPropertyName);
+        }
+
+        if (property == null)
+        {
+            AddTranslationErrorDetails(
+                "Only mapped root scalar properties can be updated by a bulk update. The setter target "
+                + $"'{propertySelector.Body}' is not a mapped scalar property of '{entityType.DisplayName()}'.");
+            throw new InvalidOperationException(
+                CoreStrings.NonQueryTranslationFailedWithDetails(
+                    mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails));
+        }
+
+        // Classify and normalize the value expression.
+        // EF9 self-referencing: value is a quoted Func<T,TProp> lambda; unwrap and detect a reference to its parameter.
+        // EF10 (and EF9 constants): value is the raw value/aggregate expression; detect a reference to the
+        // setter's lambda parameter.
+        bool isSelfReferencing;
+        Expression value;
+        if (IsQuotedLambda(valueExpression))
+        {
+            var valueLambda = valueExpression.UnwrapLambdaFromQuote();
+            value = valueLambda.Body;
+            isSelfReferencing = ParameterFinder.ContainsAny(value, valueLambda.Parameters);
+        }
+        else
+        {
+            value = valueExpression;
+            isSelfReferencing = ParameterFinder.ContainsAny(value, propertySelector.Parameters);
+        }
+
+        if (isSelfReferencing && property.GetTypeMapping().Converter != null)
+        {
+            AddTranslationErrorDetails(
+                $"Self-referencing ExecuteUpdate on property '{property.Name}' is not supported because it uses a value converter.");
+            throw new InvalidOperationException(
+                CoreStrings.NonQueryTranslationFailedWithDetails(
+                    mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails));
+        }
+
+        return new MongoNonQueryExpression.Setter(property, value, isSelfReferencing);
+    }
+
+    private static bool IsQuotedLambda(Expression expression)
+        => expression is LambdaExpression
+           || expression is UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression };
+
+    private static bool IsParameterReference(Expression expression, ParameterExpression parameter)
+    {
+        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            expression = convert.Operand;
+        }
+
+        return expression == parameter;
+    }
+
+    /// <summary>
+    /// Scans an expression for a reference to any of the supplied <see cref="ParameterExpression"/>s,
+    /// used to classify a bulk-update setter value as self-referencing (depends on the entity being updated).
+    /// </summary>
+    private sealed class ParameterFinder : ExpressionVisitor
+    {
+        private readonly IReadOnlyCollection<ParameterExpression> _parameters;
+        private bool _found;
+
+        private ParameterFinder(IReadOnlyCollection<ParameterExpression> parameters)
+            => _parameters = parameters;
+
+        public static bool ContainsAny(Expression expression, IReadOnlyCollection<ParameterExpression> parameters)
+        {
+            var finder = new ParameterFinder(parameters);
+            finder.Visit(expression);
+            return finder._found;
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (_parameters.Contains(node))
+            {
+                _found = true;
+            }
+
+            return base.VisitParameter(node);
+        }
+    }
+
+    /// <summary>
+    /// Classifies the captured source chain of a bulk delete/update. A chain of only
+    /// <see cref="Queryable.Where{TSource}(IQueryable{TSource},Expression{Func{TSource,bool}})"/> is the
+    /// single-command atomic path. Adding <c>OrderBy</c>/<c>OrderByDescending</c>/<c>ThenBy</c>/
+    /// <c>ThenByDescending</c>/<c>Skip</c>/<c>Take</c>/<c>Distinct</c> requires the two-phase
+    /// (query target <c>_id</c>s, then act by <c>$in</c>) path. Any other operator is not expressible as
+    /// a server-side bulk scope and produces EF's canonical non-query translation failure. A TPH
+    /// discriminator filter rides along as a Where.
+    /// </summary>
+    private MongoNonQueryExpression.BulkStrategy ClassifyBulkSource(MongoQueryExpression mongoQueryExpression)
+    {
+        var expression = MongoNonQueryExpression.UnwrapBulkOperator(mongoQueryExpression.CapturedExpression);
+        var strategy = MongoNonQueryExpression.BulkStrategy.SingleCommand;
+
+        while (expression is MethodCallExpression methodCallExpression)
+        {
+            if (methodCallExpression.Method.DeclaringType != typeof(Queryable))
+            {
+                ThrowBulkSourceNotSupported(mongoQueryExpression, methodCallExpression.Method.Name);
+            }
+
+            switch (methodCallExpression.Method.Name)
+            {
+                case nameof(Queryable.Where):
+                    break;
+
+                case nameof(Queryable.OrderBy):
+                case nameof(Queryable.OrderByDescending):
+                case nameof(Queryable.ThenBy):
+                case nameof(Queryable.ThenByDescending):
+                case nameof(Queryable.Skip):
+                case nameof(Queryable.Take):
+                case nameof(Queryable.Distinct):
+                    strategy = MongoNonQueryExpression.BulkStrategy.TwoPhase;
+                    break;
+
+                default:
+                    ThrowBulkSourceNotSupported(mongoQueryExpression, methodCallExpression.Method.Name);
+                    break;
+            }
+
+            expression = methodCallExpression.Arguments[0];
+        }
+
+        return strategy;
+    }
+
+    [DoesNotReturn]
+    private void ThrowBulkSourceNotSupported(MongoQueryExpression mongoQueryExpression, string operatorName)
+    {
+        AddTranslationErrorDetails(
+            $"The '{operatorName}' operator is not supported in a bulk delete or update. Only 'Where' predicates "
+            + "and the 'OrderBy', 'OrderByDescending', 'ThenBy', 'ThenByDescending', 'Skip', 'Take', and 'Distinct' "
+            + "operators can scope a bulk operation.");
+        throw new InvalidOperationException(
+            CoreStrings.NonQueryTranslationFailedWithDetails(
+                mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails));
+    }
+#endif
 
     private static ResultCardinality GetResultCardinality(MethodInfo method)
     {

@@ -115,11 +115,21 @@ public class MongoComplianceTest : ComplianceTestBase
         typeof(AdHocMiscellaneousQueryTestBase),
         typeof(AdHocNavigationsQueryTestBase),
         typeof(AdHocQueryFiltersQueryTestBase),
+        // Bulk ExecuteUpdate/ExecuteDelete ARE supported (EF9+), but only for single-collection,
+        // Where-scoped queries with scalar setters. These EF conformance suites target owned-collection,
+        // table-sharing, cross-collection/navigation, and join scenarios outside that supported subset,
+        // so they remain ignored here; behavioral coverage lives in
+        // FunctionalTests/Query/ExecuteDeleteTests.cs and ExecuteUpdateTests.cs.
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.BulkUpdatesTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.FiltersInheritanceBulkUpdatesTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.InheritanceBulkUpdatesTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.NonSharedModelBulkUpdatesTestBase),
-        typeof(Microsoft.EntityFrameworkCore.BulkUpdates.NorthwindBulkUpdatesTestBase<>),
+        // NorthwindBulkUpdatesTestBase is now implemented by NorthwindBulkUpdatesMongoTest: the supported
+        // single-collection Where-scoped scalar cases, as well as OrderBy/Skip/Take/Distinct-scoped cases
+        // (executed via the two-phase _id-projection path), call base and pass; everything outside that
+        // subset (joins, set ops, GroupBy, SelectMany, navigations, non-entity projections,
+        // multiple-collection updates) is not skipped there — each runs and asserts its actual failure
+        // mode (translation failure or cross-DbSet rejection), tagged with a // Fails: <reason> comment.
         typeof(JsonQueryTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.ModelBuilding.ModelBuilderTest.ComplexTypeTestBase),
         typeof(Microsoft.EntityFrameworkCore.ModelBuilding.ModelBuilderTest.InheritanceTestBase),
@@ -136,6 +146,10 @@ public class MongoComplianceTest : ComplianceTestBase
 
 #if EF9
         // Test bases that existed only in EF9.
+        // Bulk ExecuteUpdate/ExecuteDelete ARE supported (EF9+), but only for single-collection,
+        // Where-scoped queries with scalar setters. This complex-type conformance suite targets
+        // scenarios outside that supported subset, so it remains ignored here; behavioral coverage
+        // lives in FunctionalTests/Query/ExecuteDeleteTests.cs and ExecuteUpdateTests.cs.
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.ComplexTypeBulkUpdatesTestBase<>),
 #endif
 
