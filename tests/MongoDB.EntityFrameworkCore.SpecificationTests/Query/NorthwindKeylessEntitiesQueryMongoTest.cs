@@ -54,10 +54,12 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task Entity_mapped_to_view_on_right_side_of_join(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Entity_mapped_to_view_on_right_side_of_join(async));
+        await base.Entity_mapped_to_view_on_right_side_of_join(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Products", "localField" : "_outer.CustomerID", "foreignField" : "CategoryName", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+""");
     }
 
     public override async Task KeylessEntity_with_nav_defining_query(bool async)
@@ -107,10 +109,12 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_select_where_navigation(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.KeylessEntity_select_where_navigation(async));
+        await base.KeylessEntity_select_where_navigation(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner.City" : "Seattle" } }
+""");
     }
 
     public override async Task KeylessEntity_select_where_navigation_multi_level(bool async)

@@ -146,9 +146,24 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                             throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
                     }
 
-                    var bsonArray = _projectionBindings[objectArrayProjection];
-                    var jObjectParameter = Expression.Parameter(typeof(BsonDocument), bsonArray.Name + "Object");
-                    var ordinalParameter = Expression.Parameter(typeof(int), bsonArray.Name + "Ordinal");
+                    Expression bsonArrayExpression;
+                    string arrayName;
+                    if (ProjectionBindings.TryGetValue(objectArrayProjection, out var bsonArrayVar))
+                    {
+                        bsonArrayExpression = bsonArrayVar;
+                        arrayName = bsonArrayVar.Name!;
+                    }
+                    else
+                    {
+                        // Nested collection inside a parent collection item (ThenInclude on
+                        // collection-then-collection). Read the BsonArray from the parent document.
+                        var parentAccess = objectArrayProjection.AccessExpression;
+                        var parentDoc = ProjectionBindings[parentAccess];
+                        bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, objectArrayProjection.Name);
+                        arrayName = objectArrayProjection.Name;
+                    }
+                    var jObjectParameter = Expression.Parameter(typeof(BsonDocument), arrayName + "Object");
+                    var ordinalParameter = Expression.Parameter(typeof(int), arrayName + "Ordinal");
 
                     var accessExpression = objectArrayProjection.InnerProjection.ParentAccessExpression;
                     _projectionBindings[accessExpression] = jObjectParameter;
@@ -163,7 +178,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         EnumerableMethods.SelectWithOrdinal.MakeGenericMethod(typeof(BsonDocument), innerShaper.Type),
                         Expression.Call(
                             EnumerableMethods.Cast.MakeGenericMethod(typeof(BsonDocument)),
-                            bsonArray),
+                            bsonArrayExpression),
                         Expression.Lambda(innerShaper, jObjectParameter, ordinalParameter));
 
                     var navigation = collectionShaperExpression.Navigation!;
@@ -175,13 +190,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
             case IncludeExpression includeExpression:
                 {
-                    if (!(includeExpression.Navigation is INavigation navigation)
-                        || navigation.IsOnDependent
-                        || navigation.ForeignKey.DeclaringEntityType.IsDocumentRoot())
+                    if (includeExpression.Navigation is not INavigation navigation)
                     {
                         throw new InvalidOperationException(
-                            $"Including navigation '{includeExpression.Navigation
-                            }' is not supported as the navigation is not embedded in same resource.");
+                            $"Including navigation '{includeExpression.Navigation}' is not supported.");
                     }
 
                     var isFirstInclude = _pendingIncludes.Count == 0;
@@ -194,18 +206,29 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         return bsonDocBlock;
                     }
 
-                    var bsonDocCondition = (ConditionalExpression)bsonDocBlock.Expressions[^1];
+                    // For collection item shapers (inside CollectionShaperExpression), the block
+                    // may not have a ConditionalExpression — it just ends with the entity variable.
+                    if (bsonDocBlock.Expressions[^1] is ConditionalExpression bsonDocCondition)
+                    {
+                        var shaperBlock = (BlockExpression)bsonDocCondition.IfFalse;
+                        shaperBlock = AddIncludes(shaperBlock);
 
-                    var shaperBlock = (BlockExpression)bsonDocCondition.IfFalse;
-                    shaperBlock = AddIncludes(shaperBlock);
+                        List<Expression> jObjectExpressions = [..bsonDocBlock.Expressions];
+                        jObjectExpressions.RemoveAt(jObjectExpressions.Count - 1);
 
-                    List<Expression> jObjectExpressions = [..bsonDocBlock.Expressions];
-                    jObjectExpressions.RemoveAt(jObjectExpressions.Count - 1);
+                        jObjectExpressions.Add(
+                            bsonDocCondition.Update(bsonDocCondition.Test, bsonDocCondition.IfTrue, shaperBlock));
 
-                    jObjectExpressions.Add(
-                        bsonDocCondition.Update(bsonDocCondition.Test, bsonDocCondition.IfTrue, shaperBlock));
-
-                    return bsonDocBlock.Update(bsonDocBlock.Variables, jObjectExpressions);
+                        return bsonDocBlock.Update(bsonDocBlock.Variables, jObjectExpressions);
+                    }
+                    else
+                    {
+                        // No conditional — entity is always present (e.g., collection item shaper).
+                        // Append includes directly to the block.
+                        var shaperBlock = bsonDocBlock;
+                        shaperBlock = AddIncludes(shaperBlock);
+                        return shaperBlock;
+                    }
                 }
         }
 
@@ -258,10 +281,26 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                         switch (accessExpression)
                         {
+                            case ObjectAccessExpression { Name: "_inner" } when _queryExpression.UsesDriverJoinFields:
+                                // For Include joins, _inner is at root level in the BsonDocument.
+                                innerAccessExpression = DocParameter;
+                                fieldRequired = false;
+                                break;
+                            case ObjectAccessExpression { Name: var name } when _queryExpression.UsesDriverJoinFields
+                                && name.StartsWith("_lookup_"):
+                                // Additional reference Includes via $lookup + $unwind are at root level.
+                                innerAccessExpression = DocParameter;
+                                fieldRequired = false;
+                                break;
                             case ObjectAccessExpression innerObjectAccessExpression:
                                 innerAccessExpression = innerObjectAccessExpression.AccessExpression;
                                 _ownerMappings[accessExpression] = (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
                                 fieldRequired = innerObjectAccessExpression.Required;
+                                break;
+                            case RootReferenceExpression when _queryExpression.UsesDriverJoinFields:
+                                // For Include joins, the outer entity is under "_outer".
+                                innerAccessExpression = DocParameter;
+                                fieldName = "_outer";
                                 break;
                             case RootReferenceExpression:
                                 innerAccessExpression = DocParameter;
@@ -362,12 +401,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             var lambda = (LambdaExpression)methodCallExpression.Arguments[1];
             if (lambda.Body is IncludeExpression includeExpression)
             {
-                if (!(includeExpression.Navigation is INavigation navigation)
-                    || navigation.IsOnDependent
-                    || navigation.ForeignKey.DeclaringEntityType.IsDocumentRoot())
+                if (includeExpression.Navigation is not INavigation navigation)
                 {
-                    throw new InvalidOperationException($"Including navigation '{nameof(navigation)
-                    }' is not supported as the navigation is not embedded in same resource.");
+                    throw new InvalidOperationException(
+                        $"Including navigation '{includeExpression.Navigation}' is not supported.");
                 }
 
                 _pendingIncludes.Add(includeExpression);
@@ -466,7 +503,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         var entityType = declaredType ?? docExpression switch
         {
             RootReferenceExpression rootReferenceExpression => rootReferenceExpression.EntityType,
-            ObjectAccessExpression docAccessExpression => docAccessExpression.Navigation.TargetEntityType,
+            ObjectAccessExpression docAccessExpression => docAccessExpression.Navigation?.TargetEntityType ?? docAccessExpression.EntityType,
             _ => _rootEntityType
         };
 
@@ -479,7 +516,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         {
             innerExpression = docExpression switch
             {
+                // For Include joins, the outer entity is under "_outer" in the BsonDocument.
+                RootReferenceExpression when _queryExpression.UsesDriverJoinFields
+                    => CreateGetValueExpression(DocParameter, "_outer", required, typeof(BsonDocument)),
                 RootReferenceExpression => CreateGetValueExpression(DocParameter, null, required, typeof(BsonDocument)),
+                // For Include joins, _inner and _lookup_* are at the root of the BsonDocument.
+                ObjectAccessExpression { Name: "_inner" } when _queryExpression.UsesDriverJoinFields
+                    => CreateGetValueExpression(DocParameter, "_inner", required, typeof(BsonDocument)),
+                ObjectAccessExpression { Name: var name } when _queryExpression.UsesDriverJoinFields && name.StartsWith("_lookup_")
+                    => CreateGetValueExpression(DocParameter, name, false, typeof(BsonDocument)),
                 ObjectAccessExpression docAccessExpression => CreateGetValueExpression(docAccessExpression.AccessExpression,
                     docAccessExpression.Name, required, typeof(BsonDocument)),
                 _ => innerExpression

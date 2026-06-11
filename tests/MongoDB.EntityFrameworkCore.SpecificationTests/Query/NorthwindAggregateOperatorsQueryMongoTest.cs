@@ -1657,20 +1657,20 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task OfType_Select(bool async)
     {
-        // Fails: OfType translation EF-X012
-        await AssertTranslationFailed(() => base.OfType_Select(async));
-
+        await base.OfType_Select(async);
         AssertMql(
-        );
+            """
+Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "Outer" : "$_outer", "Group" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$Group" }, 0] }, "then" : [null], "else" : "$Group" } }, "as" : "i", "in" : { "Outer" : "$Outer", "Inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v.Inner.City", "_id" : 0 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task OfType_Select_OfType_Select(bool async)
     {
-        // Fails: OfType translation EF-X012
-        await AssertTranslationFailed(() => base.OfType_Select_OfType_Select(async));
-
+        await base.OfType_Select_OfType_Select(async);
         AssertMql(
-        );
+            """
+Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "Outer" : "$_outer", "Group" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$Group" }, 0] }, "then" : [null], "else" : "$Group" } }, "as" : "i", "in" : { "Outer" : "$Outer", "Inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v.Inner.City", "_id" : 0 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Average_with_non_matching_types_in_projection_doesnt_produce_second_explicit_cast(bool async)

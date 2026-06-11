@@ -237,7 +237,7 @@ Books.{ "$vectorSearch" : { "path" : "Doubles", "limit" : 4, "numCandidates" : 4
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex", "filter" : { "Preface.Published" : true }, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
+Books.{ "$vectorSearch" : { "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex", "parentFilter" : { "Preface.Published" : true }, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -247,7 +247,7 @@ Books.{ "$vectorSearch" : { "path" : "Preface.Floats", "limit" : 4, "numCandidat
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex", "filter" : { "$and" : [{ "Preface.PrefaceComments" : "Froody" }, { "$or" : [{ "Preface.Pages" : { "$gt" : 500 } }, { "Preface.Published" : true }] }] }, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
+Books.{ "$vectorSearch" : { "path" : "Preface.Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsVectorIndex", "parentFilter" : { "$and" : [{ "Preface.PrefaceComments" : "Froody" }, { "$or" : [{ "Preface.Pages" : { "$gt" : 500 } }, { "Preface.Published" : true }] }] }, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 

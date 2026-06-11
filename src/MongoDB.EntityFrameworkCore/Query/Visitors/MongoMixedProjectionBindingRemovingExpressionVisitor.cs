@@ -70,8 +70,12 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 }
                 else
                 {
-                    alias = projectionBindingExpression.ProjectionMember.Last?.Name;
-                    sourceExpression = mappedExpression;
+                    // When using the driver's native Join, scalar properties from the outer entity
+                    // are in the "_outer" sub-document, not at the root level.
+                    Expression docExpr = _queryExpression.UsesDriverJoinFields
+                        ? CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument))
+                        : _docParameter;
+                    return CreateGetValueExpression(docExpr, property, projectionBindingExpression.Type);
                 }
 
                 var fieldAccess = TryResolveFieldAccess(sourceExpression);

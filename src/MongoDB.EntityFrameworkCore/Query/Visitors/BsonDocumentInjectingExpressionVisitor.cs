@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,13 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
 {
     private int _currentEntityIndex;
 
+    /// <summary>
+    /// All BsonDocument/BsonArray variables created during injection.
+    /// These are collected so they can also be declared at the lambda level,
+    /// making them accessible across entity boundaries in join projections.
+    /// </summary>
+    public List<ParameterExpression> AllVariables { get; } = [];
+
     protected override Expression VisitExtension(Expression extensionExpression)
     {
         switch (extensionExpression)
@@ -39,6 +46,8 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
                         typeof(BsonDocument),
                         "bsonDoc" + _currentEntityIndex);
                     var variables = new List<ParameterExpression> {bsonDocAccess};
+
+                    AllVariables.Add(bsonDocAccess);
 
                     var expressions = new List<Expression>
                     {
@@ -65,6 +74,8 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
 
                     var arrayVariable = Expression.Variable(typeof(BsonArray), "bsonArray" + _currentEntityIndex);
                     var variables = new List<ParameterExpression> {arrayVariable};
+
+                    AllVariables.Add(arrayVariable);
 
                     var expressions = new List<Expression>
                     {

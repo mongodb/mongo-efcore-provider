@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -125,13 +126,24 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
 
         var shaperBody = shapedQueryExpression.ShaperExpression;
-        shaperBody = new BsonDocumentInjectingExpressionVisitor().Visit(shaperBody);
+        var bsonInjector = new BsonDocumentInjectingExpressionVisitor();
+        shaperBody = bsonInjector.Visit(shaperBody);
 #if EF8 || EF9
         shaperBody = InjectEntityMaterializers(shaperBody);
 #else
         shaperBody = InjectStructuralTypeMaterializers(shaperBody);
 #endif
         shaperBody = createBindingRemover(bsonDocParameter, trackingBehavior).Visit(shaperBody);
+
+        // Lift all BsonDocument/BsonArray variables to the lambda level so they are
+        // accessible across entity boundaries in join projections.
+        if (bsonInjector.AllVariables.Count > 0)
+        {
+            shaperBody = Expression.Block(
+                shaperBody.Type,
+                bsonInjector.AllVariables,
+                shaperBody);
+        }
 
         var shaperLambda = Expression.Lambda(
             shaperBody,
@@ -200,7 +212,18 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var queryable = transaction == null ? collection.AsQueryable() : collection.AsQueryable(transaction.Session);
         var source = queryable.As((IBsonSerializer<TSource>)bsonSerializerFactory.GetEntitySerializer(entityType));
 
-        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(queryContext, source.Expression, bsonSerializerFactory);
+        var innerSources = new Dictionary<IEntityType, Expression>();
+        if (queryExpression.IsJoinQuery)
+        {
+            foreach (var (innerEntityType, innerCollectionExpression) in queryExpression.InnerCollections)
+            {
+                innerSources[innerEntityType] = CreateInnerSource(
+                    mongoQueryContext, bsonSerializerFactory, innerEntityType, innerCollectionExpression.CollectionName, transaction);
+            }
+        }
+
+        var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(
+            queryContext, source.Expression, bsonSerializerFactory, queryExpression.PendingLookups, innerSources);
         var translatedQuery = translate(queryTranslator, queryExpression.CapturedExpression);
 
         var executableQuery = new MongoExecutableQuery(
@@ -244,7 +267,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         var (mongoQueryContext, executableQuery) = TranslateQuery<TSource>(
             queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
-            (translator, expression) => translator.Visit(expression)!);
+            (translator, expression) => translator.TranslateProjected(expression));
 
         return new QueryingEnumerable<TResult, TResult>(
             mongoQueryContext,
@@ -292,4 +315,37 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             .GetTypeInfo()
             .DeclaredMethods
             .Single(m => m.Name == nameof(ExecuteProjectedQuery));
+
+    private static readonly MethodInfo CreateInnerSourceMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .GetDeclaredMethod(nameof(CreateInnerSourceTyped))!;
+
+    private static Expression CreateInnerSource(
+        MongoQueryContext mongoQueryContext,
+        BsonSerializerFactory bsonSerializerFactory,
+        IReadOnlyEntityType innerEntityType,
+        string collectionName,
+        MongoTransaction? transaction)
+    {
+        return (Expression)CreateInnerSourceMethodInfo
+            .MakeGenericMethod(innerEntityType.ClrType)
+            .Invoke(null, [mongoQueryContext, bsonSerializerFactory, innerEntityType, collectionName, transaction])!;
+    }
+
+    private static Expression CreateInnerSourceTyped<TInner>(
+        MongoQueryContext mongoQueryContext,
+        BsonSerializerFactory bsonSerializerFactory,
+        IReadOnlyEntityType innerEntityType,
+        string collectionName,
+        MongoTransaction? transaction)
+    {
+        var innerCollection = mongoQueryContext.MongoClient.GetCollection<TInner>(collectionName);
+        var innerQueryable = transaction == null
+            ? innerCollection.AsQueryable()
+            : innerCollection.AsQueryable(transaction.Session);
+        var innerSource = innerQueryable.As(
+            (IBsonSerializer<TInner>)bsonSerializerFactory.GetEntitySerializer(innerEntityType));
+        return innerSource.Expression;
+    }
 }

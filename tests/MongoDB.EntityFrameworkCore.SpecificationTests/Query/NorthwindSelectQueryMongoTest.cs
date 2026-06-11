@@ -209,9 +209,11 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Projection_of_multiple_entity_types_into_object_array(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(
-            () => base.Projection_of_multiple_entity_types_into_object_array(async));
+        await base.Projection_of_multiple_entity_types_into_object_array(async);
+        AssertMql(
+            """
+Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+""");
     }
 
     public override async Task Projection_of_entity_type_into_object_list(bool async)
@@ -903,10 +905,11 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Anonymous_projection_with_repeated_property_being_ordered_2(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Anonymous_projection_with_repeated_property_being_ordered_2(async));
-
-        AssertMql();
+        await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
+        AssertMql(
+            """
+Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "Outer" : "$_outer", "Group" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$Group" }, 0] }, "then" : [null], "else" : "$Group" } }, "as" : "i", "in" : { "Outer" : "$Outer", "Inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "A" : "$_v.Inner._id", "B" : "$_v.Outer.CustomerID", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_GetValueOrDefault_on_DateTime(bool async)
@@ -1128,10 +1131,11 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Select_entity_compared_to_null(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Select_entity_compared_to_null(async));
-
-        AssertMql();
+        await base.Select_entity_compared_to_null(async);
+        AssertMql(
+            """
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+""");
     }
 
     public override async Task Explicit_cast_in_arithmetic_operation_is_preserved(bool async)

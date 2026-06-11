@@ -31,11 +31,12 @@ public class NorthwindAsTrackingQueryMongoTest : NorthwindAsTrackingQueryTestBas
 
     public override void Applied_to_body_clause()
     {
-        // Fails: Cross-document navigation access issue EF-216
-        AssertTranslationFailed(() => base.Applied_to_body_clause());
+        base.Applied_to_body_clause();
 
         AssertMql(
-);
+"""
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_outer._id" : "ALFKI" } }
+""");
     }
 
     public override void Entity_added_to_state_manager(bool useParam)
@@ -50,11 +51,12 @@ Customers.
 
     public override void Applied_to_projection()
     {
-        // Fails: Cross-document navigation access issue EF-216
-        AssertTranslationFailed(() => base.Applied_to_projection());
+        base.Applied_to_projection();
 
         AssertMql(
-);
+"""
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_outer._id" : "ALFKI" } }
+""");
     }
 
     public override void Applied_to_multiple_body_clauses()
@@ -68,11 +70,12 @@ Customers.
 
     public override void Applied_to_body_clause_with_projection()
     {
-        // Fails: Cross-document navigation access issue EF-216
-        AssertTranslationFailed(() => base.Applied_to_body_clause_with_projection());
+        base.Applied_to_body_clause_with_projection();
 
         AssertMql(
-);
+"""
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_outer._id" : "ALFKI" } }
+""");
     }
 
     private static void AssertTranslationFailed(Action query)

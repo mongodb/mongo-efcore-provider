@@ -29,6 +29,8 @@ internal sealed class MongoQueryExpression : Expression
 {
     private Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly List<ProjectionExpression> _projection = [];
+    private readonly List<LookupExpression> _pendingLookups = [];
+    private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
 
     /// <summary>
     /// Create a <see cref="MongoQueryExpression"/> for the given entity type.
@@ -86,6 +88,67 @@ internal sealed class MongoQueryExpression : Expression
 
     public IReadOnlyList<ProjectionExpression> Projection
         => _projection;
+
+    /// <summary>
+    /// Pending $lookup stages for cross-collection collection Include operations.
+    /// </summary>
+    public IReadOnlyList<LookupExpression> PendingLookups
+        => _pendingLookups;
+
+    /// <summary>
+    /// Register a $lookup stage for a cross-collection collection Include.
+    /// </summary>
+    public void AddLookup(LookupExpression lookup)
+    {
+        if (!_pendingLookups.Any(l => l.As == lookup.As))
+        {
+            _pendingLookups.Add(lookup);
+        }
+    }
+
+    /// <summary>
+    /// Inner collections involved in join operations.
+    /// </summary>
+    public IReadOnlyDictionary<IEntityType, MongoCollectionExpression> InnerCollections
+        => _innerCollections;
+
+    /// <summary>
+    /// Whether this query involves join operations across multiple collections.
+    /// </summary>
+    public bool IsJoinQuery => _innerCollections.Count > 0;
+
+    /// <summary>
+    /// Whether this join query uses the driver's _outer/_inner field naming convention.
+    /// True for Include-generated LeftJoins (LeftJoinResult), false for explicit user Joins.
+    /// </summary>
+    public bool UsesDriverJoinFields { get; set; }
+
+
+    /// <summary>
+    /// Register an inner collection for a join operation.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IEntityType"/> of the inner collection.</param>
+    /// <returns>The <see cref="MongoCollectionExpression"/> for the inner collection.</returns>
+    public MongoCollectionExpression AddInnerCollection(IEntityType entityType)
+    {
+        if (!_innerCollections.TryGetValue(entityType, out var collection))
+        {
+            collection = new MongoCollectionExpression(entityType);
+            _innerCollections[entityType] = collection;
+        }
+
+        return collection;
+    }
+
+    /// <summary>
+    /// Replace a projection expression at the given index.
+    /// Used to rebind entity projections for cross-collection $lookup results.
+    /// </summary>
+    public void ReplaceProjectionAt(int index, Expression newExpression)
+    {
+        var existing = _projection[index];
+        _projection[index] = new ProjectionExpression(newExpression, existing.Alias, existing.Required);
+    }
 
     public void ApplyProjection()
     {

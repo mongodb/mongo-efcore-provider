@@ -1031,10 +1031,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_expression_invoke_2(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_expression_invoke_2(async));
-
-        AssertMql();
+        await base.Where_expression_invoke_2(async);
+        AssertMql(
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner._id" : "ALFKI" } }
+""");
     }
 
     public override async Task Where_expression_invoke_3(bool async)
@@ -1234,11 +1235,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_navigation_contains(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_navigation_contains(async))).Message);
-
+        await base.Where_navigation_contains(async);
         AssertMql();
     }
 

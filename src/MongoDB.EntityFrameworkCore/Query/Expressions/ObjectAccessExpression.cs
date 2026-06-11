@@ -17,7 +17,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 internal sealed class ObjectAccessExpression : Expression, IPrintableExpression, IAccessExpression
 {
     /// <summary>
-    /// Create a <see cref="ObjectAccessExpression"/>.
+    /// Create a <see cref="ObjectAccessExpression"/> for an embedded entity navigation.
     /// </summary>
     /// <param name="navigation">The <see cref="INavigation"/> this object access relates to.</param>
     /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
@@ -30,15 +30,50 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
         INavigation navigation,
         Expression accessExpression,
         bool required)
+        : this(navigation, accessExpression, required,
+            navigation.TargetEntityType.GetContainingElementName() ??
+            throw new InvalidOperationException(
+                $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity."))
     {
-        Name = navigation.TargetEntityType.GetContainingElementName() ??
-               throw new InvalidOperationException(
-                   $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
+    }
 
+    /// <summary>
+    /// Create a <see cref="ObjectAccessExpression"/> with an explicit field name.
+    /// Used for cross-collection $lookup results.
+    /// </summary>
+    /// <param name="navigation">The <see cref="INavigation"/> this object access relates to.</param>
+    /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
+    /// <param name="required">Whether this object is required.</param>
+    /// <param name="name">The explicit field name to access in the document.</param>
+    public ObjectAccessExpression(
+        INavigation navigation,
+        Expression accessExpression,
+        bool required,
+        string name)
+    {
+        Name = name;
         Navigation = navigation;
         AccessExpression = accessExpression;
         Required = required;
     }
+
+    /// <summary>
+    /// Create a <see cref="ObjectAccessExpression"/> for a cross-collection join result
+    /// where no navigation is defined (explicit Join).
+    /// </summary>
+    public ObjectAccessExpression(
+        IEntityType entityType,
+        Expression accessExpression,
+        bool required,
+        string name)
+    {
+        Name = name;
+        EntityType = entityType;
+        AccessExpression = accessExpression;
+        Required = required;
+    }
+
+    internal IEntityType? EntityType { get; }
 
     /// <inheritdoc />
     public override ExpressionType NodeType
@@ -46,11 +81,11 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
 
     /// <inheritdoc />
     public override Type Type
-        => Navigation.ClrType;
+        => Navigation?.ClrType ?? EntityType!.ClrType;
 
     public string Name { get; }
 
-    public INavigation Navigation { get; }
+    public INavigation? Navigation { get; }
 
     public Expression AccessExpression { get; }
 
@@ -62,7 +97,9 @@ internal sealed class ObjectAccessExpression : Expression, IPrintableExpression,
 
     public ObjectAccessExpression Update(Expression outerExpression)
         => outerExpression != AccessExpression
-            ? new ObjectAccessExpression(Navigation, outerExpression, Required)
+            ? (Navigation != null
+                ? new ObjectAccessExpression(Navigation, outerExpression, Required)
+                : new ObjectAccessExpression(EntityType!, outerExpression, Required, Name))
             : this;
 
     void IPrintableExpression.Print(ExpressionPrinter expressionPrinter)

@@ -112,33 +112,26 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
     public override async Task Include_query(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_query(async))).Message);
-
+        await base.Include_query(async);
         AssertMql(
-);
+            """
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Include_query_opt_out(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_query_opt_out(async))).Message);
-
+        await base.Include_query_opt_out(async);
         AssertMql(
-);
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Included_many_to_one_query(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Included_many_to_one_query(async));
-
-        AssertMql(
-);
+        await base.Included_many_to_one_query(async);
+        AssertMql();
     }
 
     public override async Task Project_reference_that_itself_has_query_filter_with_another_reference(bool async)
@@ -197,11 +190,8 @@ Products.
 
     public override async Task Included_many_to_one_query2(bool async)
     {
-        // Fails: Include issue EF-117
-        await AssertTranslationFailed(() => base.Included_many_to_one_query2(async));
-
-        AssertMql(
-);
+        await base.Included_many_to_one_query2(async);
+        AssertMql();
     }
 
     public override async Task Included_one_to_many_query_with_client_eval(bool async)

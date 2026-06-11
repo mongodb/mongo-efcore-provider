@@ -30,24 +30,19 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     private readonly GuidesDbContext _db = GuidesDbContext.Create(database.MongoDatabase);
 
     [Fact]
-    public void Join_cannot_be_translated()
+    public void Join_can_be_translated()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-            _db.Planets.Join(_db.Moons, p => p._id, m => m.planetId, (p, m) => new { p, m }).ToList());
-        Assert.Contains(".Join(", ex.Message);
-        Assert.Contains(" could not be translated", ex.Message);
+        var result = _db.Planets.Join(_db.Moons, p => p._id, m => m.planetId, (p, m) => new { p, m }).ToList();
+        Assert.NotNull(result);
     }
 
 #if !EF8 && !EF9
 
     [Fact]
-    public void LeftJoin_throws_not_supported_exception()
+    public void LeftJoin_can_be_translated()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => _db.Planets.LeftJoin(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList());
-
-        Assert.Contains(".LeftJoin(", ex.Message);
-        Assert.Contains(" could not be translated", ex.Message);
+        var result = _db.Planets.LeftJoin(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList();
+        Assert.NotNull(result);
     }
 
 #endif
@@ -84,15 +79,12 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     }
 
     [Fact]
-    public void Select_cannot_select_foreign_navigation()
+    public void Select_can_select_foreign_navigation()
     {
         using var db = new ClientContext(database.MongoDatabase);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.Clients.Select(p => p.Company).ToList());
-
-        Assert.Contains(".Select(", ex.Message);
-        Assert.Contains(" could not be translated", ex.Message);
-        Assert.Contains("p.Company", ex.Message);
+        var result = db.Clients.Select(p => p.Company).ToList();
+        Assert.NotNull(result);
     }
 
     [Fact]

@@ -86,50 +86,7 @@ internal static class BsonBinding
         throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, declaredType.DisplayName()));
     }
 
-    /// <summary>
-    /// Create the expression which will obtain a projected element using the serializer metadata
-    /// from the source property rather than resolving metadata from the projected alias.
-    /// </summary>
-    /// <param name="bsonDocExpression">The expression to obtain the current <see cref="BsonDocument"/>.</param>
-    /// <param name="name">The projected element name in the current document.</param>
-    /// <param name="property">The source model property that defines serializer/nullability metadata.</param>
-    /// <param name="mappedType">What <see cref="Type"/> the value is to be treated as.</param>
-    /// <remarks>
-    /// Callers must ensure <paramref name="mappedType"/> matches <paramref name="property"/>'s CLR
-    /// type (modulo nullability). The generated call casts the deserialized value to
-    /// <paramref name="mappedType"/>; if it differs from the property's CLR type the cast can
-    /// throw because the property's serializer produces values of its own type.
-    /// </remarks>
-    /// <returns>A compilable expression the shaper can use to obtain this value.</returns>
-    public static Expression CreateGetValueExpression(
-        Expression bsonDocExpression,
-        string? name,
-        IProperty property,
-        Type mappedType)
-    {
-        if (name is null)
-        {
-            return bsonDocExpression;
-        }
-
-        if (mappedType == typeof(BsonArray))
-        {
-            return CreateGetBsonArray(bsonDocExpression, name);
-        }
-
-        if (mappedType == typeof(BsonDocument))
-        {
-            return CreateGetBsonDocument(bsonDocExpression, name, !property.IsNullable, property.DeclaringType);
-        }
-
-        return CreateGetPropertyValueAtElement(
-            bsonDocExpression,
-            Expression.Constant(name),
-            Expression.Constant(property),
-            property.IsNullable ? mappedType.MakeNullable() : mappedType);
-    }
-
-    private static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
+    internal static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
     private static readonly MethodInfo GetBsonArrayMethodInfo

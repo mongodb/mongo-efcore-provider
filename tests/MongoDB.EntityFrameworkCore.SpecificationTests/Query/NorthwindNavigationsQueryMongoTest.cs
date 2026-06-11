@@ -156,11 +156,11 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Select_Navigations(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Select_Navigations(async));
-
+        await base.Select_Navigations(async);
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_Where_Navigation_Multiple_Access(bool async)
@@ -201,11 +201,11 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Singleton_Navigation_With_Member_Access(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Singleton_Navigation_With_Member_Access(async));
-
+        await base.Singleton_Navigation_With_Member_Access(async);
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "Outer" : "$_outer", "Group" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$Group" }, 0] }, "then" : [null], "else" : "$Group" } }, "as" : "i", "in" : { "Outer" : "$Outer", "Inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$match" : { "_v.Inner.City" : "Seattle" } }, { "$match" : { "_v.Inner.Phone" : { "$ne" : "555 555 5555" } } }, { "$project" : { "B" : "$_v.Inner.City", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_Where_Navigation_Scalar_Equals_Navigation_Scalar_Projected(bool async)
@@ -457,11 +457,12 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
 
     public override async Task Navigation_fk_based_inside_contains(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Navigation_fk_based_inside_contains(async));
+        await base.Navigation_fk_based_inside_contains(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner._id" : { "$in" : ["ALFKI"] } } }
+""");
     }
 
     public override async Task Navigation_inside_contains(bool async)
