@@ -405,7 +405,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // This correctly handles self-joins where multiple navigations target the same entity type.
         var innerEntityType = innerEntityProjection.EntityType;
         var outerEntityType = outerQueryExpression.CollectionExpression.EntityType;
-        var fkPropertyName = ExtractPropertyName(outerKeySelector);
+        var fkPropertyName = outerKeySelector.Body.TryGetSimplePropertyName();
         INavigation? navigation = null;
 
         if (fkPropertyName != null)
@@ -418,57 +418,89 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         navigation ??= outerEntityType.GetNavigations()
             .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
 
-        // Use "_inner" for the first LeftJoin to match the driver's Join pipeline.
-        // For subsequent LeftJoins, register ALL as $lookup + $unwind to keep the
-        // document flat (avoid nested _outer._outer depths).
-        string lookupAlias;
-        if (!outerQueryExpression.UsesDriverJoinFields)
+        // Transitive join: the inner entity is reached not directly from the root but THROUGH a
+        // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
+        // selector is "o.Inner.CustomerID"). When no direct navigation exists, resolve the navigation
+        // on a prior inner collection and remember the intermediate so the $lookup's localField can be
+        // prefixed with that intermediate's "_lookup_<Intermediate>" path.
+        INavigation? throughNavigation = null;
+        if (navigation == null && fkPropertyName != null)
         {
-            outerQueryExpression.UsesDriverJoinFields = true;
-            lookupAlias = "_inner";
-        }
-        else
-        {
-            lookupAlias = navigation != null ? $"_lookup_{navigation.Name}" : $"_lookup_{innerEntityType.ShortName()}";
-
-            // Register all joins (including the first) as $lookup + $unwind.
-            // Also register the first join's navigation so it becomes a $lookup too.
-            if (navigation != null)
+            foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
             {
-                outerQueryExpression.AddLookup(new Expressions.LookupExpression(navigation, forceUnwind: true));
-            }
-
-            // Also register the FIRST join's navigation as a $lookup and update its projection alias
-            var firstInnerEntityType = outerQueryExpression.InnerCollections.Keys.First();
-            var firstNavigation = outerEntityType.GetNavigations()
-                .FirstOrDefault(n => n.TargetEntityType == firstInnerEntityType);
-            if (firstNavigation != null)
-            {
-                outerQueryExpression.AddLookup(new Expressions.LookupExpression(firstNavigation, forceUnwind: true));
-
-                // Update the first join's projection from "_inner" to "_lookup_*"
-                var firstLookupAlias = $"_lookup_{firstNavigation.Name}";
-                var rootAccess = new RootReferenceExpression(outerEntityType);
-                var firstAccessExpr = new ObjectAccessExpression(firstNavigation, rootAccess, false, firstLookupAlias);
-                var firstProjection = new EntityProjectionExpression(firstInnerEntityType, firstAccessExpr);
-                for (var i = 0; i < outerQueryExpression.Projection.Count; i++)
+                if (priorInnerEntityType == innerEntityType)
                 {
-                    if (outerQueryExpression.Projection[i].Alias == "_inner")
-                    {
-                        outerQueryExpression.ReplaceProjectionAt(i, firstProjection);
-                        break;
-                    }
+                    continue;
+                }
+
+                var candidate = priorInnerEntityType.GetNavigations()
+                    .FirstOrDefault(n => n.TargetEntityType == innerEntityType
+                                         && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
+                if (candidate != null)
+                {
+                    navigation = candidate;
+                    throughNavigation = outerEntityType.GetNavigations()
+                        .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
+                    break;
                 }
             }
-
-            // Switch off driver LeftJoin — all joins are now $lookup
-            outerQueryExpression.UsesDriverJoinFields = false;
         }
+
+        // Document-shape decision (single source of truth): the driver's native LeftJoin
+        // (producing { _outer, _inner }) is only viable for a SINGLE reference join. As soon
+        // as a second cross-collection join appears we must flatten everything to root-level
+        // $lookup + $unwind fields ("_lookup_<Navigation>") — the driver can't nest multiple
+        // joins as _outer/_inner. Rather than toggle a mutable flag, we register the forced-unwind
+        // lookups; MongoQueryExpression.UsesDriverJoinFields is then computed from that state and
+        // never contradicts the emitted pipeline.
+        //
+        // Each cross-collection projection carries its OWNING navigation and a stable
+        // "_lookup_<Navigation>" alias. The shaper derives the field it reads from that navigation
+        // plus the computed UsesDriverJoinFields flag (driver-native => "_inner"; flat => the
+        // "_lookup_<Navigation>" alias), so the projection is never retroactively rewritten.
+        var isSecondOrLaterJoin = outerQueryExpression.InnerCollections.Count > 1;
+        if (isSecondOrLaterJoin)
+        {
+            // Flatten: register a forced-unwind $lookup for THIS join...
+            if (navigation != null)
+            {
+                var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true);
+                if (throughNavigation != null)
+                {
+                    // Transitive join: match against the already-unwound intermediate document.
+                    lookup.LocalField = $"{Expressions.LookupExpression.GetLookupAlias(throughNavigation)}.{lookup.LocalField}";
+                }
+
+                outerQueryExpression.AddLookup(lookup);
+            }
+
+            // ...and retroactively for every PRIOR inner collection so the whole document is flat.
+            foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
+            {
+                if (priorInnerEntityType == innerEntityType)
+                {
+                    continue;
+                }
+
+                var priorNavigation = outerEntityType.GetNavigations()
+                    .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
+                if (priorNavigation != null)
+                {
+                    outerQueryExpression.AddLookup(new Expressions.LookupExpression(priorNavigation, forceUnwind: true));
+                }
+            }
+        }
+
+        // Stable, navigation-derived alias. For the lone driver-native reference the shaper maps this
+        // to "_inner"; in flat mode it reads this "_lookup_<Navigation>" field directly.
+        var lookupAlias = navigation != null
+            ? Expressions.LookupExpression.GetLookupAlias(navigation)
+            : $"_lookup_{innerEntityType.ShortName()}";
 
         Expression parentAccess = new RootReferenceExpression(outerEntityType);
         ObjectAccessExpression lookupAccessExpression = navigation != null
-            ? new ObjectAccessExpression(navigation, parentAccess, false, lookupAlias)
-            : new ObjectAccessExpression(innerEntityType, parentAccess, false, lookupAlias);
+            ? new NavigationObjectAccessExpression(navigation, parentAccess, false, lookupAlias)
+            : new EntityTypeObjectAccessExpression(innerEntityType, parentAccess, false, lookupAlias);
         var newInnerProjection = new EntityProjectionExpression(innerEntityType, lookupAccessExpression);
 
         // Register on the outer query expression and create a new binding
@@ -476,36 +508,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
-    }
-
-    /// <summary>
-    /// Extract the property name from a key selector lambda (e.g., o => o.CustomerId -> "CustomerId").
-    /// Handles EF.Property calls and direct member access.
-    /// </summary>
-    private static string? ExtractPropertyName(LambdaExpression keySelector)
-    {
-        var body = keySelector.Body;
-
-        // Unwrap Convert/ConvertChecked
-        while (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
-        {
-            body = unary.Operand;
-        }
-
-        // Direct member access: o => o.CustomerId
-        if (body is MemberExpression memberExpression)
-        {
-            return memberExpression.Member.Name;
-        }
-
-        // EF.Property call: EF.Property(o, "CustomerId")
-        if (body is MethodCallExpression methodCall && methodCall.Method.IsEFPropertyMethod()
-            && methodCall.Arguments[1] is ConstantExpression constant)
-        {
-            return constant.Value as string;
-        }
-
-        return null;
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,

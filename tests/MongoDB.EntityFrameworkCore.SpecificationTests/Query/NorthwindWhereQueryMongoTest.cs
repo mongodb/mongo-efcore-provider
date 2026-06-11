@@ -1031,11 +1031,18 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_expression_invoke_2(bool async)
     {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Where_expression_invoke_2(async));
+        AssertMql();
+#else
+        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Where_expression_invoke_2(async);
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner._id" : "ALFKI" } }
 """);
+#endif
     }
 
     public override async Task Where_expression_invoke_3(bool async)
@@ -1236,7 +1243,14 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
     public override async Task Where_navigation_contains(bool async)
     {
         await base.Where_navigation_contains(async);
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$limit" : 2 }
+""",
+            //
+            """
+OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "$or" : [{ "_inner._id" : 10643 }, { "_inner._id" : 10692 }, { "_inner._id" : 10702 }, { "_inner._id" : 10835 }, { "_inner._id" : 10952 }, { "_inner._id" : 11011 }] } }
+""");
     }
 
     public override async Task Where_array_index(bool async)

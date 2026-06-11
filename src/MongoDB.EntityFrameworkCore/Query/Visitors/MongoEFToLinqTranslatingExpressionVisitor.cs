@@ -30,6 +30,7 @@ using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -37,7 +38,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// <summary>
 /// Visits the tree resolving any query context parameter bindings and EF references so the query can be used with the MongoDB V3 LINQ provider.
 /// </summary>
-internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Expressions.ExpressionVisitor
+internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Expressions.ExpressionVisitor
 {
     private static readonly MethodInfo MqlFieldMethodInfo =
         typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -49,6 +50,12 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
     private readonly IReadOnlyList<LookupExpression> _pendingLookups;
     private readonly Dictionary<IEntityType, Expression> _innerSources;
     private EntityQueryRootExpression? _foundEntityQueryRootExpression;
+
+    // When forceUnwind lookups stand in for a Join chain that StripJoinForLookup did not actually remove,
+    // the Join survives in the translated tree and is rendered natively by the driver; emitting the
+    // forceUnwind $lookup/$unwind stages on top is then both redundant and (for scalar terminals) invalid.
+    // Set false in that case so AppendLookupStages skips them. Defaults true (lookups are appended).
+    private bool _appendForceUnwindLookups = true;
 
     internal MongoEFToLinqTranslatingExpressionVisitor(
         QueryContext queryContext,
@@ -72,15 +79,33 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
     /// </summary>
     public Expression TranslateProjected(Expression? efQueryExpression)
     {
+        GuardAgainstMultiBranchNavigationCount(efQueryExpression);
+
         if (efQueryExpression == null)
         {
             return AppendLookupStages(_source);
         }
 
         // For explicit Join queries with pending lookups, strip the join and use $lookup instead.
-        var expressionToTranslate = _pendingLookups.Count > 0
-            ? StripJoinForLookup(efQueryExpression) ?? efQueryExpression
-            : efQueryExpression;
+        // Otherwise rewrite any Include-generated LeftJoin into Queryable.Join + LeftJoinResult so the
+        // driver's pipeline translator (which has no LeftJoin translator) accepts it.
+        Expression expressionToTranslate;
+        if (_pendingLookups.Count > 0)
+        {
+            var stripped = StripJoinForLookup(efQueryExpression);
+            expressionToTranslate = stripped ?? efQueryExpression;
+            // forceUnwind lookups stand in for an explicit Join chain that StripJoinForLookup removed.
+            // When the strip did not fire (e.g. the join is buried under OrderBy/terminal operators the
+            // stripper doesn't recurse through), the Join survives in the translated tree and the driver
+            // renders it natively - appending the forceUnwind $lookup/$unwind stages on top would both be
+            // redundant and, for a scalar-cardinality terminal (Any/All/Count), try to wrap the scalar
+            // result in AppendStage. Skip them in that case.
+            _appendForceUnwindLookups = stripped != null;
+        }
+        else
+        {
+            expressionToTranslate = RewriteLeftJoins(efQueryExpression, convertExplicitJoins: false);
+        }
 
         var query = Visit(expressionToTranslate)!;
         return AppendLookupStages(query);
@@ -90,6 +115,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
         Expression? efQueryExpression,
         ResultCardinality resultCardinality)
     {
+        GuardAgainstMultiBranchNavigationCount(efQueryExpression);
+
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
         {
             var source = AppendLookupStages(_source);
@@ -102,7 +129,11 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
         var expressionToTranslate = efQueryExpression;
         if (_pendingLookups.Any(l => l.ForceUnwind))
         {
-            expressionToTranslate = StripJoinForLookup(efQueryExpression) ?? efQueryExpression;
+            var stripped = StripJoinForLookup(efQueryExpression);
+            expressionToTranslate = stripped ?? efQueryExpression;
+            // See TranslateProjected: only emit the forceUnwind lookups when they actually replaced a
+            // stripped Join chain. If the strip did not fire the Join survives and the driver renders it.
+            _appendForceUnwindLookups = stripped != null;
         }
         else if (_innerSources.Count > 0)
         {
@@ -124,286 +155,6 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
             null,
             query.Method.GetGenericMethodDefinition().MakeGenericMethod(typeof(BsonDocument)),
             documentQueryableSource);
-    }
-
-    /// <summary>
-    /// For join queries, strip the outermost Select that EF adds to extract from TransparentIdentifier,
-    /// and rewrite any LeftJoin result selectors from TransparentIdentifier to LeftJoinResult so the
-    /// driver can serialize them. The driver produces documents with _outer/_inner fields which match
-    /// the LeftJoinResult property names.
-    /// </summary>
-    private static Expression? StripOuterSelectForJoin(Expression expression)
-    {
-        if (expression is not MethodCallExpression call)
-        {
-            return null;
-        }
-
-        // Terminal op (First, etc.) wrapping a Select
-        if (call.Arguments.Count >= 1 && call.Arguments[0] is MethodCallExpression innerCall
-            && innerCall.Method.Name == "Select" && innerCall.Method.DeclaringType == typeof(Queryable))
-        {
-            var selectSource = RewriteLeftJoinResultSelectors(innerCall.Arguments[0]);
-            var newArgs = call.Arguments.ToArray();
-            newArgs[0] = selectSource;
-
-            var method = call.Method;
-            if (method.IsGenericMethod)
-            {
-                var sourceItemType = selectSource.Type.TryGetItemType();
-                if (sourceItemType != null)
-                {
-                    var genericDef = method.GetGenericMethodDefinition();
-                    if (genericDef.GetGenericArguments().Length == 1)
-                    {
-                        method = genericDef.MakeGenericMethod(sourceItemType);
-                    }
-                }
-            }
-
-            return Expression.Call(null, method, newArgs);
-        }
-
-        // The outermost IS the Select (enumerable cardinality, no terminal op)
-        if (call.Method.Name == "Select" && call.Method.DeclaringType == typeof(Queryable))
-        {
-            return RewriteLeftJoinResultSelectors(call.Arguments[0]);
-        }
-
-        // The outermost IS the Join/LeftJoin itself (Select was already stripped by the mixed path)
-        if (call.Method.Name is "Join" or "LeftJoin" && call.Method.DeclaringType == typeof(Queryable))
-        {
-            return RewriteLeftJoinResultSelectors(call);
-        }
-
-        // The outermost is Where/OrderBy wrapping a Join (Select was already stripped by the mixed path)
-        if (call.Method.DeclaringType == typeof(Queryable)
-            && call.Method.Name is "Where" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending")
-        {
-            return RewriteLeftJoinResultSelectors(call);
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Recursively rewrite LeftJoin result selectors from TransparentIdentifier to LeftJoinResult.
-    /// Handles nested joins (multi-level Include) by recursing into the outer source.
-    /// </summary>
-    private static Expression RewriteLeftJoinResultSelectors(Expression expression)
-    {
-        if (expression is not MethodCallExpression call)
-        {
-            return expression;
-        }
-
-        // For Select nodes between joins, recurse into the source and rewrite the Select's generic type
-        if (call.Method.Name == "Select" && call.Method.DeclaringType == typeof(Queryable))
-        {
-            var rewrittenSource = RewriteLeftJoinResultSelectors(call.Arguments[0]);
-            if (rewrittenSource != call.Arguments[0])
-            {
-                // Rebuild the Select with updated generic types
-                var sourceItemType = rewrittenSource.Type.TryGetItemType()!;
-                var selectMethod = call.Method.GetGenericMethodDefinition();
-                var selectReturnType = call.Method.ReturnType.TryGetItemType()!;
-                var newSelectMethod = selectMethod.MakeGenericMethod(sourceItemType, selectReturnType);
-                return Expression.Call(null, newSelectMethod, rewrittenSource, call.Arguments[1]);
-            }
-
-            return call;
-        }
-
-        // For Where/OrderBy nodes between joins, recurse into the source and rewrite the lambda
-        if (call.Method.DeclaringType == typeof(Queryable)
-            && call.Method.Name is "Where" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending")
-        {
-            var rewrittenSource = RewriteLeftJoinResultSelectors(call.Arguments[0]);
-            if (rewrittenSource != call.Arguments[0])
-            {
-                var sourceItemType = rewrittenSource.Type.TryGetItemType()!;
-                var lambda = call.Arguments[1].UnwrapLambdaFromQuote();
-                var rewrittenLambda = RewriteLambdaForLeftJoinResult(lambda, sourceItemType);
-
-                var updatedGenericArgs = call.Method.GetGenericArguments().ToArray();
-                updatedGenericArgs[0] = sourceItemType;
-                var updatedMethod = call.Method.GetGenericMethodDefinition().MakeGenericMethod(updatedGenericArgs);
-
-                return Expression.Call(null, updatedMethod, rewrittenSource, Expression.Quote(rewrittenLambda));
-            }
-
-            return call;
-        }
-
-        if (call.Method.Name is not ("LeftJoin" or "Join") || call.Method.DeclaringType != typeof(Queryable))
-        {
-            return expression;
-        }
-
-        var genericArgs = call.Method.GetGenericArguments();
-        var resultType = genericArgs[^1];
-        if (resultType == typeof(LeftJoinResult<,>).MakeGenericType(genericArgs[0], genericArgs[1]))
-        {
-            return expression; // Already rewritten
-        }
-
-        // Recurse into the outer source for nested joins
-        var outerSource = RewriteLeftJoinResultSelectors(call.Arguments[0]);
-
-        var resultSelectorQuoted = call.Arguments[4];
-        var resultSelector = resultSelectorQuoted.UnwrapLambdaFromQuote();
-        var innerType = resultSelector.Parameters[1].Type;
-
-        // When the outer source was rewritten, its element type changed from
-        // TransparentIdentifier to LeftJoinResult. Use the actual source element type.
-        var outerType = outerSource.Type.TryGetItemType() ?? resultSelector.Parameters[0].Type;
-
-        var joinResultType = typeof(LeftJoinResult<,>).MakeGenericType(outerType, innerType);
-        var ctor = joinResultType.GetConstructors()[0];
-
-        // Rebuild the result selector with the correct outer parameter type
-        var newOuterParam = Expression.Parameter(outerType, resultSelector.Parameters[0].Name);
-        var newInnerParam = resultSelector.Parameters[1];
-        var newResultSelector = Expression.Lambda(
-            Expression.New(ctor, newOuterParam, newInnerParam),
-            newOuterParam, newInnerParam);
-
-        var newMethod = call.Method.GetGenericMethodDefinition()
-            .MakeGenericMethod(outerType, innerType, genericArgs[2], joinResultType);
-
-        var newArgs = call.Arguments.ToArray();
-        newArgs[0] = outerSource;
-        // Also rewrite key selectors that reference the outer type
-        if (outerSource != call.Arguments[0])
-        {
-            newArgs[2] = RewriteKeySelectorForNewOuterType(call.Arguments[2], resultSelector.Parameters[0], newOuterParam);
-        }
-        newArgs[4] = Expression.Quote(newResultSelector);
-
-        return Expression.Call(null, newMethod, newArgs);
-    }
-
-    /// <summary>
-    /// Rewrite a key selector expression when the outer source type changed from TransparentIdentifier
-    /// to LeftJoinResult due to nested join rewriting.
-    /// </summary>
-    private static Expression RewriteKeySelectorForNewOuterType(
-        Expression keySelectorArg,
-        ParameterExpression oldParam,
-        ParameterExpression newParam)
-    {
-        // Unwrap Quote if present, but keep it as-is if it's not a Quote wrapping a lambda
-        if (keySelectorArg is UnaryExpression { NodeType: ExpressionType.Quote } quote
-            && quote.Operand is LambdaExpression lambda)
-        {
-            var rewritten = RewriteLambdaForLeftJoinResult(lambda, newParam.Type);
-            return Expression.Quote(rewritten);
-        }
-
-        return keySelectorArg;
-    }
-
-    /// <summary>
-    /// Rewrite a lambda expression to change its first parameter type from TransparentIdentifier to
-    /// LeftJoinResult, mapping field accesses from Outer/Inner to _outer/_inner.
-    /// </summary>
-    private static LambdaExpression RewriteLambdaForLeftJoinResult(LambdaExpression lambda, Type newParameterType)
-    {
-        var oldParam = lambda.Parameters[0];
-        var newParam = Expression.Parameter(newParameterType, oldParam.Name);
-        var body = new TransparentIdentifierToLeftJoinResultRewriter(oldParam, newParam).Visit(lambda.Body);
-        var newParams = lambda.Parameters.Count == 1
-            ? new[] { newParam }
-            : lambda.Parameters.Select((p, i) => i == 0 ? newParam : p).ToArray();
-        return Expression.Lambda(body, newParams);
-    }
-
-    /// <summary>
-    /// Rewrites member accesses from TransparentIdentifier fields (Outer/Inner) to
-    /// LeftJoinResult properties (_outer/_inner) when the parameter is replaced.
-    /// </summary>
-    private sealed class TransparentIdentifierToLeftJoinResultRewriter(
-        ParameterExpression oldParam,
-        ParameterExpression newParam) : System.Linq.Expressions.ExpressionVisitor
-    {
-        protected override Expression VisitMember(MemberExpression node)
-        {
-            // Rewrite TransparentIdentifier field accesses (Outer/Inner) to LeftJoinResult
-            // property accesses (_outer/_inner). Check by member declaring type since the
-            // expression may be a parameter, another field access, or any rewritten expression.
-            if (node.Member.Name is "Outer" or "Inner"
-                && node.Member.DeclaringType is { IsGenericType: true } dt
-                && dt.Name.StartsWith("TransparentIdentifier"))
-            {
-                var visitedExpression = Visit(node.Expression!);
-                var propertyName = node.Member.Name == "Outer" ? "_outer" : "_inner";
-                return Expression.Property(visitedExpression, propertyName);
-            }
-
-            return base.VisitMember(node);
-        }
-
-        protected override Expression VisitParameter(ParameterExpression node)
-            => node.Type == oldParam.Type ? newParam : base.VisitParameter(node);
-    }
-
-    /// <summary>
-    /// For explicit Join queries, strip the Join chain and return just the base source.
-    /// The $lookup stages appended by AppendLookupStages handle the actual join.
-    /// </summary>
-    private static Expression? StripJoinForLookup(Expression expression)
-    {
-        if (expression is not MethodCallExpression outerCall)
-            return null;
-
-        var baseSource = FindBaseSourceThroughJoin(outerCall);
-        if (baseSource != null && IsJoinRelatedMethod(outerCall))
-            return baseSource;
-
-        var source = outerCall.Arguments[0];
-        baseSource = FindBaseSourceThroughJoin(source);
-        if (baseSource == null)
-            return null;
-
-        var newArgs = outerCall.Arguments.ToArray();
-        newArgs[0] = baseSource;
-
-        var method = outerCall.Method;
-        if (method.IsGenericMethod)
-        {
-            var baseItemType = baseSource.Type.TryGetItemType();
-            if (baseItemType != null)
-            {
-                var genericDef = method.GetGenericMethodDefinition();
-                if (genericDef.GetGenericArguments().Length == 1)
-                    method = genericDef.MakeGenericMethod(baseItemType);
-            }
-        }
-
-        return Expression.Call(null, method, newArgs);
-    }
-
-    private static bool IsJoinRelatedMethod(MethodCallExpression call)
-        => call.Method.Name is "Select" or "LeftJoin" or "Join" or "GroupJoin" or "SelectMany" or "Where";
-
-    private static Expression? FindBaseSourceThroughJoin(Expression expression)
-    {
-        if (expression is not MethodCallExpression call)
-            return null;
-
-        if (call.Method.Name == "Select" && call.Arguments.Count >= 2)
-            return FindBaseSourceThroughJoin(call.Arguments[0]);
-
-        if (call.Method.Name is "LeftJoin" or "Join" or "GroupJoin")
-            return FindBaseSourceThroughJoin(call.Arguments[0]) ?? call.Arguments[0];
-
-        if (call.Method.Name == "SelectMany")
-            return FindBaseSourceThroughJoin(call.Arguments[0]);
-
-        if (call.Method.Name == "Where" && call.Arguments.Count >= 2)
-            return FindBaseSourceThroughJoin(call.Arguments[0]);
-
-        return null;
     }
 
     private static MethodCallExpression ApplyAsSerializer(
@@ -485,19 +236,19 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
             case MethodCallExpression { Method.Name: nameof(object.Equals), Object: null, Arguments.Count: 2 } methodCallExpression:
                 // Check for entity equality before visiting (composite keys use Equals instead of ==)
                 var entityRewrite = TryRewriteEntityEquality(
-                    RemoveObjectConvert(methodCallExpression.Arguments[0]),
-                    RemoveObjectConvert(methodCallExpression.Arguments[1]),
+                    methodCallExpression.Arguments[0].RemoveObjectConvert(),
+                    methodCallExpression.Arguments[1].RemoveObjectConvert(),
                     ExpressionType.Equal);
                 if (entityRewrite != null)
                     return entityRewrite;
 
-                var left = Visit(RemoveObjectConvert(methodCallExpression.Arguments[0]))!;
-                var right = Visit(RemoveObjectConvert(methodCallExpression.Arguments[1]))!;
+                var left = Visit(methodCallExpression.Arguments[0].RemoveObjectConvert())!;
+                var right = Visit(methodCallExpression.Arguments[1].RemoveObjectConvert())!;
                 var method = methodCallExpression.Method;
 
                 if (left.Type == right.Type)
                 {
-                    return Expression.Equal(RemoveObjectConvert(left), RemoveObjectConvert(right));
+                    return Expression.Equal(left.RemoveObjectConvert(), right.RemoveObjectConvert());
                 }
 
                 var parameters = method.GetParameters();
@@ -574,6 +325,56 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
 
                 return VisitMethodCall(methodCallExpression);
 
+            // Replace plain entity-property/navigation member access in a JOIN result selector (e.g. a
+            // user's verbatim `(c, o) => new { c.ContactName, o.OrderID }`) with Mql.Field reads that honour
+            // the entity's BSON element names. Single-collection queries don't need this - the root source's
+            // .As(EntitySerializer) already resolves member access correctly - but in a join the driver
+            // synthesizes a result-type serializer for the _outer/_inner shape that does NOT carry EF's
+            // entity serializers, so `o.OrderID` would resolve to a literal "OrderID" field instead of the
+            // PK's "_id". Gated on _innerSources so it only affects join queries.
+            case MemberExpression memberExpression
+                when _innerSources.Count > 0
+                     && memberExpression.Expression != null
+                     && _queryContext.Context.Model.FindEntityType(memberExpression.Expression.Type) is { } memberEntityType
+                     && (memberEntityType.FindProperty(memberExpression.Member.Name) != null
+                         || memberEntityType.FindNavigation(memberExpression.Member.Name) != null):
+                {
+                    var memberSource = Visit(memberExpression.Expression)
+                                       ?? throw new InvalidOperationException("Unsupported source to member access expression.");
+
+                    var memberProperty = memberEntityType.FindProperty(memberExpression.Member.Name);
+                    if (memberProperty != null)
+                    {
+                        var doc = memberSource;
+
+                        // Composite keys need to go via the _id document
+                        var isCompositeKeyAccess = memberProperty.IsPrimaryKey()
+                                                   && memberEntityType.FindPrimaryKey()?.Properties.Count > 1;
+                        if (isCompositeKeyAccess)
+                        {
+                            var mqlFieldDoc = MqlFieldMethodInfo.MakeGenericMethod(memberSource.Type, typeof(BsonValue));
+                            doc = Expression.Call(null, mqlFieldDoc, memberSource, Expression.Constant("_id"),
+                                Expression.Constant(BsonValueSerializer.Instance));
+                        }
+
+                        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(doc.Type, memberProperty.ClrType);
+                        var serializer = BsonSerializerFactory.CreateTypeSerializer(memberProperty);
+                        var callExpression = Expression.Call(null, mqlField, doc,
+                            Expression.Constant(memberProperty.GetElementName()),
+                            Expression.Constant(serializer));
+                        return callExpression.ConvertIfRequired(memberExpression.Type);
+                    }
+
+                    var memberNavigation = memberEntityType.FindNavigation(memberExpression.Member.Name)!;
+                    var navElementName = memberNavigation.TargetEntityType.GetContainingElementName();
+                    var navMqlField = MqlFieldMethodInfo.MakeGenericMethod(memberSource.Type, memberNavigation.ClrType);
+                    var navSerializer = _bsonSerializerFactory.GetNavigationSerializer(memberNavigation);
+                    var navCall = Expression.Call(null, navMqlField, memberSource,
+                        Expression.Constant(navElementName),
+                        Expression.Constant(navSerializer));
+                    return navCall.ConvertIfRequired(memberExpression.Type);
+                }
+
             // Handle method call to VectorQuery
             case MethodCallExpression methodCallExpression
                 when methodCallExpression.IsVectorSearch():
@@ -591,7 +392,7 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
                 if (_foundEntityQueryRootExpression == null)
                 {
                     _foundEntityQueryRootExpression = entityQueryRootExpression;
-                    return _source;
+                    return InjectAfterRootLookupStages(_source);
                 }
 
                 // Check inner sources first (handles self-joins where outer and inner are the same type)
@@ -750,84 +551,8 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
         }
     }
 
-    /// <summary>
-    /// Appends $lookup stages for cross-collection collection Includes.
-    /// Uses the same AppendStage pattern as VectorSearch.
-    /// </summary>
-    private Expression AppendLookupStages(Expression query)
-    {
-        if (_pendingLookups.Count == 0)
-        {
-            return query;
-        }
-
-        var sourceType = query.Type.TryGetItemType() ?? _source.Type.TryGetItemType()!;
-        var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
-            .MakeGenericMethod(sourceType, sourceType);
-        var serializerType = typeof(IBsonSerializer<>).MakeGenericType(sourceType);
-        var stageDefinitionType = typeof(BsonDocumentPipelineStageDefinition<,>).MakeGenericType(sourceType, sourceType);
-        var stageConstructor = stageDefinitionType.GetConstructor([typeof(BsonDocument), serializerType])!;
-
-        foreach (var lookup in _pendingLookups)
-        {
-            BsonDocument lookupDoc;
-            if (lookup.HasPipeline)
-            {
-                // Pipeline form: used for filtered Includes (OrderBy, Skip, Take on the included collection).
-                var pipeline = new BsonArray
-                {
-                    new BsonDocument("$match",
-                        new BsonDocument("$expr",
-                            new BsonDocument("$eq", new BsonArray { $"${lookup.ForeignField}", "$$localField" })))
-                };
-                foreach (var stage in lookup.PipelineStages)
-                {
-                    pipeline.Add(stage);
-                }
-
-                lookupDoc = new BsonDocument("$lookup", new BsonDocument
-                {
-                    { "from", lookup.From },
-                    { "let", new BsonDocument("localField", $"${lookup.LocalField}") },
-                    { "pipeline", pipeline },
-                    { "as", lookup.As }
-                });
-            }
-            else
-            {
-                lookupDoc = new BsonDocument("$lookup", new BsonDocument
-                {
-                    { "from", lookup.From },
-                    { "localField", lookup.LocalField },
-                    { "foreignField", lookup.ForeignField },
-                    { "as", lookup.As }
-                });
-            }
-
-            query = Expression.Call(null, appendStageMethod, query,
-                Expression.New(stageConstructor,
-                    Expression.Constant(lookupDoc),
-                    Expression.Constant(null, serializerType)),
-                Expression.Constant(null, serializerType));
-
-            if (lookup.ShouldUnwind)
-            {
-                var unwindDoc = new BsonDocument("$unwind", new BsonDocument
-                {
-                    { "path", $"${lookup.As}" },
-                    { "preserveNullAndEmptyArrays", true }
-                });
-
-                query = Expression.Call(null, appendStageMethod, query,
-                    Expression.New(stageConstructor,
-                        Expression.Constant(unwindDoc),
-                        Expression.Constant(null, serializerType)),
-                    Expression.Constant(null, serializerType));
-            }
-        }
-
-        return query;
-    }
+    private static readonly MethodInfo EFPropertyMethodInfo =
+        typeof(EF).GetMethod(nameof(EF.Property))!;
 
     private static readonly BsonDocument AddScoreField =
         new("$addFields", new BsonDocument { { "__score", new BsonDocument("$meta", "vectorSearchScore") } });
@@ -841,7 +566,216 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
                 return rewrite;
         }
 
+        // A projected/filtered cross-collection collection-navigation Count, lowered by EF Core to
+        // Queryable.Count(Queryable.Where(DbSet<Target>(), fkPredicate)). Rewrite it to a client-side
+        // Enumerable.Count over Mql.Field(outerDoc, "_lookup_<Nav>", navSerializer); the driver renders
+        // this as a server-side { $size: "$_lookup_<Nav>" } reading the array materialized by the
+        // InjectAfterRoot $lookup.
+        if (TryRewriteCollectionNavigationCount(node, out var sizeRewrite))
+        {
+            return sizeRewrite;
+        }
+
         return base.VisitMethodCall(node);
+    }
+
+    /// <summary>
+    /// Rewrites <c>Queryable.Count(Queryable.Where(DbSet&lt;Target&gt;(), fkPredicate))</c> (and the
+    /// <c>LongCount</c> variant) — the lowered form of a projected/filtered collection-navigation count
+    /// such as <c>c.Orders.Count</c> — into <c>Enumerable.Count(Mql.Field(outerDoc, "_lookup_&lt;Nav&gt;",
+    /// navSerializer))</c>. The collection array is materialized by the matching <see
+    /// cref="LookupExpression.InjectAfterRoot"/> $lookup; the driver renders the count as a server-side
+    /// <c>{ $size: "$_lookup_&lt;Nav&gt;" }</c>.
+    ///
+    /// Guard: only fires when there is exactly one <see cref="LookupExpression.InjectAfterRoot"/> lookup
+    /// pending. Multiple such lookups arise under a set operation (e.g. Union of two nav-count branches)
+    /// where only one branch's root $lookup is injected; rewriting then would produce a runtime
+    /// "$size must be an array" error, so we leave the subtree untranslated (translation failure) instead.
+    /// </summary>
+    private static readonly HashSet<string> SetOperationMethodNames =
+        new(StringComparer.Ordinal) { "Union", "Concat", "Except", "Intersect" };
+
+    /// <summary>
+    /// A projected collection-navigation count is materialized by a single <c>$lookup</c> injected right
+    /// after the root source. Under a set operation (e.g. <c>Union</c>) where more than one branch reads
+    /// the looked-up collection, the non-leading branch becomes a <c>$unionWith</c> sub-pipeline that does
+    /// not see that root-level <c>$lookup</c>, so its server-side <c>{ $size: "$_lookup_&lt;Nav&gt;" }</c>
+    /// would fail at runtime with "argument to $size must be an array". Detect that shape and fail
+    /// translation cleanly (an <see cref="InvalidOperationException"/>) instead of emitting a pipeline that
+    /// crashes on the server.
+    /// </summary>
+    private void GuardAgainstMultiBranchNavigationCount(Expression? efQueryExpression)
+    {
+        if (efQueryExpression == null || !_pendingLookups.Any(l => l.InjectAfterRoot))
+        {
+            return;
+        }
+
+        var finder = new MultiBranchNavigationCountFinder();
+        finder.Visit(efQueryExpression);
+        if (finder.HasMultiBranchNavigationCount)
+        {
+            // Fail as a standard EF Core translation failure (the message AssertTranslationFailed expects)
+            // rather than letting a broken pipeline reach the server.
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(efQueryExpression.Print()));
+        }
+    }
+
+    /// <summary>
+    /// Detects a set operation (Union/Concat/Except/Intersect) at least two of whose operands contain a
+    /// projected collection-navigation count subtree (<c>Count(Where(EntityQueryRootExpression, fk))</c>).
+    /// </summary>
+    private sealed class MultiBranchNavigationCountFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public bool HasMultiBranchNavigationCount { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (SetOperationMethodNames.Contains(node.Method.Name)
+                && (node.Method.DeclaringType == typeof(Queryable)
+                    || node.Method.DeclaringType == typeof(Enumerable)))
+            {
+                var branchesWithCount = node.Arguments.Count(ContainsNavigationCount);
+                if (branchesWithCount >= 2)
+                {
+                    HasMultiBranchNavigationCount = true;
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        private static bool ContainsNavigationCount(Expression expression)
+        {
+            var finder = new NavigationCountFinder();
+            finder.Visit(expression);
+            return finder.Found;
+        }
+
+        private sealed class NavigationCountFinder : System.Linq.Expressions.ExpressionVisitor
+        {
+            public bool Found { get; private set; }
+
+            protected override Expression VisitMethodCall(MethodCallExpression node)
+            {
+                if (node.Method.DeclaringType == typeof(Queryable)
+                    && node.Arguments.Count == 1
+                    && node.Method.Name is nameof(Queryable.Count) or nameof(Queryable.LongCount)
+                    && node.Arguments[0] is MethodCallExpression
+                    {
+                        Method: { Name: nameof(Queryable.Where), DeclaringType: var d },
+                        Arguments: [EntityQueryRootExpression, _]
+                    }
+                    && d == typeof(Queryable))
+                {
+                    Found = true;
+                }
+
+                return base.VisitMethodCall(node);
+            }
+        }
+    }
+
+    private bool TryRewriteCollectionNavigationCount(MethodCallExpression node, out Expression result)
+    {
+        result = null!;
+
+        if (node.Method.DeclaringType != typeof(Queryable)
+            || node.Arguments.Count != 1
+            || node.Method.Name is not (nameof(Queryable.Count) or nameof(Queryable.LongCount)))
+        {
+            return false;
+        }
+
+        if (node.Arguments[0] is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
+                Arguments: [EntityQueryRootExpression rootExpression, var predicateArg]
+            }
+            || whereDeclaring != typeof(Queryable))
+        {
+            return false;
+        }
+
+        // Resolve the InjectAfterRoot $lookup registered by the projection binder for this navigation
+        // (matched by target entity type). The multi-branch set-operation case is rejected earlier by
+        // GuardAgainstMultiBranchNavigationCount, so here we only need the matching lookup to exist.
+        var targetEntityType = rootExpression.EntityType;
+        var lookup = _pendingLookups.FirstOrDefault(
+            l => l.InjectAfterRoot && l.Navigation.TargetEntityType == targetEntityType);
+        if (lookup == null)
+        {
+            return false;
+        }
+
+        var navigation = lookup.Navigation;
+
+        // Extract the outer document reference from the FK predicate: the parameter that is NOT the inner
+        // Where lambda's parameter (e.g. the `c` in `o0 => c.CustomerID == o0.CustomerID`).
+        var predicate = predicateArg.UnwrapLambdaFromQuote();
+        var innerParam = predicate.Parameters[0];
+        var outerReference = FindOuterReference(predicate.Body, innerParam);
+        if (outerReference == null)
+        {
+            return false;
+        }
+
+        var visitedOuter = Visit(outerReference)!;
+
+        // Mql.Field<TOuter, TNav>(outerDoc, "_lookup_<Nav>", navSerializer) reads the looked-up array.
+        var navClrType = navigation.ClrType;
+        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(visitedOuter.Type, navClrType);
+        var navSerializer = _bsonSerializerFactory.GetNavigationSerializer(navigation);
+        var fieldAccess = Expression.Call(null, mqlField, visitedOuter,
+            Expression.Constant(lookup.As),
+            Expression.Constant(navSerializer));
+
+        var elementType = navClrType.TryGetItemType() ?? navigation.TargetEntityType.ClrType;
+        var countMethod = (node.Method.Name == nameof(Queryable.LongCount)
+                ? EnumerableLongCountMethod
+                : EnumerableCountMethod)
+            .MakeGenericMethod(elementType);
+
+        result = Expression.Call(null, countMethod, fieldAccess);
+        return true;
+    }
+
+    private static readonly MethodInfo EnumerableCountMethod =
+        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(Enumerable.Count) && m.GetParameters().Length == 1);
+
+    private static readonly MethodInfo EnumerableLongCountMethod =
+        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(Enumerable.LongCount) && m.GetParameters().Length == 1);
+
+    /// <summary>
+    /// Find the outer-entity reference in an FK-equality predicate body — the sub-expression rooted at a
+    /// parameter other than the inner Where lambda parameter (e.g. <c>c</c> in
+    /// <c>o => c.CustomerID == o.CustomerID</c>). Returns the outer parameter or member access whose
+    /// ultimate parameter is the outer one.
+    /// </summary>
+    private static Expression? FindOuterReference(Expression body, ParameterExpression innerParam)
+    {
+        var finder = new OuterReferenceFinder(innerParam);
+        finder.Visit(body);
+        return finder.Found;
+    }
+
+    private sealed class OuterReferenceFinder(ParameterExpression innerParam)
+        : System.Linq.Expressions.ExpressionVisitor
+    {
+        public ParameterExpression? Found { get; private set; }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (Found == null && node != innerParam)
+            {
+                Found = node;
+            }
+
+            return node;
+        }
     }
 
     private Expression? VisitContainsMethod(MethodCallExpression node)
@@ -1112,12 +1046,6 @@ internal sealed class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Ex
         var value = property.PropertyInfo?.GetValue(entity) ?? property.FieldInfo?.GetValue(entity);
         return Expression.Constant(value, property.ClrType);
     }
-
-    private static Expression RemoveObjectConvert(Expression expression)
-        => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
-           && unaryExpression.Type == typeof(object)
-            ? unaryExpression.Operand
-            : expression;
 
     private static readonly MethodInfo AsMethodInfo = typeof(MongoQueryable)
         .GetMethods()

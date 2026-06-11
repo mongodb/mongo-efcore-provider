@@ -91,6 +91,22 @@ public static class MongoRelationshipDiscoveryConventionTests
         Assert.NotNull(shippingAddressType.FindOwnership());
     }
 
+    [Fact]
+    public static void Explicit_OwnsOne_of_type_with_DbSet_stays_owned()
+    {
+        using var db = new ExplicitOwnsOneDbContext();
+
+        var blogType = db.Model.FindEntityType(typeof(Blog));
+        Assert.NotNull(blogType);
+
+        var navigation = blogType.FindNavigation(nameof(Blog.Meta));
+        Assert.NotNull(navigation);
+
+        // An explicit OwnsOne wins even though the target type also has its own DbSet:
+        // the navigation's target stays an owned (embedded) entity type.
+        Assert.NotNull(navigation.TargetEntityType.FindOwnership());
+    }
+
     class Order
     {
         public ObjectId _id { get; set; }
@@ -116,6 +132,32 @@ public static class MongoRelationshipDiscoveryConventionTests
     {
         public ObjectId _id { get; set; }
         public Address ShippingAddress { get; set; }
+    }
+
+    class Blog
+    {
+        public ObjectId _id { get; set; }
+        public BlogMeta Meta { get; set; }
+    }
+
+    class BlogMeta
+    {
+        public ObjectId _id { get; set; }
+        public string Summary { get; set; }
+    }
+
+    class ExplicitOwnsOneDbContext : DbContext
+    {
+        public DbSet<Blog> Blogs { get; set; }
+        public DbSet<BlogMeta> Metas { get; set; }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            => optionsBuilder
+                .UseMongoDB("mongodb://localhost:27017", "UnitTests")
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+            => modelBuilder.Entity<Blog>().OwnsOne(b => b.Meta);
     }
 
     class OrderCustomerDbContext : DbContext

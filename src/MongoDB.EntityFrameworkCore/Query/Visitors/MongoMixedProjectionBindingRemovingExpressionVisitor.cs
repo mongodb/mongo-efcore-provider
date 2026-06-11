@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Storage;
 
@@ -34,6 +35,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     : MongoProjectionBindingRemovingExpressionVisitor
 {
     private readonly MongoQueryExpression _queryExpression;
+    private readonly IEntityType _rootEntityType;
     private readonly ParameterExpression _docParameter;
 
     public MongoMixedProjectionBindingRemovingExpressionVisitor(
@@ -44,6 +46,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         : base(rootEntityType, queryExpression, docParameter, trackingBehavior)
     {
         _queryExpression = queryExpression;
+        _rootEntityType = rootEntityType;
         _docParameter = docParameter;
     }
 
@@ -70,12 +73,18 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 }
                 else
                 {
-                    // When using the driver's native Join, scalar properties from the outer entity
-                    // are in the "_outer" sub-document, not at the root level.
-                    Expression docExpr = _queryExpression.UsesDriverJoinFields
-                        ? CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument))
-                        : _docParameter;
-                    return CreateGetValueExpression(docExpr, property, projectionBindingExpression.Type);
+                    alias = projectionBindingExpression.ProjectionMember.Last?.Name;
+                    sourceExpression = mappedExpression;
+                }
+
+                // A scalar member access on a singleton (reference) navigation, e.g. select o.Customer.City.
+                // The source expression is a MemberExpression whose source is the navigation's
+                // StructuralTypeShaperExpression. The property belongs to the navigation target entity, not the
+                // query root, so it must be read from the joined sub-document (the driver's native LeftJoin
+                // places the lone joined reference under "_inner") rather than the root document.
+                if (TryBindNavigationMemberAccess(sourceExpression, projectionBindingExpression.Type, out var navMemberRead))
+                {
+                    return navMemberRead;
                 }
 
                 var fieldAccess = TryResolveFieldAccess(sourceExpression);
@@ -91,8 +100,18 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                             : Expression.Convert(memberAccess, projectionBindingExpression.Type);
                     }
 
+                    // When using the driver's native Join, scalar properties read from the root entity
+                    // live in the "_outer" sub-document, not at the document root. The resolver returns
+                    // the root doc parameter for such accesses; redirect it to "_outer" here.
+                    var docExpr = fieldAccess.DocumentExpression ?? _docParameter;
+                    if (_queryExpression.UsesDriverJoinFields
+                        && ReferenceEquals(docExpr, _docParameter))
+                    {
+                        docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
+                    }
+
                     return CreateGetValueExpression(
-                        fieldAccess.DocumentExpression ?? _docParameter,
+                        docExpr,
                         fieldAccess.Property,
                         projectionBindingExpression.Type);
                 }
@@ -116,5 +135,53 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         }
 
         return base.VisitExtension(extensionExpression);
+    }
+
+    /// <summary>
+    /// Binds a scalar member access on a singleton (reference) navigation in a mixed projection
+    /// (e.g. <c>select new { A = o.Customer, B = o.Customer.City }</c>). The mapped expression is a
+    /// <see cref="MemberExpression"/> (EF Core's <c>PropertyExpression</c>) whose source is the navigation
+    /// target's <see cref="StructuralTypeShaperExpression"/>. Because the accessed property belongs to the
+    /// navigation target rather than the query root, it is read from the joined sub-document: the driver's
+    /// native LeftJoin places the lone joined reference under <c>"_inner"</c>. Returns <see langword="false"/>
+    /// for anything that is not such a navigation member access so the caller can fall back to its other
+    /// resolution paths.
+    /// </summary>
+    private bool TryBindNavigationMemberAccess(Expression? mappedExpression, Type resultType, out Expression result)
+    {
+        result = null!;
+
+        if (mappedExpression is not MemberExpression memberExpression
+            || memberExpression.Expression is not StructuralTypeShaperExpression shaper
+            || shaper.StructuralType is not IEntityType targetEntityType)
+        {
+            return false;
+        }
+
+        // Only handle member access on a JOINED navigation target. A member access on the root entity's own
+        // shaper (e.g. select new { o, o.CustomerID }) is a root-level property and is handled by the
+        // existing TryResolveFieldAccess path, which reads it from "_outer". Reading it from "_inner" here
+        // would return the wrong (joined) document's value.
+        if (targetEntityType == _rootEntityType)
+        {
+            return false;
+        }
+
+        var property = targetEntityType.FindProperty(memberExpression.Member);
+        if (property == null)
+        {
+            return false;
+        }
+
+        // Only the driver-native single-reference join shape (joined document under "_inner") is supported
+        // here; other shapes fall through to the existing resolution paths / translation failure.
+        if (!_queryExpression.UsesDriverJoinFields)
+        {
+            return false;
+        }
+
+        var innerDoc = CreateGetValueExpression(_docParameter, "_inner", false, typeof(BsonDocument));
+        result = CreateGetValueExpression(innerDoc, property, resultType);
+        return true;
     }
 }

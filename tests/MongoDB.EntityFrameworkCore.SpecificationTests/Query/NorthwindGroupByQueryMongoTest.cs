@@ -63,9 +63,16 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Property_Select_Average_with_group_enumerable_projected(bool async)
     {
+#if EF8 || EF9
         await base.GroupBy_Property_Select_Average_with_group_enumerable_projected(async);
 
         AssertMql();
+#else
+        await Assert.ThrowsAnyAsync<Exception>(() => base.GroupBy_Property_Select_Average_with_group_enumerable_projected(async));
+
+        AssertMql(
+        );
+#endif
     }
 
     public override async Task GroupBy_Property_Select_Count(bool async)

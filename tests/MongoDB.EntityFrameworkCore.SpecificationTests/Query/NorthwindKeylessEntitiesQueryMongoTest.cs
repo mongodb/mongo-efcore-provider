@@ -54,12 +54,19 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task Entity_mapped_to_view_on_right_side_of_join(bool async)
     {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Entity_mapped_to_view_on_right_side_of_join(async));
+        AssertMql();
+#else
+        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Entity_mapped_to_view_on_right_side_of_join(async);
 
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Products", "localField" : "_outer.CustomerID", "foreignField" : "CategoryName", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
+#endif
     }
 
     public override async Task KeylessEntity_with_nav_defining_query(bool async)
@@ -83,7 +90,7 @@ CustomerQueryWithQueryFilter.{ "$match" : { "OrderCount" : { "$gt" : 0 } } }
 
     public override async Task KeylessEntity_with_included_nav(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include on keyless entity not supported (no primary key for $lookup join) EF-X019
         await AssertTranslationFailed(() => base.KeylessEntity_with_included_nav(async));
 
         AssertMql();
@@ -109,25 +116,41 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_select_where_navigation(bool async)
     {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.KeylessEntity_select_where_navigation(async));
+        AssertMql();
+#else
         await base.KeylessEntity_select_where_navigation(async);
 
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner.City" : "Seattle" } }
 """);
+#endif
     }
 
     public override async Task KeylessEntity_select_where_navigation_multi_level(bool async)
     {
+#if EF8 || EF9
         // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.KeylessEntity_select_where_navigation_multi_level(async));
 
         AssertMql();
+#else
+        Assert.Contains(
+            "Unsupported cross-DbSet query",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.KeylessEntity_select_where_navigation_multi_level(async))).Message);
+
+        AssertMql(
+        );
+#endif
     }
 
     public override async Task KeylessEntity_with_included_navs_multi_level(bool async)
     {
-        // Fails: Include issue EF-117
+        // Fails: Include on keyless entity not supported (no primary key for $lookup join) EF-X019
         await AssertTranslationFailed(() => base.KeylessEntity_with_included_navs_multi_level(async));
 
         AssertMql();

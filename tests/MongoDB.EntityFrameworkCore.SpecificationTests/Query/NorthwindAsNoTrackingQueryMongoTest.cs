@@ -99,20 +99,35 @@ Customers.
 
     public override async Task Applied_after_navigation_expansion(bool async)
     {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Applied_after_navigation_expansion(async));
+        AssertMql();
+#else
         await base.Applied_after_navigation_expansion(async);
 
         AssertMql(
-"""
+            """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner.City" : { "$ne" : "London" } } }
 """);
+#endif
     }
 
     public override async Task Include_reference_and_collection(bool async)
     {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Include_reference_and_collection(async));
+        AssertMql();
+#else
+        // Failed: Throws InvalidOperationException - LINQ expression could not be translated
         await base.Include_reference_and_collection(async);
 
         AssertMql(
-);
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_outer._id", "foreignField" : "_id.OrderID", "as" : "_outer._lookup_OrderDetails" } }
+""");
+#endif
     }
 
     public override async Task Applied_to_body_clause(bool async)

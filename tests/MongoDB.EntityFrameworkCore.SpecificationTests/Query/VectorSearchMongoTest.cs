@@ -346,7 +346,7 @@ Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 20, "numCandidates" : 2
 
     public class VectorSearchFixture : VectorSearchFixtureBase
     {
-        protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("BuiltInDataTypes");
+        protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("VectorSearch");
 
         public override bool Exact
             => false;

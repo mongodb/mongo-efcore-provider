@@ -148,7 +148,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                     Expression bsonArrayExpression;
                     string arrayName;
-                    if (ProjectionBindings.TryGetValue(objectArrayProjection, out var bsonArrayVar))
+                    if (_projectionBindings.TryGetValue(objectArrayProjection, out var bsonArrayVar))
                     {
                         bsonArrayExpression = bsonArrayVar;
                         arrayName = bsonArrayVar.Name!;
@@ -158,9 +158,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         // Nested collection inside a parent collection item (ThenInclude on
                         // collection-then-collection). Read the BsonArray from the parent document.
                         var parentAccess = objectArrayProjection.AccessExpression;
-                        var parentDoc = ProjectionBindings[parentAccess];
-                        bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, objectArrayProjection.Name);
-                        arrayName = objectArrayProjection.Name;
+                        var parentDoc = _projectionBindings[parentAccess];
+                        bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, objectArrayProjection.Name!);
+                        arrayName = objectArrayProjection.Name!;
                     }
                     var jObjectParameter = Expression.Parameter(typeof(BsonDocument), arrayName + "Object");
                     var ordinalParameter = Expression.Parameter(typeof(int), arrayName + "Ordinal");
@@ -270,7 +270,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     {
                         innerAccessExpression = objectArrayProjectionExpression.AccessExpression;
                         _projectionBindings[objectArrayProjectionExpression] = parameterExpression;
-                        fieldName ??= FindProjectionAlias(objectArrayProjectionExpression) ?? objectArrayProjectionExpression.Name;
+                        fieldName ??= objectArrayProjectionExpression.Name;
                     }
                     else
                     {
@@ -281,24 +281,31 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                         switch (accessExpression)
                         {
-                            case ObjectAccessExpression { Name: "_inner" } when _queryExpression.UsesDriverJoinFields:
-                                // For Include joins, _inner is at root level in the BsonDocument.
-                                innerAccessExpression = DocParameter;
+                            case ObjectAccessExpression crossCollectionAccess
+                                when IsCrossCollectionAccess(crossCollectionAccess):
+                                // Cross-collection Include result. In driver-native LeftJoin mode the single
+                                // joined reference is at root level under "_inner"; in flat $lookup + $unwind
+                                // mode each join is at root level under its own "_lookup_<Navigation>" field.
+                                // The field name is derived from the projection node itself (its navigation +
+                                // the computed UsesDriverJoinFields flag), never from mutable global state.
+                                // For a reference nested under a collection Include, the parent RootReference
+                                // is bound to the per-collection-element document; read the joined field from
+                                // that element rather than the absolute query root.
+                                innerAccessExpression = GetCrossCollectionRootDocument(crossCollectionAccess);
+                                fieldName = GetCrossCollectionFieldName(crossCollectionAccess);
                                 fieldRequired = false;
                                 break;
-                            case ObjectAccessExpression { Name: var name } when _queryExpression.UsesDriverJoinFields
-                                && name.StartsWith("_lookup_"):
-                                // Additional reference Includes via $lookup + $unwind are at root level.
-                                innerAccessExpression = DocParameter;
-                                fieldRequired = false;
-                                break;
-                            case ObjectAccessExpression innerObjectAccessExpression:
+                            // Embedded sub-document access: the navigation is always present here because
+                            // navigation-less ObjectAccessExpressions are only created for cross-collection
+                            // explicit joins, which are handled by the cross-collection case above.
+                            case ObjectAccessExpression { Navigation: { } embeddedNavigation } innerObjectAccessExpression:
                                 innerAccessExpression = innerObjectAccessExpression.AccessExpression;
-                                _ownerMappings[accessExpression] = (innerObjectAccessExpression.Navigation.DeclaringEntityType, innerAccessExpression);
+                                _ownerMappings[accessExpression] =
+                                    (embeddedNavigation.DeclaringEntityType, innerAccessExpression);
                                 fieldRequired = innerObjectAccessExpression.Required;
                                 break;
                             case RootReferenceExpression when _queryExpression.UsesDriverJoinFields:
-                                // For Include joins, the outer entity is under "_outer".
+                                // For driver-native LeftJoin Includes, the root entity is under "_outer".
                                 innerAccessExpression = DocParameter;
                                 fieldName = "_outer";
                                 break;
@@ -475,6 +482,54 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
+    /// Whether an <see cref="ObjectAccessExpression"/> refers to a cross-collection Include result
+    /// (a separate document joined in via the driver's native LeftJoin or via $lookup + $unwind),
+    /// as opposed to an embedded sub-document accessed in place. Cross-collection results live at the
+    /// root of the joined BsonDocument; embedded navigations are nested under their containing element.
+    /// </summary>
+    private static bool IsCrossCollectionAccess(ObjectAccessExpression accessExpression)
+        => accessExpression.AccessExpression is RootReferenceExpression
+           && (accessExpression.Navigation is null || !accessExpression.Navigation.IsEmbedded());
+
+    /// <summary>
+    /// Determine the root-level BsonDocument field a cross-collection Include result is read from.
+    /// The decision comes from the projection node itself plus the query's computed
+    /// <see cref="MongoQueryExpression.UsesDriverJoinFields"/> flag — the single source of truth —
+    /// not from any mutable per-translation state:
+    /// <list type="bullet">
+    /// <item>driver-native LeftJoin mode: the lone joined reference is under "_inner";</item>
+    /// <item>flat $lookup + $unwind mode: each join is under its own "_lookup_&lt;Navigation&gt;" alias,
+    /// which is exactly the alias baked into the access expression's <see cref="ObjectAccessExpression.Name"/>.</item>
+    /// </list>
+    /// </summary>
+    private string GetCrossCollectionFieldName(ObjectAccessExpression accessExpression)
+        => _queryExpression.UsesDriverJoinFields ? "_inner" : accessExpression.Name;
+
+    /// <summary>
+    /// Determine the <see cref="BsonDocument"/> a cross-collection Include result is read from. For a
+    /// top-level cross-collection Include this is the query root document (<see cref="DocParameter"/>).
+    /// For a cross-collection reference nested under a collection Include (e.g.
+    /// <c>Product.OrderDetails.ThenInclude(od =&gt; od.Order)</c>), the parent <see cref="RootReferenceExpression"/>
+    /// is bound to the per-element document of the enclosing collection; the joined field
+    /// (<c>_lookup_&lt;RefNav&gt;</c>) lives on that element, so read from the bound element document instead.
+    /// </summary>
+    private Expression GetCrossCollectionRootDocument(ObjectAccessExpression accessExpression)
+    {
+        // Only redirect to a bound element document when the joined reference is genuinely nested under a
+        // collection Include — i.e. its parent RootReference is for an entity OTHER than the query root and
+        // that element document is currently bound. Top-level cross-collection Includes (parent == query
+        // root) and driver-native LeftJoin reference chains continue to read from the absolute root.
+        if (accessExpression.AccessExpression is RootReferenceExpression { EntityType: var parentType }
+            && parentType != _queryExpression.CollectionExpression.EntityType
+            && _projectionBindings.TryGetValue(accessExpression.AccessExpression, out var elementDocument))
+        {
+            return elementDocument;
+        }
+
+        return DocParameter;
+    }
+
+    /// <summary>
     /// Obtain the registered <see cref="ProjectionExpression"/> for a given <see cref="ProjectionBindingExpression"/>.
     /// </summary>
     /// <param name="projectionBindingExpression">The <see cref="ProjectionBindingExpression"/> to look-up.</param>
@@ -516,15 +571,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         {
             innerExpression = docExpression switch
             {
-                // For Include joins, the outer entity is under "_outer" in the BsonDocument.
+                // For driver-native LeftJoin Includes, the root entity is under "_outer" in the BsonDocument.
                 RootReferenceExpression when _queryExpression.UsesDriverJoinFields
                     => CreateGetValueExpression(DocParameter, "_outer", required, typeof(BsonDocument)),
                 RootReferenceExpression => CreateGetValueExpression(DocParameter, null, required, typeof(BsonDocument)),
-                // For Include joins, _inner and _lookup_* are at the root of the BsonDocument.
-                ObjectAccessExpression { Name: "_inner" } when _queryExpression.UsesDriverJoinFields
-                    => CreateGetValueExpression(DocParameter, "_inner", required, typeof(BsonDocument)),
-                ObjectAccessExpression { Name: var name } when _queryExpression.UsesDriverJoinFields && name.StartsWith("_lookup_")
-                    => CreateGetValueExpression(DocParameter, name, false, typeof(BsonDocument)),
+                // Cross-collection Include results are at the root of the BsonDocument. The field is
+                // derived from the projection node (navigation + computed UsesDriverJoinFields flag):
+                // "_inner" for the lone driver-native reference, "_lookup_<Navigation>" in flat mode.
+                ObjectAccessExpression crossCollectionAccess when IsCrossCollectionAccess(crossCollectionAccess)
+                    => CreateGetValueExpression(
+                        GetCrossCollectionRootDocument(crossCollectionAccess),
+                        GetCrossCollectionFieldName(crossCollectionAccess), false, typeof(BsonDocument)),
                 ObjectAccessExpression docAccessExpression => CreateGetValueExpression(docAccessExpression.AccessExpression,
                     docAccessExpression.Name, required, typeof(BsonDocument)),
                 _ => innerExpression
@@ -532,17 +589,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         }
 
         var elementType = typeMapping?.ClrType ?? type;
-        return BsonBinding.CreateGetValueExpression(innerExpression, propertyName, required, elementType, entityType);
+        return BsonBinding.CreateGetValueExpression(innerExpression, propertyName, required, elementType, entityType!);
     }
 
     protected ResolvedFieldAccess TryResolveFieldAccess(Expression? expression)
     {
         if (expression == null) return default;
 
-        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
-        {
-            expression = unary.Operand;
-        }
+        expression = expression.RemoveConvert();
 
         if (expression is MemberExpression memberExpression)
         {
@@ -579,10 +633,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
     private (IEntityType? EntityType, Expression? DocumentExpression) TryResolveFieldAccessSource(Expression? expression)
     {
-        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
-        {
-            expression = unary.Operand;
-        }
+        expression = expression.RemoveConvert();
 
         if (expression is EntityTypedExpression entityTypedExpression)
         {
@@ -596,7 +647,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
         if (expression is ObjectAccessExpression objectAccessExpression)
         {
-            return (objectAccessExpression.Navigation.TargetEntityType, objectAccessExpression);
+            return (objectAccessExpression.Navigation?.TargetEntityType ?? objectAccessExpression.EntityType!, objectAccessExpression);
         }
 
         // When a projection lambda does `new { o.Prop }`, EF stores MemberExpr(STS_root, "Prop")
@@ -670,6 +721,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         Expression instanceVariable)
     {
         var navigation = (INavigation)includeExpression.Navigation;
+
+        // Include on a keyless entity is not supported: there is no primary key to resolve the
+        // $lookup join, and keyless entities are never tracked (no InternalEntityEntry is emitted).
+        if (navigation.DeclaringEntityType.FindPrimaryKey() == null)
+        {
+            throw new InvalidOperationException(CoreStrings.TranslationFailed(includeExpression.Print()));
+        }
+
         var includeMethod = navigation.IsCollection ? IncludeCollectionMethodInfo : IncludeReferenceMethodInfo;
         var includingClrType = navigation.DeclaringEntityType.ClrType;
         var relatedEntityClrType = navigation.TargetEntityType.ClrType;

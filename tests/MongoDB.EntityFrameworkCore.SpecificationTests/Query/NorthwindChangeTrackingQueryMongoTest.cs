@@ -117,7 +117,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 2 }
         base.Precedence_of_tracking_modifiers5();
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Outer._id" : "ALFKI" } }, { "$project" : { "_v" : "$Inner", "_id" : 0 } }
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_outer._id" : "ALFKI" } }
 """);
     }
 
@@ -260,7 +260,7 @@ Customers.{ "$project" : { "_v" : "$Region", "_id" : 0 } }
         base.Precedence_of_tracking_modifiers4();
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Outer._id" : "ALFKI" } }, { "$project" : { "_v" : "$Inner", "_id" : 0 } }
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_outer._id" : "ALFKI" } }
 """);
     }
 

@@ -83,17 +83,17 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
                     ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression)
                     : new EntityProjectionExpression(
                         navigation.TargetEntityType,
-                        new ObjectAccessExpression(navigation, ParentAccessExpression, navigation.ForeignKey.IsRequiredDependent));
+                        new NavigationObjectAccessExpression(navigation, ParentAccessExpression, navigation.ForeignKey.IsRequiredDependent));
             }
             else
             {
                 // Cross-collection navigation: use lookup alias as the field name
-                var lookupAlias = $"_lookup_{navigation.Name}";
+                var lookupAlias = LookupExpression.GetLookupAlias(navigation);
                 expression = navigation.IsCollection
                     ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression, lookupAlias)
                     : new EntityProjectionExpression(
                         navigation.TargetEntityType,
-                        new ObjectAccessExpression(navigation, ParentAccessExpression, false, lookupAlias));
+                        new NavigationObjectAccessExpression(navigation, ParentAccessExpression, false, lookupAlias));
             }
 
             _navigationExpressionsMap[navigation] = expression;
@@ -182,9 +182,10 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
 
     private bool Equals(EntityProjectionExpression entityProjectionExpression)
         => Equals(EntityType, entityProjectionExpression.EntityType)
+           && string.Equals(Name, entityProjectionExpression.Name, StringComparison.Ordinal)
            && ParentAccessExpression.Equals(entityProjectionExpression.ParentAccessExpression);
 
     /// <inheritdoc />
     public override int GetHashCode()
-        => HashCode.Combine(EntityType, ParentAccessExpression);
+        => HashCode.Combine(EntityType, Name, ParentAccessExpression);
 }

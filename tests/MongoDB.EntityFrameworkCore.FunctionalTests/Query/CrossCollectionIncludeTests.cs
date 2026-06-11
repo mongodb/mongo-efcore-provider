@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -62,6 +63,7 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(order.OrderDescription);
     }
 
+#if !EF8 && !EF9
     [Fact]
     public void Include_reference_navigation_materializes_related_entity()
     {
@@ -73,7 +75,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(order.Customer);
         Assert.Equal("Alice", order.Customer.FullName);
     }
+#endif
 
+#if !EF8 && !EF9
     [Fact]
     public void Include_reference_navigation_with_no_tracking()
     {
@@ -85,6 +89,7 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(order.Customer);
         Assert.Equal("Alice", order.Customer.FullName);
     }
+#endif
 
     [Fact]
     public void Include_collection_navigation_materializes_related_entities()
@@ -98,6 +103,7 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(2, customer.Orders.Count);
     }
 
+#if !EF8 && !EF9
     [Fact]
     public void Include_reference_navigation_null_fk_returns_null()
     {
@@ -115,7 +121,37 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 
         Assert.Null(order.Customer);
     }
+#endif
 
+#if !EF8 && !EF9
+    [Fact]
+    public void Include_optional_reference_preserves_principal_with_null_fk()
+    {
+        // A bare reference Include (Orders.Include(o => o.Customer)) is a LEFT-OUTER join: principals whose
+        // optional FK is null/absent must survive with a null navigation. This exercises the driver-native
+        // left-join pipeline (manual $project/$lookup/$unwind(preserveNullAndEmptyArrays:true)/$project) and
+        // guards against regressing it back to an inner join (which would silently drop the orphan order).
+        var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
+
+        var orphanOrder = new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() },
+            { "desc", "Orphan order" }
+        };
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersCollection).InsertOne(orphanOrder);
+
+        using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
+        var orders = db.Orders.Include(o => o.Customer).ToList();
+
+        // All four orders (three with a customer + the orphan) must be returned (left-outer, not inner).
+        Assert.Equal(4, orders.Count);
+        var orphan = Assert.Single(orders, o => o.OrderDescription == "Orphan order");
+        Assert.Null(orphan.Customer);
+        Assert.All(orders.Where(o => o.OrderDescription != "Orphan order"), o => Assert.NotNull(o.Customer));
+    }
+#endif
+
+#if !EF8 && !EF9
     [Fact]
     public void Where_on_navigation_property_with_entity_projection()
     {
@@ -130,7 +166,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(2, orders.Count);
         Assert.All(orders, o => Assert.NotNull(o.OrderDescription));
     }
+#endif
 
+#if !EF8 && !EF9
     [Fact]
     public void Where_on_navigation_property_with_projection()
     {
@@ -145,7 +183,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(2, orders.Count);
         Assert.All(orders, o => Assert.NotNull(o.OrderDescription));
     }
+#endif
 
+#if !EF8 && !EF9
     [Fact]
     public void Select_navigation_property_projects_correctly()
     {
@@ -158,7 +198,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("Alice", customerNames);
         Assert.Contains("Bob", customerNames);
     }
+#endif
 
+#if !EF8 && !EF9
     [Fact]
     public void Select_anonymous_with_navigation_property()
     {
@@ -172,7 +214,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(3, result.Count);
         Assert.Contains(result, r => r.OrderDescription == "Order 1" && r.CustomerName == "Alice");
     }
+#endif
 
+#if !EF8 && !EF9
     [Fact]
     public void Include_multiple_navigations_on_same_entity()
     {
@@ -195,7 +239,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(customer.Orders);
         Assert.Equal(2, customer.Orders.Count);
     }
+#endif
 
+#if !EF8 && !EF9
     [Fact]
     public void Include_multi_level_materializes_nested_entities()
     {
@@ -211,7 +257,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(order.Customer.Orders);
         Assert.True(order.Customer.Orders.Count > 0);
     }
+#endif
 
+#if !EF8 && !EF9
     [Fact]
     public void Include_self_join_materializes_related_entity()
     {
@@ -232,6 +280,41 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(employee.Manager);
         Assert.Equal("Boss", employee.Manager.EmployeeName);
         Assert.Null(allStaff.First(s => s.EmployeeName == "Boss").Manager);
+    }
+#endif
+
+    [Fact]
+    public void Filtered_collection_include_predicate_is_not_silently_dropped()
+    {
+        // A user filtered-Include predicate (.Include(c => c.Orders.Where(...))) lowers to a Where inside
+        // the collection subquery. The provider does not yet translate that predicate into the $lookup
+        // sub-pipeline $match. It must fail loudly (translation failure) rather than silently drop the
+        // predicate and return ALL of the customer's orders.
+        var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
+
+        using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Customers
+                .Include(c => c.Orders.Where(o => o.OrderDescription == "Order 1"))
+                .First(c => c.FullName == "Alice"));
+    }
+
+    [Fact]
+    public void Query_filter_on_collection_include_target_is_not_silently_dropped()
+    {
+        // A HasQueryFilter on the dependent entity (e.g. soft-delete / multi-tenant) also lowers to a Where
+        // inside the collection-Include subquery. The provider does not yet translate it into the $lookup
+        // sub-pipeline $match, so it must fail loudly rather than silently bypass the filter and return
+        // soft-deleted rows.
+        var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
+
+        using var db = new SoftDeleteOrderCustomerDbContext(database, ordersCollection, customersCollection);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Customers
+                .Include(c => c.Orders)
+                .First(c => c.FullName == "Alice"));
     }
 
     // BSON uses: desc, cust_id for Orders; name for Customers
@@ -291,6 +374,7 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
             : base(new DbContextOptionsBuilder<OrderCustomerDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
         {
             _database = database;
@@ -327,6 +411,63 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         }
     }
 
+    // Same model as OrderCustomerDbContext but with a soft-delete HasQueryFilter on the dependent (Order).
+    class SoftDeleteOrderCustomerDbContext : DbContext
+    {
+        private readonly string _ordersCollection;
+        private readonly string _customersCollection;
+
+        public DbSet<Order> Orders { get; set; }
+        public DbSet<Customer> Customers { get; set; }
+
+        public SoftDeleteOrderCustomerDbContext(
+            TemporaryDatabaseFixture database,
+            string ordersCollection,
+            string customersCollection)
+            : base(new DbContextOptionsBuilder<SoftDeleteOrderCustomerDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .Options)
+        {
+            _ordersCollection = ordersCollection;
+            _customersCollection = customersCollection;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<Customer>(b =>
+            {
+                b.ToCollection(_customersCollection);
+                b.Property(c => c.FullName).HasElementName("name");
+                b.HasMany(c => c.Orders)
+                    .WithOne(o => o.Customer)
+                    .HasForeignKey(o => o.CustomerId);
+            });
+
+            modelBuilder.Entity<Order>(b =>
+            {
+                b.ToCollection(_ordersCollection);
+                b.Property(o => o.OrderDescription).HasElementName("desc");
+                b.Property(o => o.CustomerId).HasElementName("cust_id");
+                // Soft-delete-style query filter on the dependent, expressed over a mapped property so
+                // materialization itself is unaffected — the only difference vs the plain model is the
+                // extra Where lowered into the collection-Include subquery.
+                b.HasQueryFilter(o => o.OrderDescription != "tombstone");
+            });
+        }
+
+        sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime)
+                => Interlocked.Increment(ref _count);
+        }
+    }
+
+#if !EF8 && !EF9
     class StaffMember
     {
         public ObjectId _id { get; set; }
@@ -346,6 +487,7 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
             : base(new DbContextOptionsBuilder<StaffDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
         {
             _collectionName = collectionName;
@@ -372,4 +514,5 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 => Interlocked.Increment(ref _count);
         }
     }
+#endif
 }

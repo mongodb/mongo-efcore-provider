@@ -78,3 +78,38 @@ dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityF
 ```
 
 For full multi-EF coverage, invoke the `/test-all` skill.
+
+## Regenerating MQL baselines
+
+`AssertMql(...)` baselines are generated, not hand-written. To (re)generate them, run the test(s)
+with the `EF_TEST_REWRITE_BASELINES` environment variable set to `1` (or `TRUE`):
+
+```bash
+EF_TEST_REWRITE_BASELINES=1 dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj   -c "Debug EF10" --no-build --filter "FullyQualifiedName~<Class>.<Method>"
+```
+
+When an `AssertMql` assertion fails with the rewrite var set, `TestMqlLoggerFactory.AssertBaseline`
+rewrites that override's `AssertMql(...)` **in place** from the actually-captured MQL (and also writes
+a `QueryBaseline.txt` artifact). The test still reports as failed in this mode — that's the signal a
+rewrite happened. Then **rebuild and re-run without the var** to confirm the test is genuinely green.
+
+Important properties / caveats:
+
+- **It is data-gated by construction.** `AssertMql(...)` is the *last* call in an override, after
+  `await base.SomeTest(...)`. A test that fails its data/behavior assertion (or throws) never reaches
+  `AssertBaseline`, so it is never rewritten. This means you can re-baseline a *passing-data* test safely
+  without blessing a wrong result — but it also means the rewrite will happily record the MQL of a test
+  whose only remaining failure is the baseline mismatch, including tests asserting a *partial* pipeline
+  emitted before an expected throw.
+- **Scope the run.** A whole-suite rewrite run will rewrite every test that reaches `AssertBaseline`. Use
+  a tight `--filter` so you only touch the intended tests, then diff the result.
+- **It truncates at 9 statements** (`Output truncated.`), and it can only rewrite when it can resolve the
+  test's source file+line from the stack trace.
+- **The auto-rewriter can corrupt some files / mis-place output** — always `git diff` the result and
+  rebuild before trusting it; revert and hand-edit if a file looks wrong.
+
+> Transitional note (EF-117 Include work): overrides tagged with a `// Failed:` comment mark tests whose
+> behavior changed during the in-progress Include work and were not yet re-baselined; they are removed as
+> each test is fixed and its baseline refreshed. `// Fails:` (no "d") is the separate, durable
+> known-gap-with-ticket convention documented in `docs/failing-spec-tests.md`.
+

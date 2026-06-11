@@ -14,32 +14,24 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableExpression, IAccessExpression
 {
-    public ObjectArrayProjectionExpression(
-        INavigation navigation,
-        Expression accessExpression,
-        EntityProjectionExpression? innerProjection = null)
-        : this(navigation, accessExpression,
-            navigation.TargetEntityType.GetContainingElementName()
-            ?? throw new InvalidOperationException(
-                $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity."),
-            innerProjection)
-    {
-    }
-
     /// <summary>
-    /// Create an <see cref="ObjectArrayProjectionExpression"/> with an explicit field name.
-    /// Used for cross-collection $lookup results.
+    /// Create an <see cref="ObjectArrayProjectionExpression"/>. When <paramref name="name"/> is
+    /// <see langword="null"/> the field name is taken from the navigation's containing element name
+    /// (an embedded collection); pass an explicit name for cross-collection $lookup results.
     /// </summary>
     public ObjectArrayProjectionExpression(
         INavigation navigation,
         Expression accessExpression,
-        string name,
+        string? name = null,
         EntityProjectionExpression? innerProjection = null)
     {
         var targetType = navigation.TargetEntityType;
         Type = typeof(IEnumerable<>).MakeGenericType(targetType.ClrType);
 
-        Name = name;
+        Name = name
+               ?? targetType.GetContainingElementName()
+               ?? throw new InvalidOperationException(
+                   $"Navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' doesn't point to an embedded entity.");
         Navigation = navigation;
         AccessExpression = accessExpression;
         InnerProjection = innerProjection
@@ -73,7 +65,7 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
         Expression accessExpression,
         EntityProjectionExpression innerProjection)
         => accessExpression != AccessExpression || innerProjection != InnerProjection
-            ? new ObjectArrayProjectionExpression(Navigation, accessExpression, innerProjection)
+            ? new ObjectArrayProjectionExpression(Navigation, accessExpression, Name!, innerProjection)
             : this;
 
     void IPrintableExpression.Print(ExpressionPrinter expressionPrinter)
@@ -89,9 +81,11 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
                && Equals(arrayProjectionExpression));
 
     private bool Equals(ObjectArrayProjectionExpression objectArrayProjectionExpression)
-        => AccessExpression.Equals(objectArrayProjectionExpression.AccessExpression)
+        => Navigation == objectArrayProjectionExpression.Navigation
+           && string.Equals(Name, objectArrayProjectionExpression.Name, StringComparison.Ordinal)
+           && AccessExpression.Equals(objectArrayProjectionExpression.AccessExpression)
            && InnerProjection.Equals(objectArrayProjectionExpression.InnerProjection);
 
     public override int GetHashCode()
-        => HashCode.Combine(AccessExpression, InnerProjection);
+        => HashCode.Combine(Navigation, Name, AccessExpression, InnerProjection);
 }

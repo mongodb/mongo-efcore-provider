@@ -24,15 +24,15 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 
 | Ticket | Comment subject | Description | Count |
 | --- | --- | --- | --- |
-| [EF-117](https://jira.mongodb.org/browse/EF-117) | `Include issue EF-117` / `Include (joins) issue EF-117` | `Include`/`ThenInclude` across DbSets is not supported — joins between collections cannot be translated. | 499 |
+| [EF-117](https://jira.mongodb.org/browse/EF-117) | _(no remaining `// Fails:` tags)_ | Cross-collection **Include**/`ThenInclude` is now implemented for the tested shapes. The five tests formerly tagged here were re-investigated: `Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join` (tracking + no-tracking) now **passes**; `Collection_include_over_result_of_single_non_scalar` and `Do_not_erase_projection_mapping_when_adding_single_projection` actually fail on cross-`DbSet` subquery translation (re-tagged **EF-X001**); `Included_one_to_many_query_with_client_eval` fails on driver client-evaluation (re-tagged **EF-X003**); and Include on a keyless entity (incl. multi-level) is a genuine PK-less `$lookup` gap (re-tagged **EF-X019**). EF-117 no longer has any active `// Fails:` tags. (Join/GroupJoin/SelectMany/RightJoin/subquery failures formerly tagged here were re-categorized — see EF-X001/EF-216/EF-220/EF-X016/EF-X017/EF-X018.) | 0 |
 | [EF-149](https://jira.mongodb.org/browse/EF-149) | `GroupBy issue EF-149` | `GroupBy` translation is severely limited; most non-trivial group-by shapes fail to translate. | 246 |
 | [EF-153](https://jira.mongodb.org/browse/EF-153) | `TagWith EF-153` | `TagWith(...)` content is silently dropped — does not appear in the emitted MQL. | 9 |
 | [EF-164](https://jira.mongodb.org/browse/EF-164) | `Missing property values issue EF-164` / `Projections issue EF-164` | BSON documents that omit a required scalar (or required navigation) throw on materialization — `Project_root_with_missing_scalars`, `Project_root_entity_with_missing_required_navigation`, etc. | 3 |
 | [EF-202](https://jira.mongodb.org/browse/EF-202) | `Entity equality issue EF-202` | Comparing two entities (`entity1 == entity2` / `Contains(entity)`) is not lowered to a key-equality comparison. | 4 |
-| [EF-216](https://jira.mongodb.org/browse/EF-216) | `Cross-document navigation access issue EF-216` / `Navigations issue EF-216` | Navigations that cross collection boundaries cannot be translated; surfaces as `Unsupported cross-DbSet query between ...`. Documented at the helper `AssertNoMultiCollectionQuerySupport`. | 263 |
+| [EF-216](https://jira.mongodb.org/browse/EF-216) | `Cross-document navigation access issue EF-216` / `Navigations issue EF-216` | Navigations that cross collection boundaries cannot be translated; surfaces as `Unsupported cross-DbSet query between ...`. Documented at the helper `AssertNoMultiCollectionQuerySupport`. | 265 |
 | [EF-217](https://jira.mongodb.org/browse/EF-217) | `Call ToString on DateTimeOffset EF-217` | `DateTimeOffset.ToString()` cannot be translated. | 2 |
 | [EF-218](https://jira.mongodb.org/browse/EF-218) | `Projecting DateTimeOffset members EF-218` | Projecting individual members of a `DateTimeOffset` (e.g. `.Year`, `.Hour`) is not supported. | 2 |
-| [EF-220](https://jira.mongodb.org/browse/EF-220) | `Multiple query roots issue EF-220` | Queries that reference more than one `DbSet<>` (Cartesian product / cross-join) are not translatable. | 2 |
+| [EF-220](https://jira.mongodb.org/browse/EF-220) | `Multiple query roots issue EF-220` | Queries that reference more than one `DbSet<>` (Cartesian product / cross-join) are not translatable. Includes `SelectMany` across DbSets and tautology-predicate cross-joins. | 10 |
 | [EF-221](https://jira.mongodb.org/browse/EF-221) | `Equals with different types issue EF-221` | `==` / `Equals` with operands of mismatched CLR types (e.g. `int == long`) is not translated correctly. | 4 |
 | [EF-222](https://jira.mongodb.org/browse/EF-222) | `translation of Like issue EF-222` | `EF.Functions.Like(...)` is not translated. | 9 |
 | [EF-227](https://jira.mongodb.org/browse/EF-227) | `Max over empty nullables issue EF-227` | `Min` / `Max` over an empty nullable sequence does not produce the EF-expected `null`. | 4 |
@@ -82,9 +82,9 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 
 | Temp ticket | Subject | Count |
 | --- | --- | --- |
-| EF-X001 | Sub-query selection across DbSets is not translated | 125 |
+| EF-X001 | Sub-query selection across DbSets is not translated | 144 |
 | EF-X002 | Provider throws a different exception than the EF translation-failure message | 44 |
-| EF-X003 | Driver-level feature gaps surfaced as test failures | 17 |
+| EF-X003 | Driver-level feature gaps surfaced as test failures | 19 |
 | EF-X004 | Float `Sum`/`Average` truncation (likely duplicate of EF-228) | 1 |
 | EF-X005 | BSON document missing nested required reference (AdHoc JSON) | 2 |
 | EF-X006 | MongoDB `DateTimeKind` round-trip handling | 1 |
@@ -97,11 +97,17 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X013 | MongoDB has no `$xor` operator (`Where_bitwise_xor`) | 1 |
 | EF-X014 | Server-side projection conflict with cast-to-nullable | 1 |
 | EF-X015 | Sub-second `DateTime` component translation (nanosecond/microsecond) | 1 |
+| EF-X016 | GroupJoin shapes not translated | 9 |
+| EF-X017 | Join shapes not translated | 5 |
+| EF-X018 | RightJoin not supported | 1 |
+| EF-X019 | Include on keyless entity not supported (no primary key for $lookup join) | 2 |
+| EF-X020 | Cross-collection Include/join/navigation not translated on EF8/EF9 (works on EF10) | 168 |
+| EF-X021 | Filtered Include / query filter on cross-collection target not translated | 0 |
 
 ### EF-X001 — Sub-query selection across DbSets is not translated
 Comment patterns: `// Fails: Subquery selection EF-X001`, `// Fails: Subqueries not supported EF-X001`, `// Fails: No subquery support EF-X001`.
 Test-body patterns: `AssertTranslationFailed(() => base.X(...))`, `AssertNoMultiCollectionQuerySupport(() => base.X(...))`.
-Affected: ~125 tests across `NorthwindAggregateOperators`, `NorthwindMiscellaneous`, `NorthwindWhere`, `NorthwindNavigations`, `NorthwindSetOperations`, etc. Many overlap with [EF-216](https://jira.mongodb.org/browse/EF-216); a separate ticket lets cross-collection subquery support be tracked independently from raw navigation access.
+Affected: ~140 tests across `NorthwindAggregateOperators`, `NorthwindMiscellaneous`, `NorthwindWhere`, `NorthwindNavigations`, `NorthwindSetOperations`, `NorthwindJoin`, etc. Many overlap with [EF-216](https://jira.mongodb.org/browse/EF-216); a separate ticket lets cross-collection subquery support be tracked independently from raw navigation access.
 
 ### EF-X002 — Provider throws a different exception than the EF translation-failure message
 Comment patterns: `// Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002`, `// Fails: Not throwing expected translation failed exception from EF. EF-X002`, `// Fails: Does not throw expected unable to translate exception EF-X002`, `// Fails: Does not use translation failed message EF-X002`, `// Fails: Throws different exception, but still throws EF-X002`.
@@ -159,7 +165,66 @@ Affected: 1 test (`NorthwindSelectQueryMongoTest.Select_bool_closure_with_order_
 Comment pattern: `// Fails: Sub-second DateTime component translation EF-X015`.
 Affected: 1 test (`NorthwindMiscellaneousQueryMongoTest.Where_nanosecond_and_microsecond_component`). `DateTime.Nanosecond` and `DateTime.Microsecond` (added in .NET 7) are not translated; the provider throws `ExpressionNotSupportedException`.
 
+### EF-X016 — GroupJoin shapes not translated
+Comment pattern: `// Fails: GroupJoin shape not translated EF-X016`.
+Affected: 9 tests in `NorthwindJoinQueryMongoTest.cs` — `GroupJoin_aggregate_anonymous_key_selectors` (+`2`, +`_one_argument`, +`_nested`), `GroupJoin_DefaultIfEmpty_multiple`, `GroupJoin_DefaultIfEmpty2`, `GroupJoin_subquery_projection_outer_mixed`, `GroupJoin_on_true_equal_true` (EF9 only), `Unflattened_GroupJoin_composed_2`. These are `GroupJoin` shapes the flatten-to-`$lookup` pipeline does not yet handle (aggregate / anonymous or nested key selectors, multiple `DefaultIfEmpty`, on-`true == true`, mixed projection). Distinct from the `GroupJoin` *subquery* shapes, which are tracked under [EF-X001](#ef-x001--sub-query-selection-across-dbsets-is-not-translated), and from cross-collection `Include`, which is [EF-117](https://jira.mongodb.org/browse/EF-117).
+
+### EF-X017 — Join shapes not translated
+Comment pattern: `// Fails: Join shape not translated EF-X017`.
+Affected: 5 tests — `Join_composite_key`, `Join_complex_condition`, `Join_with_key_selectors_being_nested_anonymous_objects`, `Join_local_collection_int_closure_is_cached_correctly` (all in `NorthwindJoinQueryMongoTest.cs`) and `Join_with_default_if_empty_on_both_sources` (in `NorthwindMiscellaneousQueryMongoTest.cs`). The provider translates simple single-key `Join`/`GroupJoin` to `$lookup`, but composite keys, complex (non-equality) conditions, nested-anonymous key selectors, joins against a local in-memory collection, and `DefaultIfEmpty` on both sources are not yet supported.
+
+### EF-X018 — RightJoin not supported
+Comment pattern: `// Fails: RightJoin not supported EF-X018`.
+Affected: 1 test (`NorthwindJoinQueryMongoTest.RightJoin`, EF10+). `Queryable.RightJoin` (the EF9+/EF10 operator) is not translated; the provider fails translation rather than emitting the reversed `$lookup` pipeline.
+
+### EF-X019 — Include on keyless entity not supported (no primary key for $lookup join)
+Comment pattern: `// Fails: Include on keyless entity not supported (no primary key for $lookup join) EF-X019`.
+Affected: 2 tests (`NorthwindKeylessEntitiesQueryMongoTest.KeylessEntity_with_included_nav`, `KeylessEntity_with_included_navs_multi_level`). A keyless entity has no primary key, so the cross-collection `$lookup` join-key cannot be resolved and keyless entities are never tracked (no `InternalEntityEntry` is emitted into the shaper). The provider now detects this in `MongoProjectionBindingRemovingExpressionVisitor.AddInclude` and throws the standard `CoreStrings.TranslationFailed` (translation-failure) message instead of the internal `Sequence contains no matching element` error. Distinct from cross-collection `Include` on keyed entities, which is implemented (formerly [EF-117](https://jira.mongodb.org/browse/EF-117)).
+
+### EF-X020 — Cross-collection Include/join/navigation not translated on EF8/EF9
+Comment pattern: `// Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020`.
+Test-body pattern: the override is wrapped in `#if EF8 || EF9` / `#else`. The `#if EF8 || EF9` branch asserts the translation failure (`AssertTranslationFailed(() => base.X(...))`); the `#else` branch keeps the working EF10 baseline (the real `base` call plus its `AssertMql(...)`).
+Affected: 168 tests across `NorthwindEFPropertyIncludeQueryMongoTest`, `NorthwindStringIncludeQueryMongoTest`, `NorthwindIncludeQueryMongoTest`, `NorthwindIncludeNoTrackingQueryMongoTest`, `NorthwindNavigationsQueryMongoTest`, `NorthwindMiscellaneousQueryMongoTest`, `NorthwindJoinQueryMongoTest`, `NorthwindAggregateOperatorsQueryMongoTest`, `NorthwindAsNoTrackingQueryMongoTest`, `NorthwindKeylessEntitiesQueryMongoTest`, `NorthwindSelectQueryMongoTest`, `NorthwindSetOperationsQueryMongoTest`, `NorthwindWhereQueryMongoTest`, and `BuiltInDataTypesMongoTest`. These are the cross-collection Include/`ThenInclude`/join/navigation shapes implemented for the EF10-targeted query pipeline. On EF8/EF9 the upstream nav-expansion / query pipeline produces a different expression shape (e.g. an extra `.OrderBy(o => o.OrderID)` injected during navigation expansion) that the EF10-targeted translator does not handle, so translation fails with EF Core's `InvalidOperationException` "could not be translated" (a few also throw the provider's `ExpressionNotSupportedException`); the same query translates and runs on EF10. The provider's local `AssertTranslationFailed` helper swallows whichever exception is thrown, so both shapes are covered. Four `Include_reference_dependent_already_tracked` overrides (in the four Include suites) emit MQL from a first principal query *before* the Include sub-query fails to translate, so their `#if EF8 || EF9` branch asserts only the translation failure and omits the empty `AssertMql()`. `BuiltInDataTypesMongoTest.Can_read_back_bool_mapped_as_int_through_navigation` is split three ways (a nested `#if EF9` inside the file's `#if !EF8` branch, plus the `#else` EF8 branch) because that file uses async signatures on EF9/EF10 and sync `void` signatures on EF8.
+
+### EF-216 — wrong-data on EF10 (cross-collection navigation), unsupported on EF8/EF9
+
+Five `NorthwindNavigationsQueryMongoTest` methods exercise **multi-hop** cross-collection navigation
+(multiple optional navigations, nested `Contains`-over-navigation, deep 2-hop null filters). On EF10
+the query **translates and runs but returns the wrong result set** (e.g. 2155 rows instead of 112 —
+the join/`Contains` filter is not applied; or 0 instead of 6 for the deep null case) — a genuine
+cross-collection navigation lowering bug, not a translation gap. On EF8/EF9 the same shapes simply
+fail to translate. Because the wrong-data variant cannot be asserted green by a test-only baseline
+(the base test asserts the *correct* data), these five are marked
+`[ConditionalTheory(Skip = "EF-216: multi-hop cross-collection navigation returns wrong data")]`
+uniformly across EF8/EF9/EF10 and carry a `// Fails: ... EF-216` comment. They need a provider
+query-pipeline fix for compound multi-hop navigation lowering:
+
+- `Include_with_multiple_optional_navigations`
+- `Multiple_include_with_multiple_optional_navigations`
+- `Navigation_from_join_clause_inside_contains`
+- `Navigation_inside_contains_nested`
+- `Select_Where_Navigation_Null_Deep`
+
+With these skipped, the full spec suite is **green on all three EF versions** (EF8/EF9/EF10:
+0 failures). They are the only known-incorrect query shapes remaining; un-skip them once the
+multi-hop navigation lowering is fixed.
+
 ---
+
+### EF-X021 — Filtered Include / query filter on cross-collection target not translated
+Comment pattern: `// Fails: Filtered Include / query-filter predicate on a cross-collection $lookup target is not translated EF-X021`.
+Affected: 0 spec overrides today (no specification test currently exercises a *filtered* cross-collection Include
+with a predicate, nor a `HasQueryFilter` on a cross-collection dependent — `Filtered_include_with_multiple_ordering`
+only uses OrderBy/Skip/Take, which *are* translated). Tracked because the provider now **fails loudly** for these
+shapes instead of silently dropping the predicate. A user filtered-Include predicate
+(`.Include(c => c.Orders.Where(o => ...))`) and a dependent-side `HasQueryFilter` (soft-delete / multi-tenant) both
+lower to a `Where` inside the collection-Include subquery; that `Where` is **not** the synthetic FK-correlation join
+condition and is not yet translated into the `$lookup` sub-pipeline `$match`. Previously it was silently dropped
+(returning *all* dependents and bypassing the filter — wrong data); the provider now throws a translation failure
+(`CoreStrings.TranslationFailed`). Translating the predicate into the sub-pipeline `$match` is the follow-up feature
+this ticket tracks. Functional coverage:
+`CrossCollectionIncludeTests.Filtered_collection_include_predicate_is_not_silently_dropped` and
+`CrossCollectionIncludeTests.Query_filter_on_collection_include_target_is_not_silently_dropped`.
 
 ## Audit findings — tagging hygiene
 

@@ -86,6 +86,49 @@ internal static class BsonBinding
         throw new InvalidOperationException(CoreStrings.PropertyNotFound(name, declaredType.DisplayName()));
     }
 
+    /// <summary>
+    /// Create the expression which will obtain a projected element using the serializer metadata
+    /// from the source property rather than resolving metadata from the projected alias.
+    /// </summary>
+    /// <param name="bsonDocExpression">The expression to obtain the current <see cref="BsonDocument"/>.</param>
+    /// <param name="name">The projected element name in the current document.</param>
+    /// <param name="property">The source model property that defines serializer/nullability metadata.</param>
+    /// <param name="mappedType">What <see cref="Type"/> the value is to be treated as.</param>
+    /// <remarks>
+    /// Callers must ensure <paramref name="mappedType"/> matches <paramref name="property"/>'s CLR
+    /// type (modulo nullability). The generated call casts the deserialized value to
+    /// <paramref name="mappedType"/>; if it differs from the property's CLR type the cast can
+    /// throw because the property's serializer produces values of its own type.
+    /// </remarks>
+    /// <returns>A compilable expression the shaper can use to obtain this value.</returns>
+    public static Expression CreateGetValueExpression(
+        Expression bsonDocExpression,
+        string? name,
+        IProperty property,
+        Type mappedType)
+    {
+        if (name is null)
+        {
+            return bsonDocExpression;
+        }
+
+        if (mappedType == typeof(BsonArray))
+        {
+            return CreateGetBsonArray(bsonDocExpression, name);
+        }
+
+        if (mappedType == typeof(BsonDocument))
+        {
+            return CreateGetBsonDocument(bsonDocExpression, name, !property.IsNullable, property.DeclaringType);
+        }
+
+        return CreateGetPropertyValueAtElement(
+            bsonDocExpression,
+            Expression.Constant(name),
+            Expression.Constant(property),
+            property.IsNullable ? mappedType.MakeNullable() : mappedType);
+    }
+
     internal static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
@@ -159,8 +202,17 @@ internal static class BsonBinding
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetElementValue));
 
-    internal static T? GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
+    internal static T? GetPropertyValue<T>(BsonDocument? document, IReadOnlyProperty property)
     {
+        // A null parent document means the owning entity is absent entirely (e.g. an optional
+        // cross-collection reference nested inside a collection Include whose $lookup matched no
+        // document). Treat every property as absent so the entity materializer's null-key check
+        // produces a null entity rather than dereferencing the missing document.
+        if (document == null)
+        {
+            return default;
+        }
+
         var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
         if (TryReadElementValue(document, serializationInfo, out T? value))
         {

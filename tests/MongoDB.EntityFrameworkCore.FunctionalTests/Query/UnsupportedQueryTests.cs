@@ -33,7 +33,15 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     public void Join_can_be_translated()
     {
         var result = _db.Planets.Join(_db.Moons, p => p._id, m => m.planetId, (p, m) => new { p, m }).ToList();
-        Assert.NotNull(result);
+
+        // An inner join must materialize matched pairs on both sides; a broken translation that
+        // returned an empty set would still satisfy Assert.NotNull, so assert real rows.
+        Assert.NotEmpty(result);
+        Assert.All(result, r =>
+        {
+            Assert.NotNull(r.p);
+            Assert.NotNull(r.m);
+        });
     }
 
 #if !EF8 && !EF9
@@ -42,7 +50,13 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     public void LeftJoin_can_be_translated()
     {
         var result = _db.Planets.LeftJoin(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList();
-        Assert.NotNull(result);
+
+        // Left-join semantics: every outer (planet) row is present, and at least one planet without a
+        // matching moon must yield a null inner element. Asserting the null inner guards against a
+        // regression to inner-join semantics that Assert.NotNull would silently pass.
+        Assert.NotEmpty(result);
+        Assert.All(result, r => Assert.NotNull(r.p));
+        Assert.Contains(result, r => r.m == null);
     }
 
 #endif

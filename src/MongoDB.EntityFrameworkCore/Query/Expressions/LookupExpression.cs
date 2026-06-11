@@ -54,8 +54,20 @@ internal sealed class LookupExpression
             ForeignField = GetFieldPath(foreignKey.Properties[0]);
         }
 
-        As = $"_lookup_{navigation.Name}";
+        As = GetLookupAlias(navigation);
     }
+
+    /// <summary>
+    /// The synthetic field name that a cross-collection <c>$lookup</c> writes its joined documents to
+    /// (the lookup's <see cref="As"/>) and that the shaper reads them back from. Centralized so every
+    /// write site (the lookup stage) and read site (projection binding) derive the identical alias from
+    /// the navigation, rather than re-spelling the <c>_lookup_</c> format independently and risking a
+    /// write/read mismatch.
+    /// </summary>
+    /// <param name="navigation">The navigation the lookup supports.</param>
+    /// <returns>The <c>_lookup_&lt;NavigationName&gt;</c> field name.</returns>
+    public static string GetLookupAlias(IReadOnlyNavigationBase navigation)
+        => $"_lookup_{navigation.Name}";
 
     /// <summary>The navigation this lookup supports.</summary>
     public INavigation Navigation { get; }
@@ -111,4 +123,12 @@ internal sealed class LookupExpression
 
     /// <summary>Whether $unwind is forced regardless of navigation type.</summary>
     public bool ForceUnwind { get; }
+
+    /// <summary>
+    /// Whether this $lookup must be injected right after the root collection source (before the user's
+    /// downstream pipeline stages) rather than tail-appended. Used for projected collection-navigation
+    /// counts (<c>select new { ..., c.Orders.Count }</c>) where a later <c>$match</c>/<c>$project</c>
+    /// reads the <c>_lookup_&lt;Nav&gt;</c> array via <c>{ $size: ... }</c> and so must see it already present.
+    /// </summary>
+    public bool InjectAfterRoot { get; set; }
 }

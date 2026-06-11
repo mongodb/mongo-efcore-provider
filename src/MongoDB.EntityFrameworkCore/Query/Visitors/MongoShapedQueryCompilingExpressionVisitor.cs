@@ -116,6 +116,42 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 rootEntityType, mongoQueryExpression, bsonDoc, behavior));
     }
 
+    /// <summary>
+    /// Remove the projection <c>Select</c> from the captured query chain so the shaper runs client-side
+    /// over full <see cref="BsonDocument"/>s. The Select may be the outermost node, or wrapped by a single
+    /// no-arg cardinality terminator (e.g. <c>First</c>, <c>Single</c>) emitted by EF Core for cardinality
+    /// reducers such as <c>AssertFirst</c>. The terminal operator is preserved with its generic argument
+    /// retargeted to the Select's source element type.
+    /// </summary>
+    private static Expression? StripPushedDownSelect(Expression? captured)
+    {
+        if (captured is not MethodCallExpression call || call.Method.DeclaringType != typeof(Queryable))
+        {
+            return captured;
+        }
+
+        if (call.Method.Name == nameof(Queryable.Select) && call.Arguments.Count == 2)
+        {
+            return call.Arguments[0];
+        }
+
+        if (call.Method.IsGenericMethod
+            && call.Method.GetParameters().Length == 1
+            && call.Method.Name is nameof(Queryable.Single) or nameof(Queryable.SingleOrDefault)
+                or nameof(Queryable.First) or nameof(Queryable.FirstOrDefault)
+                or nameof(Queryable.Last) or nameof(Queryable.LastOrDefault)
+            && call.Arguments is [MethodCallExpression { Method: { Name: nameof(Queryable.Select), DeclaringType: var st } } innerSelect]
+            && st == typeof(Queryable))
+        {
+            var newSource = innerSelect.Arguments[0];
+            var newSourceType = newSource.Type.GetGenericArguments()[0];
+            var rebound = call.Method.GetGenericMethodDefinition().MakeGenericMethod(newSourceType);
+            return Expression.Call(rebound, newSource);
+        }
+
+        return captured;
+    }
+
     private MethodCallExpression CompileShapedQuery(
         ShapedQueryExpression shapedQueryExpression,
         MongoQueryExpression mongoQueryExpression,
@@ -168,35 +204,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             Expression.Constant(shapedQueryExpression.ResultCardinality));
     }
 
-    private static Expression? StripPushedDownSelect(Expression? captured)
-    {
-        if (captured is not MethodCallExpression call || call.Method.DeclaringType != typeof(Queryable))
-        {
-            return captured;
-        }
-
-        if (call.Method.Name == nameof(Queryable.Select) && call.Arguments.Count == 2)
-        {
-            return call.Arguments[0];
-        }
-
-        if (call.Method.IsGenericMethod
-            && call.Method.GetParameters().Length == 1
-            && call.Method.Name is nameof(Queryable.Single) or nameof(Queryable.SingleOrDefault)
-                or nameof(Queryable.First) or nameof(Queryable.FirstOrDefault)
-                or nameof(Queryable.Last) or nameof(Queryable.LastOrDefault)
-            && call.Arguments is [MethodCallExpression { Method: { Name: nameof(Queryable.Select), DeclaringType: var st } } innerSelect]
-            && st == typeof(Queryable))
-        {
-            var newSource = innerSelect.Arguments[0];
-            var newSourceType = newSource.Type.GetGenericArguments()[0];
-            var rebound = call.Method.GetGenericMethodDefinition().MakeGenericMethod(newSourceType);
-            return Expression.Call(rebound, newSource);
-        }
-
-        return captured;
-    }
-
     private static (MongoQueryContext, MongoExecutableQuery) TranslateQuery<TSource>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
@@ -223,7 +230,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
 
         var queryTranslator = new MongoEFToLinqTranslatingExpressionVisitor(
-            queryContext, source.Expression, bsonSerializerFactory, queryExpression.PendingLookups, innerSources);
+            queryContext, source.Expression, bsonSerializerFactory, queryExpression.GetPendingLookups(), innerSources);
         var translatedQuery = translate(queryTranslator, queryExpression.CapturedExpression);
 
         var executableQuery = new MongoExecutableQuery(
@@ -340,12 +347,18 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         string collectionName,
         MongoTransaction? transaction)
     {
-        var innerCollection = mongoQueryContext.MongoClient.GetCollection<TInner>(collectionName);
+        // The driver's Join/GroupJoin pipeline translator requires the inner operand to be a bare
+        // IMongoQueryable backed by a collection (a ConstantExpression). It rejects an operand wrapped
+        // in .As(serializer) (a MethodCallExpression), so we cannot use .As(...) here as we do for the
+        // outer source. Instead we wrap the collection so its DocumentSerializer returns EF's entity
+        // serializer; the driver derives the inner pipeline-input serializer from collection.DocumentSerializer,
+        // which keeps EF's element-name / discriminator / BsonRepresentation mappings on the inner side.
+        var innerCollection = new SerializerOverrideCollection<TInner>(
+            mongoQueryContext.MongoClient.GetCollection<TInner>(collectionName),
+            (IBsonSerializer<TInner>)bsonSerializerFactory.GetEntitySerializer(innerEntityType));
         var innerQueryable = transaction == null
             ? innerCollection.AsQueryable()
             : innerCollection.AsQueryable(transaction.Session);
-        var innerSource = innerQueryable.As(
-            (IBsonSerializer<TInner>)bsonSerializerFactory.GetEntitySerializer(innerEntityType));
-        return innerSource.Expression;
+        return innerQueryable.Expression;
     }
 }
