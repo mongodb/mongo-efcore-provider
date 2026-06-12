@@ -1070,6 +1070,19 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         Assert.Equal(7, results[1].orderFromSun);
     }
 
+    [Fact]
+    public void Select_untranslatable_in_final_projection_is_client_evaluated()
+    {
+        // EF-250: string.ToArray() has no server translation. The final projection is
+        // client-evaluated (as the SQL providers do): the driver returns the documents and
+        // p.name.ToArray() runs on the client, returning each name as a char[].
+        var results = _db.Planets.Select(p => p.name.ToArray()).ToList();
+
+        Assert.Equal(8, results.Count);
+        Assert.All(results, chars => Assert.NotEmpty(chars));
+        Assert.Contains(results, chars => new string(chars) == "Earth");
+    }
+
     private static string FormatLabel(string name) => $"[{name}]";
 
     [Fact]

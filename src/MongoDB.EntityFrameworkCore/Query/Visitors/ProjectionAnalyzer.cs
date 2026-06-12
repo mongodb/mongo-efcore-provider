@@ -14,6 +14,7 @@
  */
 
 using System.Diagnostics;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 
@@ -32,7 +33,39 @@ internal static class ProjectionAnalyzer
     /// contains entity references or other constructs that require client-side materialization.
     /// </summary>
     public static bool CanPushDown(Expression shaperExpression)
-        => !ContainsEntityReference(shaperExpression);
+        => !ContainsEntityReference(shaperExpression)
+           && !ContainsUntranslatableProjection(shaperExpression);
+
+    private static bool ContainsUntranslatableProjection(Expression expression)
+    {
+        var finder = new UntranslatableProjectionFinder();
+        finder.Visit(expression);
+        return finder.Found;
+    }
+
+    private sealed class UntranslatableProjectionFinder : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            // A LINQ (Enumerable.*) operator applied to a string treats the string as
+            // IEnumerable<char>, which the driver cannot translate — StringSerializer is not
+            // an IBsonArraySerializer. This covers ToArray / ToList / AsEnumerable /
+            // FirstOrDefault / LastOrDefault / etc. over a string. Don't push the projection
+            // down; route it to the client shaper so the operator runs on the materialized
+            // value. (EF-250, EF-231)
+            if (node.Method.DeclaringType == typeof(Enumerable)
+                && node.Arguments.Count >= 1
+                && node.Arguments[0].Type == typeof(string))
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.VisitMethodCall(node);
+        }
+    }
 
     private static bool ContainsEntityReference(Expression expression)
     {

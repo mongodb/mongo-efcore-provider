@@ -3878,40 +3878,31 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }
 
     public override async Task ToList_over_string(bool async)
     {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "StringSerializer must implement IBsonArraySerializer",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.ToList_over_string(async))).Message);
+        await base.ToList_over_string(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$sort" : { "_id" : 1 } }
             """);
     }
 
     public override async Task ToArray_over_string(bool async)
     {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "StringSerializer must implement IBsonArraySerializer",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.ToArray_over_string(async))).Message);
+        await base.ToArray_over_string(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$sort" : { "_id" : 1 } }
             """);
     }
 
     public override async Task AsEnumerable_over_string(bool async)
     {
-        // Fails: Client eval in final projection EF-250
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.AsEnumerable_over_string(async))).Message);
+        await base.AsEnumerable_over_string(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$sort" : { "_id" : 1 } }
             """);
     }
 
