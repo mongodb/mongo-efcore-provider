@@ -1657,20 +1657,32 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task OfType_Select(bool async)
     {
-        // Fails: OfType translation EF-X012
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.OfType_Select(async));
-
+        AssertMql();
+#else
+        await base.OfType_Select(async);
         AssertMql(
-        );
+            """
+Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }, { "$limit" : 1 }
+""");
+#endif
     }
 
     public override async Task OfType_Select_OfType_Select(bool async)
     {
-        // Fails: OfType translation EF-X012
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.OfType_Select_OfType_Select(async));
-
+        AssertMql();
+#else
+        await base.OfType_Select_OfType_Select(async);
         AssertMql(
-        );
+            """
+Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }, { "$limit" : 1 }
+""");
+#endif
     }
 
     public override async Task Average_with_non_matching_types_in_projection_doesnt_produce_second_explicit_cast(bool async)

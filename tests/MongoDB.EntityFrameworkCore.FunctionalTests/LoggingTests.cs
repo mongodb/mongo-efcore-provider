@@ -452,8 +452,11 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     [InlineData(true)]
     public async Task Vector_query_warning_logged_with_sensitive_data(bool async)
     {
+        var atlasFixture = new AtlasSampleGuidesFixture();
+        await atlasFixture.InitializeAsync();
+
         List<string> logs = [];
-        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(atlasFixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);
@@ -476,8 +479,11 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
     [InlineData(true)] // Ticket EF-270
     public async Task Vector_query_warning_logged_without_sensitive_data(bool async)
     {
+        var atlasFixture = new AtlasSampleGuidesFixture();
+        await atlasFixture.InitializeAsync();
+
         List<string> logs = [];
-        using var db = GuidesDbContext.Create(fixture.MongoDatabase, s =>
+        using var db = GuidesDbContext.Create(atlasFixture.MongoDatabase, s =>
         {
             logs.Add(s);
             testOutputHelper.WriteLine(s);

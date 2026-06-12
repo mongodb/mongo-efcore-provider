@@ -30,10 +30,29 @@ public class TestContainersTestServer : TestServer
 
     public override async Task InitializeAsync()
     {
-        _container = new MongoDbAtlasBuilder().Build();
+        // Dispose any container left over from a prior failed start before allocating a new one.
+        if (_container != null)
+        {
+            await _container.DisposeAsync().ConfigureAwait(false);
+            _container = null;
+        }
 
-        await _container.StartAsync().ConfigureAwait(false);
+        var container = new MongoDbAtlasBuilder().Build();
 
+        try
+        {
+            // Bound startup so a stuck readiness probe (e.g. the Atlas Search Index Management
+            // service never coming up) fails fast instead of hanging the run indefinitely.
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            await container.StartAsync(cts.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            await container.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        _container = container;
         _client = new(ConnectionString);
     }
 

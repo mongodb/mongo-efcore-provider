@@ -60,13 +60,15 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 
     public override void Query_ending_with_include()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            Assert.Throws<InvalidOperationException>(() => base.Query_ending_with_include()).Message);
-
+        base.Query_ending_with_include();
         AssertMql(
-);
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""",
+            //
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override void Untyped_context()
@@ -182,14 +184,34 @@ Customers.
 
     public override async Task Compiled_query_with_max_parameters()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Compiled_query_with_max_parameters())).Message);
-
+        await base.Compiled_query_with_max_parameters();
         AssertMql(
             """
 Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "_v" }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "_v" }
+""",
+            //
+            """
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }] } }, { "$count" : "_v" }
 """);
     }
 
@@ -436,13 +458,15 @@ Customers.
 
     public override void Query_with_single_parameter_with_include()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            Assert.Throws<InvalidOperationException>(() => base.Query_with_single_parameter_with_include()).Message);
-
+        base.Query_with_single_parameter_with_include();
         AssertMql(
-);
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""",
+            //
+            """
+Customers.{ "$match" : { "_id" : "ANATR" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     private void AssertMql(params string[] expected)

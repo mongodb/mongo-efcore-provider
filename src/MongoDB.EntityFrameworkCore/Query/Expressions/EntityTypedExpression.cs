@@ -52,8 +52,9 @@ internal abstract class EntityTypedExpression : Expression
     public override bool Equals(object? obj)
         => obj != null
            && (ReferenceEquals(this, obj)
-               || obj is EntityTypedExpression entityTypedExpression
-               && Equals(entityTypedExpression));
+               || (obj.GetType() == GetType()
+                   && obj is EntityTypedExpression entityTypedExpression
+                   && Equals(entityTypedExpression)));
 
     private bool Equals(EntityTypedExpression entityTypedExpression)
         => Equals(EntityType, entityTypedExpression.EntityType);

@@ -48,7 +48,17 @@ public class MongoRelationshipDiscoveryConvention : RelationshipDiscoveryConvent
     public static bool ShouldBeOwnedType(
         Type targetType,
         IConventionModel model)
-        => !targetType.IsGenericType
-           || targetType == typeof(Dictionary<string, object>)
-           || targetType.GetInterface(typeof(IEnumerable<>).Name) == null;
+    {
+        // If the type is already in the model as an independent entity (e.g. has its own DbSet),
+        // don't auto-configure it as owned/embedded - it has its own collection.
+        var existingEntityType = model.FindEntityType(targetType);
+        if (existingEntityType != null && existingEntityType.FindOwnership() == null)
+        {
+            return false;
+        }
+
+        return !targetType.IsGenericType
+               || targetType == typeof(Dictionary<string, object>)
+               || targetType.GetInterface(typeof(IEnumerable<>).Name) == null;
+    }
 }

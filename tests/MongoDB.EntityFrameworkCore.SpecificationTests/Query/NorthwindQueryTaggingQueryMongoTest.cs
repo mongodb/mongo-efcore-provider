@@ -63,7 +63,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 
     public override void Tags_on_subquery()
     {
-        // Fails: Include issue EF-117
+        // Fails: Subquery selection EF-X001
         Assert.Contains(
             "The LINQ expression",
             Assert.Throws<InvalidOperationException>(() => base.Tags_on_subquery()).Message);
@@ -91,16 +91,11 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 
     public override void Tag_on_include_query()
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            Assert.Throws<InvalidOperationException>(() => base.Tag_on_include_query()).Message);
-
-        // Fails: TagWith EF-153
-        Assert.DoesNotContain("Yanni", string.Join('|', Fixture.TestMqlLoggerFactory.MqlStatements));
-
+        base.Tag_on_include_query();
         AssertMql(
-);
+            """
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$limit" : 1 }
+""");
     }
 
     public override void Tag_on_scalar_query()

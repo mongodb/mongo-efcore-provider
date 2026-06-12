@@ -219,24 +219,20 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_Include(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Union_Include(async))).Message);
-
+        await base.Union_Include(async);
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Include_Union(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_Union(async))).Message);
-
+        await base.Include_Union(async);
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Select_Except_reference_projection(bool async)
@@ -551,38 +547,52 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Union_over_scalarsubquery_column(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_column(async));
+        await base.Union_over_scalarsubquery_column(async);
+
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_scalarsubquery_function(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_function(async));
+        await base.Union_over_scalarsubquery_function(async);
+
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_scalarsubquery_constant(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_constant(async));
+        await base.Union_over_scalarsubquery_constant(async);
+
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_scalarsubquery_unary(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_unary(async));
+        await base.Union_over_scalarsubquery_unary(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_scalarsubquery_binary(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_scalarsubquery_binary(async));
+        await base.Union_over_scalarsubquery_binary(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_scalarsubquery_scalarsubquery(bool async)
@@ -655,11 +665,17 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Concat_with_one_side_being_GroupBy_aggregate(bool async)
     {
-        // Fails: Subquery selection EF-X001
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.Concat_with_one_side_being_GroupBy_aggregate(async));
-
+        AssertMql();
+#else
+        await base.Concat_with_one_side_being_GroupBy_aggregate(async);
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$match" : { "_v._inner.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$_v._outer.OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "OrderDate" : { "$max" : "$_elements.OrderDate" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
+#endif
     }
 
     public override async Task Union_on_entity_with_correlated_collection(bool async)

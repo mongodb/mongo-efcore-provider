@@ -23,13 +23,28 @@ The MongoDB database provider for [Entity Framework Core](https://github.com/dot
 
 ## Versioning conventions
 
-This project does **not** follow strict semantic versioning — the major version tracks the EF Core major version it supports, so breaking changes can land in minor releases. See `BREAKING-CHANGES.md` for the running log. What counts as a break:
+This project does **not** follow strict semantic versioning — the major version tracks the EF Core major version it supports, so breaking changes can land in minor releases. See `BREAKING-CHANGES.md` for the running log.
+
+Breaks are always measured **against the latest released version of the assembly** (the most recent published NuGet package), **not** against the current state of `main`. A public API that was added and then changed or removed within the current unreleased development cycle never shipped, so it is not a break.
+
+Releases are tagged `v<major>.<minor>.<patch>` (with optional `-preview.N`), one line per EF major — `v8.*`, `v9.*`, `v10.*` ship in parallel. Find the baseline with the GitHub release list, **not** local `git tag` (a clone's tags are frequently stale and miss recent releases):
+- Absolute latest published version: `gh release list --limit 1 --json tagName,isLatest`.
+- Latest on a given EF major's line (the baseline that matters when assessing a change for that EF version): the highest non-preview `v<major>.*` from `gh release list --limit 100 --json tagName`.
+
+Diff the file at that release tag against the working tree to confirm a change is observable to an upgrading consumer (`git fetch --tags` first if the tag isn't local, then `git show <tag>:<path>`).
+
+What counts as a break:
 
 - Public API signature, default, or visibility changes.
 - Annotation key changes (under the `Mongo:` prefix — see `Metadata/MongoAnnotationNames.cs`) — these affect stored compiled models and design-time output.
 - Behavior changes affecting persisted document shape (element name, BSON representation, discriminator field, Guid representation, etc.).
-- `IMongoClientWrapper` interface changes (users are warned not to implement this themselves; it exists for DI).
+- `IMongoClientWrapper` / `IMongoDatabaseCreator` / `IMongoTransactionManager` interface changes (users are warned not to implement these themselves; they exist for DI, but they're observable public surface).
 - Default-value changes for `AutoTransactionBehavior`, conventions, or `BsonRepresentation` handling.
+
+What does **not** count as a break:
+
+- Changes to anything `internal` — regardless of `InternalsVisibleTo` (which exists only to expose internals to the test assemblies). Internal code is never part of the public surface.
+- Changes to the exception type thrown for an **unsupported** feature (a not-yet-implemented operator, an unsupported mapping, a guard rejecting something the provider doesn't support). Only the exception type of a supported, documented operation is part of the contract.
 
 ## Async conventions
 The provider follows EF Core's pattern, not the C# driver's. There is **no enforced sync/async pairing** of public methods — async surfaces exist where EF Core defines them (`*Async` variants) and where the underlying driver call is async. Library code uses `ConfigureAwait(false)` consistently. `CancellationToken` flows from EF Core through to driver calls without substitution; new async methods must take a `CancellationToken` and pass it on.

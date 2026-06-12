@@ -19,6 +19,13 @@ public class AtlasTemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
 {
     private TestServer? _server;
 
+    public static async Task<AtlasTemporaryDatabaseFixture> CreateInitializedAsync()
+    {
+        var fixture = new AtlasTemporaryDatabaseFixture();
+        await fixture.InitializeAsync();
+        return fixture;
+    }
+
     public override TestServer TestServer
         => _server!;
 

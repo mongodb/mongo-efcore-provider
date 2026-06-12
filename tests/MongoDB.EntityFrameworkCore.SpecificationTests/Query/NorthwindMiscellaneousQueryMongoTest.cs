@@ -403,10 +403,15 @@ public class NorthwindMiscellaneousQueryMongoTest
     public override async Task Join_with_entity_equality_local_on_both_sources(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Join_with_entity_equality_local_on_both_sources(async));
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_with_entity_equality_local_on_both_sources(async))).Message);
 
         AssertMql(
-        );
+            """
+Customers.
+""");
     }
 
     public override async Task Entity_equality_local_inline(bool async)
@@ -544,7 +549,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Join_with_default_if_empty_on_both_sources(bool async)
     {
-        // Fails: Include (joins) issue EF-117
+        // Fails: Join shape not translated EF-X017
         await AssertTranslationFailed(() => base.Join_with_default_if_empty_on_both_sources(async));
     }
 
@@ -976,38 +981,38 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Join_Customers_Orders_Skip_Take(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Join_Customers_Orders_Skip_Take(async));
-
+        await base.Join_Customers_Orders_Skip_Take(async);
         AssertMql(
-        );
+            """
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Inner._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
+""");
     }
 
     public override async Task Join_Customers_Orders_Skip_Take_followed_by_constant_projection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Join_Customers_Orders_Skip_Take_followed_by_constant_projection(async));
-
+        await base.Join_Customers_Orders_Skip_Take_followed_by_constant_projection(async);
         AssertMql(
-        );
+            """
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Inner._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "_v" : "Foo", "_id" : 0 } }
+""");
     }
 
     public override async Task Join_Customers_Orders_Projection_With_String_Concat_Skip_Take(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Join_Customers_Orders_Projection_With_String_Concat_Skip_Take(async));
-
+        await base.Join_Customers_Orders_Projection_With_String_Concat_Skip_Take(async);
         AssertMql(
-        );
+            """
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Inner._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "Contact" : { "$concat" : ["$Outer.ContactName", " ", "$Outer.ContactTitle"] }, "OrderID" : "$Inner._id", "_id" : 0 } }
+""");
     }
 
     public override async Task Join_Customers_Orders_Orders_Skip_Take_Same_Properties(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Join_Customers_Orders_Orders_Skip_Take_Same_Properties(async));
-
+        await base.Join_Customers_Orders_Orders_Skip_Take_Same_Properties(async);
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.Outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Outer.Outer._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "OrderID" : "$Outer.Outer._id", "CustomerIDA" : "$Outer.Inner._id", "CustomerIDB" : "$Inner._id", "ContactNameA" : "$Outer.Inner.ContactName", "ContactNameB" : "$Inner.ContactName", "_id" : 0 } }
+""");
     }
 
     public override async Task Ternary_should_not_evaluate_both_sides(bool async)
@@ -1404,8 +1409,11 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Join_Where_Count(bool async)
     {
-        // Fails: Include (joins) issue EF-117
-        await AssertTranslationFailed(() => base.Join_Where_Count(async));
+        await base.Join_Where_Count(async);
+        AssertMql(
+            """
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Outer._id" : "ALFKI" } }, { "$count" : "_v" }
+""");
     }
 
     public override async Task Where_Join_Any(bool async)
@@ -1453,47 +1461,52 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task Join_OrderBy_Count(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Join_OrderBy_Count(async));
-
+        await base.Join_OrderBy_Count(async);
         AssertMql(
-        );
+            """
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Outer._id" : 1 } }, { "$count" : "_v" }
+""");
     }
 
     public override async Task Multiple_joins_Where_Order_Any(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Multiple_joins_Where_Order_Any(async));
-
+        await base.Multiple_joins_Where_Order_Any(async);
         AssertMql(
-        );
+            """
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_outer.Inner._id", "foreignField" : "_id.OrderID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Outer.Outer.City" : "London" } }, { "$sort" : { "Outer.Outer._id" : 1 } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+""");
     }
 
     public override async Task Where_join_select(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_join_select(async));
-
+        await base.Where_join_select(async);
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_orderby_join_select(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_orderby_join_select(async));
-
+        await base.Where_orderby_join_select(async);
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_join_orderby_join_select(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Where_join_orderby_join_select(async));
+        Assert.Contains(
+            "Document element is missing for required",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                base.Where_join_orderby_join_select(async))).Message);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Outer._id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_lookup_Orders._id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$unwind" : { "path" : "$_lookup_OrderDetails", "preserveNullAndEmptyArrays" : true } }
+""");
     }
 
     public override async Task Where_select_many(bool async)
@@ -2219,20 +2232,32 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task String_concat_with_navigation1(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.String_concat_with_navigation1(async));
-
+        AssertMql();
+#else
+        await base.String_concat_with_navigation1(async);
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : { "$concat" : ["$_v._outer.CustomerID", " ", "$_v._inner.City"] }, "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task String_concat_with_navigation2(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.String_concat_with_navigation2(async));
-
+        AssertMql();
+#else
+        await base.String_concat_with_navigation2(async);
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : { "$concat" : ["$_v._inner.City", " ", "$_v._inner.City"] }, "_id" : 0 } }
+""");
+#endif
     }
 
 #if EF8 || EF9
@@ -2780,11 +2805,18 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task No_orderby_added_for_fully_translated_manually_constructed_LOJ(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.No_orderby_added_for_fully_translated_manually_constructed_LOJ(async));
-
+        AssertMql();
+#else
+        // Failed: Throws ExpressionNotSupportedException (query not translated)
+        await base.No_orderby_added_for_fully_translated_manually_constructed_LOJ(async);
         AssertMql(
-        );
+            """
+Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer._id", "foreignField" : "ReportsTo", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City1" : "$_v._outer.City", "City2" : "$_v._inner.City", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task No_orderby_added_for_client_side_GroupJoin_dependent_to_principal_LOJ(bool async)
@@ -3042,14 +3074,11 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Include_with_orderby_skip_preserves_ordering(bool async)
     {
-        // Fails: Include issue EF-117
-        Assert.Contains(
-            "Including navigation 'Navigation' is not supported",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Include_with_orderby_skip_preserves_ordering(async)))
-            .Message);
-
+        await base.Include_with_orderby_skip_preserves_ordering(async);
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$sort" : { "City" : 1, "_id" : 1 } }, { "$skip" : 40 }, { "$limit" : 5 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
     }
 
     public override async Task Int16_parameter_can_be_used_for_int_column(bool async)
@@ -3376,11 +3405,23 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Comparing_collection_navigation_to_null_complex(bool async)
     {
+#if EF8 || EF9
         // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Comparing_collection_navigation_to_null_complex(async));
 
         AssertMql(
         );
+#else
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Comparing_collection_navigation_to_null_complex(async))).Message);
+
+        AssertMql(
+            """
+OrderDetails.
+""");
+#endif
     }
 
     public override async Task Compare_collection_navigation_with_itself(bool async)
@@ -3477,10 +3518,15 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
     public override async Task Join_take_count_works(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Join_take_count_works(async));
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_take_count_works(async))).Message);
 
         AssertMql(
-        );
+            """
+Orders.
+""");
     }
 
     public override async Task OrderBy_empty_list_contains(bool async)
@@ -3505,11 +3551,17 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Manual_expression_tree_typed_null_equality(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.Manual_expression_tree_typed_null_equality(async));
-
+        AssertMql();
+#else
+        await base.Manual_expression_tree_typed_null_equality(async);
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Let_subquery_with_multiple_occurrences(bool async)
@@ -3570,20 +3622,38 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Navigation_inside_interpolated_string_is_expanded(bool async)
     {
+#if EF8 || EF9
         // Fails: Cross-document navigation access issue EF-216
         await AssertTranslationFailed(() => base.Navigation_inside_interpolated_string_is_expanded(async));
 
         AssertMql(
         );
+#else
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Navigation_inside_interpolated_string_is_expanded(async))).Message);
+
+        AssertMql(
+            """
+Orders.
+""");
+#endif
     }
 
     public override async Task OrderBy_object_type_server_evals(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.OrderBy_object_type_server_evals(async));
-
+        AssertMql();
+#else
+        await base.OrderBy_object_type_server_evals(async);
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : "$_outer.OrderDate" } }, { "$sort" : { "_document._outer._id" : 1, "_key1" : 1, "_document._inner._id" : 1, "_document._inner.City" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 0 }, { "$limit" : 20 }
+""");
+#endif
     }
 
     public override async Task AsQueryable_in_query_server_evals(bool async)
@@ -3624,29 +3694,47 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Projection_skip_projection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.Projection_skip_projection(async));
-
+        AssertMql();
+#else
+        await base.Projection_skip_projection(async);
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Projection_take_projection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.Projection_take_projection(async));
-
+        AssertMql();
+#else
+        await base.Projection_take_projection(async);
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Projection_skip_take_projection(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.Projection_skip_take_projection(async));
-
+        AssertMql();
+#else
+        await base.Projection_skip_take_projection(async);
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$limit" : 10 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Collection_projection_skip(bool async)
@@ -4096,10 +4184,15 @@ Customers.
     public override async Task OrderBy_Join(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.OrderBy_Join(async));
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.OrderBy_Join(async))).Message);
 
         AssertMql(
-        );
+            """
+Customers.
+""");
     }
 
     public override async Task Where_Property_shadow_closure(bool async)
@@ -4213,12 +4306,17 @@ Customers.
 
     public override async Task Perform_identity_resolution_reuses_same_instances_across_joins(bool async, bool useAsTracking)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() =>
-            base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking));
-
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking));
+        AssertMql();
+#else
+        await base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking);
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Orders.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }
+""");
+#endif
     }
 
     public override async Task OrderBy_scalar_primitive(bool async)
@@ -4752,9 +4850,13 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task OrderBy_multiple_queries(bool async)
     {
-        await base.OrderBy_multiple_queries(async);
+        // Fails: Multiple query roots issue EF-220
+        await Assert.ThrowsAnyAsync<Exception>(() => base.OrderBy_multiple_queries(async));
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.
+""");
     }
 
     public override void Can_cast_CreateQuery_result_to_IQueryable_T_bug_1730()
@@ -4965,11 +5067,19 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Contains_over_concatenated_columns_both_fixed_length(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
         await AssertTranslationFailed(() => base.Contains_over_concatenated_columns_both_fixed_length(async));
+        AssertMql();
+#else
+        // Failed: Throws ExpressionNotSupportedException (query not translated)
+        await base.Contains_over_concatenated_columns_both_fixed_length(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_outer.CustomerID", "$_inner._id"] }, ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"]] } } }
+""");
+#endif
     }
 
     public override async Task Contains_over_concatenated_column_and_parameter(bool async)

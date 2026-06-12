@@ -129,7 +129,7 @@ internal static class BsonBinding
             property.IsNullable ? mappedType.MakeNullable() : mappedType);
     }
 
-    private static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
+    internal static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
     private static readonly MethodInfo GetBsonArrayMethodInfo
@@ -202,8 +202,17 @@ internal static class BsonBinding
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetElementValue));
 
-    internal static T? GetPropertyValue<T>(BsonDocument document, IReadOnlyProperty property)
+    internal static T? GetPropertyValue<T>(BsonDocument? document, IReadOnlyProperty property)
     {
+        // A null parent document means the owning entity is absent entirely (e.g. an optional
+        // cross-collection reference nested inside a collection Include whose $lookup matched no
+        // document). Treat every property as absent so the entity materializer's null-key check
+        // produces a null entity rather than dereferencing the missing document.
+        if (document == null)
+        {
+            return default;
+        }
+
         var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
         if (TryReadElementValue(document, serializationInfo, out T? value))
         {
