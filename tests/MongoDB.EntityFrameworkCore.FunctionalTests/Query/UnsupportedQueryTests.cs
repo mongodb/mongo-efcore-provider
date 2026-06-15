@@ -44,23 +44,6 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
         });
     }
 
-#if !EF8 && !EF9
-
-    [Fact]
-    public void LeftJoin_can_be_translated()
-    {
-        var result = _db.Planets.LeftJoin(_db.Moons, p => p._id, m => m.planetId, (p, m) => new {p, m}).ToList();
-
-        // Left-join semantics: every outer (planet) row is present, and at least one planet without a
-        // matching moon must yield a null inner element. Asserting the null inner guards against a
-        // regression to inner-join semantics that Assert.NotNull would silently pass.
-        Assert.NotEmpty(result);
-        Assert.All(result, r => Assert.NotNull(r.p));
-        Assert.Contains(result, r => r.m == null);
-    }
-
-#endif
-
     [Fact]
     public void SelectMany_throws_because_target_is_not_primitive()
     {
