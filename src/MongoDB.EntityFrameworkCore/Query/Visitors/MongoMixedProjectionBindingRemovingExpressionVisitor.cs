@@ -67,9 +67,24 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 {
                     var projection = GetProjection(projectionBindingExpression);
                     alias = projection.Alias;
-                    if (alias is null)
-                        return _docParameter;
                     sourceExpression = projection.Expression;
+                    if (alias is null)
+                    {
+                        // A null alias usually means the binding is the whole document/entity
+                        // (e.g. select new { o }) — hand back the BsonDocument for the entity shaper.
+                        // But a scalar root-property binding (e.g. select p.name.ToArray()) also has no
+                        // alias; resolve it to a field read instead of returning the whole document.
+                        var rootField = TryResolveFieldAccess(sourceExpression);
+                        if (rootField.Property != null)
+                            return CreateGetValueExpression(
+                                rootField.DocumentExpression ?? _docParameter, rootField.Property,
+                                projectionBindingExpression.Type);
+                        if (rootField.FieldName != null)
+                            return BsonBinding.CreateGetElementValue(
+                                rootField.DocumentExpression ?? _docParameter, rootField.FieldName,
+                                projectionBindingExpression.Type);
+                        return _docParameter;
+                    }
                 }
                 else
                 {

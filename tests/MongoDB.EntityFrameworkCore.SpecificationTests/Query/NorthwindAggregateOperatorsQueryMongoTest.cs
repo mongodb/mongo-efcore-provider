@@ -1963,11 +1963,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
     public override async Task String_FirstOrDefault_in_projection_does_not_do_client_eval(bool async)
     {
-        // Fails: String.FirstOrDefault issue EF-231
-        Assert.Contains(
-            "StringSerializer must implement IBsonArraySerializer",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.String_FirstOrDefault_in_projection_does_not_do_client_eval(async))).Message);
+        await base.String_FirstOrDefault_in_projection_does_not_do_client_eval(async);
 
         AssertMql(
             """
