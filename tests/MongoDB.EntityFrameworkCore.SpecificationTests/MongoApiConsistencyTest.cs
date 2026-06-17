@@ -49,7 +49,7 @@ public class MongoApiConsistencyTest(MongoApiConsistencyTest.MongoApiConsistency
             typeof(MongoServiceCollectionExtensions)
         ];
 
-public override
+        public override
             Dictionary<Type,
                 (Type? ReadonlyExtensions,
                 Type? MutableExtensions,
@@ -113,5 +113,18 @@ public override
                     )
                 }
             };
+
+        // The search-index Remove methods return bool rather than the removed element or a string, because the
+        // removed SearchIndexDefinition is not an EF metadata interface type and so cannot satisfy the convention's
+        // expected IMutable/IConvention/string return shape. Exempt them from the metadata-method shape check.
+        public override HashSet<MethodInfo> MetadataMethodExceptions { get; } =
+        [
+            typeof(MongoEntityTypeExtensions).GetMethod(
+                nameof(MongoEntityTypeExtensions.RemoveSearchIndexDefinition),
+                [typeof(IMutableEntityType), typeof(string)])!,
+            typeof(MongoEntityTypeExtensions).GetMethod(
+                nameof(MongoEntityTypeExtensions.RemoveSearchIndexDefinition),
+                [typeof(IConventionEntityType), typeof(string), typeof(bool)])!
+        ];
     }
 }

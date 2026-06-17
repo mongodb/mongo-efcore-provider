@@ -33,7 +33,7 @@ internal static class InternalIndexExtensions
             return index.Properties.FirstOrDefault()?.Name + "VectorIndex";
         }
 
-        // For normal indexes, mimic the servers index naming convention using the property names and directions
+        // For regular indexes, mimic the servers index naming convention using the property names and directions
         var parts = new string[index.Properties.Count * 2];
 
         var propertyIndex = 0;
