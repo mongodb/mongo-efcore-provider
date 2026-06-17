@@ -8,7 +8,7 @@
 
 **Tech Stack:** C# / .NET 8 & 10, EF Core 9/10 (`#if !EF8`), MongoDB C# driver 3.9.0, xUnit + FluentAssertions.
 
-**Key constraints (from the design doc `docs/superpowers/specs/2026-06-09-execute-update-delete-design.md`):**
+**Key constraints (from the design doc `docs/agentplans/2026-06-09/execute-update-delete/execute-update-delete.design.md`):**
 - EF9 + EF10 only. All new code gated `#if !EF8`. `TranslateExecuteUpdate` signature differs EF9 vs EF10.
 - Source query may only contain `Where` filtering (+ the implicit discriminator filter for TPH). `OrderBy`/`Skip`/`Take`/`Select`/`Distinct`/joins/set-ops/cross-collection ⇒ throw the canonical EF translation-failure message.
 - Update setters target **root scalar properties only**. Constants/parameters ⇒ `$set`; self-referencing (`e => e.Count + 1`) ⇒ aggregation pipeline-form update.

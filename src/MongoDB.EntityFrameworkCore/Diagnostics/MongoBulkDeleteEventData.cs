@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+#if !EF8
+
 using System;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -21,12 +23,12 @@ using MongoDB.Driver;
 namespace MongoDB.EntityFrameworkCore.Diagnostics;
 
 /// <summary>
-/// A <see cref="DiagnosticSource" /> event payload class for MongoDB bulk write events.
+/// A <see cref="DiagnosticSource" /> event payload class for EF bulk <c>ExecuteDelete</c> events.
 /// </summary>
 /// <remarks>
 /// See <see href="https://aka.ms/efcore-docs-diagnostics">Logging, events, and diagnostics</see> for more information and examples.
 /// </remarks>
-public class MongoBulkWriteEventData : EventData
+public class MongoBulkDeleteEventData : EventData
 {
     /// <summary>
     /// Constructs the event payload.
@@ -35,24 +37,24 @@ public class MongoBulkWriteEventData : EventData
     /// <param name="messageGenerator">A delegate that generates a log message for this event.</param>
     /// <param name="elapsed">The time elapsed since the command was sent to the database.</param>
     /// <param name="collectionNamespace">The <see cref="CollectionNamespace"/> being operated upon.</param>
-    /// <param name="insertCount">The number of documents to insert in this bulk write operation.</param>
-    /// <param name="deleteCount">The number of documents to delete by this bulk write operation.</param>
-    /// <param name="modifyCount">The number of documents to modify by this bulk write operation.</param>
-    public MongoBulkWriteEventData(
+    /// <param name="deleteCount">The number of documents deleted by this bulk delete operation.</param>
+    /// <param name="targetCount">
+    /// For a two-phase bulk delete — the number of documents identified in phase one to be deleted by
+    /// <c>_id</c>; <see langword="null" /> for a single-command bulk delete.
+    /// </param>
+    public MongoBulkDeleteEventData(
         EventDefinitionBase eventDefinition,
         Func<EventDefinitionBase, EventData, string> messageGenerator,
         TimeSpan elapsed,
         CollectionNamespace collectionNamespace,
-        long insertCount,
         long deleteCount,
-        long modifyCount)
+        long? targetCount)
         : base(eventDefinition, messageGenerator)
     {
         Elapsed = elapsed;
         CollectionNamespace = collectionNamespace;
-        InsertCount = insertCount;
         DeleteCount = deleteCount;
-        ModifyCount = modifyCount;
+        TargetCount = targetCount;
     }
 
     /// <summary>
@@ -61,22 +63,20 @@ public class MongoBulkWriteEventData : EventData
     public TimeSpan Elapsed { get; }
 
     /// <summary>
-    /// The <see cref="CollectionNamespace"/> being queried.
+    /// The <see cref="CollectionNamespace"/> being operated upon.
     /// </summary>
     public CollectionNamespace CollectionNamespace { get; }
 
     /// <summary>
-    /// The number of documents to insert in this bulk write operation.
-    /// </summary>
-    public long InsertCount { get; }
-
-    /// <summary>
-    /// The number of documents to delete by this bulk write operation.
+    /// The number of documents deleted by this bulk delete operation.
     /// </summary>
     public long DeleteCount { get; }
 
     /// <summary>
-    /// The number of documents to modify by this bulk write operation.
+    /// For a two-phase bulk delete — the number of documents identified in phase one to be deleted by
+    /// <c>_id</c>; <see langword="null" /> for a single-command bulk delete.
     /// </summary>
-    public long ModifyCount { get; }
+    public long? TargetCount { get; }
 }
+
+#endif

@@ -423,6 +423,41 @@ public class ExecuteUpdateTests(TemporaryDatabaseFixture database)
         Assert.Contains("two-phase", executingMessage, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("2 target(s)", executingMessage);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteUpdate_two_phase_auto_transaction_logs_transaction_lifecycle(bool async)
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        var collection = database.CreateCollection<Order>(
+            nameof(ExecuteUpdate_two_phase_auto_transaction_logs_transaction_lifecycle), async);
+
+        using (var seedDb = SingleEntityDbContext.Create(collection, ConfigureModel))
+        {
+            seedDb.AddRange(
+                new Order { _id = ObjectId.GenerateNewId(), Status = "open", Quantity = 10 },
+                new Order { _id = ObjectId.GenerateNewId(), Status = "open", Quantity = 20 });
+            seedDb.SaveChanges();
+        }
+
+        using var db = SingleEntityDbContext.Create(collection, loggerFactory, ConfigureModel);
+
+        // No explicit BeginTransaction: the two-phase path (OrderBy + Take) auto-starts one
+        // and must log both its begin and commit lifecycle events.
+        var updated = async
+            ? await db.Entities.OrderBy(o => o.Quantity).Take(1)
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, "archived"))
+            : db.Entities.OrderBy(o => o.Quantity).Take(1)
+                .ExecuteUpdate(s => s.SetProperty(o => o.Status, "archived"));
+
+        Assert.Equal(1, updated);
+
+        var startedMessage = spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarted);
+        Assert.Contains("Began transaction", startedMessage);
+        var committedMessage = spyLogger.GetLogMessageByEventId(MongoEventId.TransactionCommitted);
+        Assert.Contains("Committed transaction", committedMessage);
+    }
 }
 
 #endif

@@ -21,11 +21,8 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 #if !EF8
-using System.Diagnostics;
-using System.Threading;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Storage;
 #endif
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -78,34 +75,55 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         if (nonQueryExpression.Strategy == MongoNonQueryExpression.BulkStrategy.TwoPhase)
         {
-            // Two-phase: phase 1 materializes matched entities and extracts their stored _id,
-            // phase 2 deletes/updates by { _id: { $in: [...] } } — both inside a transaction. Works for
-            // scalar and composite primary keys because we read the raw _id BsonValue from the serialized doc.
+            // Two-phase needs the entity's _id key to project phase-1 targets and act by { _id: $in }.
             EnsureBulkKeyOrThrow(entityType, nonQueryExpression);
-            var twoPhaseExecutor = nonQueryExpression.Kind == MongoNonQueryExpression.OperationKind.Update
-                ? (QueryCompilationContext.IsAsync ? ExecuteTwoPhaseUpdateAsyncMethodInfo : ExecuteTwoPhaseUpdateMethodInfo)
-                : (QueryCompilationContext.IsAsync ? ExecuteTwoPhaseDeleteAsyncMethodInfo : ExecuteTwoPhaseDeleteMethodInfo);
-            return Expression.Call(null,
-                twoPhaseExecutor.MakeGenericMethod(entityType.ClrType),
-                QueryCompilationContext.QueryContextParameter,
-                Expression.Constant(entityType),
-                Expression.Constant(_bsonSerializerFactory),
-                Expression.Constant(nonQueryExpression));
         }
 
-        var executor = nonQueryExpression.Kind switch
-        {
-            MongoNonQueryExpression.OperationKind.Update =>
-                QueryCompilationContext.IsAsync ? ExecuteUpdateAsyncMethodInfo : ExecuteUpdateMethodInfo,
-            _ => QueryCompilationContext.IsAsync ? ExecuteDeleteAsyncMethodInfo : ExecuteDeleteMethodInfo
-        };
+        // The plan closes over the entity type / serializer factory / non-query expression (all compile-time
+        // constants) and is embedded into the compiled query. Its delegates perform the runtime translation;
+        // MongoBulkOperationExecutor (Storage) runs the writes, transaction, and diagnostics.
+        var plan = (MongoBulkPlan)CreateBulkPlanMethodInfo
+            .MakeGenericMethod(entityType.ClrType)
+            .Invoke(null, [entityType, _bsonSerializerFactory, nonQueryExpression])!;
 
-        return Expression.Call(null,
-            executor.MakeGenericMethod(entityType.ClrType),
+        var executor = QueryCompilationContext.IsAsync
+            ? MongoBulkExecuteAsyncMethodInfo
+            : MongoBulkExecuteMethodInfo;
+
+        return Expression.Call(
+            null,
+            executor,
             QueryCompilationContext.QueryContextParameter,
-            Expression.Constant(entityType),
-            Expression.Constant(_bsonSerializerFactory),
-            Expression.Constant(nonQueryExpression));
+            Expression.Constant(plan));
+    }
+
+    // Builds the compile-time plan for a bulk operation. Generic over TSource so the deferred translation
+    // delegates can close over the correctly-typed serializer/queryable; invoked once via reflection from
+    // VisitNonQuery with entityType.ClrType. The translation helpers stay here in the query pipeline; only
+    // the resulting FilterDefinition / UpdateDefinition / IQueryable<BsonDocument> cross to the executor.
+    private static MongoBulkPlan CreateBulkPlan<TSource>(
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoNonQueryExpression nonQuery)
+    {
+        var isUpdate = nonQuery.Kind == MongoNonQueryExpression.OperationKind.Update;
+        var isTwoPhase = nonQuery.Strategy == MongoNonQueryExpression.BulkStrategy.TwoPhase;
+
+        return new MongoBulkPlan
+        {
+            Kind = isUpdate ? MongoBulkOperationKind.Update : MongoBulkOperationKind.Delete,
+            Strategy = isTwoPhase ? MongoBulkStrategy.TwoPhase : MongoBulkStrategy.SingleCommand,
+            CollectionName = nonQuery.SourceQuery.CollectionExpression.CollectionName,
+            BuildFilter = isTwoPhase
+                ? null
+                : qc => TranslateBulkOrThrow(nonQuery, () => BuildFilter<TSource>(qc, entityType, bsonSerializerFactory, nonQuery)),
+            BuildUpdate = isUpdate
+                ? qc => TranslateBulkOrThrow(nonQuery, () => BuildUpdate<TSource>(qc, entityType, bsonSerializerFactory, nonQuery))
+                : null,
+            BuildTargetIdQuery = isTwoPhase
+                ? qc => BuildIdDocumentQuery<TSource>(qc, entityType, bsonSerializerFactory, nonQuery)
+                : null,
+        };
     }
 #endif
 
@@ -364,394 +382,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     }
 
 #if !EF8
-    // Architecture note: unlike the read path (which hands a MongoExecutableQuery to
-    // MongoClientWrapper.Execute in Storage), these bulk executors call DeleteMany/UpdateMany on the
-    // driver collection directly and read the ambient session from Database.CurrentTransaction. This is
-    // a deliberate, narrow exception to the "Query never touches the driver" boundary: ExecuteDelete/
-    // ExecuteUpdate have no cursor/shaper to run, the collection is still obtained via the wrapper
-    // (GetCollection), and the transaction lifecycle (begin/commit/rollback) remains entirely in
-    // Storage's transaction manager — only the existing session handle is read here. Routing the raw
-    // write through a new IMongoClientWrapper method would expand that observable interface for marginal
-    // benefit (the session would still be resolved from the query context). Revisit if bulk execution
-    // grows retry/cursor concerns that belong in the wrapper.
-
-    // Two-phase bulk needs phase 1 (read) and phase 2 (write) to observe one snapshot, so both run inside a
-    // single transaction. If the user already opened one we join it (and never commit it — they own it);
-    // otherwise we auto-start one, commit on success, abort on failure. AutoTransactionBehavior.Never means
-    // "I manage transactions" — we refuse to auto-start and tell the caller to open one.
-    private static int RunInBulkTransaction(QueryContext queryContext, MongoNonQueryExpression nonQuery, Func<int> body)
-    {
-        var database = queryContext.Context.Database;
-        if (database.CurrentTransaction != null)
-        {
-            return body();
-        }
-
-        if (database.AutoTransactionBehavior == AutoTransactionBehavior.Never)
-        {
-            throw NoAutoTransactionError();
-        }
-
-        // BeginTransaction is inside the try: on a non-transactional deployment the session's StartTransaction
-        // (reached synchronously via MongoTransaction.Start) throws here, and we want that mapped to the
-        // actionable StandaloneTransactionError like any other transaction-unsupported failure.
-        IDbContextTransaction? transaction = null;
-        try
-        {
-            transaction = database.BeginTransaction();
-            var result = body();
-            transaction.Commit();
-            return result;
-        }
-        catch (Exception exception)
-        {
-            if (transaction != null)
-            {
-                SafeRollback(transaction);
-            }
-
-            if (IsTransactionsUnsupported(exception))
-            {
-                throw StandaloneTransactionError(exception);
-            }
-
-            throw;
-        }
-        finally
-        {
-            transaction?.Dispose();
-        }
-    }
-
-    private static async Task<int> RunInBulkTransactionAsync(
-        QueryContext queryContext, MongoNonQueryExpression nonQuery, Func<Task<int>> body)
-    {
-        var database = queryContext.Context.Database;
-        if (database.CurrentTransaction != null)
-        {
-            return await body().ConfigureAwait(false);
-        }
-
-        if (database.AutoTransactionBehavior == AutoTransactionBehavior.Never)
-        {
-            throw NoAutoTransactionError();
-        }
-
-        var cancellationToken = queryContext.CancellationToken;
-        // BeginTransactionAsync is inside the try for the same reason as the sync path: a non-transactional
-        // deployment throws during transaction startup, and that must map to StandaloneTransactionError.
-        IDbContextTransaction? transaction = null;
-        try
-        {
-            transaction = await database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-            var result = await body().ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return result;
-        }
-        catch (Exception exception)
-        {
-            if (transaction != null)
-            {
-                await SafeRollbackAsync(transaction, cancellationToken).ConfigureAwait(false);
-            }
-
-            if (IsTransactionsUnsupported(exception))
-            {
-                throw StandaloneTransactionError(exception);
-            }
-
-            throw;
-        }
-        finally
-        {
-            if (transaction != null)
-            {
-                await transaction.DisposeAsync().ConfigureAwait(false);
-            }
-        }
-    }
-
-    private static void SafeRollback(IDbContextTransaction transaction)
-    {
-        try { transaction.Rollback(); }
-        catch { /* a failed/standalone transaction may not be rollback-able; the original error wins */ }
-    }
-
-    private static async Task SafeRollbackAsync(IDbContextTransaction transaction, CancellationToken cancellationToken)
-    {
-        try { await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false); }
-        catch { /* see SafeRollback */ }
-    }
-
-    private static InvalidOperationException NoAutoTransactionError()
-        => new(
-            "This bulk delete or update uses ordering, paging, or 'Distinct', which the MongoDB provider executes "
-            + "as a two-phase operation requiring a transaction. The context's AutoTransactionBehavior is 'Never', "
-            + "so open an explicit transaction (Database.BeginTransaction) around the call.");
-
-    private static InvalidOperationException StandaloneTransactionError(Exception inner)
-        => new(
-            "This bulk delete or update uses ordering, paging, or 'Distinct', which the MongoDB provider executes "
-            + "as a two-phase operation requiring a transaction. The current MongoDB deployment does not support "
-            + "multi-document transactions (a replica set or sharded cluster is required).", inner);
-
-    // Multi-document transactions are rejected when the deployment doesn't support them, and the failure can
-    // surface in three shapes: (1) the provider's own transaction startup (MongoTransaction.Start) intercepts the
-    // driver's "Standalone servers do not support transactions." and rethrows a NotSupportedException whose message
-    // contains "does not support transactions"; (2) a raw driver MongoCommandException (code 20 / IllegalOperation);
-    // (3) a "Transaction numbers are only allowed on a replica set member or mongos" message. Match all three so
-    // two-phase bulk on a non-transactional deployment is wrapped in the actionable StandaloneTransactionError.
-    // Match conservatively so unrelated failures propagate untouched.
-    private static bool IsTransactionsUnsupported(Exception exception)
-        => exception is MongoCommandException { Code: 20 }
-           || (exception is MongoException && exception.Message.Contains("Transaction numbers are only allowed", StringComparison.Ordinal))
-           || (exception is NotSupportedException && exception.Message.Contains("does not support transactions", StringComparison.Ordinal));
-
-    private static int ExecuteTwoPhaseDelete<TSource>(
-        QueryContext queryContext, IReadOnlyEntityType entityType, BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-        => RunInBulkTransaction(queryContext, nonQuery, () =>
-        {
-            var ids = SelectTargetIds<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery);
-            return ids.Count == 0 ? 0 : DeleteByIds(queryContext, nonQuery, ids);
-        });
-
-    private static Task<int> ExecuteTwoPhaseDeleteAsync<TSource>(
-        QueryContext queryContext, IReadOnlyEntityType entityType, BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-        => RunInBulkTransactionAsync(queryContext, nonQuery, async () =>
-        {
-            var ids = await SelectTargetIdsAsync<TSource>(
-                queryContext, entityType, bsonSerializerFactory, nonQuery).ConfigureAwait(false);
-            return ids.Count == 0
-                ? 0
-                : await DeleteByIdsAsync(queryContext, nonQuery, ids).ConfigureAwait(false);
-        });
-
-    private static int ExecuteTwoPhaseUpdate<TSource>(
-        QueryContext queryContext, IReadOnlyEntityType entityType, BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-        => RunInBulkTransaction(queryContext, nonQuery, () =>
-        {
-            var ids = SelectTargetIds<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery);
-            if (ids.Count == 0)
-            {
-                return 0;
-            }
-
-            var update = TranslateBulkOrThrow(nonQuery,
-                () => BuildUpdate<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery));
-            return UpdateByIds(queryContext, nonQuery, ids, update);
-        });
-
-    private static Task<int> ExecuteTwoPhaseUpdateAsync<TSource>(
-        QueryContext queryContext, IReadOnlyEntityType entityType, BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-        => RunInBulkTransactionAsync(queryContext, nonQuery, async () =>
-        {
-            var ids = await SelectTargetIdsAsync<TSource>(
-                queryContext, entityType, bsonSerializerFactory, nonQuery).ConfigureAwait(false);
-            if (ids.Count == 0)
-            {
-                return 0;
-            }
-
-            var update = TranslateBulkOrThrow(nonQuery,
-                () => BuildUpdate<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery));
-            return await UpdateByIdsAsync(queryContext, nonQuery, ids, update).ConfigureAwait(false);
-        });
-
-    private static int UpdateByIds(
-        QueryContext queryContext, MongoNonQueryExpression nonQuery, List<BsonValue> ids,
-        UpdateDefinition<BsonDocument> update)
-    {
-        var (collection, session) = GetBulkCollectionAndSession(queryContext, nonQuery);
-        var filter = Builders<BsonDocument>.Filter.In("_id", ids);
-
-        var updateLogger = GetUpdateLogger(queryContext);
-        var stopwatch = Stopwatch.StartNew();
-        updateLogger.ExecutingBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace, ids.Count);
-
-        var result = session == null
-            ? collection.UpdateMany(filter, update)
-            : collection.UpdateMany(session, filter, update);
-
-        updateLogger.ExecutedBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace, result.ModifiedCount);
-        return checked((int)result.MatchedCount);
-    }
-
-    private static async Task<int> UpdateByIdsAsync(
-        QueryContext queryContext, MongoNonQueryExpression nonQuery, List<BsonValue> ids,
-        UpdateDefinition<BsonDocument> update)
-    {
-        var (collection, session) = GetBulkCollectionAndSession(queryContext, nonQuery);
-        var filter = Builders<BsonDocument>.Filter.In("_id", ids);
-
-        var updateLogger = GetUpdateLogger(queryContext);
-        var stopwatch = Stopwatch.StartNew();
-        updateLogger.ExecutingBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace, ids.Count);
-
-        var cancellationToken = queryContext.CancellationToken;
-        var result = session == null
-            ? await collection.UpdateManyAsync(filter, update, options: null, cancellationToken).ConfigureAwait(false)
-            : await collection.UpdateManyAsync(session, filter, update, options: null, cancellationToken)
-                .ConfigureAwait(false);
-
-        updateLogger.ExecutedBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace, result.ModifiedCount);
-        return checked((int)result.MatchedCount);
-    }
-
-    private static int DeleteByIds(
-        QueryContext queryContext, MongoNonQueryExpression nonQuery, List<BsonValue> ids)
-    {
-        var (collection, session) = GetBulkCollectionAndSession(queryContext, nonQuery);
-        var filter = Builders<BsonDocument>.Filter.In("_id", ids);
-
-        var updateLogger = GetUpdateLogger(queryContext);
-        var stopwatch = Stopwatch.StartNew();
-        updateLogger.ExecutingBulkDelete(stopwatch.Elapsed, collection.CollectionNamespace, ids.Count);
-
-        var result = session == null ? collection.DeleteMany(filter) : collection.DeleteMany(session, filter);
-
-        updateLogger.ExecutedBulkDelete(stopwatch.Elapsed, collection.CollectionNamespace, result.DeletedCount);
-        return checked((int)result.DeletedCount);
-    }
-
-    private static async Task<int> DeleteByIdsAsync(
-        QueryContext queryContext, MongoNonQueryExpression nonQuery, List<BsonValue> ids)
-    {
-        var (collection, session) = GetBulkCollectionAndSession(queryContext, nonQuery);
-        var filter = Builders<BsonDocument>.Filter.In("_id", ids);
-
-        var updateLogger = GetUpdateLogger(queryContext);
-        var stopwatch = Stopwatch.StartNew();
-        updateLogger.ExecutingBulkDelete(stopwatch.Elapsed, collection.CollectionNamespace, ids.Count);
-
-        var cancellationToken = queryContext.CancellationToken;
-        var result = session == null
-            ? await collection.DeleteManyAsync(filter, cancellationToken).ConfigureAwait(false)
-            : await collection.DeleteManyAsync(session, filter, options: null, cancellationToken).ConfigureAwait(false);
-
-        updateLogger.ExecutedBulkDelete(stopwatch.Elapsed, collection.CollectionNamespace, result.DeletedCount);
-        return checked((int)result.DeletedCount);
-    }
-
-    private static (IMongoCollection<BsonDocument> collection, IClientSessionHandle? session) GetBulkCollectionAndSession(
-        QueryContext queryContext, MongoNonQueryExpression nonQuery)
-    {
-        var mongoQueryContext = (MongoQueryContext)queryContext;
-        var collection =
-            mongoQueryContext.MongoClient.GetCollection<BsonDocument>(nonQuery.SourceQuery.CollectionExpression.CollectionName);
-        var session = (mongoQueryContext.Context.Database.CurrentTransaction as MongoTransaction)?.Session;
-        return (collection, session);
-    }
-
-    private static int ExecuteDelete<TSource>(
-        QueryContext queryContext,
-        IReadOnlyEntityType entityType,
-        BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-    {
-        var (collection, session, filter) = PrepareBulk<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery);
-
-        var updateLogger = GetUpdateLogger(queryContext);
-        var stopwatch = Stopwatch.StartNew();
-        updateLogger.ExecutingBulkDelete(stopwatch.Elapsed, collection.CollectionNamespace);
-
-        var result = session == null
-            ? collection.DeleteMany(filter)
-            : collection.DeleteMany(session, filter);
-
-        updateLogger.ExecutedBulkDelete(stopwatch.Elapsed, collection.CollectionNamespace, result.DeletedCount);
-
-        // DeletedCount is long; EF's ExecuteDelete contract returns int — overflow past int.MaxValue throws by design.
-        return checked((int)result.DeletedCount);
-    }
-
-    private static async Task<int> ExecuteDeleteAsync<TSource>(
-        QueryContext queryContext,
-        IReadOnlyEntityType entityType,
-        BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-    {
-        var (collection, session, filter) = PrepareBulk<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery);
-
-        var updateLogger = GetUpdateLogger(queryContext);
-        var stopwatch = Stopwatch.StartNew();
-        updateLogger.ExecutingBulkDelete(stopwatch.Elapsed, collection.CollectionNamespace);
-
-        var cancellationToken = queryContext.CancellationToken;
-        var result = session == null
-            ? await collection.DeleteManyAsync(filter, cancellationToken).ConfigureAwait(false)
-            : await collection.DeleteManyAsync(session, filter, options: null, cancellationToken).ConfigureAwait(false);
-
-        updateLogger.ExecutedBulkDelete(stopwatch.Elapsed, collection.CollectionNamespace, result.DeletedCount);
-
-        // DeletedCount is long; EF's ExecuteDelete contract returns int — overflow past int.MaxValue throws by design.
-        return checked((int)result.DeletedCount);
-    }
-
-    private static int ExecuteUpdate<TSource>(
-        QueryContext queryContext,
-        IReadOnlyEntityType entityType,
-        BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-    {
-        var (collection, session, filter) = PrepareBulk<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery);
-        var update = TranslateBulkOrThrow(nonQuery, () => BuildUpdate<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery));
-
-        var updateLogger = GetUpdateLogger(queryContext);
-        var stopwatch = Stopwatch.StartNew();
-        updateLogger.ExecutingBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace);
-
-        var result = session == null
-            ? collection.UpdateMany(filter, update)
-            : collection.UpdateMany(session, filter, update);
-
-        updateLogger.ExecutedBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace, result.ModifiedCount);
-
-        // EF's ExecuteUpdate contract returns the number of rows matched by the predicate (the same as relational
-        // providers, which count a row even when SET writes its existing value), not just those whose stored
-        // values actually changed. MongoDB's UpdateResult exposes both; MatchedCount is the affected-row count.
-        // (The ExecutedBulkUpdate event above still reports ModifiedCount — the genuinely-modified subset.)
-        // MatchedCount is long; overflow past int.MaxValue throws by design.
-        return checked((int)result.MatchedCount);
-    }
-
-    private static async Task<int> ExecuteUpdateAsync<TSource>(
-        QueryContext queryContext,
-        IReadOnlyEntityType entityType,
-        BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-    {
-        var (collection, session, filter) = PrepareBulk<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery);
-        var update = TranslateBulkOrThrow(nonQuery, () => BuildUpdate<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery));
-
-        var updateLogger = GetUpdateLogger(queryContext);
-        var stopwatch = Stopwatch.StartNew();
-        updateLogger.ExecutingBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace);
-
-        var cancellationToken = queryContext.CancellationToken;
-        var result = session == null
-            ? await collection.UpdateManyAsync(filter, update, options: null, cancellationToken).ConfigureAwait(false)
-            : await collection.UpdateManyAsync(session, filter, update, options: null, cancellationToken).ConfigureAwait(false);
-
-        updateLogger.ExecutedBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace, result.ModifiedCount);
-
-        // EF's ExecuteUpdate contract returns the number of rows matched by the predicate (the same as relational
-        // providers, which count a row even when SET writes its existing value), not just those whose stored
-        // values actually changed. MongoDB's UpdateResult exposes both; MatchedCount is the affected-row count.
-        // (The ExecutedBulkUpdate event above still reports ModifiedCount — the genuinely-modified subset.)
-        // MatchedCount is long; overflow past int.MaxValue throws by design.
-        return checked((int)result.MatchedCount);
-    }
-
-    // Server-side ExecuteDelete/ExecuteUpdate bypass SaveChanges, so the bulk-write logging in MongoDatabaseWrapper
-    // never fires for them. Resolve the Update-category logger from the context's service provider to emit the
-    // dedicated bulk delete/update events. IDiagnosticsLogger<> is registered as an open generic in EF Core's DI.
-    private static IDiagnosticsLogger<DbLoggerCategory.Update> GetUpdateLogger(QueryContext queryContext)
-        => queryContext.Context.GetService<IDiagnosticsLogger<DbLoggerCategory.Update>>();
-
     // The bulk filter/update is translated from user expressions at execution time. When a predicate or
     // setter shape that slipped past compile-time validation can't be translated (e.g. a GroupBy subquery
     // in the Where), the driver/LINQ layer throws a raw ExpressionNotSupportedException / ArgumentException.
@@ -774,21 +404,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
     }
 
-    private static (IMongoCollection<BsonDocument> collection, IClientSessionHandle? session, FilterDefinition<BsonDocument> filter) PrepareBulk<TSource>(
-        QueryContext queryContext,
-        IReadOnlyEntityType entityType,
-        BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-    {
-        var mongoQueryContext = (MongoQueryContext)queryContext;
-        var collection =
-            mongoQueryContext.MongoClient.GetCollection<BsonDocument>(nonQuery.SourceQuery.CollectionExpression.CollectionName);
-        var session = (mongoQueryContext.Context.Database.CurrentTransaction as MongoTransaction)?.Session;
-        var filter = TranslateBulkOrThrow(nonQuery, () => BuildFilter<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery));
-
-        return (collection, session, filter);
-    }
-
     // Validates that the entity has a primary key mapped to _id (always true for a MongoDB root entity).
     // Keyless entities cannot use two-phase delete and fall back to the canonical non-query failure.
     private static void EnsureBulkKeyOrThrow(IReadOnlyEntityType entityType, MongoNonQueryExpression nonQuery)
@@ -800,47 +415,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                     nonQuery.SourceQuery.CapturedExpression?.Print(),
                     "the entity must have a primary key to use ordering, paging, or Distinct in a bulk delete or update."));
         }
-    }
-
-    // Phase 1: run the bulk source (Where + OrderBy/Skip/Take/Distinct) as a read that yields the raw stored
-    // BsonDocuments — reusing the read-path translation — and collect each document's _id. This works
-    // uniformly for scalar and composite primary keys (MongoDB stores a composite key as the _id sub-document)
-    // and never goes through EntitySerializer's (unimplemented) round-trip serialization.
-    private static List<BsonValue> SelectTargetIds<TSource>(
-        QueryContext queryContext,
-        IReadOnlyEntityType entityType,
-        BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-    {
-        var documents = BuildIdDocumentQuery<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery);
-
-        var ids = new List<BsonValue>();
-        foreach (var document in documents)
-        {
-            ids.Add(document["_id"]);
-        }
-
-        return ids;
-    }
-
-    private static async Task<List<BsonValue>> SelectTargetIdsAsync<TSource>(
-        QueryContext queryContext,
-        IReadOnlyEntityType entityType,
-        BsonSerializerFactory bsonSerializerFactory,
-        MongoNonQueryExpression nonQuery)
-    {
-        var documents = BuildIdDocumentQuery<TSource>(queryContext, entityType, bsonSerializerFactory, nonQuery);
-
-        var materialized = await IAsyncCursorSourceExtensions
-            .ToListAsync((IAsyncCursorSource<BsonDocument>)documents, queryContext.CancellationToken).ConfigureAwait(false);
-
-        var ids = new List<BsonValue>(materialized.Count);
-        foreach (var document in materialized)
-        {
-            ids.Add(document["_id"]);
-        }
-
-        return ids;
     }
 
     // Builds a driver query that yields the raw stored BsonDocuments for the bulk source, by reusing the
@@ -880,8 +454,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         Expression? combinedBody = null;
         var expression = MongoNonQueryExpression.UnwrapBulkOperator(nonQuery.SourceQuery.CapturedExpression);
-        // Invariant: ValidateBulkSource (in the method-translating visitor) has already rejected any operator other than
-        // Queryable.Where, so this walk is exhaustive — a non-Where node here would be silently dropped.
+        // Invariant: ClassifyBulkSource (in the method-translating visitor) has already rejected, for the single-command
+        // path, any operator other than Queryable.Where — so this walk should consume the whole chain down to the root.
         while (expression is MethodCallExpression { Method: { DeclaringType: var declaringType, Name: nameof(Queryable.Where) } }
                    whereCall
                && declaringType == typeof(Queryable))
@@ -893,6 +467,18 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             combinedBody = combinedBody == null ? translatedBody : Expression.AndAlso(combinedBody, translatedBody);
 
             expression = whereCall.Arguments[0];
+        }
+
+        // Fail loud rather than silently drop: if a non-Where Queryable operator remains, the single-command classifier
+        // (ClassifyBulkSource) admitted an operator this filter builder doesn't handle — that would otherwise scope the
+        // operation incorrectly (wrong documents affected). Surfaces as a translation failure via TranslateBulkOrThrow.
+        if (expression is MethodCallExpression { Method.DeclaringType: var remainingType } remaining
+            && remainingType == typeof(Queryable))
+        {
+            throw new InvalidOperationException(
+                $"Bulk filter construction encountered an unsupported '{remaining.Method.Name}' operator in the source "
+                + "chain. Only 'Where' can scope a single-command bulk filter; this indicates the bulk-source classifier "
+                + "admitted an operator the filter builder does not handle.");
         }
 
         if (combinedBody == null)
@@ -1066,53 +652,23 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             => node.Type == target.Type ? target : base.VisitParameter(node);
     }
 
-    private static readonly MethodInfo ExecuteDeleteMethodInfo =
+    private static readonly MethodInfo CreateBulkPlanMethodInfo =
         typeof(MongoShapedQueryCompilingExpressionVisitor)
             .GetTypeInfo()
             .DeclaredMethods
-            .Single(m => m.Name == nameof(ExecuteDelete));
+            .Single(m => m.Name == nameof(CreateBulkPlan));
 
-    private static readonly MethodInfo ExecuteDeleteAsyncMethodInfo =
-        typeof(MongoShapedQueryCompilingExpressionVisitor)
+    private static readonly MethodInfo MongoBulkExecuteMethodInfo =
+        typeof(MongoBulkOperationExecutor)
             .GetTypeInfo()
             .DeclaredMethods
-            .Single(m => m.Name == nameof(ExecuteDeleteAsync));
+            .Single(m => m.Name == nameof(MongoBulkOperationExecutor.Execute));
 
-    private static readonly MethodInfo ExecuteUpdateMethodInfo =
-        typeof(MongoShapedQueryCompilingExpressionVisitor)
+    private static readonly MethodInfo MongoBulkExecuteAsyncMethodInfo =
+        typeof(MongoBulkOperationExecutor)
             .GetTypeInfo()
             .DeclaredMethods
-            .Single(m => m.Name == nameof(ExecuteUpdate));
-
-    private static readonly MethodInfo ExecuteUpdateAsyncMethodInfo =
-        typeof(MongoShapedQueryCompilingExpressionVisitor)
-            .GetTypeInfo()
-            .DeclaredMethods
-            .Single(m => m.Name == nameof(ExecuteUpdateAsync));
-
-    private static readonly MethodInfo ExecuteTwoPhaseDeleteMethodInfo =
-        typeof(MongoShapedQueryCompilingExpressionVisitor)
-            .GetTypeInfo()
-            .DeclaredMethods
-            .Single(m => m.Name == nameof(ExecuteTwoPhaseDelete));
-
-    private static readonly MethodInfo ExecuteTwoPhaseDeleteAsyncMethodInfo =
-        typeof(MongoShapedQueryCompilingExpressionVisitor)
-            .GetTypeInfo()
-            .DeclaredMethods
-            .Single(m => m.Name == nameof(ExecuteTwoPhaseDeleteAsync));
-
-    private static readonly MethodInfo ExecuteTwoPhaseUpdateMethodInfo =
-        typeof(MongoShapedQueryCompilingExpressionVisitor)
-            .GetTypeInfo()
-            .DeclaredMethods
-            .Single(m => m.Name == nameof(ExecuteTwoPhaseUpdate));
-
-    private static readonly MethodInfo ExecuteTwoPhaseUpdateAsyncMethodInfo =
-        typeof(MongoShapedQueryCompilingExpressionVisitor)
-            .GetTypeInfo()
-            .DeclaredMethods
-            .Single(m => m.Name == nameof(ExecuteTwoPhaseUpdateAsync));
+            .Single(m => m.Name == nameof(MongoBulkOperationExecutor.ExecuteAsync));
 
     private static readonly MethodInfo RenderAggregateExpressionMethodInfo =
         typeof(MongoShapedQueryCompilingExpressionVisitor)

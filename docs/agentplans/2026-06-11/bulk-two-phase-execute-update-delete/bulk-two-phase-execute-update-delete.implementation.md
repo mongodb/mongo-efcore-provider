@@ -8,7 +8,7 @@
 
 **Tech Stack:** C# / .NET (net8.0 for EF8/EF9, net10.0 for EF10), EF Core provider internals, MongoDB C# driver LINQ v3, xUnit + FluentAssertions. All new behavior is under `#if !EF8` (EF9/EF10 only).
 
-**Design doc:** `docs/superpowers/specs/2026-06-11-bulk-two-phase-execute-update-delete-design.md`
+**Design doc:** `docs/agentplans/2026-06-11/bulk-two-phase-execute-update-delete/bulk-two-phase-execute-update-delete.design.md`
 
 **Conventions reminder:**
 - Preserve file BOMs. `<Nullable>enable</Nullable>` on `src/` — annotate new types.

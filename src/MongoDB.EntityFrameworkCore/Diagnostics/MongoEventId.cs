@@ -241,13 +241,14 @@ public static class MongoEventId
     /// </remarks>
     public static readonly EventId WaitingForSearchIndex = MakeDatabaseId(Id.WaitingForSearchIndex);
 
+#if !EF8
     /// <summary>
     /// A bulk delete (server-side <c>ExecuteDelete</c>) is being executed.
     /// </summary>
     /// <remarks>
     /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
     /// <para>
-    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// This event uses the <see cref="MongoBulkDeleteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
     /// </para>
     /// </remarks>
     public static readonly EventId ExecutingBulkDelete = MakeUpdateId(Id.ExecutingBulkDelete);
@@ -258,7 +259,7 @@ public static class MongoEventId
     /// <remarks>
     /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
     /// <para>
-    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// This event uses the <see cref="MongoBulkDeleteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
     /// </para>
     /// </remarks>
     public static readonly EventId ExecutedBulkDelete = MakeUpdateId(Id.ExecutedBulkDelete);
@@ -269,7 +270,7 @@ public static class MongoEventId
     /// <remarks>
     /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
     /// <para>
-    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// This event uses the <see cref="MongoBulkUpdateEventData" /> payload when used with a <see cref="DiagnosticSource" />.
     /// </para>
     /// </remarks>
     public static readonly EventId ExecutingBulkUpdate = MakeUpdateId(Id.ExecutingBulkUpdate);
@@ -280,8 +281,9 @@ public static class MongoEventId
     /// <remarks>
     /// <para>This event is in the <see cref="DbLoggerCategory.Update" /> category.</para>
     /// <para>
-    /// This event uses the <see cref="MongoBulkWriteEventData" /> payload when used with a <see cref="DiagnosticSource" />.
+    /// This event uses the <see cref="MongoBulkUpdateEventData" /> payload when used with a <see cref="DiagnosticSource" />.
     /// </para>
     /// </remarks>
     public static readonly EventId ExecutedBulkUpdate = MakeUpdateId(Id.ExecutedBulkUpdate);
+#endif
 }

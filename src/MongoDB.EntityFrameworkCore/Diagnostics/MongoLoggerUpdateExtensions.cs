@@ -24,7 +24,7 @@ namespace MongoDB.EntityFrameworkCore.Diagnostics;
 using BulkWriteEventDefinition = EventDefinition<string, CollectionNamespace, long, long, long>;
 #if !EF8
 using BulkExecutingEventDefinition = EventDefinition<string, CollectionNamespace>;
-using BulkExecutingTwoPhaseEventDefinition = EventDefinition<string, CollectionNamespace, int>;
+using BulkExecutingTwoPhaseEventDefinition = EventDefinition<string, CollectionNamespace, long>;
 using BulkExecutedEventDefinition = EventDefinition<string, CollectionNamespace, long>;
 #endif
 
@@ -192,7 +192,7 @@ internal static class MongoLoggerUpdateExtensions
         this IDiagnosticsLogger<DbLoggerCategory.Update> diagnostics,
         TimeSpan duration,
         CollectionNamespace collectionNamespace,
-        int? targetCount = null)
+        long? targetCount = null)
     {
         if (targetCount.HasValue)
         {
@@ -205,14 +205,12 @@ internal static class MongoLoggerUpdateExtensions
 
             if (diagnostics.NeedsEventData(twoPhaseDefinition, out var diagnosticSourceEnabled2, out var simpleLogEnabled2))
             {
-                var twoPhaseEventData = new MongoBulkWriteEventData(
+                var twoPhaseEventData = new MongoBulkDeleteEventData(
                     twoPhaseDefinition,
                     ExecutingBulkDeleteTwoPhaseMessage,
                     duration,
                     collectionNamespace,
-                    insertCount: 0,
                     deleteCount: 0,
-                    modifyCount: 0,
                     targetCount: targetCount.Value);
 
                 diagnostics.DispatchEventData(twoPhaseDefinition, twoPhaseEventData, diagnosticSourceEnabled2, simpleLogEnabled2);
@@ -230,14 +228,13 @@ internal static class MongoLoggerUpdateExtensions
 
         if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
         {
-            var eventData = new MongoBulkWriteEventData(
+            var eventData = new MongoBulkDeleteEventData(
                 definition,
                 ExecutingBulkDeleteMessage,
                 duration,
                 collectionNamespace,
-                insertCount: 0,
                 deleteCount: 0,
-                modifyCount: 0);
+                targetCount: null);
 
             diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
         }
@@ -246,14 +243,14 @@ internal static class MongoLoggerUpdateExtensions
     private static string ExecutingBulkDeleteMessage(EventDefinitionBase definition, EventData payload)
     {
         var d = (BulkExecutingEventDefinition)definition;
-        var p = (MongoBulkWriteEventData)payload;
+        var p = (MongoBulkDeleteEventData)payload;
         return d.GenerateMessage(p.Elapsed.TotalMilliseconds.ToString(), p.CollectionNamespace);
     }
 
     private static string ExecutingBulkDeleteTwoPhaseMessage(EventDefinitionBase definition, EventData payload)
     {
         var d = (BulkExecutingTwoPhaseEventDefinition)definition;
-        var p = (MongoBulkWriteEventData)payload;
+        var p = (MongoBulkDeleteEventData)payload;
         return d.GenerateMessage(p.Elapsed.TotalMilliseconds.ToString(), p.CollectionNamespace, p.TargetCount!.Value);
     }
 
@@ -282,7 +279,7 @@ internal static class MongoLoggerUpdateExtensions
                     MongoEventId.ExecutingBulkDelete,
                     LogLevel.Information,
                     "MongoEventId.ExecutingBulkDelete",
-                    level => LoggerMessage.Define<string, CollectionNamespace, int>(
+                    level => LoggerMessage.Define<string, CollectionNamespace, long>(
                         level,
                         MongoEventId.ExecutingBulkDelete,
                         "Executing Bulk Delete ({elapsed} ms) Collection='{collectionNamespace}' (two-phase, {targetCount} target(s))"))));
@@ -309,14 +306,13 @@ internal static class MongoLoggerUpdateExtensions
 
         if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
         {
-            var eventData = new MongoBulkWriteEventData(
+            var eventData = new MongoBulkDeleteEventData(
                 definition,
                 ExecutedBulkDeleteMessage,
                 duration,
                 collectionNamespace,
-                insertCount: 0,
                 deleteCount: deleteCount,
-                modifyCount: 0);
+                targetCount: null);
 
             diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
         }
@@ -325,7 +321,7 @@ internal static class MongoLoggerUpdateExtensions
     private static string ExecutedBulkDeleteMessage(EventDefinitionBase definition, EventData payload)
     {
         var d = (BulkExecutedEventDefinition)definition;
-        var p = (MongoBulkWriteEventData)payload;
+        var p = (MongoBulkDeleteEventData)payload;
         return d.GenerateMessage(p.Elapsed.TotalMilliseconds.ToString(), p.CollectionNamespace, p.DeleteCount);
     }
 
@@ -358,7 +354,7 @@ internal static class MongoLoggerUpdateExtensions
         this IDiagnosticsLogger<DbLoggerCategory.Update> diagnostics,
         TimeSpan duration,
         CollectionNamespace collectionNamespace,
-        int? targetCount = null)
+        long? targetCount = null)
     {
         if (targetCount.HasValue)
         {
@@ -371,13 +367,11 @@ internal static class MongoLoggerUpdateExtensions
 
             if (diagnostics.NeedsEventData(twoPhaseDefinition, out var diagnosticSourceEnabled2, out var simpleLogEnabled2))
             {
-                var twoPhaseEventData = new MongoBulkWriteEventData(
+                var twoPhaseEventData = new MongoBulkUpdateEventData(
                     twoPhaseDefinition,
                     ExecutingBulkUpdateTwoPhaseMessage,
                     duration,
                     collectionNamespace,
-                    insertCount: 0,
-                    deleteCount: 0,
                     modifyCount: 0,
                     targetCount: targetCount.Value);
 
@@ -396,14 +390,13 @@ internal static class MongoLoggerUpdateExtensions
 
         if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
         {
-            var eventData = new MongoBulkWriteEventData(
+            var eventData = new MongoBulkUpdateEventData(
                 definition,
                 ExecutingBulkUpdateMessage,
                 duration,
                 collectionNamespace,
-                insertCount: 0,
-                deleteCount: 0,
-                modifyCount: 0);
+                modifyCount: 0,
+                targetCount: null);
 
             diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
         }
@@ -412,14 +405,14 @@ internal static class MongoLoggerUpdateExtensions
     private static string ExecutingBulkUpdateMessage(EventDefinitionBase definition, EventData payload)
     {
         var d = (BulkExecutingEventDefinition)definition;
-        var p = (MongoBulkWriteEventData)payload;
+        var p = (MongoBulkUpdateEventData)payload;
         return d.GenerateMessage(p.Elapsed.TotalMilliseconds.ToString(), p.CollectionNamespace);
     }
 
     private static string ExecutingBulkUpdateTwoPhaseMessage(EventDefinitionBase definition, EventData payload)
     {
         var d = (BulkExecutingTwoPhaseEventDefinition)definition;
-        var p = (MongoBulkWriteEventData)payload;
+        var p = (MongoBulkUpdateEventData)payload;
         return d.GenerateMessage(p.Elapsed.TotalMilliseconds.ToString(), p.CollectionNamespace, p.TargetCount!.Value);
     }
 
@@ -448,7 +441,7 @@ internal static class MongoLoggerUpdateExtensions
                     MongoEventId.ExecutingBulkUpdate,
                     LogLevel.Information,
                     "MongoEventId.ExecutingBulkUpdate",
-                    level => LoggerMessage.Define<string, CollectionNamespace, int>(
+                    level => LoggerMessage.Define<string, CollectionNamespace, long>(
                         level,
                         MongoEventId.ExecutingBulkUpdate,
                         "Executing Bulk Update ({elapsed} ms) Collection='{collectionNamespace}' (two-phase, {targetCount} target(s))"))));
@@ -475,14 +468,13 @@ internal static class MongoLoggerUpdateExtensions
 
         if (diagnostics.NeedsEventData(definition, out var diagnosticSourceEnabled, out var simpleLogEnabled))
         {
-            var eventData = new MongoBulkWriteEventData(
+            var eventData = new MongoBulkUpdateEventData(
                 definition,
                 ExecutedBulkUpdateMessage,
                 duration,
                 collectionNamespace,
-                insertCount: 0,
-                deleteCount: 0,
-                modifyCount: modifyCount);
+                modifyCount: modifyCount,
+                targetCount: null);
 
             diagnostics.DispatchEventData(definition, eventData, diagnosticSourceEnabled, simpleLogEnabled);
         }
@@ -491,7 +483,7 @@ internal static class MongoLoggerUpdateExtensions
     private static string ExecutedBulkUpdateMessage(EventDefinitionBase definition, EventData payload)
     {
         var d = (BulkExecutedEventDefinition)definition;
-        var p = (MongoBulkWriteEventData)payload;
+        var p = (MongoBulkUpdateEventData)payload;
         return d.GenerateMessage(p.Elapsed.TotalMilliseconds.ToString(), p.CollectionNamespace, p.ModifyCount);
     }
 

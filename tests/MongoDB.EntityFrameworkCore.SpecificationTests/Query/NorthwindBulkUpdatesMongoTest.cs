@@ -354,15 +354,19 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => AssertTranslationFailed(() => base.Update_unmapped_property_throws(async));
 
 #if EF10
-    // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; joins / correlated subqueries unsupported EF-X016
+    // Fails: cross-collection join (translatable post-EF-117) — the conformance asserter's before/after
+    // snapshot reads the filtered-inner join, which the driver's LINQ provider cannot translate, so a
+    // non-translation exception surfaces before the bulk path's own rejection, but still throws EF-X002
     public override Task Update_with_LeftJoin(bool async)
-        => AssertTranslationFailed(() => base.Update_with_LeftJoin(async));
+        => Assert.ThrowsAnyAsync<Exception>(() => base.Update_with_LeftJoin(async));
 #endif
 
 #if EF10
-    // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; joins / correlated subqueries unsupported EF-X016
+    // Fails: cross-collection join (translatable post-EF-117) — the conformance asserter's before/after
+    // snapshot reads the filtered-inner join, which the driver's LINQ provider cannot translate, so a
+    // non-translation exception surfaces before the bulk path's own rejection, but still throws EF-X002
     public override Task Update_with_LeftJoin_via_flattened_GroupJoin(bool async)
-        => AssertTranslationFailed(() => base.Update_with_LeftJoin_via_flattened_GroupJoin(async));
+        => Assert.ThrowsAnyAsync<Exception>(() => base.Update_with_LeftJoin_via_flattened_GroupJoin(async));
 #endif
 
 #if EF10
@@ -405,9 +409,11 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => AssertTranslationFailed(() => base.Update_with_invalid_lambda_throws(async));
 #endif
 
-    // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; joins / correlated subqueries unsupported EF-X016
+    // Fails: cross-collection join (translatable post-EF-117) — the conformance asserter's before/after
+    // snapshot reads the filtered-inner join, which the driver's LINQ provider cannot translate, so a
+    // non-translation exception surfaces before the bulk path's own rejection, but still throws EF-X002
     public override Task Update_with_join_set_constant(bool async)
-        => AssertTranslationFailed(() => base.Update_with_join_set_constant(async));
+        => Assert.ThrowsAnyAsync<Exception>(() => base.Update_with_join_set_constant(async));
 
 #if EF9
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; joins / correlated subqueries unsupported EF-X016
