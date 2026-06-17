@@ -72,6 +72,7 @@ public class MongoModelValidator : ModelValidator
 
         ValidateNoTablePerType(model);
         ValidateMaximumOneRowVersionPerEntity(model);
+        ValidateNoConcurrencyTokensOnOwnedEntities(model);
         ValidateNoUnsupportedAttributesOrAnnotations(model);
         ValidateElementNames(model);
         ValidateOwnedTypeMappingConsistency(model);
@@ -148,6 +149,37 @@ public class MongoModelValidator : ModelValidator
                 throw new NotSupportedException(
                     $"Entity '{entityType.DisplayName()}' has multiple properties '{propertyNames
                     }' configured as row versions. Only one row version property per entity is supported.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validate that concurrency tokens are only configured on document-root entities.
+    /// </summary>
+    /// <param name="model">The <see cref="IModel"/> to validate for correctness.</param>
+    /// <remarks>
+    /// A concurrency token on an owned entity cannot be honored: updates operate on the whole
+    /// document and the update filter is built only from the document-root entity's properties
+    /// (see <c>MongoUpdate.WriteConcurrencyTokens</c>). Rather than silently ignore the token and
+    /// give a false sense of optimistic-concurrency protection, the configuration is rejected.
+    /// A concurrency token on the document-root entity guards the whole document, including any
+    /// changes to its owned entities.
+    /// </remarks>
+    /// <exception cref="NotSupportedException">When a concurrency token is configured on an owned entity.</exception>
+    private static void ValidateNoConcurrencyTokensOnOwnedEntities(IModel model)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            if (entityType.IsDocumentRoot()) continue;
+
+            var concurrencyToken = entityType.GetProperties().FirstOrDefault(p => p.IsConcurrencyToken);
+            if (concurrencyToken != null)
+            {
+                throw new NotSupportedException(
+                    PropertyOnEntity(concurrencyToken) +
+                    " is configured as a concurrency token, but it belongs to an owned entity." +
+                    " Concurrency tokens are only supported on the document-root entity, where they" +
+                    " guard the whole document including its owned entities.");
             }
         }
     }
