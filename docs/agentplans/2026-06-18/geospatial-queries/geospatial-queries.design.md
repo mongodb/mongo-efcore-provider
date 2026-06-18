@@ -199,6 +199,40 @@ GeoJSON serialization is free: the driver ships `GeoJsonPointSerializer<T>`,
 EF's perspective these properties are simple scalars (a single BSON sub-document); no owned-entity
 modeling is involved.
 
+Crucially, this **one** serializer registration serves *both directions* — see "Persistence
+(write/save) path" below. The single arm added to `BsonSerializerFactory.CreateTypeSerializer`
+enables reads (query materialization) and writes (insert/update) alike; there is no separate
+write-path code to author.
+
+## Persistence (write/save) path
+
+Although the data-flow section above is query-first, persistence is the same plumbing run the other
+way. `SaveChanges` writes a property through `MongoUpdate.WriteProperty`
+(`Storage/MongoUpdate.cs`), which resolves the serializer via
+`BsonSerializerFactory.GetPropertySerializationInfo(property)` and calls
+`serializationInfo.Serializer.Serialize(...)` to emit BSON into the insert/update document.
+`GetPropertySerializationInfo` ultimately calls `CreateTypeSerializer(property.ClrType, …)` — the
+*same* method (and the same new GeoJSON arm) used to materialize query results. So:
+
+```
+SaveChanges  →  MongoUpdate.WriteProperty
+                   →  BsonSerializerFactory.GetPropertySerializationInfo(property)
+                        →  CreateTypeSerializer(property.ClrType, …)   // the GeoJSON arm
+                   →  serializer.Serialize(writer, value)              // GeoJSON value → { type, coordinates }
+```
+
+No geospatial-specific write code is needed; registering the driver serializer is sufficient for
+persistence. Task 4's round-trip test (`Add` + `SaveChanges`, then read back) exercises this path
+end to end.
+
+**Change-tracking nuance (updates):** the GeoJSON CLR types are effectively immutable — coordinates
+are supplied at construction and there are no setters — so the normal way to change a value is to
+assign a new instance to the property, which EF's change tracker detects by reference. In-place
+mutation of an existing instance would not be detected. This matches expected usage; v1 does not add
+a custom `ValueComparer` for GeoJSON properties. The implementation plan should include an
+update-an-existing-entity test (assign a new geometry, `SaveChanges`, re-read) alongside the insert
+round-trip to lock this in.
+
 ## The NTS seam
 
 `MongoGeoTranslator` is written against **(element path, GeoJSON-BSON geometry, operator kind)** —
