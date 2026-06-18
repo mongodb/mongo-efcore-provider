@@ -98,6 +98,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - Bulk `ExecuteUpdate` and `ExecuteDelete` (EF 9+) on a single collection; supports constant and self-referencing setters; bypasses the change tracker (concurrency tokens are not checked)
   - `Where`-scoped sources execute as a single atomic `deleteMany` / `updateMany` server command
   - Sources that also use `OrderBy`/`ThenBy`/`Skip`/`Take`/`Distinct` are supported via a transactional two-phase execution (phase 1 collects the target `_id`s; phase 2 acts on them via `{ _id: { $in: [...] } }`); requires a transaction-capable deployment (replica set or sharded cluster); under `AutoTransactionBehavior.Never` the caller must open an explicit transaction
+  - If a transaction is already open on the context, the operation enlists in it rather than starting its own — MongoDB does not support nested transactions, so a two-phase bulk op cannot open an inner transaction the way some relational providers do
   - Not supported: joins, `GroupBy`, `SelectMany`, set operations, cross-document navigation predicates, or multiple-collection updates
 
 ## Limitations

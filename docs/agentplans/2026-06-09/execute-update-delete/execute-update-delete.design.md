@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-09
 **Status:** Approved (design); pending implementation plan
-**JIRA:** TBD (`EF-NNN`)
+**JIRA:** [EF-107](https://jira.mongodb.org/browse/EF-107)
 
 ## Summary
 
