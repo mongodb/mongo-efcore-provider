@@ -428,15 +428,41 @@ public class GeospatialQueryTests(TemporaryDatabaseFixture database)
             place.Location.Coordinates.Latitude.Should().BeApproximately(51.5, 1e-9);
         }
     }
+
+    [Fact]
+    public void Can_update_GeoJsonPoint()
+    {
+        var collection = database.CreateCollection<Place>();
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            db.Entities.Add(new Place { Id = 1, Name = "Origin", Location = Point(-0.12, 51.5) });
+            db.SaveChanges();
+        }
+
+        // Assign a new geometry instance (GeoJSON values are immutable) and persist the change.
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var place = db.Entities.Single();
+            place.Location = Point(2.35, 48.85);
+            db.SaveChanges();
+        }
+
+        using (var db = SingleEntityDbContext.Create(collection))
+        {
+            var place = db.Entities.Single();
+            place.Location.Coordinates.Longitude.Should().BeApproximately(2.35, 1e-9);
+            place.Location.Coordinates.Latitude.Should().BeApproximately(48.85, 1e-9);
+        }
+    }
 }
 ```
 
 > `SingleEntityDbContext`, `TemporaryDatabaseFixture`, and `database.CreateCollection<T>()` are existing helpers (see `Storage/IndexTests.cs` and other `Query/` tests for usage). `SingleEntityDbContext.Create(collection)` exposes the set as `db.Entities`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj -c "Debug EF10" --filter "FullyQualifiedName~GeospatialQueryTests.Can_round_trip_GeoJsonPoint"`
-Expected: FAIL — EF rejects the `GeoJsonPoint<>` property (no type mapping) at model build, or no serializer is found.
+Run: `dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj -c "Debug EF10" --filter "FullyQualifiedName~GeospatialQueryTests.Can_round_trip_GeoJsonPoint|FullyQualifiedName~GeospatialQueryTests.Can_update_GeoJsonPoint"`
+Expected: FAIL (both) — EF rejects the `GeoJsonPoint<>` property (no type mapping) at model build, or no serializer is found.
 
 - [ ] **Step 3: Recognize GeoJSON types in the type-mapping source**
 
@@ -500,10 +526,10 @@ Add the same `IsGeoJsonType` helper as a private static method on `BsonSerialize
 
 > `BsonSerializer.LookupSerializer` is read-only (it does not mutate global driver state) — consistent with the factory's existing `BsonClassMap.LookupClassMap` usage and the Serializers AGENTS.md rule against `RegisterSerializer`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 5: Run tests to verify they pass**
 
-Run: `dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj -c "Debug EF10" --filter "FullyQualifiedName~GeospatialQueryTests.Can_round_trip_GeoJsonPoint"`
-Expected: PASS.
+Run: `dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj -c "Debug EF10" --filter "FullyQualifiedName~GeospatialQueryTests.Can_round_trip_GeoJsonPoint|FullyQualifiedName~GeospatialQueryTests.Can_update_GeoJsonPoint"`
+Expected: PASS (both — insert round-trip and update-existing).
 
 - [ ] **Step 6: Commit**
 
