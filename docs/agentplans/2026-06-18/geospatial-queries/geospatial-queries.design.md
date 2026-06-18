@@ -125,6 +125,11 @@ A fluent extension in `MongoIndexBuilderExtensions`:
 modelBuilder.Entity<Place>().HasIndex(e => e.Location).Is2dSphereIndex();
 ```
 
+This only records the index in the model (a `Mongo:GeospatialIndexType` annotation). The physical
+`2dsphere` index is created when the application runs `EnsureCreated` (or
+`database.CreateMissingIndexes()`) — see [Index creation](#index-creation-2dsphere) below for how
+the annotation is turned into a `createIndex` call.
+
 ## Architecture and files
 
 Mirrors the structure of the existing VectorSearch feature.

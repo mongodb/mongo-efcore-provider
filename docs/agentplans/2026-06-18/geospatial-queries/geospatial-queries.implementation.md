@@ -331,16 +331,20 @@ In `InternalIndexExtensions.cs`, replace the body of `CreateIndexDocument` (line
 In `InternalIndexExtensions.cs`, in `MakeIndexName(this IReadOnlyIndex index)` (lines 28-48), after the existing vector-index early return (line 31-34), add:
 
 ```csharp
-        // 2dsphere indexes follow the server convention "<field>_2dsphere".
+        // Match MongoDB's server-generated index name: each key joined to its value by '_', where the
+        // key is the dotted element path. e.g. { "address.location": "2dsphere" } => "address.location_2dsphere".
         var geospatialIndexType = index.GetGeospatialIndexType();
         if (geospatialIndexType is not null)
         {
-            var geoParts = index.DeclaringEntityType.GetDocumentPath()
-                .Concat(index.Properties.Select(p => p.GetElementName()))
-                .Append(geospatialIndexType);
-            return string.Join('_', geoParts);
+            var path = index.DeclaringEntityType.GetDocumentPath();
+            var keyParts = index.Properties.Select(p =>
+                string.Join('.', path.Append(p.GetElementName())) + "_" + geospatialIndexType);
+            return string.Join('_', keyParts);
         }
 ```
+
+> The dotted-key form (`address.location_2dsphere`, not `address_location_2dsphere`) matches the name
+> MongoDB itself generates for an unnamed `2dsphere` index, so EF-created and server-created names agree.
 
 (`System.Linq` is already imported.)
 
@@ -466,24 +470,7 @@ Expected: FAIL (both) — EF rejects the `GeoJsonPoint<>` property (no type mapp
 
 - [ ] **Step 3: Recognize GeoJSON types in the type-mapping source**
 
-In `MongoTypeMappingSource.cs`, add a static helper and extend `FindPrimitiveMapping`. Add near the top of the class (after the `SupportedDictionaryInterfaces` array, ~line 45):
-
-```csharp
-    private static bool IsGeoJsonType(Type type)
-    {
-        for (var t = type; t is not null; t = t.BaseType!)
-        {
-            if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(GeoJsonGeometry<>))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-```
-
-Add `using MongoDB.Driver.GeoJsonObjectModel;` to the using block. Then in `FindPrimitiveMapping` (line 64), add `IsGeoJsonType(clrType)` to the condition:
+In `MongoTypeMappingSource.cs`, add `using MongoDB.Driver.GeoJsonObjectModel;` to the using block. Then in `FindPrimitiveMapping` (line 64), add a GeoJSON check to the condition using the existing `TryGetItemType` hierarchy helper — the same one already used here for `Memory<>` / `ReadOnlyMemory<>`, which walks base types and interfaces (`TypeExtensionMethods.GetGenericTypeImplementations`). No bespoke helper is needed:
 
 ```csharp
         if (clrType is { IsValueType: true }
@@ -491,7 +478,7 @@ Add `using MongoDB.Driver.GeoJsonObjectModel;` to the using block. Then in `Find
             || clrType == typeof(BinaryVectorFloat32)
             || clrType == typeof(BinaryVectorInt8)
             || clrType == typeof(BinaryVectorPackedBit)
-            || IsGeoJsonType(clrType)
+            || clrType.TryGetItemType(typeof(GeoJsonGeometry<>)) != null
             || clrType.TryGetItemType(typeof(ReadOnlyMemory<>)) != null
             || clrType.TryGetItemType(typeof(Memory<>)) != null)
         {
@@ -501,27 +488,10 @@ Add `using MongoDB.Driver.GeoJsonObjectModel;` to the using block. Then in `Find
 
 - [ ] **Step 4: Return the driver serializer for GeoJSON types**
 
-In `BsonSerializerFactory.cs`, add a `using MongoDB.Driver.GeoJsonObjectModel;` and add a switch arm in `CreateTypeSerializer(Type type, ...)` immediately before the `_ when type.IsEnum` arm (line 91):
+In `BsonSerializerFactory.cs`, add `using MongoDB.Driver.GeoJsonObjectModel;` and add a switch arm in `CreateTypeSerializer(Type type, ...)` immediately before the `_ when type.IsEnum` arm (line 91). Reuse the existing `TryGetItemType` helper (already used in this file for `Memory<>` / `ReadOnlyMemory<>`), so no bespoke helper is needed:
 
 ```csharp
-            _ when IsGeoJsonType(type) => BsonSerializer.LookupSerializer(type),
-```
-
-Add the same `IsGeoJsonType` helper as a private static method on `BsonSerializerFactory` (it is needed independently of the type-mapping source):
-
-```csharp
-    private static bool IsGeoJsonType(Type type)
-    {
-        for (var t = type; t is not null; t = t.BaseType!)
-        {
-            if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(GeoJsonGeometry<>))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+            _ when type.TryGetItemType(typeof(GeoJsonGeometry<>)) != null => BsonSerializer.LookupSerializer(type),
 ```
 
 > `BsonSerializer.LookupSerializer` is read-only (it does not mutate global driver state) — consistent with the factory's existing `BsonClassMap.LookupClassMap` usage and the Serializers AGENTS.md rule against `RegisterSerializer`.
