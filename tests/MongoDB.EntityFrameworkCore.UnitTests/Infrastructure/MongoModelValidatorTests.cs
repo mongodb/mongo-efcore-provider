@@ -492,6 +492,78 @@ public static class MongoModelValidatorTests
         Assert.Contains($"{nameof(VersionableEntity.VersionB)}", ex.Message);
     }
 
+    class OwnerWithConcurrencyCheckedOwned
+    {
+        public int _id { get; set; }
+        public ConcurrencyTokenOwned Owned { get; set; }
+    }
+
+    class ConcurrencyTokenOwned
+    {
+        [ConcurrencyCheck] public int Version { get; set; }
+        public string Text { get; set; }
+    }
+
+    class OwnerWithPlainOwned
+    {
+        public int _id { get; set; }
+        public int RootVersion { get; set; }
+        public PlainOwned Owned { get; set; }
+    }
+
+    class PlainOwned
+    {
+        public int Version { get; set; }
+        public string Text { get; set; }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_owned_entity_has_concurrency_token_attribute()
+    {
+        using var db = SingleEntityDbContext.Create<OwnerWithConcurrencyCheckedOwned>();
+
+        var ex = Assert.Throws<NotSupportedException>(() => db.Model);
+        Assert.Contains($"'{nameof(ConcurrencyTokenOwned.Version)}'", ex.Message);
+        Assert.Contains("concurrency token", ex.Message);
+        Assert.Contains("owned entity", ex.Message);
+    }
+
+    [Fact]
+    public static void Validate_throws_when_owned_entity_has_fluent_concurrency_token()
+    {
+        using var db = SingleEntityDbContext.Create<OwnerWithPlainOwned>(mb =>
+            mb.Entity<OwnerWithPlainOwned>()
+                .OwnsOne(e => e.Owned, b => b.Property(p => p.Version).IsConcurrencyToken()));
+
+        var ex = Assert.Throws<NotSupportedException>(() => db.Model);
+        Assert.Contains($"'{nameof(PlainOwned.Version)}'", ex.Message);
+        Assert.Contains("concurrency token", ex.Message);
+    }
+
+    [Fact]
+    public static void Validate_throws_when_owned_entity_has_row_version()
+    {
+        using var db = SingleEntityDbContext.Create<OwnerWithPlainOwned>(mb =>
+            mb.Entity<OwnerWithPlainOwned>()
+                .OwnsOne(e => e.Owned, b => b.Property(p => p.Version).IsRowVersion()));
+
+        var ex = Assert.Throws<NotSupportedException>(() => db.Model);
+        Assert.Contains($"'{nameof(PlainOwned.Version)}'", ex.Message);
+    }
+
+    [Fact]
+    public static void Validate_succeeds_when_root_entity_has_concurrency_token()
+    {
+        using var db = SingleEntityDbContext.Create<OwnerWithPlainOwned>(mb =>
+            mb.Entity<OwnerWithPlainOwned>(e =>
+            {
+                e.Property(p => p.RootVersion).IsConcurrencyToken();
+                e.OwnsOne(o => o.Owned);
+            }));
+
+        Assert.NotNull(db.Model);
+    }
+
     class VersionableEntity
     {
         public int _id { get; set; }
