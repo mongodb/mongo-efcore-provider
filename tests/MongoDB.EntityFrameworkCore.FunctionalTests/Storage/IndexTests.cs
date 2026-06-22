@@ -65,11 +65,25 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
     class FirstOwnedType
     {
         public string Name { get; set; }
+        public float[] Floats { get; set; }
     }
 
     class SecondOwnedType
     {
         public double[] Doubles { get; set; }
+    }
+
+    class EntityWithThreeOwnedTypes
+    {
+        public Guid Id { get; set; }
+        public FirstOwnedType First { get; set; }
+        public SecondOwnedType Second { get; set; }
+        public ThirdOwnedType Third { get; set; }
+    }
+
+    class ThirdOwnedType
+    {
+        public float[] Embeddings { get; set; }
     }
 
     [AtlasTheory]
@@ -683,6 +697,107 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         Assert.Equal("Second.Doubles", fields[0]["path"].AsString);
         Assert.Equal(2, fields[0]["numDimensions"].AsInt32);
         Assert.Equal("cosine", fields[0]["similarity"].AsString);
+    }
+
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateMissingVectorIndexes_detects_vector_indexes_on_multiple_owned_entities(bool async)
+    {
+        var collection = database.CreateCollection<EntityWithTwoOwnedTypes>(values: async);
+        using var db = SingleEntityDbContext.Create(collection,
+            b => b.Entity<EntityWithTwoOwnedTypes>(b =>
+            {
+                b.OwnsOne(e => e.First)
+                    .HasIndex(e => e.Floats)
+                    .IsVectorIndex(VectorSimilarity.DotProduct, 4);
+                b.OwnsOne(e => e.Second)
+                    .HasIndex(e => e.Doubles)
+                    .IsVectorIndex(VectorSimilarity.Cosine, 2);
+            }));
+
+        var options = new MongoDatabaseCreationOptions(CreateMissingVectorIndexes: false, WaitForVectorIndexes: false);
+        var bsonCollection = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
+
+        if (async)
+        {
+            await db.Database.EnsureCreatedAsync(options);
+            Assert.Empty(bsonCollection.SearchIndexes.List().ToList());
+
+            await db.Database.CreateMissingVectorIndexesAsync();
+            await db.Database.WaitForVectorIndexesAsync();
+        }
+        else
+        {
+            db.Database.EnsureCreated(options);
+            Assert.Empty(bsonCollection.SearchIndexes.List().ToList());
+
+            db.Database.CreateMissingVectorIndexes();
+            db.Database.WaitForVectorIndexes();
+        }
+
+        var indexes = bsonCollection.SearchIndexes.List().ToList();
+        Assert.Equal(2, indexes.Count);
+
+        var floatsIndex = indexes.Single(i => i["name"].AsString == "FloatsVectorIndex");
+        var floatsFields = floatsIndex["latestDefinition"]["fields"].AsBsonArray;
+        Assert.Equal("vector", floatsFields[0]["type"].AsString);
+        Assert.Equal("First.Floats", floatsFields[0]["path"].AsString);
+        Assert.Equal(4, floatsFields[0]["numDimensions"].AsInt32);
+        Assert.Equal("dotProduct", floatsFields[0]["similarity"].AsString);
+
+        var doublesIndex = indexes.Single(i => i["name"].AsString == "DoublesVectorIndex");
+        var doublesFields = doublesIndex["latestDefinition"]["fields"].AsBsonArray;
+        Assert.Equal("vector", doublesFields[0]["type"].AsString);
+        Assert.Equal("Second.Doubles", doublesFields[0]["path"].AsString);
+        Assert.Equal(2, doublesFields[0]["numDimensions"].AsInt32);
+        Assert.Equal("cosine", doublesFields[0]["similarity"].AsString);
+    }
+
+    [AtlasTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateMissingVectorIndexes_detects_vector_index_on_third_of_three_owned_entities(bool async)
+    {
+        var collection = database.CreateCollection<EntityWithThreeOwnedTypes>(values: async);
+        using var db = SingleEntityDbContext.Create(collection,
+            b => b.Entity<EntityWithThreeOwnedTypes>(b =>
+            {
+                b.OwnsOne(e => e.First);
+                b.OwnsOne(e => e.Second);
+                b.OwnsOne(e => e.Third)
+                    .HasIndex(e => e.Embeddings)
+                    .IsVectorIndex(VectorSimilarity.Euclidean, 3);
+            }));
+
+        var options = new MongoDatabaseCreationOptions(CreateMissingVectorIndexes: false, WaitForVectorIndexes: false);
+        var bsonCollection = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
+
+        if (async)
+        {
+            await db.Database.EnsureCreatedAsync(options);
+            Assert.Empty(bsonCollection.SearchIndexes.List().ToList());
+
+            await db.Database.CreateMissingVectorIndexesAsync();
+            await db.Database.WaitForVectorIndexesAsync();
+        }
+        else
+        {
+            db.Database.EnsureCreated(options);
+            Assert.Empty(bsonCollection.SearchIndexes.List().ToList());
+
+            db.Database.CreateMissingVectorIndexes();
+            db.Database.WaitForVectorIndexes();
+        }
+
+        var indexes = bsonCollection.SearchIndexes.List().ToList();
+        var index = Assert.Single(indexes);
+        var fields = index["latestDefinition"]["fields"].AsBsonArray;
+        Assert.Equal("EmbeddingsVectorIndex", index["name"].AsString);
+        Assert.Equal("vector", fields[0]["type"].AsString);
+        Assert.Equal("Third.Embeddings", fields[0]["path"].AsString);
+        Assert.Equal(3, fields[0]["numDimensions"].AsInt32);
+        Assert.Equal("euclidean", fields[0]["similarity"].AsString);
     }
 
     private int GetIndexCount(IMongoCollection<SimpleEntity> collection)

@@ -66,7 +66,7 @@ public static class MongoIndexBuilderExtensions
         => indexBuilder.CanSetAnnotation(MongoAnnotationNames.CreateIndexOptions, options, fromDataAnnotation);
 
     /// <summary>
-    /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// Configures the index as a MongoDB Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
     /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
@@ -84,7 +84,7 @@ public static class MongoIndexBuilderExtensions
     }
 
     /// <summary>
-    /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// Configures the index as a MongoDB Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
     /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
@@ -102,7 +102,7 @@ public static class MongoIndexBuilderExtensions
     }
 
     /// <summary>
-    /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// Configures the index as a MongoDB Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
     /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
@@ -117,7 +117,7 @@ public static class MongoIndexBuilderExtensions
         => (IndexBuilder<TEntity>)((IndexBuilder)indexBuilder).IsVectorIndex(similarity, dimensions, buildAction);
 
     /// <summary>
-    /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// Configures the index as a MongoDB Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
     /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
@@ -135,7 +135,7 @@ public static class MongoIndexBuilderExtensions
     }
 
     /// <summary>
-    /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// Configures the index as a MongoDB Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
     /// <param name="similarity">The <see cref="VectorSimilarity"/> to use to search for top K-nearest neighbors.</param>
@@ -153,10 +153,10 @@ public static class MongoIndexBuilderExtensions
     }
 
     /// <summary>
-    /// Configures the index as an Atlas Vector Search index with the given similarity function and dimensions.
+    /// Configures the index as a MongoDB Vector Search index with the given similarity function and dimensions.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="indexOptions">The <see cref="VectorIndexOptions"/> options to use for the Atlas Search Vector Index.</param>
+    /// <param name="indexOptions">The <see cref="VectorIndexOptions"/> options to use for the MongoDB Search Vector Index.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.
     /// </returns>
@@ -178,7 +178,7 @@ public static class MongoIndexBuilderExtensions
     /// Returns a value indicating whether the vector index can be configured.
     /// </summary>
     /// <param name="indexBuilder">The builder for the index being configured.</param>
-    /// <param name="indexOptions">The <see cref="VectorIndexOptions"/> options to use for the Atlas Search Vector Index.</param>
+    /// <param name="indexOptions">The <see cref="VectorIndexOptions"/> options to use for the vector Index.</param>
     /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
     /// <returns><see langword="true" /> if the index can be configured for vectors.</returns>
     public static bool CanSetIsVectorIndex(
