@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,38 +13,36 @@
  * limitations under the License.
  */
 
-using System.Linq.Expressions;
-using System.Reflection;
+// On EF8 the provider does not implement ExecuteDelete/ExecuteUpdate (the whole bulk path is #if !EF8),
+// so EF Core reports the operation as untranslatable. This pins that clean-failure boundary. On EF9+ the
+// feature is implemented and exercised by ExecuteDeleteTests / ExecuteUpdateTests instead.
+#if EF8
+
+using System;
+using System.Linq;
+using Microsoft.EntityFrameworkCore;
+using MongoDB.Bson;
+using Xunit;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 [XUnitCollection("QueryTests")]
-public class InvalidQueryTranslationTests(TemporaryDatabaseFixture database)
+public class BulkOperationsUnsupportedOnEf8Tests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    class SimpleEntity
+    private class SimpleEntity
     {
-        public Guid _id { get; set; }
-        public string name { get; set; }
+        public ObjectId _id { get; set; }
     }
 
     [Fact]
-    public void ExecuteDelete_throws_invalid_operation_exception()
+    public void ExecuteDelete_throws_translation_failure()
     {
         using var db = SingleEntityDbContext.Create(database.CreateCollection<SimpleEntity>());
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.ExecuteDelete());
-        Assert.Contains("ExecuteDelete", ex.Message);
-        Assert.Contains("LINQ expression", ex.Message);
+        Assert.Contains("could not be translated", ex.Message);
     }
 }
 
-static class FakeQueryableExtensions
-{
-    internal static int ExecuteDelete<TSource>(this IQueryable<TSource> source)
-        => source.Provider.Execute<int>(Expression.Call(ExecuteDeleteMethodInfo.MakeGenericMethod(typeof(TSource)),
-            source.Expression));
-
-    private static readonly MethodInfo ExecuteDeleteMethodInfo
-        = typeof(FakeQueryableExtensions).GetTypeInfo().GetDeclaredMethod(nameof(ExecuteDelete))!;
-}
+#endif

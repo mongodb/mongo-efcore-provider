@@ -18,7 +18,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+#if !EF8
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+#endif
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
@@ -56,6 +61,71 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         _threadSafetyChecksEnabled = dependencies.CoreSingletonOptions.AreThreadSafetyChecksEnabled;
         _bsonSerializerFactory = mongoDependencies.BsonSerializerFactory;
     }
+
+#if !EF8
+    /// <inheritdoc/>
+    protected override Expression VisitExtension(Expression extensionExpression)
+        => extensionExpression is MongoNonQueryExpression nonQueryExpression
+            ? VisitNonQuery(nonQueryExpression)
+            : base.VisitExtension(extensionExpression);
+
+    private Expression VisitNonQuery(MongoNonQueryExpression nonQueryExpression)
+    {
+        var entityType = nonQueryExpression.SourceQuery.CollectionExpression.EntityType;
+
+        if (nonQueryExpression.Strategy == MongoNonQueryExpression.BulkStrategy.TwoPhase)
+        {
+            // Two-phase needs the entity's _id key to project phase-1 targets and act by { _id: $in }.
+            EnsureBulkKeyOrThrow(entityType, nonQueryExpression);
+        }
+
+        // The plan closes over the entity type / serializer factory / non-query expression (all compile-time
+        // constants) and is embedded into the compiled query. Its delegates perform the runtime translation;
+        // MongoBulkOperationExecutor (Storage) runs the writes, transaction, and diagnostics.
+        var plan = (MongoBulkPlan)CreateBulkPlanMethodInfo
+            .MakeGenericMethod(entityType.ClrType)
+            .Invoke(null, [entityType, _bsonSerializerFactory, nonQueryExpression])!;
+
+        var executor = QueryCompilationContext.IsAsync
+            ? MongoBulkExecuteAsyncMethodInfo
+            : MongoBulkExecuteMethodInfo;
+
+        return Expression.Call(
+            null,
+            executor,
+            QueryCompilationContext.QueryContextParameter,
+            Expression.Constant(plan));
+    }
+
+    // Builds the compile-time plan for a bulk operation. Generic over TSource so the deferred translation
+    // delegates can close over the correctly-typed serializer/queryable; invoked once via reflection from
+    // VisitNonQuery with entityType.ClrType. The translation helpers stay here in the query pipeline; only
+    // the resulting FilterDefinition / UpdateDefinition / IQueryable<BsonDocument> cross to the executor.
+    private static MongoBulkPlan CreateBulkPlan<TSource>(
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoNonQueryExpression nonQuery)
+    {
+        var isUpdate = nonQuery.Kind == MongoNonQueryExpression.OperationKind.Update;
+        var isTwoPhase = nonQuery.Strategy == MongoNonQueryExpression.BulkStrategy.TwoPhase;
+
+        return new MongoBulkPlan
+        {
+            Kind = isUpdate ? MongoBulkOperationKind.Update : MongoBulkOperationKind.Delete,
+            Strategy = isTwoPhase ? MongoBulkStrategy.TwoPhase : MongoBulkStrategy.SingleCommand,
+            CollectionName = nonQuery.SourceQuery.CollectionExpression.CollectionName,
+            BuildFilter = isTwoPhase
+                ? null
+                : qc => TranslateBulkOrThrow(nonQuery, () => BuildFilter<TSource>(qc, entityType, bsonSerializerFactory, nonQuery)),
+            BuildUpdate = isUpdate
+                ? qc => TranslateBulkOrThrow(nonQuery, () => BuildUpdate<TSource>(qc, entityType, bsonSerializerFactory, nonQuery))
+                : null,
+            BuildTargetIdQuery = isTwoPhase
+                ? qc => BuildIdDocumentQuery<TSource>(qc, entityType, bsonSerializerFactory, nonQuery)
+                : null,
+        };
+    }
+#endif
 
     /// <inheritdoc/>
     protected override Expression VisitShapedQuery(ShapedQueryExpression shapedQueryExpression)
@@ -310,6 +380,302 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             threadSafetyChecksEnabled,
             GetOnZeroResultsAction(queryExpression));
     }
+
+#if !EF8
+    // The bulk filter/update is translated from user expressions at execution time. When a predicate or
+    // setter shape that slipped past compile-time validation can't be translated (e.g. a GroupBy subquery
+    // in the Where), the driver/LINQ layer throws a raw ExpressionNotSupportedException / ArgumentException.
+    // Convert those into EF Core's canonical non-query translation failure so callers see a consistent
+    // "could not be translated" error. InvalidOperationException is left as-is — it already carries either
+    // that canonical message or the provider's cross-DbSet rejection.
+    private static T TranslateBulkOrThrow<T>(MongoNonQueryExpression nonQuery, Func<T> translate)
+    {
+        try
+        {
+            return translate();
+        }
+        catch (Exception exception) when (exception is not InvalidOperationException)
+        {
+            throw new InvalidOperationException(
+                CoreStrings.NonQueryTranslationFailedWithDetails(
+                    nonQuery.SourceQuery.CapturedExpression?.Print(),
+                    exception.Message),
+                exception);
+        }
+    }
+
+    // Validates that the entity has a primary key mapped to _id (always true for a MongoDB root entity).
+    // Keyless entities cannot use two-phase delete and fall back to the canonical non-query failure.
+    private static void EnsureBulkKeyOrThrow(IReadOnlyEntityType entityType, MongoNonQueryExpression nonQuery)
+    {
+        if (entityType.FindPrimaryKey() == null)
+        {
+            throw new InvalidOperationException(
+                CoreStrings.NonQueryTranslationFailedWithDetails(
+                    nonQuery.SourceQuery.CapturedExpression?.Print(),
+                    "the entity must have a primary key to use ordering, paging, or Distinct in a bulk delete or update."));
+        }
+    }
+
+    // Builds a driver query that yields the raw stored BsonDocuments for the bulk source, by reusing the
+    // read path's TranslateQuery (which applies Where/OrderBy/Skip/Take/Distinct via the driver and reads the
+    // ambient transaction session) and asking the driver provider for BsonDocument results.
+    // Note: this fetches whole documents and keeps only _id; a future optimization could push a
+    // { _id: 1 } projection server-side to reduce transfer for large target sets.
+    private static IQueryable<BsonDocument> BuildIdDocumentQuery<TSource>(
+        QueryContext queryContext,
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoNonQueryExpression nonQuery)
+    {
+        var (_, executableQuery) = TranslateQuery<TSource>(
+            queryContext, entityType, bsonSerializerFactory, nonQuery.SourceQuery, ResultCardinality.Enumerable,
+            (translator, expression) =>
+                translator.Translate(MongoNonQueryExpression.UnwrapBulkOperator(expression)!, ResultCardinality.Enumerable));
+
+        return executableQuery.Provider.CreateQuery<BsonDocument>(executableQuery.Query);
+    }
+
+    /// <summary>
+    /// Builds the server-side <see cref="FilterDefinition{BsonDocument}"/> that scopes a bulk operation by combining the
+    /// predicates of every <c>Where</c> in the captured chain. Each predicate body is lowered through the EF→driver-LINQ
+    /// visitor (rewriting <c>EF.Property</c> to <c>Mql.Field</c>) and rebound to a single shared parameter, then rendered
+    /// with the EF entity serializer so element names honor the EF model. An empty chain matches every document.
+    /// </summary>
+    private static FilterDefinition<BsonDocument> BuildFilter<TSource>(
+        QueryContext queryContext,
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoNonQueryExpression nonQuery)
+    {
+        var sharedParameter = Expression.Parameter(typeof(TSource), "e");
+        var translator = new MongoEFToLinqTranslatingExpressionVisitor(
+            queryContext, Expression.Constant(null, typeof(IQueryable<TSource>)), bsonSerializerFactory);
+
+        Expression? combinedBody = null;
+        var expression = MongoNonQueryExpression.UnwrapBulkOperator(nonQuery.SourceQuery.CapturedExpression);
+        // Invariant: ClassifyBulkSource (in the method-translating visitor) has already rejected, for the single-command
+        // path, any operator other than Queryable.Where — so this walk should consume the whole chain down to the root.
+        while (expression is MethodCallExpression { Method: { DeclaringType: var declaringType, Name: nameof(Queryable.Where) } }
+                   whereCall
+               && declaringType == typeof(Queryable))
+        {
+            var predicate = whereCall.Arguments[1].UnwrapLambdaFromQuote();
+            var translatedBody = translator.Visit(predicate.Body)!;
+            translatedBody = ReplacingExpressionVisitor.Replace(predicate.Parameters[0], sharedParameter, translatedBody);
+
+            combinedBody = combinedBody == null ? translatedBody : Expression.AndAlso(combinedBody, translatedBody);
+
+            expression = whereCall.Arguments[0];
+        }
+
+        // Fail loud rather than silently drop: if a non-Where Queryable operator remains, the single-command classifier
+        // (ClassifyBulkSource) admitted an operator this filter builder doesn't handle — that would otherwise scope the
+        // operation incorrectly (wrong documents affected). Surfaces as a translation failure via TranslateBulkOrThrow.
+        if (expression is MethodCallExpression { Method.DeclaringType: var remainingType } remaining
+            && remainingType == typeof(Queryable))
+        {
+            throw new InvalidOperationException(
+                $"Bulk filter construction encountered an unsupported '{remaining.Method.Name}' operator in the source "
+                + "chain. Only 'Where' can scope a single-command bulk filter; this indicates the bulk-source classifier "
+                + "admitted an operator the filter builder does not handle.");
+        }
+
+        if (combinedBody == null)
+        {
+            return FilterDefinition<BsonDocument>.Empty;
+        }
+
+        var predicateLambda = Expression.Lambda<Func<TSource, bool>>(combinedBody, sharedParameter);
+        var efSerializer = (IBsonSerializer<TSource>)bsonSerializerFactory.GetEntitySerializer(entityType);
+        var rendered = new ExpressionFilterDefinition<TSource>(predicateLambda)
+            .Render(new RenderArgs<TSource>(efSerializer, BsonSerializer.SerializerRegistry));
+
+        return rendered;
+    }
+
+    /// <summary>
+    /// Builds the server-side update for a bulk update. When no setter is self-referencing the update is a simple
+    /// <c>$set</c> document of serialized literal values. When any setter references the entity being updated the update
+    /// becomes an aggregation pipeline containing a single <c>$set</c> stage; self-referencing setters contribute a
+    /// rendered aggregation expression and constant setters contribute their serialized literal (the two can mix freely).
+    /// </summary>
+    private static UpdateDefinition<BsonDocument> BuildUpdate<TSource>(
+        QueryContext queryContext,
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoNonQueryExpression nonQuery)
+    {
+        var setters = nonQuery.Setters;
+
+        if (!setters.Any(s => s.IsSelfReferencing))
+        {
+            var setDoc = new BsonDocument();
+            foreach (var setter in setters)
+            {
+                setDoc[setter.Property.GetElementName()] = SerializeConstant(queryContext, setter);
+            }
+
+            return new BsonDocumentUpdateDefinition<BsonDocument>(new BsonDocument("$set", setDoc));
+        }
+
+        // Pipeline-form update: required as soon as any setter references the document being updated.
+        var efSerializer = (IBsonSerializer<TSource>)bsonSerializerFactory.GetEntitySerializer(entityType);
+        var entityParameter = Expression.Parameter(typeof(TSource), "e");
+        var setStageDoc = new BsonDocument();
+
+        foreach (var setter in setters)
+        {
+            if (setter.IsSelfReferencing)
+            {
+                setStageDoc[setter.Property.GetElementName()] = RenderSelfReferencingValue<TSource>(
+                    queryContext, bsonSerializerFactory, entityParameter, efSerializer, setter);
+            }
+            else
+            {
+                setStageDoc[setter.Property.GetElementName()] = SerializeConstant(queryContext, setter);
+            }
+        }
+
+        var setStage = new BsonDocument("$set", setStageDoc);
+        var pipeline = PipelineDefinition<BsonDocument, BsonDocument>.Create(new[] { setStage });
+        return Builders<BsonDocument>.Update.Pipeline(pipeline);
+    }
+
+    /// <summary>
+    /// Evaluates a constant/parameter setter value to a CLR constant and serializes it to a <see cref="BsonValue"/>
+    /// using the same property serializer the write pipeline uses, so enum / Guid / representation handling matches
+    /// inserts and SaveChanges updates.
+    /// </summary>
+    private static BsonValue SerializeConstant(QueryContext queryContext, MongoNonQueryExpression.Setter setter)
+    {
+        var value = EvaluateToConstant(queryContext, setter.ValueExpression);
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(setter.Property);
+        return serializationInfo.SerializeValue(value);
+    }
+
+    /// <summary>
+    /// Renders a self-referencing setter value (e.g. <c>o =&gt; o.Quantity + 1</c>) to an aggregation-expression
+    /// <see cref="BsonValue"/>. The value body is lowered through the EF→driver-LINQ visitor, rebound to a single shared
+    /// parameter, and rendered with the EF entity serializer so element names honor the EF model.
+    /// </summary>
+    private static BsonValue RenderSelfReferencingValue<TSource>(
+        QueryContext queryContext,
+        BsonSerializerFactory bsonSerializerFactory,
+        ParameterExpression entityParameter,
+        IBsonSerializer<TSource> efSerializer,
+        MongoNonQueryExpression.Setter setter)
+    {
+        var translator = new MongoEFToLinqTranslatingExpressionVisitor(
+            queryContext, Expression.Constant(null, typeof(IQueryable<TSource>)), bsonSerializerFactory);
+        var translatedBody = translator.Visit(setter.ValueExpression)!;
+
+        // The translated body still references the original setter parameter(s); rebind to the shared parameter.
+        translatedBody = new ParameterRebindingExpressionVisitor(entityParameter).Visit(translatedBody);
+
+        var resultType = setter.Property.ClrType;
+        var renderer = RenderAggregateExpressionMethodInfo.MakeGenericMethod(typeof(TSource), resultType);
+        return (BsonValue)renderer.Invoke(null, [entityParameter, translatedBody, efSerializer])!;
+    }
+
+    private static BsonValue RenderAggregateExpression<TSource, TResult>(
+        ParameterExpression entityParameter,
+        Expression body,
+        IBsonSerializer<TSource> efSerializer)
+    {
+        var lambda = Expression.Lambda<Func<TSource, TResult>>(
+            body.Type == typeof(TResult) ? body : Expression.Convert(body, typeof(TResult)),
+            entityParameter);
+        return new ExpressionAggregateExpressionDefinition<TSource, TResult>(lambda)
+            .Render(new RenderArgs<TSource>(efSerializer, BsonSerializer.SerializerRegistry));
+    }
+
+    /// <summary>
+    /// Evaluates a setter value expression (constant, captured closure, or query parameter) to a CLR value.
+    /// Unlike <c>MongoEFToLinqTranslatingExpressionVisitor.TryEvaluateToConstant</c>, this method intentionally
+    /// lets compile-and-evaluate failures propagate as exceptions — throwing on an un-evaluatable setter value
+    /// is preferable to silently writing null.
+    /// </summary>
+    private static object? EvaluateToConstant(QueryContext queryContext, Expression expression)
+    {
+        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            expression = convert.Operand;
+        }
+
+        if (expression is ConstantExpression constant)
+        {
+            return constant.Value;
+        }
+
+        if (expression is MemberExpression { Expression: ConstantExpression closureConstant } member)
+        {
+            return member.Member switch
+            {
+                FieldInfo field => field.GetValue(closureConstant.Value),
+                PropertyInfo prop => prop.GetValue(closureConstant.Value),
+                _ => CompileAndEvaluate(expression)
+            };
+        }
+
+#if EF8 || EF9
+        if (expression is ParameterExpression param
+            && param.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal) == true
+            && queryContext.ParameterValues.TryGetValue(param.Name, out var value))
+        {
+            return value;
+        }
+#else
+        if (expression is Microsoft.EntityFrameworkCore.Query.QueryParameterExpression queryParam)
+        {
+            return queryContext.Parameters[queryParam.Name];
+        }
+#endif
+
+        return CompileAndEvaluate(expression);
+    }
+
+    private static object? CompileAndEvaluate(Expression expression)
+        => Expression.Lambda<Func<object?>>(Expression.Convert(expression, typeof(object))).Compile()();
+
+    /// <summary>
+    /// Rebinds every <see cref="ParameterExpression"/> in a translated self-referencing setter body to a single shared
+    /// parameter, so the assembled value lambda has exactly one parameter as required by the renderer.
+    /// </summary>
+    private sealed class ParameterRebindingExpressionVisitor(ParameterExpression target)
+        : System.Linq.Expressions.ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node)
+            // Rebind by type rather than by identity: translation through MongoEFToLinqTranslatingExpressionVisitor
+            // discards the original parameter identity, and the value body has exactly one TSource-typed parameter
+            // (the setter's own), so type-based rebinding is safe for the supported single-setter value shapes.
+            => node.Type == target.Type ? target : base.VisitParameter(node);
+    }
+
+    private static readonly MethodInfo CreateBulkPlanMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(CreateBulkPlan));
+
+    private static readonly MethodInfo MongoBulkExecuteMethodInfo =
+        typeof(MongoBulkOperationExecutor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(MongoBulkOperationExecutor.Execute));
+
+    private static readonly MethodInfo MongoBulkExecuteAsyncMethodInfo =
+        typeof(MongoBulkOperationExecutor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(MongoBulkOperationExecutor.ExecuteAsync));
+
+    private static readonly MethodInfo RenderAggregateExpressionMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(RenderAggregateExpression));
+#endif
 
     private static readonly MethodInfo ExecuteShapedQueryMethodInfo =
         typeof(MongoShapedQueryCompilingExpressionVisitor)
