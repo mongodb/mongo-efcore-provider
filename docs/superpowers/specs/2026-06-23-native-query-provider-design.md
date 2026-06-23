@@ -268,14 +268,16 @@ release. That selectable fallback is precisely what lets us make native the defa
 
 ---
 
-## Keep vs rebuild inventory
+Everything below is **rebuilt fresh on main** — the spike is reference only, nothing is ported. The
+buckets say which spike pieces to **reproduce faithfully** (their design is sound), which to
+**redesign**, and which to **never reproduce / delete**.
 
 **Rebuild (the translation subsystem), ground-up on the AST:**
 - The structured slot population in `MongoQueryableMethodTranslatingExpressionVisitor` (where
   `Translate{Where,OrderBy,Skip,Take,…}` return `null` today).
 - The AST, lowerer, renderer, expression translator, and pipeline factory (the `[NEW]` types above).
 
-**Delete (delegation scar tissue — removed, not refactored, once native covers their slice):**
+**Delete — current-main delegation code, removed (not refactored) once native covers its slice:**
 - `Query/Visitors/MongoEFToLinqTranslatingExpressionVisitor.cs` (+`.LeftJoin.cs`, ~1,800 LOC) — exists
   only to rewrite the EF tree into a *driver-LINQ* tree (`Mql.Field`, `.As<serializer>`,
   `AppendStage`).
@@ -284,36 +286,64 @@ release. That selectable fallback is precisely what lets us make native the defa
   `GetStreamingReferenceLookups()`).
 - The shallow `MongoQueryExpression` / `CapturedExpression` raw-chain IR (after `MongoSelectExpression`
   fully supersedes it).
-- The per-execution chain re-walkers `MongoPipelineTranslator` / `MongoPredicateTranslator` (replaced
-  by the lowerer + renderer + `MongoExpressionTranslator`).
 
-**Keep (carry forward, do not rewrite):**
-- **The streaming materializer** — `MongoStreamingEntityMaterializerRewriter` + `BsonRowReader` +
-  the `StreamingEligibility` predicate. Delegation-independent and EF-idiomatic; the source of the
-  allocation win. (Its per-row feeding is redesigned in sub-project 7, not its logic.)
-- **The DOM shaper**, the query-mode mechanism (now surfaced as a config option — see "Pipeline
-  selection, fallback & the gate"), the `DispatchingQueryingEnumerable` dual-shaper.
-- **Storage / update / transactions / serialization / CSFLE / metadata / value-generation** — all
+(The spike's per-execution chain re-walkers `MongoPipelineTranslator` / `MongoPredicateTranslator` are
+**spike-only and never reproduced** — the AST is the translator from the start, so there is nothing to
+delete there.)
+
+**Reuse as-is — already on main, untouched:**
+- **Storage / update / transactions / serialization / CSFLE / metadata / value-generation** —
   independent of the LINQ-delegation question.
-- **The public query-mode config option** on `MongoDbContextOptionsBuilder` + its
-  `MongoOptionsExtension` flag (the user-level gate). Resolved as an enum (`Native` / `DriverLinq` /
-  `NativeStrict` — see "Pipeline selection, fallback & the gate"), not a bool, so it also expresses
-  the strict diagnostic mode.
-- **The entire test + benchmark rig** — the EF spec-conformance harness, `AssertMql`, the
-  strict-mode native-coverage instrument, the benchmark project + baselines. The most
-  valuable asset; path-agnostic.
+- **The spec-conformance harness + `AssertMql` / `TestMqlLoggerFactory`** — the existing test infra;
+  the zero-regression and MQL-assertion yardstick.
+
+**Reproduce fresh on main — spike-only, but the design is sound (rebuild faithfully, don't redesign):**
+- **The streaming materializer** — `MongoStreamingEntityMaterializerRewriter` + `BsonRowReader` +
+  `StreamingEligibility`. Delegation-independent and EF-idiomatic; the source of the allocation win.
+  (Its per-row feeding is redesigned in sub-project 7, not its logic.) — *built in sub-project 1.*
+- **The native execution path, the DOM shaper, and the `DispatchingQueryingEnumerable` dual-shaper** —
+  the runtime that runs a raw `BsonDocument[]` pipeline and feeds the shaper. — *built in sub-project 1.*
+- **The query-mode config option** on `MongoDbContextOptionsBuilder` + its `MongoOptionsExtension`
+  flag — enum `Native` / `DriverLinq` / `NativeStrict` (replaces the spike's env var), part of
+  service-provider identity. — *built in sub-project 1.*
+- **The benchmark harness + baselines, and the strict-mode coverage instrument** — the benchmark
+  project does not exist on main. — *benchmark harness built in sub-project 0; the strict-mode
+  instrument rides with the gate in sub-project 1.*
 
 The driver-LINQ path stays alive as the gated fallback during the rebuild and is retired at parity.
 
 ---
 
+## Sub-project 0: benchmark harness + baselines (do first)
+
+**Scope:** establish the measurement yardsticks **before any product-code change**.
+- A BenchmarkDotNet project (`benchmarks/…`) over stable public query shapes (Where→ToList;
+  whole-entity tracked / no-track; reference Include) with deterministic seed data, the InProcess
+  toolchain, and the config-conditional-csproj handling. Capture the **current-provider baseline** on
+  main (a driver-only config as the floor is useful context).
+- A recorded **conformance baseline**: which Query spec tests pass on main today (leans on the
+  existing suite + `AssertMql`).
+
+**Why first:** the rebuild is justified on perf *and* on spec conformance; both need a committed
+"before" on real main so every later sub-project can prove no regression and confirm the gains. No
+product code here — independently reviewable and low-risk.
+
+**Success bar:** the benchmark harness builds and runs (`Release EF10`, InProcess); baseline numbers +
+the conformance snapshot are committed and repeatable.
+
+---
+
 ## Sub-project 1: AST foundation (designed, ready to plan)
 
-**Scope:** stand up the AST + lowerer + renderer + pipeline factory and reach **parity** with the
-spike's current native slice — single-collection filter / sort / paging + single-level reference
-Include over whole-entity results. Driver-LINQ remains the gated fallback for everything else.
-**Not** in scope: predicate breadth, projection pushdown, scalar cardinality, collection includes, the
-materializer perf fix (those are sub-projects 2–7).
+**Scope:** stand up the **first working native read path** at **parity** with the spike's current
+native slice — single-collection filter / sort / paging + single-level reference Include over
+whole-entity results. Because none of the native machinery exists on main yet, this sub-project builds
+it all fresh (spike as reference): the **native execution path** (raw `BsonDocument[]` pipeline via
+`Aggregate` → cursor → shaper), the **streaming materializer** (+ DOM shaper), the **query-mode
+config-option gate**, and the **AST + lowerer + renderer + pipeline factory** that produces the
+pipeline. Driver-LINQ remains the gated fallback for everything else. **Not** in scope: predicate
+breadth, projection pushdown, scalar cardinality, collection includes, the materializer perf fix
+(those are sub-projects 2–7).
 
 **QMTEV slot population** (the `Translate*` overrides that return `null` today):
 
@@ -332,7 +362,7 @@ and serializer-based value coercion carry over verbatim from `NativeExpressionHe
 `MongoPredicateTranslator`. Only *where* the decision is made moves; the **acceptance set is
 unchanged**.
 
-**Success bar:** (1) full FunctionalTests + SpecificationTests green in `Auto` mode on EF10 **and**
+**Success bar:** (1) full FunctionalTests + SpecificationTests green in `Native` mode on EF10 **and**
 EF8; (2) strict-mode native coverage **must not shrink** vs the spike (~64% spec / ~82% functional
 Query); (3) new unit tests asserting slot population and rendered MQL for the parity operators
 (`AssertMql`), **including parameterized queries proving the template binds correctly across

@@ -10,7 +10,7 @@
 - We translate EF queries to MongoDB pipelines **ourselves**; the driver only executes (BSON, cursors, sessions, transactions). It is no longer the LINQ engine.
 - Two reasons: **perf** (~50% less allocation, ~45–53% faster on heavy reads) and the **conformance ceiling** (the driver's LINQ provider can't express the EF semantics we need).
 - Architecture: a **Mongo query AST** → typed **stage IR** → `BsonDocument[]`, built **once at compile time**, parameter-bound per execution.
-- **Keep** the spike's streaming materializer + test/benchmark rig; **rebuild** translation; **delete** the driver-LINQ delegation at parity.
+- Spike = **reference only**; everything is rebuilt fresh on main. Reproduce its streaming materializer faithfully, build the translation on the AST, drop the driver-LINQ delegation at parity.
 - Pipeline choice is a **user config option** — `Native` (default), `DriverLinq` (revert), `NativeStrict` (diagnostic). No environment variables.
 - Endgame: read **stream → POCO in one pass, no double copy**.
 - Delivered in sub-projects, each at **zero regressions** with driver-LINQ as the fallback behind it.
@@ -18,12 +18,14 @@
 ## What we are doing
 
 Replace the *translation* half of the Query subsystem. Build the aggregation pipeline from a query
-AST; use the driver only to run it. Keep the materializer and the test/benchmark rig. Delete the
+AST; use the driver only to run it. The spike is **reference only** — everything here is rebuilt fresh
+on main (the streaming materializer reproduced faithfully, the translation built on the AST). Drop the
 driver-LINQ delegation once native is at parity.
 
 Ship as a sequence of sub-projects:
 
-1. **AST foundation** — filter / sort / paging + single-level reference Include. *(designed, ready to plan)*
+0. **Benchmark + baselines** — a perf benchmark harness + recorded current-provider baseline, plus a conformance-baseline snapshot. No product code; the yardstick for every later stage. *(do first)*
+1. **AST foundation** — the first working native read path, rebuilt fresh: native execution + streaming materializer + config-option gate + the AST translation, at parity (filter / sort / paging + single-level reference Include). *(designed, ready to plan)*
 2. **Predicate breadth** — the `$expr` renderer and the operator long tail.
 3. **Projection pushdown** — server-side `$project`.
 4. **Scalar cardinality** — `Count` / `First` / `Any` / aggregates.
