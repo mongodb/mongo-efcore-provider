@@ -13,12 +13,18 @@ population that feeds it, and the compile-time gate that selects it).
 
 ## Goal
 
-Replace the *translation* half of the Query subsystem with a real, canonical MongoDB query AST and a
-pipeline generator that consumes it — at **parity** with what the spike already runs natively
-(single-collection filter / sort / paging + single-level reference Include over whole-entity
-results). The driver-LINQ path remains the gated fallback for everything outside that slice. The
-materialization half (streaming materializer, DOM shaper), the query-mode config option (the gate),
-and the test/benchmark rig are kept.
+Stand up the **first working native read path** — a real, canonical MongoDB query AST and a pipeline
+generator that consumes it — at **parity** with what the spike already runs natively (single-collection
+filter / sort / paging + single-level reference Include over whole-entity results). The driver-LINQ
+path remains the gated fallback for everything outside that slice.
+
+The spike is **reference only** — nothing is ported; everything here is rebuilt fresh on main. Because
+none of the native machinery exists on main yet, this sub-project builds it all (spike as reference):
+the **native execution path** (raw `BsonDocument[]` pipeline via `Aggregate` → cursor → shaper), the
+**streaming materializer** (+ DOM shaper), the **query-mode config-option gate**, and the **AST +
+lowerer + renderer + pipeline factory**. The MQL-assertion + spec-conformance test infra already
+exists on main and is reused as-is. (The benchmark harness + perf/conformance baselines are
+sub-project 0, landed before this.)
 
 The success bar is **zero regressions** and **no shrink** in native strict-mode coverage: the same
 query shapes that go native today must still go native, now via the structured AST rather than by
@@ -99,10 +105,13 @@ MongoClientWrapper.Execute  (Storage, unchanged) → IAsyncCursor → streaming/
 
 ### Kept / superseded
 
-- *Kept unchanged:* the streaming materializer (`MongoStreamingEntityMaterializerRewriter`,
-  `BsonRowReader`, `StreamingEligibility`), the DOM shaper, the query-mode mechanism and its config
-  option (`Native` / `DriverLinq` / `NativeStrict`), the `DispatchingQueryingEnumerable` dual-shaper,
-  and Storage's `MongoClientWrapper.Execute`.
+- *Reused as-is (already on main):* Storage's `MongoClientWrapper`, and the MQL-assertion +
+  spec-conformance test infra.
+- *Reproduced fresh on main (spike-only, but the design is sound — rebuild faithfully, don't redesign):*
+  the streaming materializer (`MongoStreamingEntityMaterializerRewriter`, `BsonRowReader`,
+  `StreamingEligibility`), the DOM shaper, the native execution path (raw `BsonDocument[]` →
+  `Aggregate` → cursor → shaper), the `DispatchingQueryingEnumerable` dual-shaper, and the query-mode
+  config option (`Native` / `DriverLinq` / `NativeStrict`). These are reference, not ported code.
 - *Superseded and removed once the AST covers their slice:* `MongoPipelineTranslator` and
   `MongoPredicateTranslator` (the per-execution chain re-walkers). The lowerer + renderer +
   `MongoExpressionTranslator` replace them.

@@ -22,9 +22,11 @@ survive as a raw LINQ chain that the native path re-walks on every execution. In
 populates a structured AST, and a lowerer + renderer consume it to build the pipeline once at compile
 time.
 
-Kept unchanged: the streaming materializer, the DOM shaper, the query-mode config option, and the
-test/benchmark rig. Superseded: `MongoPipelineTranslator` / `MongoPredicateTranslator` (the
-per-execution chain re-walkers).
+The spike is **reference only** — nothing is ported. Since no native machinery exists on main yet,
+this sub-project also builds the native execution path, streaming materializer, DOM shaper, and
+config-option gate fresh (spike as reference); the MQL-assertion + spec-conformance test infra already
+on main is reused as-is. The spike's `MongoPipelineTranslator` / `MongoPredicateTranslator` chain
+re-walkers are not reproduced — the AST is the translator from the start.
 
 ## Why this shape
 
