@@ -1,6 +1,47 @@
 using Microsoft.EntityFrameworkCore;
 using MongoDB.EntityFrameworkCore.Benchmarks;
 
+if (args.Contains("--extended-smoke"))
+{
+    var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+    var dbName = "ef_bench_extsmoke_" + Guid.NewGuid().ToString("N");
+    var options = new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(conn, dbName).Options;
+    try
+    {
+        using (var ctx = new BenchmarkDbContext(options))
+            BenchmarkSeeder.SeedExtended(ctx, accountCount: 10, orderCount: 50, wideCount: 100);
+
+        using (var ctx = new BenchmarkDbContext(options))
+        {
+            var orders = ctx.Orders.AsNoTracking().Include(o => o.Account).ToList();
+            var totalLines = orders.Sum(o => o.Lines.Count);
+            var totalDiscounts = orders.Sum(o => o.Lines.Sum(l => l.Discounts.Count));
+            var withAccount = orders.Count(o => o.Account != null);
+            var nestedZipOk = orders.All(o => o.Shipping.Address.Zip >= 10_000);
+            var wides = ctx.Wides.AsNoTracking().ToList();
+
+            Console.WriteLine(
+                $"EXT SMOKE OK: orders={orders.Count}, lines={totalLines}, discounts={totalDiscounts}, " +
+                $"withAccount={withAccount}, wides={wides.Count}");
+
+            if (orders.Count != 50) throw new InvalidOperationException($"expected 50 orders, got {orders.Count}");
+            if (totalLines != 150) throw new InvalidOperationException($"expected 150 lines, got {totalLines}");
+            if (totalDiscounts != 300) throw new InvalidOperationException($"expected 300 discounts, got {totalDiscounts}");
+            if (withAccount != 50) throw new InvalidOperationException($"expected 50 with Account, got {withAccount}");
+            if (!nestedZipOk) throw new InvalidOperationException("nested owned Shipping.Address.Zip did not round-trip");
+
+            var w0 = wides.Single(w => w.Prop001 == 1);       // Fill(0): Prop001 = 0 + 1
+            if (w0.Prop005 != "p005-0") throw new InvalidOperationException($"WideEntity scalar wrong: Prop005={w0.Prop005}");
+        }
+    }
+    finally
+    {
+        using var ctx = new BenchmarkDbContext(options);
+        ctx.Database.EnsureDeleted();
+    }
+    return;
+}
+
 if (args.Contains("--smoke"))
 {
     var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
@@ -42,6 +83,12 @@ if (args.Contains("--smoke"))
         using var ctx = new BenchmarkDbContext(options);
         ctx.Database.EnsureDeleted();
     }
+    return;
+}
+
+if (args.Contains("--extended"))
+{
+    BenchmarkDotNet.Running.BenchmarkRunner.Run<ExtendedBenchmarks>();
     return;
 }
 

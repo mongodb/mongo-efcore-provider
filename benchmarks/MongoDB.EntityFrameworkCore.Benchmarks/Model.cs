@@ -36,10 +36,26 @@ public class BenchmarkDbContext : DbContext
     public DbSet<FlatItem> FlatItems => Set<FlatItem>();
     public DbSet<Review> Reviews => Set<Review>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<Account> Accounts => Set<Account>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<WideEntity> Wides => Set<WideEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<FlatItem>();
         modelBuilder.Entity<Review>().HasOne(r => r.Product).WithMany().HasForeignKey(r => r.ProductId);
+
+        modelBuilder.Entity<Account>();
+        modelBuilder.Entity<WideEntity>();
+        modelBuilder.Entity<Order>(b =>
+        {
+            b.HasOne(o => o.Account).WithMany().HasForeignKey(o => o.AccountId);
+            b.OwnsOne(o => o.Shipping, s => s.OwnsOne(si => si.Address));
+            b.OwnsMany(o => o.Lines, l =>
+            {
+                l.OwnsOne(li => li.Meta);
+                l.OwnsMany(li => li.Discounts);
+            });
+        });
     }
 }

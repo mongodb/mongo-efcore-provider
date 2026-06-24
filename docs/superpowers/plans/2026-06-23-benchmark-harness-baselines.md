@@ -616,3 +616,461 @@ git commit -m "EF-324: record Query spec/functional conformance baseline on main
 - **Collection names:** EF maps each entity to a collection named after its `DbSet` property (`FlatItems`, `Reviews`, `Products`). The DriverOnly methods open those exact names; `Validate()` is what catches a mismatch.
 - **Fairness:** one shared `MongoClient` across DriverOnly and EF (already in `[GlobalSetup]`). Do not construct a client per context.
 - **No solution entry:** never add this project to `MongoDB.EFCoreProvider.sln`; the `/test-all` flow and the multi-config build must not pick it up.
+
+---
+
+# Extended cases (added 2026-06-24 — EF-324 follow-on)
+
+Three heavier benchmark cases, in a **separate** `ExtendedBenchmarks` class run via `--extended`,
+leaving the headline set (and its baseline) untouched:
+
+- **Case A — complex combined query** over `Order`: filter (nested-owned scalar + own prop) +
+  reference `Include(Account)` + multi-key `OrderByDescending`/`ThenBy` + `Skip`/`Take`.
+- **Case B — wide entity** (`WideEntity`, 400 scalar properties): whole-entity `ToList`.
+- **Case C — deep owned nesting** (`Order`): whole-entity `ToList` materializing owned-within-owned
+  and a collection-within-a-collection-element.
+
+All cases follow the SP0 discipline: a DriverOnly arm (perf floor) + an EF arm, a `Validate()`
+cross-check in `[GlobalSetup]`, an `--extended` smoke gate, and a committed baseline.
+
+**"Currently works" is verified, not assumed:** Task 7's `--extended-smoke` is the support probe. If a
+shape (especially the collection-within-collection `Discounts`, or filter/sort on a nested-owned
+scalar) does not translate on the current provider, the smoke throws — the implementer reports BLOCKED
+with the error and the controller adjusts the shape (do **not** weaken assertions to force a pass).
+
+### Task 7: Extended model + extended-smoke (support gate)
+
+**Files:**
+- Create: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/Model.Extended.cs` (Account + Order graph)
+- Create: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/WideEntity.cs` (generated — 400 props + `Fill`)
+- Modify: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/Model.cs` (add DbSets + `OnModelCreating` config)
+- Modify: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/BenchmarkSeeder.cs` (add `SeedExtended`)
+- Modify: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/Program.cs` (add `--extended-smoke`)
+
+**Interfaces produced (later tasks depend on these exact names):**
+- Entities below; `BenchmarkDbContext` gains `DbSet<Account> Accounts`, `DbSet<Order> Orders`, `DbSet<WideEntity> Wides`.
+- `BenchmarkSeeder.SeedExtended(BenchmarkDbContext ctx, int accountCount, int orderCount, int wideCount)`.
+- `WideEntity` has `ObjectId Id`, `Prop001..Prop400`, and `WideEntity Fill(int i)` (sets all 400 deterministically, returns `this`).
+
+- [ ] **Step 1: Create `Model.Extended.cs`**
+
+```csharp
+using MongoDB.Bson;
+
+namespace MongoDB.EntityFrameworkCore.Benchmarks;
+
+public class Account                       // principal for Order's reference navigation
+{
+    public ObjectId Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Tier { get; set; } = "";
+}
+
+public class Order
+{
+    public ObjectId Id { get; set; }
+    public string Code { get; set; } = "";
+    public ObjectId AccountId { get; set; }            // FK to Account
+    public Account? Account { get; set; }              // reference navigation (Case A Include)
+    public ShippingInfo Shipping { get; set; } = new();// owned
+    public List<LineItem> Lines { get; set; } = new(); // owned collection
+}
+
+public class ShippingInfo                  // owned
+{
+    public string Carrier { get; set; } = "";
+    public OrderAddress Address { get; set; } = new(); // nested owned
+}
+
+public class OrderAddress                  // owned (nested under ShippingInfo)
+{
+    public string Street { get; set; } = "";
+    public string City { get; set; } = "";
+    public int Zip { get; set; }
+}
+
+public class LineItem                      // owned-collection element
+{
+    public string Sku { get; set; } = "";
+    public int Qty { get; set; }
+    public ItemMeta Meta { get; set; } = new();          // nested owned (inside collection element)
+    public List<Discount> Discounts { get; set; } = new(); // nested owned collection (inside element)
+}
+
+public class ItemMeta { public string Category { get; set; } = ""; public double Weight { get; set; } }
+public class Discount { public string Kind { get; set; } = ""; public decimal Amount { get; set; } }
+```
+
+- [ ] **Step 2: Generate `WideEntity.cs` (400 properties + Fill)**
+
+Do not hand-type 400 properties. Generate the file with this exact recipe, then commit the generated
+`.cs` (not the script). Run from the repo root:
+
+```bash
+python3 - <<'PY' > benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/WideEntity.cs
+print("using MongoDB.Bson;\n")
+print("namespace MongoDB.EntityFrameworkCore.Benchmarks;\n")
+print("// Generated: 400 scalar properties cycling int/long/double/bool/string. Do not edit by hand.")
+print("public class WideEntity")
+print("{")
+print("    public ObjectId Id { get; set; }")
+types = ["int","long","double","bool","string"]
+for i in range(1,401):
+    t = types[(i-1)%5]
+    init = ' = "";' if t == "string" else ""
+    print(f"    public {t} Prop{i:03d} {{ get; set; }}{init}")
+print()
+print("    public WideEntity Fill(int i)")
+print("    {")
+for i in range(1,401):
+    t = types[(i-1)%5]
+    n = f"Prop{i:03d}"
+    if t == "int":    print(f"        {n} = i + {i};")
+    elif t == "long": print(f"        {n} = 1_000_000_000L + i + {i};")
+    elif t == "double": print(f"        {n} = (i + {i}) * 0.5;")
+    elif t == "bool": print(f"        {n} = ((i + {i}) % 2) == 0;")
+    else:             print(f"        {n} = \"p{i:03d}-\" + i;")
+print("        return this;")
+print("    }")
+print("}")
+PY
+```
+
+- [ ] **Step 3: Extend `BenchmarkDbContext` in `Model.cs`**
+
+Add three DbSet properties and the owned/relationship config. Insert the DbSets next to the existing ones:
+
+```csharp
+    public DbSet<Account> Accounts => Set<Account>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<WideEntity> Wides => Set<WideEntity>();
+```
+
+And add to the existing `OnModelCreating` body (after the existing `FlatItem`/`Review` config):
+
+```csharp
+        modelBuilder.Entity<Account>();
+        modelBuilder.Entity<WideEntity>();
+        modelBuilder.Entity<Order>(b =>
+        {
+            b.HasOne(o => o.Account).WithMany().HasForeignKey(o => o.AccountId);
+            b.OwnsOne(o => o.Shipping, s => s.OwnsOne(si => si.Address));
+            b.OwnsMany(o => o.Lines, l =>
+            {
+                l.OwnsOne(li => li.Meta);
+                l.OwnsMany(li => li.Discounts);
+            });
+        });
+```
+
+- [ ] **Step 4: Add `SeedExtended` to `BenchmarkSeeder.cs`**
+
+```csharp
+    public static void SeedExtended(BenchmarkDbContext ctx, int accountCount, int orderCount, int wideCount)
+    {
+        ctx.Database.EnsureCreated();
+
+        var accounts = new List<Account>(accountCount);
+        for (var i = 0; i < accountCount; i++)
+        {
+            var a = new Account { Name = "account-" + i, Tier = (i % 3) == 0 ? "gold" : "standard" };
+            accounts.Add(a);
+            ctx.Accounts.Add(a);
+        }
+        ctx.SaveChanges();
+
+        for (var i = 0; i < orderCount; i++)
+        {
+            var order = new Order
+            {
+                Code = "order-" + i,
+                AccountId = accounts[i % accounts.Count].Id,
+                Shipping = new ShippingInfo
+                {
+                    Carrier = (i % 2) == 0 ? "air" : "ground",
+                    Address = new OrderAddress { Street = "street-" + i, City = "city-" + (i % 50), Zip = 10_000 + (i % 2000) }
+                }
+            };
+            for (var j = 0; j < 3; j++)
+            {
+                var line = new LineItem
+                {
+                    Sku = $"sku-{i}-{j}",
+                    Qty = j + 1,
+                    Meta = new ItemMeta { Category = "cat-" + (j % 4), Weight = (j + 1) * 0.25 }
+                };
+                for (var k = 0; k < 2; k++)
+                {
+                    line.Discounts.Add(new Discount { Kind = "k" + k, Amount = 0.5m * (k + 1) });
+                }
+                order.Lines.Add(line);
+            }
+            ctx.Orders.Add(order);
+        }
+
+        for (var i = 0; i < wideCount; i++)
+        {
+            ctx.Wides.Add(new WideEntity().Fill(i));
+        }
+        ctx.SaveChanges();
+    }
+```
+
+- [ ] **Step 5: Add `--extended-smoke` to `Program.cs`**
+
+Add this branch BEFORE the existing `--smoke` branch (so `--extended-smoke` matches first), mirroring the existing smoke structure. It seeds small, reads back in fresh contexts, and validates every new shape — this is the support probe:
+
+```csharp
+if (args.Contains("--extended-smoke"))
+{
+    var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+    var dbName = "ef_bench_extsmoke_" + Guid.NewGuid().ToString("N");
+    var options = new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(conn, dbName).Options;
+    try
+    {
+        using (var ctx = new BenchmarkDbContext(options))
+            BenchmarkSeeder.SeedExtended(ctx, accountCount: 10, orderCount: 50, wideCount: 100);
+
+        using (var ctx = new BenchmarkDbContext(options))
+        {
+            var orders = ctx.Orders.AsNoTracking().Include(o => o.Account).ToList();
+            var totalLines = orders.Sum(o => o.Lines.Count);
+            var totalDiscounts = orders.Sum(o => o.Lines.Sum(l => l.Discounts.Count));
+            var withAccount = orders.Count(o => o.Account != null);
+            var nestedZipOk = orders.All(o => o.Shipping.Address.Zip >= 10_000);
+            var wides = ctx.Wides.AsNoTracking().ToList();
+
+            Console.WriteLine(
+                $"EXT SMOKE OK: orders={orders.Count}, lines={totalLines}, discounts={totalDiscounts}, " +
+                $"withAccount={withAccount}, wides={wides.Count}");
+
+            if (orders.Count != 50) throw new InvalidOperationException($"expected 50 orders, got {orders.Count}");
+            if (totalLines != 150) throw new InvalidOperationException($"expected 150 lines, got {totalLines}");
+            if (totalDiscounts != 300) throw new InvalidOperationException($"expected 300 discounts, got {totalDiscounts}");
+            if (withAccount != 50) throw new InvalidOperationException($"expected 50 with Account, got {withAccount}");
+            if (!nestedZipOk) throw new InvalidOperationException("nested owned Shipping.Address.Zip did not round-trip");
+
+            var w0 = wides.Single(w => w.Prop001 == 1);       // Fill(0): Prop001 = 0 + 1
+            if (w0.Prop005 != "p005-0") throw new InvalidOperationException($"WideEntity scalar wrong: Prop005={w0.Prop005}");
+        }
+    }
+    finally
+    {
+        using var ctx = new BenchmarkDbContext(options);
+        ctx.Database.EnsureDeleted();
+    }
+    return;
+}
+```
+
+- [ ] **Step 6: Build, then run the extended smoke (the support gate)**
+
+Build: `dotnet build benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/MongoDB.EntityFrameworkCore.Benchmarks.csproj -c "Release EF10"` → Build succeeded.
+
+Run: `MONGODB_URI="mongodb://localhost:27017/?replicaSet=rs0" dotnet run --project benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/MongoDB.EntityFrameworkCore.Benchmarks.csproj -c "Release EF10" -- --extended-smoke`
+Expected: `EXT SMOKE OK: orders=50, lines=150, discounts=300, withAccount=50, wides=100` and exit 0.
+**If it throws** (e.g. the nested owned `Discounts` collection or a nested-owned filter isn't supported by the current provider), STOP and report **BLOCKED** with the exact exception — do not weaken the model or the assertions. The controller will adjust the shape.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/Model.Extended.cs benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/WideEntity.cs benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/Model.cs benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/BenchmarkSeeder.cs benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/Program.cs
+git commit -m "EF-324: extended benchmark model (wide entity, deep-owned Order) + --extended-smoke gate"
+```
+
+### Task 8: Extended benchmarks (Cases A/B/C)
+
+**Files:**
+- Create: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/ExtendedBenchmarks.cs`
+- Modify: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/Program.cs` (add `--extended` → run `ExtendedBenchmarks`)
+
+**Interfaces consumed:** `BenchmarkConfig`, `BenchmarkDbContext`, `BenchmarkSeeder.SeedExtended`, `UseMongoDB(IMongoClient, databaseName)`, the entities + `WideEntity` from Task 7.
+
+Counts: `ACCOUNT_N = 200`, `ORDER_N = 10_000`, `WIDE_N = 5_000` (400 props × rows is heavy — fewer rows keeps runtime bounded; recorded in the baseline doc).
+
+- [ ] **Step 1: Create `ExtendedBenchmarks.cs`**
+
+```csharp
+using BenchmarkDotNet.Attributes;
+using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
+using MongoDB.Driver.Linq;
+
+namespace MongoDB.EntityFrameworkCore.Benchmarks;
+
+// Heavier cases (DriverOnly floor + EF current provider). One shared MongoClient (fairness).
+//   Case A  ComplexQuery     - Where(nested-owned + own) + Include(Account) + OrderByDesc/ThenBy + Skip/Take
+//   Case B  WideWholeEntity  - 400-property entity, whole-entity ToList
+//   Case C  NestedWholeEntity- deep owned graph (owned-in-owned, collection-in-collection), whole-entity ToList
+[Config(typeof(BenchmarkConfig))]
+public class ExtendedBenchmarks
+{
+    private const int AccountN = 200;
+    private const int OrderN = 10_000;
+    private const int WideN = 5_000;
+    private const int ZipThreshold = 10_500;
+
+    private DbContextOptions<BenchmarkDbContext> _efOptions = null!;
+    private IMongoCollection<Order> _orderColl = null!;
+    private IMongoCollection<Account> _accountColl = null!;
+    private IMongoCollection<WideEntity> _wideColl = null!;
+    private MongoClient _client = null!;
+    private string _dbName = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+        _dbName = "ef_bench_ext_" + Guid.NewGuid().ToString("N");
+        _client = new MongoClient(conn);
+        _efOptions = new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(_client, _dbName).Options;
+
+        using (var ctx = new BenchmarkDbContext(_efOptions))
+            BenchmarkSeeder.SeedExtended(ctx, AccountN, OrderN, WideN);
+
+        var db = _client.GetDatabase(_dbName);
+        _orderColl = db.GetCollection<Order>("Orders");
+        _accountColl = db.GetCollection<Account>("Accounts");
+        _wideColl = db.GetCollection<WideEntity>("Wides");
+
+        Validate();
+    }
+
+    private void Validate()
+    {
+        var driverComplex = DriverComplexQuery();
+        var driverWide = _wideColl.AsQueryable().ToList().Count;
+        var driverOrders = _orderColl.AsQueryable().ToList();
+        var driverLines = driverOrders.Sum(o => o.Lines.Count);
+        var driverDiscounts = driverOrders.Sum(o => o.Lines.Sum(l => l.Discounts.Count));
+
+        using var ef = new BenchmarkDbContext(_efOptions);
+        var efComplex = EfComplexQuery(ef).Count;
+        var efWide = ef.Wides.AsNoTracking().ToList().Count;
+        var efOrders = ef.Orders.AsNoTracking().ToList();
+        var efLines = efOrders.Sum(o => o.Lines.Count);
+        var efDiscounts = efOrders.Sum(o => o.Lines.Sum(l => l.Discounts.Count));
+
+        if (driverWide != WideN || efWide != WideN)
+            throw new InvalidOperationException($"Wide count mismatch: driver={driverWide}, ef={efWide}, expected {WideN}.");
+        if (driverOrders.Count != OrderN || efOrders.Count != OrderN)
+            throw new InvalidOperationException($"Order count mismatch: driver={driverOrders.Count}, ef={efOrders.Count}, expected {OrderN}.");
+        if (driverLines != efLines || efLines != OrderN * 3)
+            throw new InvalidOperationException($"Line count mismatch: driver={driverLines}, ef={efLines}, expected {OrderN * 3}.");
+        if (driverDiscounts != efDiscounts || efDiscounts != OrderN * 6)
+            throw new InvalidOperationException($"Discount count mismatch: driver={driverDiscounts}, ef={efDiscounts}, expected {OrderN * 6}.");
+        if (driverComplex != efComplex)
+            throw new InvalidOperationException($"ComplexQuery count mismatch: driver={driverComplex}, ef={efComplex}.");
+    }
+
+    [GlobalCleanup]
+    public void Cleanup()
+    {
+        using var ctx = new BenchmarkDbContext(_efOptions);
+        ctx.Database.EnsureDeleted();
+    }
+
+    // ----- Case A: complex combined query -----
+    // EF: filter (nested owned scalar + own) + reference Include + multi-sort + paging.
+    private static List<Order> EfComplexQuery(BenchmarkDbContext ctx)
+        => ctx.Orders.AsNoTracking()
+            .Where(o => o.Shipping.Address.Zip > ZipThreshold && o.Code != null)
+            .Include(o => o.Account)
+            .OrderByDescending(o => o.Shipping.Address.City)
+            .ThenBy(o => o.Id)
+            .Skip(50).Take(1500)
+            .ToList();
+
+    // DriverOnly: same logical pipeline as a hand-written aggregate (match → lookup Account → sort → skip → limit).
+    private int DriverComplexQuery()
+    {
+        var filter = Builders<Order>.Filter.Gt("Shipping.Address.Zip", ZipThreshold)
+                   & Builders<Order>.Filter.Ne<string?>("Code", null);
+        var sort = Builders<Order>.Sort.Descending("Shipping.Address.City").Ascending("_id");
+
+        var page = _orderColl.Aggregate()
+            .Match(filter)
+            .Lookup<Order, Account, OrderWithAccount>(
+                foreignCollection: _accountColl,
+                localField: o => o.AccountId,
+                foreignField: a => a.Id,
+                @as: x => x.Accounts)
+            .Sort(sort)
+            .Skip(50)
+            .Limit(1500)
+            .ToList();
+        return page.Count;
+    }
+
+    private sealed class OrderWithAccount
+    {
+        public MongoDB.Bson.ObjectId Id { get; set; }
+        public List<Account> Accounts { get; set; } = new();
+    }
+
+    [Benchmark] public int ComplexQuery_DriverOnly() => DriverComplexQuery();
+
+    [Benchmark] public int ComplexQuery_EF()
+    { using var ctx = new BenchmarkDbContext(_efOptions); return EfComplexQuery(ctx).Count; }
+
+    // ----- Case B: wide entity (400 props) whole-entity ToList -----
+    [Benchmark] public int WideWholeEntity_DriverOnly()
+        => _wideColl.AsQueryable().ToList().Count;
+
+    [Benchmark] public int WideWholeEntity_EF()
+    { using var ctx = new BenchmarkDbContext(_efOptions); return ctx.Wides.AsNoTracking().ToList().Count; }
+
+    // ----- Case C: deep owned graph whole-entity ToList -----
+    [Benchmark] public int NestedWholeEntity_DriverOnly()
+        => _orderColl.AsQueryable().ToList().Count;
+
+    [Benchmark] public int NestedWholeEntity_EF()
+    { using var ctx = new BenchmarkDbContext(_efOptions); return ctx.Orders.AsNoTracking().ToList().Count; }
+}
+```
+
+- [ ] **Step 2: Add `--extended` dispatch to `Program.cs`**
+
+Add before the final headline `BenchmarkRunner.Run<HeadlineBenchmarks>()` line:
+
+```csharp
+if (args.Contains("--extended"))
+{
+    BenchmarkDotNet.Running.BenchmarkRunner.Run<ExtendedBenchmarks>();
+    return;
+}
+```
+
+- [ ] **Step 3: Build, then quick single-shape run**
+
+Build: `dotnet build ... -c "Release EF10"` → succeeded.
+Run: `MONGODB_URI="mongodb://localhost:27017/?replicaSet=rs0" dotnet run --project benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/MongoDB.EntityFrameworkCore.Benchmarks.csproj -c "Release EF10" -- --extended --filter "*WideWholeEntity*"`
+Expected: `Validate()` does not throw (it runs all cross-checks in GlobalSetup), and a summary table for the two `WideWholeEntity` methods prints. If `Validate()` throws, a DriverOnly/EF divergence exists — investigate; do not weaken it. If the driver aggregate fluent API in `DriverComplexQuery` needs a syntax fix to compile/run, fix it so it produces the same count EF does (that is the gate); report what you changed.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/ExtendedBenchmarks.cs benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/Program.cs
+git commit -m "EF-324: extended benchmarks (complex query, wide entity, deep owned nesting)"
+```
+
+### Task 9: Capture extended baseline
+
+**Files:**
+- Create: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/2026-06-24-extended-baseline.md`
+
+- [ ] **Step 1: Run the full extended set**
+
+Run: `MONGODB_URI="mongodb://localhost:27017/?replicaSet=rs0" dotnet run --project benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/MongoDB.EntityFrameworkCore.Benchmarks.csproj -c "Release EF10" -- --extended`
+Expected: a BenchmarkDotNet summary for all six methods (ComplexQuery, WideWholeEntity, NestedWholeEntity × DriverOnly/EF).
+
+- [ ] **Step 2: Record the baseline** (same rules as Task 5 — REAL numbers, no fabrication)
+
+Create `results/2026-06-24-extended-baseline.md` with the host block, the counts (`ACCOUNT_N=200, ORDER_N=10,000, WIDE_N=5,000`, and the `Order` shape: 3 lines × 2 discounts), the config line, and a table of the six methods (Mean + Allocated copied from the run). Add the note: "current-provider + driver-only floor; EF-Native columns added as later sub-projects gain support for these shapes."
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/2026-06-24-extended-baseline.md
+git commit -m "EF-324: record extended-case perf baseline (Release EF10)"
+```

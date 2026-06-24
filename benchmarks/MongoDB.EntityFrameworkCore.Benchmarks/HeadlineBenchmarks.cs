@@ -56,7 +56,7 @@ public class HeadlineBenchmarks
         using var ef = new BenchmarkDbContext(_efOptions);
         var efAll = ef.FlatItems.AsNoTracking().ToList().Count;
         var efWhere = ef.FlatItems.AsNoTracking().Where(f => f.Active).ToList().Count;
-        var efReview = ef.Reviews.AsNoTracking().Include(r => r.Product).Count(r => r.Product != null);
+        var efReview = ef.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count(r => r.Product != null);
 
         if (driverAll != N || efAll != N)
             throw new InvalidOperationException($"FlatItem count mismatch: driver={driverAll}, ef={efAll}, expected {N}.");

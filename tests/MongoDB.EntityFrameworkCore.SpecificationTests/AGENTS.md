@@ -21,7 +21,7 @@ Out: per-area test classes themselves (`Query/`, `Storage/`, etc.) — those are
 
 ## Test infrastructure
 
-- **Connection bootstrap** (`tests/.../FunctionalTests/Utilities/TestServer.cs`). Priority: `ATLAS_URI` (`"Disabled"` skips Atlas tests) → `MONGODB_URI` → `TestContainersTestServer` (Docker-backed local Mongo). The cached server is initialized once via double-checked locking.
+- **Connection bootstrap** (`tests/.../FunctionalTests/Utilities/TestServer.cs`). The *default* server resolves from `MONGODB_URI` (else a `TestContainersTestServer`); the *Atlas* (`IsAtlas`) server resolves from `ATLAS_URI` (else a `TestContainersTestServer`). `TestContainersTestServer` boots **`mongodb/mongodb-atlas-local`** (Atlas-capable, with the Search Index Management service), not a plain `mongod` — so Atlas tests run for real against a container. `ATLAS_URI="Disabled"` skips Atlas tests; an external `ATLAS_URI`/`MONGODB_URI` uses that server instead. Cached once via double-checked locking, so each test *process* boots its own container(s) on a random host port. **Recommended: leave both `MONGODB_URI` and `ATLAS_URI` unset** — the whole run is then self-contained on atlas-local, Atlas tests run genuinely, and separate processes (parallel agents) are isolated.
 - **Per-test isolation.** `TemporaryDatabaseFixtureBase.InitializeAsync()` requests a unique database name from `TestDatabaseNamer.GetUniqueDatabaseName()` (which appends an `Interlocked.Increment` counter to a timestamped prefix). `DisposeAsync` returns `Task.CompletedTask` — there is no automatic teardown; stale `Test*` databases are cleaned up only by manually running the `[Fact(Skip = "Manually run to clean up the database")]` `DatabaseCleaner.CleanDatabase` test. Test methods get a *collection name* derived from `[CallerMemberName]` (`CreateCollectionName(...)`) with a sequential-counter fallback for CI where caller names may be unavailable.
 - **Fixture sharing.** Heavy fixtures are declared with `[CollectionDefinition("name")]` and consumed via `[XUnitCollection("name")]`. Encryption tests live in their own collection (`[XUnitCollection("Encryption")]`) so they serialize cleanly with the crypto state. Compatibility tests likewise.
 - **MQL assertion pattern.** Specification tests override `await base.SomeTest()` and follow with `AssertMql("{ $match: ... }", "{ $project: ... }")` (see e.g. `NorthwindQueryFiltersQueryMongoTest`). The pipeline-string format is whitespace-insensitive but field-order-sensitive.
@@ -67,8 +67,13 @@ Special test concerns under `FunctionalTests/`: `Encryption/` (CSFLE / QE end-to
 
 ## How to test
 
+**Run with both `MONGODB_URI` and `ATLAS_URI` unset** (Docker required): each run gets its own isolated
+`mongodb/mongodb-atlas-local` container, so Atlas-gated tests run for real and parallel runs/agents don't
+collide. Don't set `MONGODB_URI` to a plain local `mongod`/replica set unless you intend to — Atlas tests
+won't be meaningful there.
+
 ```bash
-# Run the full functional suite for one EF version
+# Run the full functional suite for one EF version (both env vars unset → isolated atlas-local container)
 dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj \
   -c "Debug EF10" --no-build
 
