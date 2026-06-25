@@ -574,14 +574,19 @@ git commit -m "EF-324: record current-provider perf baseline (Release EF10)"
 
 This records the spec/functional Query "before" — no product code, just a recorded, repeatable snapshot.
 
+**Run with both `MONGODB_URI` and `ATLAS_URI` unset** (unlike the benchmark tasks above, which set
+`MONGODB_URI`): the test infra then boots a `mongodb/mongodb-atlas-local` container, so the Atlas-gated
+Query tests (vector search) run **for real** and each run is self-contained / parallel-safe (see
+`AGENTS.md` → Testing). Docker required.
+
 - [ ] **Step 1: Run the Query specification tests (EF10)**
 
-Run: `MONGODB_URI="mongodb://localhost:27017/?replicaSet=rs0" dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj -c "Debug EF10" --filter "FullyQualifiedName~Query"`
+Run: `dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj -c "Debug EF10" --filter "FullyQualifiedName~Query"`
 Expected: a final summary line with `Passed: <p>`, `Failed: <f>`, `Skipped: <s>`.
 
 - [ ] **Step 2: Run the Query functional tests (EF10)**
 
-Run: `MONGODB_URI="mongodb://localhost:27017/?replicaSet=rs0" dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj -c "Debug EF10" --filter "FullyQualifiedName~Query"`
+Run: `dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj -c "Debug EF10" --filter "FullyQualifiedName~Query"`
 Expected: a final summary line with `Passed`/`Failed`/`Skipped`.
 
 - [ ] **Step 3: Record the snapshot**
@@ -592,13 +597,14 @@ Create `results/2026-06-23-query-conformance-baseline.md` capturing, for each of
 # Query conformance baseline — main — 2026-06-23
 
 main @ <git rev-parse HEAD>. Config: Debug EF10. Filter: FullyQualifiedName~Query.
+Run with both MONGODB_URI and ATLAS_URI unset → mongodb-atlas-local; the Atlas (vector-search) Query tests run for real.
 
 | Suite | Passed | Failed | Skipped |
 |---|---|---|---|
 | SpecificationTests (Query) | … | … | … |
 | FunctionalTests (Query) | … | … | … |
 
-Repro: the two `dotnet test … --filter "FullyQualifiedName~Query"` commands in the plan (Task 6).
+Repro: the two `dotnet test … --filter "FullyQualifiedName~Query"` commands above, both env vars unset.
 ```
 
 - [ ] **Step 4: Commit**
