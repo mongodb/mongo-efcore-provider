@@ -14,7 +14,7 @@ human-review entry point) read the companion **`2026-06-23-native-query-provider
 sub-project 1's detailed design read **`2026-06-20-mongo-query-ast-foundation-design.md`**.
 
 In one line: replace the *translation* half of the Query subsystem — build MongoDB aggregation
-pipelines ourselves from a canonical query AST and use the driver only to execute them — delivered as
+pipelines ourselves from a canonical query expression tree (custom `Expression` types, EF-style) and use the driver only to execute them — delivered as
 a sequence of zero-regression sub-projects, with the driver-LINQ path kept as a gated,
 user-selectable fallback until native reaches parity.
 
@@ -27,7 +27,9 @@ per-sub-project plan.
 ## Why this rebuild
 
 The current provider delegates LINQ translation to the driver's LINQ-v3 provider. That was a
-reasonable bootstrap, but it caps two things we care about: performance and conformance.
+reasonable bootstrap, but owning translation — holding the full compiled query pipeline ourselves —
+buys three things: **performance**, **EF-idiomatic behavior** (today several behaviors are hacked
+*around* the driver), and **conformance headroom**.
 
 ### Performance / allocation
 
@@ -48,14 +50,35 @@ spike's `benchmarks/.../results/2026-06-20-headline-three-config.md`):
   EF's model/shaper/tracking/Include machinery, the headroom for future work (the per-row double-pass
   is the largest single piece; see "What the spike proved").
 
-### Conformance ceiling (the stronger argument)
+### EF-idiomatic behavior — stop working around the driver
 
-The driver's LINQ provider (a) lacks operators (no `LeftJoin` translator, etc.) and (b) was **not
-built to EF Core semantics**. So a class of EF Core spec tests fail or are `// Fails`-flagged
-*because of the driver's LINQ provider*, and they are painful or impossible to fix without changing
-the driver. A native translator written **to the EF Core spec tests** removes that ceiling: it lowers
-the achievable-conformance limit from `min(MongoDB-can-express, driver-LINQ-supports-AND-matches-EF)`
-down to just **`MongoDB-can-express`** — the only limit worth having.
+Because translation lives in the driver's LINQ provider, several behaviors today are **worked around**
+rather than implemented the normal EF way. Owning the full compiled query pipeline makes them
+straightforward — concrete wins, independent of conformance and perf:
+
+- **MQL logging / diagnostics, especially for parameterized queries.** Logging clean MQL and
+  **redacting parameter values** is currently hacked, because the provider doesn't hold the compiled
+  pipeline with its parameters as first-class artifacts — the driver builds and runs it. With the query expression tree
+  + the B2 pipeline factory (a placeholder per parameter, bound per execution), parameters *are*
+  first-class, so we obscure them the **normal EF way** (EF's sensitive-data-logging conventions) and
+  emit proper parameterized MQL.
+- **Async.** Currently worked around; owning the execution path lets us do async properly (genuine
+  async cursor iteration, clean `CancellationToken` flow) rather than the present hack.
+
+(Other driver-imposed workarounds exist; these are the clearest.)
+
+### Conformance headroom
+
+Owning translation also lifts achievable conformance toward **`MongoDB-can-express`** — we stop being
+bottlenecked on what the driver's LINQ provider supports and how closely it matches EF Core semantics
+(no `LeftJoin` translator, null / `!=` semantics that diverge from EF, etc.), which is why a class of
+spec tests are `// Fails`-flagged today.
+
+This is **not a hard blocker, and shouldn't be over-stated.** The driver's LINQ provider can be — and
+has been — extended (we added `LeftJoin` there). So conformance *could* keep advancing by changing the
+driver; it's good that we no longer *have* to, not that it was impossible. The real benefit of owning
+translation is that we **stop round-tripping every conformance fix through the driver** and aren't
+limited to what it chooses to support — a control-and-velocity win, not an impossibility we're escaping.
 
 > **Conformance reality check.** "the suite passes" during the spike means the *currently-enabled
 > subset* of EF Core spec tests (overridden and not `// Fails`-flagged). That is **not** full spec
@@ -126,14 +149,18 @@ architecture. Treat as a hypothesis list to validate early; distinguish true cla
   overflow differ.
 - **Translate-or-throw contract.** Some spec tests assert a *specific exception* for untranslatable
   queries; the native provider must match EF's translate-or-throw behavior (right exception type).
-- **Unspecified result order.** Results without `$sort` are unordered; some tests assume order.
+- **Unspecified result order — *not* a limit; fix the tests.** Results without an explicit
+  `OrderBy` / `$sort` are unordered by definition, so any test that assumes or asserts a particular
+  order without one is relying on unspecified behavior. These get **fixed** (add the missing ordering),
+  not baselined as `// Fails` and not accepted as a conformance gap — and where they are upstream EF
+  Core spec tests, we send **upstream PRs**.
 
-### Native coverage baseline (strict mode, EF10, 2026-06-20) — a progress proxy
+### Native coverage baseline (native-only mode, EF10, 2026-06-20) — a progress proxy
 
-Running the suite in **strict native mode** (throws instead of falling back; failures = "still needs
+Running the suite in **native-only mode** (throws instead of falling back; failures = "still needs
 driver LINQ") gives ~**64% SpecificationTests Query / ~82% FunctionalTests Query** fully native. The
 biggest remaining buckets map directly onto sub-projects 2–6 below. (The spike drove this via the
-`MONGODB_EF_NATIVE_QUERY=force` env var; productization replaces that with the config option's strict
+`MONGODB_EF_NATIVE_QUERY=force` env var; productization replaces that with the config option's native-only
 mode — see "Pipeline selection, fallback & the gate".)
 
 ---
@@ -142,15 +169,18 @@ mode — see "Pipeline selection, fallback & the gate".)
 
 Two architectural decisions, taken during the spike's productization brainstorming and **locked**:
 
-- **AST structural model = A3 (hybrid).** A logical-slot `MongoSelectExpression` (EF
+- **Query representation = A3 (hybrid).** The representation is built **the EF way** — the nodes are custom
+  subclasses of `System.Linq.Expressions.Expression` (exactly how EF's relational
+  `SelectExpression`/`SqlExpression` are built), driven by EF's `ExpressionVisitor` infrastructure, not
+  a standalone hand-rolled tree. A logical-slot `MongoSelectExpression` (a custom `Expression`, EF
   `SelectExpression`-aligned, so the team's instincts transfer and future operators have a home) that
-  **lowers to** a typed stage-list IR (`MongoStage[]`, mirroring MongoDB's real pipeline), which then
+  **lowers to** a typed stage-list IR (`MongoPipelineStage[]`, mirroring MongoDB's real pipeline), which then
   **renders to** `BsonDocument[]`. Mongo-specific concerns — canonicalization, the two BSON dialects
   (query/match language vs aggregation-expression `$expr`), and future pushdown — live at the
   **lowering boundary**, not smeared across the visitor or the renderer. (Rejected: A1 = slots
   straight to BSON, too little dialect separation; A2 = bare stage-list, furthest from EF's model.)
 
-- **Pipeline generation = B2 (compile-time template + per-execution bind).** The AST is built once at
+- **Pipeline generation = B2 (compile-time template + per-execution bind).** The query expression tree is built once at
   compile time, so lower/render it **once** into a cached `MongoPipelineFactory` whose parameter
   placeholders are bound to live values per execution. This moves translation off the hot path and is
   EF-relational-idiomatic. (Rejected: B1 = per-execution regeneration, the spike's approach, re-pays
@@ -158,7 +188,7 @@ Two architectural decisions, taken during the spike's productization brainstormi
 
 A consequence of B2: the native-vs-driver decision **moves to compile time** and becomes
 deterministic (on `IsNativeRepresentable` + lowering/rendering success), replacing the spike's
-per-execution try/catch. Strict mode still surfaces gaps — just earlier.
+per-execution try/catch. Native-only mode still surfaces gaps — just earlier.
 
 ### Compile-time flow
 
@@ -167,11 +197,11 @@ QMTEV  (MongoQueryableMethodTranslatingExpressionVisitor)
    │   Translate{Where,OrderBy,ThenBy,Skip,Take,Select,Join…} POPULATE slots
    │   (instead of returning null); STILL captures the raw chain for fallback
    ▼
-MongoSelectExpression           [NEW] canonical AST (logical slots); evolves the shallow
-   │                                  MongoQueryExpression into the structured IR
+MongoSelectExpression           [NEW] query expression tree — a custom Expression (EF SelectExpression-style),
+   │                                  logical slots; evolves the shallow MongoQueryExpression
    │   MongoSelectLowerer        [NEW]
    ▼
-IReadOnlyList<MongoStage>       [NEW] typed stage IR (Match/Sort/Skip/Limit/Lookup/Unwind)
+IReadOnlyList<MongoPipelineStage>       [NEW] typed stage IR (Match/Sort/Skip/Limit/Lookup/Unwind)
    │   MongoQueryLanguageRenderer [NEW] (+ $expr renderer seam, stubbed at foundation)
    ▼
 MongoPipelineFactory           [NEW] the B2 template: rendered stages + placeholder table
@@ -180,9 +210,16 @@ MongoPipelineFactory           [NEW] the B2 template: rendered stages + placehol
 MongoClientWrapper.Execute  (Storage, unchanged) → IAsyncCursor → streaming/DOM shaper (kept)
 ```
 
-### The AST node taxonomy
+### Query-translation types (expression tree → stage IR)
 
-**`MongoSelectExpression`** — logical slots, built in the QMTEV; the evolution of today's
+The query-expression nodes — `MongoSelectExpression` and the `MongoExpression` hierarchy below — are **custom
+subclasses of `System.Linq.Expressions.Expression`** (the EF way; the same pattern as relational
+`SelectExpression`/`SqlExpression`), so they plug straight into EF's `ExpressionVisitor` machinery and
+the existing `MongoQueryExpression` / QMTEV plumbing. They *lower to* the `MongoPipelineStage[]` IR (plain
+typed stages, not `Expression`s), which renders to `BsonDocument[]`. These are an EF-style query
+**expression tree**, not a separate hand-rolled structure.
+
+**`MongoSelectExpression`** — a custom `Expression`; logical slots, built in the QMTEV; the evolution of today's
 `MongoQueryExpression` (it *keeps* `CapturedExpression` and the `ProjectionMapping` plumbing so the
 fallback and shaper binding keep working, and *adds* the structured slots that become the source of
 truth for the native path):
@@ -199,13 +236,13 @@ Expression?                      CapturedExpression     // raw LINQ chain, for d
 bool                             IsNativeRepresentable  // false ⇒ compile-time fallback
 ```
 
-**`MongoExpression`** (the `SqlExpression`-analog; **dialect-agnostic**): `MongoFieldExpression`
+**`MongoExpression`** (a custom `Expression`, the `SqlExpression`-analog; **dialect-agnostic**): `MongoFieldExpression`
 (element name via `IProperty.GetElementName()`), `MongoConstantExpression` (literal, serialized
 through the property's `IBsonSerializer`; baked into the template at compile time),
 `MongoParameterExpression` (**the B2 placeholder**, bound per execution), `MongoBinaryExpression`
 (parity set `==, !=, <, <=, >, >=, &&, ||`), `MongoUnaryExpression` (`Not`, bare-bool).
 
-**`MongoStage`** (typed IR, 1:1 with a rendered pipeline document):
+**`MongoPipelineStage`** (typed IR, 1:1 with a rendered pipeline document):
 `MongoMatchStage`, `MongoSortStage`, `MongoSkipStage`, `MongoLimitStage`, `MongoLookupStage`,
 `MongoUnwindStage`. Canonical lowering order: `$match → $sort → $skip → $limit → $lookup/$unwind`. An
 operator arriving out of canonical order (e.g. `Where` after `Take`) sets
@@ -214,7 +251,7 @@ operator arriving out of canonical order (e.g. `Where` after `Take`) sets
 
 ### Lowering, rendering & the dialect boundary
 
-- **`MongoSelectLowerer`**: `MongoSelectExpression → MongoStage[]`, reading slots in canonical order,
+- **`MongoSelectLowerer`**: `MongoSelectExpression → MongoPipelineStage[]`, reading slots in canonical order,
   dropping empties. Lookups append `$lookup` + `$unwind` (the kept `NativeLookupStages` logic, same
   reference-only / no-pipeline-stages guards).
 - **`MongoQueryLanguageRenderer`**: `MongoExpression → BSON` in the **query/match** dialect
@@ -248,7 +285,7 @@ spike's internal `NativeQueryMode`), set when configuring the provider, e.g.
 - `DriverLinq` — always use the legacy driver-LINQ pipeline. This is the **regression escape hatch**:
   even after native ships as the default, a user who hits a native-path regression can set this and
   get exactly the previous implementation back, per-DbContext, with no change beyond the option.
-- `NativeStrict` — native only; **throw instead of falling back**. The coverage/diagnostic mode the
+- `NativeOnly` — native only; **throw instead of falling back**. The coverage/diagnostic mode the
   test rig uses — it replaces the spike's `MONGODB_EF_NATIVE_QUERY=force` env var. A non-representable
   query throws at compile time, so the failure set is the "what still isn't native" report.
 
@@ -257,7 +294,7 @@ modes never collide in EF's compiled-query cache.
 
 At compile time, in `MongoShapedQueryCompilingExpressionVisitor`: under `Native`, if
 `IsNativeRepresentable` **and** lowering/rendering succeed ⇒ compile the native path, else ⇒ compile
-the driver-LINQ path from `CapturedExpression` (the per-query fallback). Under `NativeStrict` that
+the driver-LINQ path from `CapturedExpression` (the per-query fallback). Under `NativeOnly` that
 fallback is a throw. Under `DriverLinq` the native path is never attempted. The `streaming` /
 `DispatchingQueryingEnumerable` dual-shaper discipline is preserved.
 
@@ -268,14 +305,16 @@ release. That selectable fallback is precisely what lets us make native the defa
 
 ---
 
+## Keep vs rebuild inventory
+
 Everything below is **rebuilt fresh on main** — the spike is reference only, nothing is ported. The
 buckets say which spike pieces to **reproduce faithfully** (their design is sound), which to
 **redesign**, and which to **never reproduce / delete**.
 
-**Rebuild (the translation subsystem), ground-up on the AST:**
+**Rebuild (the translation subsystem), ground-up on the new query expression tree + stage IR:**
 - The structured slot population in `MongoQueryableMethodTranslatingExpressionVisitor` (where
   `Translate{Where,OrderBy,Skip,Take,…}` return `null` today).
-- The AST, lowerer, renderer, expression translator, and pipeline factory (the `[NEW]` types above).
+- The query expression tree, the stage IR, the lowerer, renderer, expression translator, and pipeline factory (the `[NEW]` types above).
 
 **Delete — current-main delegation code, removed (not refactored) once native covers its slice:**
 - `Query/Visitors/MongoEFToLinqTranslatingExpressionVisitor.cs` (+`.LeftJoin.cs`, ~1,800 LOC) — exists
@@ -288,7 +327,7 @@ buckets say which spike pieces to **reproduce faithfully** (their design is soun
   fully supersedes it).
 
 (The spike's per-execution chain re-walkers `MongoPipelineTranslator` / `MongoPredicateTranslator` are
-**spike-only and never reproduced** — the AST is the translator from the start, so there is nothing to
+**spike-only and never reproduced** — the new query translation is in place from the start, so there is nothing to
 delete there.)
 
 **Reuse as-is — already on main, untouched:**
@@ -304,10 +343,10 @@ delete there.)
 - **The native execution path, the DOM shaper, and the `DispatchingQueryingEnumerable` dual-shaper** —
   the runtime that runs a raw `BsonDocument[]` pipeline and feeds the shaper. — *built in sub-project 1.*
 - **The query-mode config option** on `MongoDbContextOptionsBuilder` + its `MongoOptionsExtension`
-  flag — enum `Native` / `DriverLinq` / `NativeStrict` (replaces the spike's env var), part of
+  flag — enum `Native` / `DriverLinq` / `NativeOnly` (replaces the spike's env var), part of
   service-provider identity. — *built in sub-project 1.*
-- **The benchmark harness + baselines, and the strict-mode coverage instrument** — the benchmark
-  project does not exist on main. — *benchmark harness built in sub-project 0; the strict-mode
+- **The benchmark harness + baselines, and the native-only-mode coverage instrument** — the benchmark
+  project does not exist on main. — *benchmark harness built in sub-project 0; the native-only-mode
   instrument rides with the gate in sub-project 1.*
 
 The driver-LINQ path stays alive as the gated fallback during the rebuild and is retired at parity.
@@ -333,14 +372,14 @@ the conformance snapshot are committed and repeatable.
 
 ---
 
-## Sub-project 1: AST foundation (designed, ready to plan)
+## Sub-project 1: native query-translation foundation (designed, ready to plan)
 
 **Scope:** stand up the **first working native read path** at **parity** with the spike's current
 native slice — single-collection filter / sort / paging + single-level reference Include over
 whole-entity results. Because none of the native machinery exists on main yet, this sub-project builds
 it all fresh (spike as reference): the **native execution path** (raw `BsonDocument[]` pipeline via
 `Aggregate` → cursor → shaper), the **streaming materializer** (+ DOM shaper), the **query-mode
-config-option gate**, and the **AST + lowerer + renderer + pipeline factory** that produces the
+config-option gate**, and the **query expression tree + lowerer + renderer + pipeline factory** that produces the
 pipeline. Driver-LINQ remains the gated fallback for everything else. **Not** in scope: predicate
 breadth, projection pushdown, scalar cardinality, collection includes, the materializer perf fix
 (those are sub-projects 2–7).
@@ -363,7 +402,7 @@ and serializer-based value coercion carry over verbatim from `NativeExpressionHe
 unchanged**.
 
 **Success bar:** (1) full FunctionalTests + SpecificationTests green in `Native` mode on EF10 **and**
-EF8; (2) strict-mode native coverage **must not shrink** vs the spike (~64% spec / ~82% functional
+EF8; (2) native-only-mode coverage **must not shrink** vs the spike (~64% spec / ~82% functional
 Query); (3) new unit tests asserting slot population and rendered MQL for the parity operators
 (`AssertMql`), **including parameterized queries proving the template binds correctly across
 executions with different values** (the cache-correctness case B2 introduces); (4) benchmark headline
@@ -374,12 +413,12 @@ re-run (`Release EF10`, InProcess) native alloc/time **≥** the spike's.
 ## Sub-projects 2–7 (planned later, in order)
 
 Each follows the same discipline (zero regressions, no coverage shrink, fallback behind it). Sizes
-are rough; sequence is by dependency and by strict-mode coverage payoff.
+are rough; sequence is by dependency and by native-only-mode coverage payoff.
 
 2. **Predicate breadth + `$expr` renderer.** Build the aggregation-expression renderer behind the
    stubbed seam; extend `MongoExpressionTranslator` over the long tail — string methods,
    `Contains`/`IN`, computed expressions, date parts, member casts, nullable-equality. Largest
-   strict-mode coverage bucket.
+   native-only-mode coverage bucket.
 3. **Projection pushdown (`$project`).** Server-side projection for scalar / anonymous / DTO
    `Select`; retire the `ExecuteProjectedQuery` / `nativeMode:Off` cutout.
 4. **Scalar cardinality.** `Count`/`First`/`Single`/`Any`/aggregates as `$count`/`$limit`/`$group`;
@@ -418,8 +457,8 @@ listed above. Triage the class-(c) list throughout so the conformance target sta
 - **Tests (per-assembly — a combined solution run causes spurious shared-DB cross-assembly
   failures):** `MONGODB_URI=... dotnet test tests/<assembly>/*.csproj -c "Debug EF10" --filter
   "FullyQualifiedName~Query"`.
-- **Strict-mode coverage instrument:** configure the query mode to strict native (the config
-  option's `NativeStrict` value) in the test context to make non-native queries throw — the failure
+- **Native-only-mode coverage instrument:** configure the query mode to native-only (the config
+  option's `NativeOnly` value) in the test context to make non-native queries throw — the failure
   set is the "what still isn't native" report. No env var; this replaces the spike's
   `MONGODB_EF_NATIVE_QUERY=force`.
 - **Benchmarks:** `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/`, `-c "Release EF10"`,
