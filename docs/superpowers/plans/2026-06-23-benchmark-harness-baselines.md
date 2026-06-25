@@ -4,7 +4,7 @@
 
 **Goal:** Establish a repeatable performance benchmark harness and commit a current-provider perf baseline (with a driver-only floor) and a Query spec-conformance snapshot on `main` — before any product-code change — so every later sub-project can prove no regression and confirm the gains.
 
-**Architecture:** A standalone BenchmarkDotNet console project under `benchmarks/`, deliberately isolated from the repo's multi-EF-version build machinery by an empty `Directory.Build.props`, run with the **InProcess** toolchain (the default toolchain breaks on the config-conditional provider csproj). It measures two configs over stable *public* query shapes: **DriverOnly** (raw MongoDB C# driver — the allocation/time floor) and **EF current provider** (the `main` baseline). A `--smoke` mode is the correctness gate (validates the harness reads correct data before any number is trusted). A third "native" config will be added in sub-project 1 when the native path exists. A separate task records the Query spec-conformance "before".
+**Architecture:** A standalone BenchmarkDotNet console project under `benchmarks/`, deliberately isolated from the repo's multi-EF-version build machinery by an empty `Directory.Build.props`, run with the **InProcess** toolchain (the default toolchain breaks on the config-conditional provider csproj). It measures two configs over stable *public* query shapes: **DriverOnly** (raw MongoDB C# driver — the allocation/time floor) and **EF current provider** (the `main` baseline). A `--smoke` mode is the correctness gate (validates the harness reads correct data before any number is trusted). A third "native" config will be added in sub-project 1 when the native path exists. A separate task records the Query spec-conformance "before". The headline set covers the EF-322 design's sub-project-0 shapes (Where→ToList; whole-entity tracked/no-track; reference Include) plus an additional `OrderByTake` shape.
 
 **Tech Stack:** .NET 10 (`net10.0`), BenchmarkDotNet 0.15.8, EF Core 10, MongoDB C# driver, a project reference to `src/MongoDB.EntityFrameworkCore`.
 
@@ -30,12 +30,14 @@ All paths under `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/` unless note
 - `Directory.Build.props` — **empty** project element; isolates from the repo build machinery.
 - `MongoDB.EntityFrameworkCore.Benchmarks.csproj` — the console project (configs, package refs, provider project ref).
 - `BenchmarkConfig.cs` — `ManualConfig`: InProcess toolchain, warmup/iteration counts, `MemoryDiagnoser`.
-- `Model.cs` — `FlatItem`, `Review`, `Product` entities + `BenchmarkDbContext`.
-- `BenchmarkSeeder.cs` — deterministic seeding shared by `--smoke` and the benchmarks.
-- `Program.cs` — arg dispatch (`--smoke` → correctness check; default → `HeadlineBenchmarks`).
-- `HeadlineBenchmarks.cs` — the two-config benchmark methods.
-- `results/2026-06-23-baseline.md` — captured perf baseline (created by Task 5).
+- `Model.cs` — `FlatItem`, `Review`, `Product` entities + `BenchmarkDbContext` (extended with `Account`/`Order`/`WideEntity` DbSets + owned config in Task 7).
+- `BenchmarkSeeder.cs` — deterministic seeding (`Seed`; `SeedExtended` added in Task 7) shared by the smoke modes and the benchmarks.
+- `Program.cs` — arg dispatch (`--smoke` / `--extended-smoke` → correctness gates; `--extended` → `ExtendedBenchmarks`; default → `HeadlineBenchmarks`).
+- `HeadlineBenchmarks.cs` — the two-config headline benchmark methods.
+- `results/perf-baseline.md` — captured perf baseline (headline section created by Task 5; extended section appended by Task 9).
 - `results/2026-06-23-query-conformance-baseline.md` — Query spec-conformance snapshot (created by Task 6).
+
+The extended cases (added 2026-06-24 — see the addendum after Task 6) add: `Model.Extended.cs` (Account + Order graph), `WideEntity.cs` (generated, 400 props), and `ExtendedBenchmarks.cs` (the three heavier cases).
 
 ---
 
@@ -418,7 +420,7 @@ public class HeadlineBenchmarks
         using var ef = new BenchmarkDbContext(_efOptions);
         var efAll = ef.FlatItems.AsNoTracking().ToList().Count;
         var efWhere = ef.FlatItems.AsNoTracking().Where(f => f.Active).ToList().Count;
-        var efReview = ef.Reviews.AsNoTracking().Include(r => r.Product).Count(r => r.Product != null);
+        var efReview = ef.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count(r => r.Product != null);
 
         if (driverAll != N || efAll != N)
             throw new InvalidOperationException($"FlatItem count mismatch: driver={driverAll}, ef={efAll}, expected {N}.");
@@ -526,22 +528,30 @@ git commit -m "EF-324: two-config headline benchmarks (DriverOnly + EF current p
 ### Task 5: Capture + commit the perf baseline
 
 **Files:**
-- Create: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/2026-06-23-baseline.md`
+- Create: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/perf-baseline.md`
 
 - [ ] **Step 1: Run the full headline set**
 
 Run: `MONGODB_URI="mongodb://localhost:27017/?replicaSet=rs0" dotnet run --project benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/MongoDB.EntityFrameworkCore.Benchmarks.csproj -c "Release EF10"`
-Expected: a BenchmarkDotNet summary table for all eight methods with `Mean`, `Error`, `StdDev`, and `Allocated`.
+Expected: a BenchmarkDotNet summary table for all nine methods with `Mean`, `Error`, `StdDev`, and `Allocated`.
 
 - [ ] **Step 2: Record the baseline**
 
-Create `results/2026-06-23-baseline.md` with: the date, the run environment (BenchmarkDotNet's printed host block — OS, CPU, .NET SDK), `N = 10_000`, and a table of the eight methods with `Mean` and `Allocated` copied from the summary. Add a one-line note: "current-provider + driver-only floor on `main`; the EF-Native column is added in sub-project 1." Use this skeleton (fill the numbers from the actual run — do not invent them):
+Create `results/perf-baseline.md` with: the run environment (BenchmarkDotNet's printed host block — OS, CPU, .NET SDK), `N = 10_000`, and a table of the nine headline methods with `Mean` and `Allocated` copied from the summary, under a `## Headline cases` section. Add a one-line note: "current-provider baseline + driver-only floor; EF-Native columns are added per shape as later sub-projects gain native support." (Task 9 appends the extended-cases section to this same file.) Use this skeleton (fill the numbers from the actual run — do not invent them):
 
 ```markdown
-# Perf baseline — main (current provider) — 2026-06-23
+# Perf baseline — main (current provider + driver-only floor)
 
 Env: <paste BenchmarkDotNet host block>
-N = 10,000. Config: Release EF10, InProcessEmitToolchain, 3 warmup / 10 iterations, MemoryDiagnoser.
+Config: Release EF10, InProcessEmitToolchain, 3 warmup / 10 iterations, MemoryDiagnoser.
+
+Note: every row is the **current-provider baseline** + the **driver-only floor**; EF-Native columns
+are added per shape as later sub-projects gain native support. Task 9 appends an `## Extended cases`
+section to this same file.
+
+## Headline cases (`--` default)
+
+N = 10,000.
 
 | Shape | Config | Mean | Allocated |
 |---|---|---|---|
@@ -554,14 +564,12 @@ N = 10,000. Config: Release EF10, InProcessEmitToolchain, 3 warmup / 10 iteratio
 | OrderByTake | EF | … | … |
 | ReferenceInclude | DriverOnly | … | … |
 | ReferenceInclude | EF | … | … |
-
-Note: current-provider baseline + driver-only floor. The EF-Native column is added in sub-project 1.
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/2026-06-23-baseline.md
+git add benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/perf-baseline.md
 git commit -m "EF-324: record current-provider perf baseline (Release EF10)"
 ```
 
@@ -628,7 +636,9 @@ git commit -m "EF-324: record Query spec/functional conformance baseline on main
 # Extended cases (added 2026-06-24 — EF-324 follow-on)
 
 Three heavier benchmark cases, in a **separate** `ExtendedBenchmarks` class run via `--extended`,
-leaving the headline set (and its baseline) untouched:
+leaving the headline set (and its baseline) untouched. (These *extend* the headline shapes the EF-322
+design lists for sub-project 0 without changing SP0's scope or success bar; their numbers land in the
+same `results/perf-baseline.md`, under an `## Extended cases` section.)
 
 - **Case A — complex combined query** over `Order`: filter (nested-owned scalar + own prop) +
   reference `Include(Account)` + multi-key `OrderByDescending`/`ThenBy` + `Skip`/`Take`.
@@ -899,6 +909,8 @@ Counts: `ACCOUNT_N = 200`, `ORDER_N = 10_000`, `WIDE_N = 5_000` (400 props × ro
 ```csharp
 using BenchmarkDotNet.Attributes;
 using Microsoft.EntityFrameworkCore;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 
@@ -918,10 +930,22 @@ public class ExtendedBenchmarks
 
     private DbContextOptions<BenchmarkDbContext> _efOptions = null!;
     private IMongoCollection<Order> _orderColl = null!;
-    private IMongoCollection<Account> _accountColl = null!;
     private IMongoCollection<WideEntity> _wideColl = null!;
     private MongoClient _client = null!;
     private string _dbName = null!;
+
+    // Typed POCO for DriverComplexQuery output: carries the full Order graph (all fields)
+    // plus the looked-up Account, matching the same shape EF materializes via Include(o => o.Account).
+    private sealed class OrderFull
+    {
+        [BsonId] public ObjectId Id { get; set; }
+        public string Code { get; set; } = "";
+        public ObjectId AccountId { get; set; }
+        public ShippingInfo Shipping { get; set; } = new();
+        public List<LineItem> Lines { get; set; } = new();
+        // $lookup places the matched account directly into this field (after $unwind).
+        [BsonElement("AccountLookup")] public Account? AccountLookup { get; set; }
+    }
 
     [GlobalSetup]
     public void Setup()
@@ -936,7 +960,6 @@ public class ExtendedBenchmarks
 
         var db = _client.GetDatabase(_dbName);
         _orderColl = db.GetCollection<Order>("Orders");
-        _accountColl = db.GetCollection<Account>("Accounts");
         _wideColl = db.GetCollection<WideEntity>("Wides");
 
         Validate();
@@ -987,31 +1010,37 @@ public class ExtendedBenchmarks
             .Skip(50).Take(1500)
             .ToList();
 
-    // DriverOnly: same logical pipeline as a hand-written aggregate (match → lookup Account → sort → skip → limit).
+    // DriverOnly: same logical pipeline as EF's captured aggregate, in the SAME stage order:
+    //   $match → $sort → $skip → $limit → $lookup (Account, after paging) → $unwind → typed materialization.
+    // The $lookup sits after $skip/$limit, so only ~1500 documents are joined — identical to EF's behaviour.
+    // OrderFull carries every Order field (Id, Code, AccountId, Shipping+Address, Lines+Meta+Discounts) plus the
+    // looked-up Account, so the typed graph is fully materialized with .ToList() — same work as EF's Include.
     private int DriverComplexQuery()
     {
-        var filter = Builders<Order>.Filter.Gt("Shipping.Address.Zip", ZipThreshold)
-                   & Builders<Order>.Filter.Ne<string?>("Code", null);
-        var sort = Builders<Order>.Sort.Descending("Shipping.Address.City").Ascending("_id");
+        var matchStage  = new BsonDocument("$match", new BsonDocument
+        {
+            { "Shipping.Address.Zip", new BsonDocument("$gt", ZipThreshold) },
+            { "Code", new BsonDocument("$ne", BsonNull.Value) }
+        });
+        var sortStage   = new BsonDocument("$sort",
+            new BsonDocument { { "Shipping.Address.City", -1 }, { "_id", 1 } });
+        var skipStage   = new BsonDocument("$skip",  50);
+        var limitStage  = new BsonDocument("$limit", 1500);
+        var lookupStage = new BsonDocument("$lookup", new BsonDocument
+        {
+            { "from",        "Accounts" },
+            { "localField",  "AccountId" },
+            { "foreignField","_id" },
+            { "as",          "AccountLookup" }
+        });
+        // $unwind replicates EF's inner-join semantics: only rows with a matched Account are returned.
+        var unwindStage = new BsonDocument("$unwind",
+            new BsonDocument { { "path", "$AccountLookup" }, { "preserveNullAndEmptyArrays", false } });
 
-        var page = _orderColl.Aggregate()
-            .Match(filter)
-            .Lookup<Order, Account, OrderWithAccount>(
-                foreignCollection: _accountColl,
-                localField: o => o.AccountId,
-                foreignField: a => a.Id,
-                @as: x => x.Accounts)
-            .Sort(sort)
-            .Skip(50)
-            .Limit(1500)
-            .ToList();
-        return page.Count;
-    }
+        var pipeline = PipelineDefinition<Order, OrderFull>.Create(
+            new[] { matchStage, sortStage, skipStage, limitStage, lookupStage, unwindStage });
 
-    private sealed class OrderWithAccount
-    {
-        public MongoDB.Bson.ObjectId Id { get; set; }
-        public List<Account> Accounts { get; set; } = new();
+        return _orderColl.Aggregate(pipeline).ToList().Count;
     }
 
     [Benchmark] public int ComplexQuery_DriverOnly() => DriverComplexQuery();
@@ -1051,7 +1080,7 @@ if (args.Contains("--extended"))
 
 Build: `dotnet build ... -c "Release EF10"` → succeeded.
 Run: `MONGODB_URI="mongodb://localhost:27017/?replicaSet=rs0" dotnet run --project benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/MongoDB.EntityFrameworkCore.Benchmarks.csproj -c "Release EF10" -- --extended --filter "*WideWholeEntity*"`
-Expected: `Validate()` does not throw (it runs all cross-checks in GlobalSetup), and a summary table for the two `WideWholeEntity` methods prints. If `Validate()` throws, a DriverOnly/EF divergence exists — investigate; do not weaken it. If the driver aggregate fluent API in `DriverComplexQuery` needs a syntax fix to compile/run, fix it so it produces the same count EF does (that is the gate); report what you changed.
+Expected: `Validate()` does not throw (it runs all cross-checks in GlobalSetup), and a summary table for the two `WideWholeEntity` methods prints. If `Validate()` throws, a DriverOnly/EF divergence exists — investigate; do not weaken it. If the driver aggregate in `DriverComplexQuery` needs a fix to compile/run, fix it so it produces the same count EF does (that is the gate); report what you changed. *(As built, this was a raw `BsonDocument[]` pipeline rather than the fluent `.Lookup<>` API — see the listing above.)*
 
 - [ ] **Step 4: Commit**
 
@@ -1063,7 +1092,7 @@ git commit -m "EF-324: extended benchmarks (complex query, wide entity, deep own
 ### Task 9: Capture extended baseline
 
 **Files:**
-- Create: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/2026-06-24-extended-baseline.md`
+- Modify: `benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/perf-baseline.md` (append the extended-cases section)
 
 - [ ] **Step 1: Run the full extended set**
 
@@ -1072,11 +1101,11 @@ Expected: a BenchmarkDotNet summary for all six methods (ComplexQuery, WideWhole
 
 - [ ] **Step 2: Record the baseline** (same rules as Task 5 — REAL numbers, no fabrication)
 
-Create `results/2026-06-24-extended-baseline.md` with the host block, the counts (`ACCOUNT_N=200, ORDER_N=10,000, WIDE_N=5,000`, and the `Order` shape: 3 lines × 2 discounts), the config line, and a table of the six methods (Mean + Allocated copied from the run). Add the note: "current-provider + driver-only floor; EF-Native columns added as later sub-projects gain support for these shapes."
+Append an `## Extended cases` section (the `--extended` set) to `results/perf-baseline.md` with the counts (`ACCOUNT_N=200, ORDER_N=10,000, WIDE_N=5,000`, and the `Order` shape: 3 lines × 2 discounts) and a table of the six methods (Mean + Allocated copied from the run). The shared host block / config line already sit at the top of the file from Task 5. Keep the same note: "current-provider + driver-only floor; EF-Native columns added as later sub-projects gain support for these shapes."
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/2026-06-24-extended-baseline.md
-git commit -m "EF-324: record extended-case perf baseline (Release EF10)"
+git add benchmarks/MongoDB.EntityFrameworkCore.Benchmarks/results/perf-baseline.md
+git commit -m "EF-324: append extended-case perf baseline (Release EF10)"
 ```
