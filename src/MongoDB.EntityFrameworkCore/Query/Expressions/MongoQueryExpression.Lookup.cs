@@ -79,6 +79,66 @@ internal sealed partial class MongoQueryExpression
     }
 
     /// <summary>
+    /// The single-level reference <c>$lookup</c>s the native streaming path must emit as
+    /// <c>$lookup</c> + <c>$unwind</c> stages (to a root-level <c>_lookup_&lt;Nav&gt;</c> field) and read back
+    /// in the forward-only materializer.
+    /// <para>
+    /// A lone reference Include is translated by the driver-LINQ path as a driver-native LeftJoin
+    /// (<c>_outer</c>/<c>_inner</c>) and registers NO pending <see cref="LookupExpression"/> — see
+    /// <see cref="UsesDriverJoinFields"/>. The native pipeline cannot produce the driver's LeftJoin shape, so
+    /// for that case the reference lookups are synthesized here from <see cref="InnerCollections"/> (each
+    /// inner collection reached by a direct single-reference navigation off the root). This keeps the
+    /// DOM/driver-LINQ join-shape decision untouched (no pending lookup is registered, so the DOM fallback
+    /// still uses the driver-native LeftJoin) while giving the native streaming path the flat
+    /// <c>_lookup_&lt;Nav&gt;</c> shape its materializer reads.
+    /// </para>
+    /// <para>
+    /// When pending reference lookups ARE registered (multi-join flat mode), those are returned directly.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<LookupExpression> GetStreamingReferenceLookups()
+    {
+        var pending = GetPendingLookups();
+        if (pending.Count > 0)
+        {
+            return pending;
+        }
+
+        if (!UsesDriverJoinFields)
+        {
+            return pending;
+        }
+
+        // Driver-native LeftJoin case: synthesize a reference lookup per inner collection that is the target
+        // of a direct single-reference navigation off the root entity.
+        var rootEntityType = CollectionExpression.EntityType;
+        var synthesized = new List<LookupExpression>();
+        foreach (var innerEntityType in _innerCollections.Keys)
+        {
+            var matches = rootEntityType.GetNavigations()
+                .Where(n => !n.IsCollection
+                            && !n.TargetEntityType.IsOwned()
+                            && n.TargetEntityType == innerEntityType)
+                .ToList();
+
+            // Synthesis matches by target type. If more than one single-reference navigation off the root
+            // targets the same inner collection (e.g. Doc.Author and Doc.Editor both -> Person), we cannot
+            // tell which one this lookup is for by type alone — bail to the driver/DOM fallback rather than
+            // risk resolving to the wrong navigation's element alias.
+            if (matches.Count != 1)
+            {
+                // Zero: not a direct single-reference navigation off the root (e.g. transitive / collection).
+                // More than one: ambiguous by target type. Either way, not streamable here -> fall back.
+                return Array.Empty<LookupExpression>();
+            }
+
+            synthesized.Add(new LookupExpression(matches[0]));
+        }
+
+        return synthesized;
+    }
+
+    /// <summary>
     /// Register a $lookup stage for a cross-collection collection Include.
     /// </summary>
     public void AddLookup(LookupExpression lookup)

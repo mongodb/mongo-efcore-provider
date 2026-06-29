@@ -31,7 +31,9 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies;
 using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
@@ -159,6 +161,20 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         VerifyNoClientConstant(shapedQueryExpression.ShaperExpression);
 
+        // A projected query (anonymous/scalar projection, scalar aggregate, or a mixed projection containing
+        // entity references) is never shaped from a full native document — it runs through the driver-LINQ
+        // push-down path or the mixed client-side shaper. The native pipeline only covers full-entity results,
+        // so a projected query is outside the native parity slice. Under NativeOnly the driver fallback is
+        // forbidden, so any projected query is a compile-time coverage failure. (The QMTEV does not always flip
+        // IsNativeRepresentable for a pushed-down projection — the projection can be realized entirely in the
+        // shaper without a translated Select node — so the projected-path gate keys off routing here, not the
+        // representable flag.)
+        if (((MongoQueryCompilationContext)QueryCompilationContext).QueryMode == MongoQueryMode.NativeOnly)
+        {
+            throw new NativeTranslationNotSupportedException(
+                "Query projects a non-entity result and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
+        }
+
         if (ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression))
         {
             // Push-down path: scalar/anonymous projections handled entirely by LINQ V3
@@ -230,64 +246,269 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
         var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
+        var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+
+        // ── The native-vs-driver gate (EF-323 B2) ──────────────────────────────────────────────
+        // Unlike the spike (B1), which builds the native pipeline per execution inside TranslateQuery
+        // and falls back to driver-LINQ at run time, this decision is made deterministically here at
+        // COMPILE time. A native query that can be lowered/rendered yields a MongoPipelineFactory captured
+        // into the executor; per execution it is only re-bound (factory.Build(parameterValues)) — never
+        // re-translated. Because fallback happens here (not at run time), we compile EXACTLY ONE shaper
+        // (streaming, DOM-native, or driver-DOM) and need no run-time dual-shaper dispatch.
+        var nativeFactory = TryBuildNativeFactory(mode, mongoQueryExpression, shapedQueryExpression.ResultCardinality);
+
+        // Streaming is only chosen when the native factory was built, the entity shape is streaming-eligible,
+        // and every cross-collection join is a streamable single-level reference lookup the streaming reader
+        // can read back. Otherwise the native pipeline (if any) returns full BsonDocuments shaped by the DOM
+        // shaper, exactly as the driver-LINQ path does.
+        var streaming = nativeFactory != null
+            && shapedQueryExpression.ResultCardinality == ResultCardinality.Enumerable
+            && StreamingEligibility.IsEligible(rootEntityType)
+            && AllPendingLookupsAreStreamableReferences(mongoQueryExpression);
 
         var shaperBody = shapedQueryExpression.ShaperExpression;
         var bsonInjector = new BsonDocumentInjectingExpressionVisitor();
         shaperBody = bsonInjector.Visit(shaperBody);
 #if EF8 || EF9
-        shaperBody = InjectEntityMaterializers(shaperBody);
+        var injectedBody = InjectEntityMaterializers(shaperBody);
 #else
-        shaperBody = InjectStructuralTypeMaterializers(shaperBody);
+        var injectedBody = InjectStructuralTypeMaterializers(shaperBody);
 #endif
-        shaperBody = createBindingRemover(bsonDocParameter, trackingBehavior).Visit(shaperBody);
+
+        var standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
+                                     QueryTrackingBehavior.NoTrackingWithIdentityResolution;
+
+        if (streaming)
+        {
+            // Forward-only streaming materialization: rewrite the post-injection materializer to read each
+            // native-path RawBsonDocument row via a single forward IBsonReader pass into typed locals. The
+            // rewriter throws on any shape it cannot stream; because the native factory is fixed at compile
+            // time, an un-streamable shape is a compile-time decision — fall back to the DOM shaper over the
+            // (still native) BsonDocument pipeline rather than to a run-time dual-shaper, except under
+            // NativeOnly where the un-streamable shape must surface.
+            var rawRowParameter = Expression.Parameter(typeof(RawBsonDocument), "rawRow");
+            try
+            {
+                var streamingBody = new MongoStreamingEntityMaterializerRewriter(
+                        rootEntityType, _bsonSerializerFactory, rawRowParameter)
+                    .Rewrite(injectedBody);
+                var streamingLambda = Expression.Lambda(
+                    streamingBody,
+                    QueryCompilationContext.QueryContextParameter,
+                    rawRowParameter);
+                var compiledStreamingShaper = streamingLambda.Compile();
+
+                return BuildExecuteCall(
+                    typeof(RawBsonDocument),
+                    Expression.Constant(compiledStreamingShaper),
+                    streamingLambda.ReturnType,
+                    streaming: true);
+            }
+            catch (Exception) when (mode != MongoQueryMode.NativeOnly)
+            {
+                // The entity shape itself isn't streamable; fall through to the DOM path (still native).
+                streaming = false;
+            }
+        }
+
+        var domShaperBody = createBindingRemover(bsonDocParameter, trackingBehavior).Visit(injectedBody);
 
         // Lift all BsonDocument/BsonArray variables to the lambda level so they are
         // accessible across entity boundaries in join projections.
         if (bsonInjector.AllVariables.Count > 0)
         {
-            shaperBody = Expression.Block(
-                shaperBody.Type,
+            domShaperBody = Expression.Block(
+                domShaperBody.Type,
                 bsonInjector.AllVariables,
-                shaperBody);
+                domShaperBody);
         }
 
         var shaperLambda = Expression.Lambda(
-            shaperBody,
+            domShaperBody,
             QueryCompilationContext.QueryContextParameter,
             bsonDocParameter);
         var compiledShaper = shaperLambda.Compile();
 
         var projectedType = shaperLambda.ReturnType;
-        var standAloneStateManager = QueryCompilationContext.QueryTrackingBehavior ==
-                                     QueryTrackingBehavior.NoTrackingWithIdentityResolution;
 
-        return Expression.Call(null,
-            ExecuteShapedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType, projectedType),
-            QueryCompilationContext.QueryContextParameter,
-            Expression.Constant(rootEntityType),
-            Expression.Constant(_bsonSerializerFactory),
-            Expression.Constant(mongoQueryExpression),
+        // Both the native DOM path and the driver-LINQ path produce full BsonDocuments shaped by this lambda;
+        // they differ only in whether nativeFactory is non-null (native pipeline) or null (driver-LINQ).
+        return BuildExecuteCall(
+            typeof(BsonDocument),
             Expression.Constant(compiledShaper),
-            Expression.Constant(_contextType),
-            Expression.Constant(standAloneStateManager),
-            Expression.Constant(_threadSafetyChecksEnabled),
-            Expression.Constant(shapedQueryExpression.ResultCardinality));
+            projectedType,
+            streaming: false);
+
+        // Builds the ExecuteShapedQuery call. Every argument is shared across the streaming and DOM paths
+        // except the row generic type, the compiled shaper, the return-type generic, and the trailing
+        // streaming flag — those four vary; the rest are baked in here.
+        MethodCallExpression BuildExecuteCall(Type rowType, Expression compiledShaper, Type returnType, bool streaming)
+            => Expression.Call(null,
+                ExecuteShapedQueryMethodInfo.MakeGenericMethod(
+                    rowType, rootEntityType.ClrType, returnType),
+                QueryCompilationContext.QueryContextParameter,
+                Expression.Constant(rootEntityType),
+                Expression.Constant(_bsonSerializerFactory),
+                Expression.Constant(mongoQueryExpression),
+                compiledShaper,
+                Expression.Constant(_contextType),
+                Expression.Constant(standAloneStateManager),
+                Expression.Constant(_threadSafetyChecksEnabled),
+                Expression.Constant(shapedQueryExpression.ResultCardinality),
+                Expression.Constant(nativeFactory, typeof(MongoPipelineFactory)),
+                Expression.Constant(streaming));
     }
 
-    private static (MongoQueryContext, MongoExecutableQuery) TranslateQuery<TSource>(
+    /// <summary>
+    /// The compile-time native-vs-driver gate honoring <see cref="MongoQueryMode"/>. Returns a
+    /// <see cref="MongoPipelineFactory"/> when the query should execute as a native aggregation pipeline,
+    /// or <see langword="null"/> to use the driver-LINQ path.
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><see cref="MongoQueryMode.DriverLinq"/>: never native (returns null).</item>
+    /// <item><see cref="MongoQueryMode.Native"/> (default): native when the query is representable and
+    /// lowers/renders without throwing <see cref="NativeTranslationNotSupportedException"/>; otherwise null
+    /// (driver fallback).</item>
+    /// <item><see cref="MongoQueryMode.NativeOnly"/>: native, or throw at compile time for a non-representable
+    /// query (the coverage instrument) — never falls back.</item>
+    /// </list>
+    /// The native pipeline returns full BsonDocuments (or RawBsonDocuments when streamed); the push-down
+    /// projection path (ExecuteProjectedQuery) is never routed here. A cardinality reducer (First/Single/…)
+    /// stays on the driver-LINQ path — the native path covers enumerable results.
+    /// </remarks>
+    private static MongoPipelineFactory? TryBuildNativeFactory(
+        MongoQueryMode mode,
+        MongoQueryExpression mongoQueryExpression,
+        ResultCardinality resultCardinality)
+    {
+        if (mode == MongoQueryMode.DriverLinq)
+        {
+            return null;
+        }
+
+        // The native pipeline shapes from full documents via the client-side entity/mixed shaper, which only
+        // runs for an enumerable result. A cardinality reducer uses the driver-LINQ path. Under NativeOnly the
+        // gate still measures representability (below) — a representable reducer is not a coverage failure.
+        if (resultCardinality != ResultCardinality.Enumerable)
+        {
+            if (mode == MongoQueryMode.NativeOnly && !mongoQueryExpression.IsNativeRepresentable)
+            {
+                throw new NativeTranslationNotSupportedException(
+                    "Query is not natively representable and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
+            }
+
+            return null;
+        }
+
+        // A VectorSearch query is realized by the driver-LINQ path ($vectorSearch stage built from the captured
+        // VectorSearch call) and carries the index-resolution / zero-results diagnostics. The native lowerer
+        // reads only the logical slots and never the captured chain, so it would silently drop the vector
+        // search. Vector search is therefore not natively representable; keep it on the driver path.
+        if (!mongoQueryExpression.IsNativeRepresentable || ContainsVectorSearch(mongoQueryExpression.CapturedExpression))
+        {
+            if (mode == MongoQueryMode.NativeOnly)
+            {
+                throw new NativeTranslationNotSupportedException(
+                    "Query is not natively representable and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
+            }
+
+            return null;
+        }
+
+        try
+        {
+            var stages = new MongoSelectLowerer().Lower(mongoQueryExpression);
+            return MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+        }
+        catch (NativeTranslationNotSupportedException) when (mode != MongoQueryMode.NativeOnly)
+        {
+            // A representable query whose lookup shape (or other stage) the native pipeline can't emit:
+            // fall back to the driver-LINQ path. Under NativeOnly this rethrows as the coverage instrument.
+            return null;
+        }
+    }
+
+    // Walks the captured Queryable method chain looking for a VectorSearch call. VectorSearch sits at the root
+    // (optionally under a single pre-Where), so this descends through the source argument of each call.
+    private static bool ContainsVectorSearch(Expression? captured)
+    {
+        while (captured is MethodCallExpression call)
+        {
+            if (call.IsVectorSearch())
+            {
+                return true;
+            }
+
+            captured = call.Arguments.Count > 0 ? call.Arguments[0] : null;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether every cross-collection join on <paramref name="mongoQueryExpression"/> is a single-level
+    /// reference lookup the native pipeline can emit and the streaming materializer can read back from a
+    /// root-level <c>_lookup_&lt;Nav&gt;</c> field — the same set the native lowerer emits. A query with no
+    /// joins is trivially streamable; a query whose joins cannot ALL be expressed as such reference lookups
+    /// (a collection include, a filtered include with pipeline stages, a transitive/nested lookup, or any
+    /// join shape not mappable to a direct root reference navigation) stays on the DOM / driver-LINQ path.
+    /// </summary>
+    private static bool AllPendingLookupsAreStreamableReferences(MongoQueryExpression mongoQueryExpression)
+    {
+        var referenceLookups = mongoQueryExpression.GetStreamingReferenceLookups();
+
+        // Every join must be covered by a streamable reference lookup; otherwise a join would be silently
+        // dropped on the native path.
+        if (mongoQueryExpression.IsJoinQuery
+            && referenceLookups.Count < mongoQueryExpression.InnerCollections.Count)
+        {
+            return false;
+        }
+
+        return referenceLookups.All(lookup => lookup.IsStreamableReference);
+    }
+
+    private static (MongoQueryContext, MongoExecutableQuery) TranslateQuery<TEntity>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
         BsonSerializerFactory bsonSerializerFactory,
         MongoQueryExpression queryExpression,
         ResultCardinality resultCardinality,
+        MongoPipelineFactory? nativeFactory,
+        bool streaming,
         Func<MongoEFToLinqTranslatingExpressionVisitor, Expression?, Expression> translate)
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
-        var collection = mongoQueryContext.MongoClient.GetCollection<TSource>(queryExpression.CollectionExpression.CollectionName);
+        var collection = mongoQueryContext.MongoClient.GetCollection<TEntity>(queryExpression.CollectionExpression.CollectionName);
 
         var transaction = mongoQueryContext.Context.Database.CurrentTransaction as MongoTransaction;
-        var queryable = transaction == null ? collection.AsQueryable() : collection.AsQueryable(transaction.Session);
-        var source = queryable.As((IBsonSerializer<TSource>)bsonSerializerFactory.GetEntitySerializer(entityType));
+
+        // Native path (EF-323 B2): the factory was built once at compile time. Per execution we only bind the
+        // current parameter values into the cached template (factory.Build) and run the resulting pipeline via
+        // MongoClientWrapper.Execute. The driver-LINQ Query is left as Expression.Empty() — it is never used.
+        if (nativeFactory != null)
+        {
+            var pipeline = nativeFactory.Build(GetParameterValues(queryContext));
+
+            var queryable = transaction == null ? collection.AsQueryable() : collection.AsQueryable(transaction.Session);
+            var nativeExecutable = new MongoExecutableQuery(
+                Expression.Empty(),
+                resultCardinality,
+                (IMongoQueryProvider)queryable.Provider,
+                collection.CollectionNamespace,
+                new(new Dictionary<string, object>()))
+            {
+                NativePipeline = pipeline,
+                Session = transaction?.Session,
+                Streaming = streaming
+            };
+
+            return (mongoQueryContext, nativeExecutable);
+        }
+
+        var driverQueryable = transaction == null ? collection.AsQueryable() : collection.AsQueryable(transaction.Session);
+        var source = driverQueryable.As((IBsonSerializer<TEntity>)bsonSerializerFactory.GetEntitySerializer(entityType));
 
         var innerSources = new Dictionary<IEntityType, Expression>();
         if (queryExpression.IsJoinQuery)
@@ -312,6 +533,15 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         return (mongoQueryContext, executableQuery);
     }
+
+    // Bridges QueryContext's per-execution parameter values to MongoPipelineFactory.Build, which takes an
+    // IReadOnlyDictionary<string, object?>. EF8/EF9 expose ParameterValues; EF10 renamed this to Parameters.
+    private static IReadOnlyDictionary<string, object?> GetParameterValues(QueryContext queryContext)
+#if EF8 || EF9
+        => queryContext.ParameterValues;
+#else
+        => queryContext.Parameters;
+#endif
 
     private static Action<MongoQueryContext, MongoExecutableQuery>? GetOnZeroResultsAction(MongoQueryExpression queryExpression)
     {
@@ -344,6 +574,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         var (mongoQueryContext, executableQuery) = TranslateQuery<TSource>(
             queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
+            nativeFactory: null, streaming: false,
             (translator, expression) => translator.TranslateProjected(expression));
 
         return new QueryingEnumerable<TResult, TResult>(
@@ -356,22 +587,31 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             GetOnZeroResultsAction(queryExpression));
     }
 
-    private static QueryingEnumerable<BsonDocument, TResult> ExecuteShapedQuery<TSource, TResult>(
+    // TSource is the driver row type: RawBsonDocument when streaming, BsonDocument otherwise (the native-DOM
+    // and driver-LINQ paths both produce BsonDocument). TEntity is the root entity CLR type; TResult is the
+    // shaped result. When nativeFactory is non-null the query runs as a native aggregation pipeline (bound per
+    // execution via factory.Build); otherwise it runs through the driver-LINQ provider. The decision was made
+    // deterministically at compile time (see CompileShapedQuery / TryBuildNativeFactory), so exactly one shaper
+    // — matching this TSource — was compiled, and MongoClientWrapper.Execute reads the matching collection type.
+    private static QueryingEnumerable<TSource, TResult> ExecuteShapedQuery<TSource, TEntity, TResult>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
         BsonSerializerFactory bsonSerializerFactory,
         MongoQueryExpression queryExpression,
-        Func<QueryContext, BsonDocument, TResult> shaper,
+        Func<QueryContext, TSource, TResult> shaper,
         Type contextType,
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled,
-        ResultCardinality resultCardinality)
+        ResultCardinality resultCardinality,
+        MongoPipelineFactory? nativeFactory,
+        bool streaming)
     {
-        var (mongoQueryContext, executableQuery) = TranslateQuery<TSource>(
+        var (mongoQueryContext, executableQuery) = TranslateQuery<TEntity>(
             queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
+            nativeFactory, streaming,
             (translator, expression) => translator.Translate(expression, resultCardinality));
 
-        return new QueryingEnumerable<BsonDocument, TResult>(
+        return new QueryingEnumerable<TSource, TResult>(
             mongoQueryContext,
             executableQuery,
             shaper,
@@ -430,6 +670,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         var (_, executableQuery) = TranslateQuery<TSource>(
             queryContext, entityType, bsonSerializerFactory, nonQuery.SourceQuery, ResultCardinality.Enumerable,
+            nativeFactory: null, streaming: false,
             (translator, expression) =>
                 translator.Translate(MongoNonQueryExpression.UnwrapBulkOperator(expression)!, ResultCardinality.Enumerable));
 
