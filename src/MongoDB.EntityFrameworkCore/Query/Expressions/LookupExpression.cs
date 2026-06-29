@@ -67,7 +67,10 @@ internal sealed class LookupExpression
     /// <param name="navigation">The navigation the lookup supports.</param>
     /// <returns>The <c>_lookup_&lt;NavigationName&gt;</c> field name.</returns>
     public static string GetLookupAlias(IReadOnlyNavigationBase navigation)
-        => $"_lookup_{navigation.Name}";
+        => $"{LookupAliasPrefix}{navigation.Name}";
+
+    /// <summary>The prefix of the synthetic <c>$lookup</c> alias field (see <see cref="GetLookupAlias"/>).</summary>
+    public const string LookupAliasPrefix = "_lookup_";
 
     /// <summary>The navigation this lookup supports.</summary>
     public INavigation Navigation { get; }
@@ -117,6 +120,13 @@ internal sealed class LookupExpression
 
     /// <summary>Whether this lookup is for a single reference (not a collection).</summary>
     public bool IsReference => !Navigation.IsCollection;
+
+    /// <summary>
+    /// A single-level reference Include the native pipeline can emit and the streaming reader can read back:
+    /// a reference nav, no filtered-Include pipeline stages, not a transitive <c>_lookup_</c> local field.
+    /// </summary>
+    public bool IsStreamableReference
+        => IsReference && !HasPipeline && !LocalField.StartsWith(LookupAliasPrefix, System.StringComparison.Ordinal);
 
     /// <summary>Whether $unwind should be applied after $lookup.</summary>
     public bool ShouldUnwind => IsReference || ForceUnwind;

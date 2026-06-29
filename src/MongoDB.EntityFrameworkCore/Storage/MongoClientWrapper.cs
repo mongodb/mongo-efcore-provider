@@ -15,12 +15,14 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
@@ -89,6 +91,33 @@ public class MongoClientWrapper : IMongoClientWrapper
 
         if (executableQuery.Cardinality != ResultCardinality.Enumerable)
             return ExecuteScalar<T>(executableQuery);
+
+        if (executableQuery.NativePipeline is { } stages)
+        {
+            // The native pipeline is already known here, so set the log action before issuing the aggregate.
+            // This mirrors the driver-LINQ path (whose stages are captured at build time) and ensures the MQL
+            // is logged even when execution against the server throws. Unlike the driver-LINQ path, the native
+            // stages are logged directly (the driver Provider was never asked to translate, so its LoggedStages
+            // would be empty) — this surfaces the real $match/$sort/$lookup pipeline in the MQL log.
+            var loggedStages = stages as BsonDocument[] ?? stages.ToArray();
+            log = () => _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
+            if (executableQuery.Streaming)
+            {
+                var rawCollection = Database.GetCollection<RawBsonDocument>(executableQuery.CollectionNamespace.CollectionName);
+                PipelineDefinition<RawBsonDocument, RawBsonDocument> rawPipeline = loggedStages;
+                var rawCursor = executableQuery.Session is { } rawSession
+                    ? rawCollection.Aggregate(rawSession, rawPipeline)
+                    : rawCollection.Aggregate(rawPipeline);
+                return (IEnumerable<T>)rawCursor.ToEnumerable();
+            }
+
+            var collection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
+            PipelineDefinition<BsonDocument, BsonDocument> pipeline = loggedStages;
+            var cursor = executableQuery.Session is { } session
+                ? collection.Aggregate(session, pipeline)
+                : collection.Aggregate(pipeline);
+            return (IEnumerable<T>)cursor.ToEnumerable();
+        }
 
         var queryable = executableQuery.Provider.CreateQuery<T>(executableQuery.Query);
         log = () => _commandLogger.ExecutedMqlQuery(executableQuery);

@@ -26,6 +26,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -145,6 +146,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     }
             }
 
+            // Native-slot population (Option B): inline, using the already-visited source so we
+            // always operate on the correct MongoQueryExpression instance — never re-traverse.
+            PopulateNativeSlots(shapedQueryExpression, methodDefinition, methodCallExpression);
+
             var newCardinality = GetResultCardinality(method);
             if (newCardinality != shapedQueryExpression.ResultCardinality)
                 shapedQueryExpression = shapedQueryExpression.UpdateResultCardinality(newCardinality);
@@ -164,14 +169,38 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return source;
         }
 
-        // TransparentIdentifier types are used by Join/LeftJoin/GroupJoin - allow them through
-
+        // TransparentIdentifier types are used by Join/LeftJoin/GroupJoin - allow them through.
+        // Any other (projecting) Select cannot be expressed as a native pipeline stage (SP3 work),
+        // so mark the query as no longer natively representable.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        if (!IsTransparentIdentifierSelector(selector))
+        {
+            mongoQueryExpression.IsNativeRepresentable = false;
+        }
+
         var newSelectorBody =
             ReplacingExpressionVisitor.Replace(selector.Parameters.Single(), source.ShaperExpression, selector.Body);
         var newShaper = _projectionBindingExpressionVisitor.Translate(mongoQueryExpression, newSelectorBody);
 
         return source.UpdateShaperExpression(newShaper);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="selector"/> is a transparent-identifier
+    /// selector produced by a Join/GroupJoin/LeftJoin rewrite — i.e. the body constructs an anonymous
+    /// object whose fields are the outer and inner parameters without further transformation.
+    /// Projecting selects (e.g. <c>Select(c =&gt; c.Name)</c>) return <see langword="false"/>.
+    /// </summary>
+    private static bool IsTransparentIdentifierSelector(LambdaExpression selector)
+    {
+        // EF generates transparent-identifier selectors as NewExpression nodes constructing an
+        // anonymous "TransparentIdentifier" type.  All other selectors project or transform.
+        if (selector.Body is not NewExpression newExpr)
+            return false;
+
+        var typeName = newExpr.Type.Name;
+        return typeName.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
+               || typeName.StartsWith("<>f__AnonymousType", StringComparison.Ordinal);
     }
 
     protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
@@ -504,6 +533,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var resultEntityType = entityType.Model.FindEntityType(resultType);
             if (resultEntityType != null)
             {
+                // OfType<TDerived>() narrows a TPH hierarchy by a discriminator predicate that is applied by
+                // the driver-LINQ path (via the captured chain / shaper), not captured into the native Predicate
+                // slot. The native pipeline would therefore return every document and the DOM shaper would fail
+                // to materialize a sibling type, so the query is not natively representable.
+                ((MongoQueryExpression)source.QueryExpression).IsNativeRepresentable = false;
                 return source.UpdateShaperExpression(entityShaperExpression.WithType(resultEntityType));
             }
         }
@@ -551,6 +585,137 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     source.QueryExpression, new ProjectionMember(), returnType.MakeNullable()), returnType));
 
     #endregion
+
+    // ── Native-slot population (Option B: inline in VisitMethodCall) ─────────────
+    //
+    // These helpers operate on the already-visited `source` so they always address
+    // the correct MongoQueryExpression instance.  They are called from the shared
+    // fall-through in VisitMethodCall AFTER the switch, before the CapturedExpression
+    // is set.  The Translate* overrides below remain dead code (never called via base)
+    // but are kept as clean implementations for potential future use.
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Populates the native-translation slots on the <see cref="MongoQueryExpression"/> for the
+    /// seven slot-bearing operators: Where, OrderBy, OrderByDescending, ThenBy, ThenByDescending,
+    /// Skip, and Take.  Called from <see cref="VisitMethodCall"/> on the already-evaluated source.
+    /// </summary>
+    private static void PopulateNativeSlots(
+        ShapedQueryExpression shapedQuery,
+        MethodInfo methodDefinition,
+        MethodCallExpression call)
+    {
+        var mongoQ = (MongoQueryExpression)shapedQuery.QueryExpression;
+        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+
+        if (methodDefinition == QueryableMethods.Where)
+        {
+            // Canonical-order guard: the native lowerer emits $match → $sort → $skip → $limit. A Where
+            // (→ $match) applied AFTER any paging (Skip → Offset, or Take → Limit) has already been
+            // recorded would be hoisted ahead of that paging on the native pipeline, silently returning
+            // the wrong rows. Such a query is not natively representable; fall back to driver-LINQ.
+            if (PagingAlreadyApplied(mongoQ))
+            {
+                mongoQ.IsNativeRepresentable = false;
+                return;
+            }
+
+            var predicate = call.Arguments[1].UnwrapLambdaFromQuote();
+            if (translator.TryTranslate(predicate.Body, out var predicateNode))
+                mongoQ.AddPredicateConjunct(predicateNode);
+            else
+                mongoQ.IsNativeRepresentable = false;
+        }
+        else if (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending)
+        {
+            // Canonical-order guard: a $sort emitted after paging ($skip/$limit) has been recorded would
+            // be hoisted ahead of it on the native pipeline, sorting the full set instead of the page and
+            // returning the wrong rows. Not natively representable; fall back to driver-LINQ.
+            if (PagingAlreadyApplied(mongoQ))
+            {
+                mongoQ.IsNativeRepresentable = false;
+                return;
+            }
+
+            var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
+            var ascending = methodDefinition == QueryableMethods.OrderBy;
+            if (translator.TryTranslateField(keySelector.Body, out var keyNode))
+                mongoQ.ResetOrderings(new MongoOrdering(keyNode, ascending));
+            else
+                mongoQ.IsNativeRepresentable = false;
+        }
+        else if (methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending)
+        {
+            // Same canonical-order guard as OrderBy: a $sort after paging is not natively representable.
+            if (PagingAlreadyApplied(mongoQ))
+            {
+                mongoQ.IsNativeRepresentable = false;
+                return;
+            }
+
+            var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
+            var ascending = methodDefinition == QueryableMethods.ThenBy;
+            if (translator.TryTranslateField(keySelector.Body, out var keyNode))
+                mongoQ.AppendOrdering(new MongoOrdering(keyNode, ascending));
+            else
+                mongoQ.IsNativeRepresentable = false;
+        }
+        else if (methodDefinition == QueryableMethods.Skip)
+        {
+            // Enforce canonical order: Skip once, before Take.
+            if (mongoQ.Offset != null || mongoQ.Limit != null)
+            {
+                mongoQ.IsNativeRepresentable = false;
+            }
+            else
+            {
+                mongoQ.Offset = TranslateCountExpression(call.Arguments[1]);
+                if (mongoQ.Offset is null)
+                    mongoQ.IsNativeRepresentable = false;
+            }
+        }
+        else if (methodDefinition == QueryableMethods.Take)
+        {
+            if (mongoQ.Limit != null)
+            {
+                mongoQ.IsNativeRepresentable = false;
+            }
+            else
+            {
+                mongoQ.Limit = TranslateCountExpression(call.Arguments[1]);
+                if (mongoQ.Limit is null)
+                    mongoQ.IsNativeRepresentable = false;
+            }
+        }
+        else if (!IsNativeRepresentableSlotOperator(methodDefinition))
+        {
+            // Any other top-level operator (Distinct, Cast, DefaultIfEmpty, scalar aggregates, cardinality
+            // reducers, Any/All, …) is not lowered into a native slot. Leaving the query "native-representable"
+            // would silently drop the operator on the native pipeline (e.g. a Distinct executed as the bare
+            // collection scan), so it is conservatively marked non-native. Select / OfType set the flag in their
+            // own Translate overrides. This is correctness-safe: the worst case is a missed native optimization
+            // and a fall back to the driver-LINQ path, never a wrong result.
+            mongoQ.IsNativeRepresentable = false;
+        }
+    }
+
+    // Canonical-order guard shared by the Where / OrderBy / OrderByDescending / ThenBy / ThenByDescending
+    // arms: once any paging ($skip → Offset, or $take → Limit) has been recorded, a later $match/$sort would
+    // be hoisted ahead of it on the canonical native pipeline and silently return the wrong rows, so the
+    // query is not natively representable.
+    private static bool PagingAlreadyApplied(MongoQueryExpression mongoQ)
+        => mongoQ.Offset != null || mongoQ.Limit != null;
+
+    // The operators PopulateNativeSlots lowers into a native slot. Everything else either sets the flag in its
+    // own Translate override (Select/OfType) or must drop off the native path (handled by the catch-all above).
+    private static bool IsNativeRepresentableSlotOperator(MethodInfo methodDefinition)
+        => methodDefinition == QueryableMethods.Where
+           || methodDefinition == QueryableMethods.OrderBy
+           || methodDefinition == QueryableMethods.OrderByDescending
+           || methodDefinition == QueryableMethods.ThenBy
+           || methodDefinition == QueryableMethods.ThenByDescending
+           || methodDefinition == QueryableMethods.Skip
+           || methodDefinition == QueryableMethods.Take;
 
     #region Never called by visit as translation is handled by C# Driver LINQ (with some minor tweaks)
 
@@ -764,6 +929,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         Type returnType, bool returnDefault)
         => null;
 
+    // These QMTEV overrides are intentionally inert: native slot population is done inline in
+    // PopulateNativeSlots (see VisitMethodCall), because routing Where/OrderBy/ThenBy/Skip/Take
+    // through base.VisitMethodCall rebuilds a fresh MongoQueryExpression per operator (slots don't
+    // accumulate). Do NOT add these operators to the VisitMethodCall switch without first removing
+    // their PopulateNativeSlots handling, or slots will be double-populated.
+
     protected override ShapedQueryExpression? TranslateOrderBy(ShapedQueryExpression source, LambdaExpression keySelector,
         bool ascending)
         => null;
@@ -791,11 +962,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override ShapedQueryExpression? TranslateTake(ShapedQueryExpression source, Expression count)
         => null;
 
+    /// <summary>
+    /// Translates a Skip/Take count expression to a <see cref="MongoExpression"/>
+    /// (either a <see cref="MongoConstantExpression"/> or a <see cref="MongoParameterExpression"/>).
+    /// Returns <see langword="null"/> if the expression cannot be represented natively.
+    /// </summary>
+    private static MongoExpression? TranslateCountExpression(Expression count)
+    {
+        if (count is ConstantExpression constant)
+            return new MongoConstantExpression(constant.Value, forSerialization: null);
+
+        if (NativeQueryParameter.TryGetQueryParameterName(count, out var parameterName))
+            return new MongoParameterExpression(parameterName, forSerialization: null);
+
+        return null;
+    }
+
     protected override ShapedQueryExpression? TranslateTakeWhile(ShapedQueryExpression source, LambdaExpression predicate)
         => null;
 
     protected override ShapedQueryExpression? TranslateThenBy(ShapedQueryExpression source, LambdaExpression keySelector,
-        bool ascending) => null;
+        bool ascending)
+        => null;
 
     protected override ShapedQueryExpression? TranslateUnion(ShapedQueryExpression source1, ShapedQueryExpression source2)
         => null;

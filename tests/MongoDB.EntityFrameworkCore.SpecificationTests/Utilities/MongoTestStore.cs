@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
@@ -39,7 +40,10 @@ public class MongoTestStore : TestStore
         => throw new NotSupportedException();
 
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
-        => builder.UseMongoDB(TestServer.Client, Name);
+        => builder.UseMongoDB(TestServer.Client, Name,
+            Environment.GetEnvironmentVariable("MONGODB_EF_NATIVE_ONLY") == "1"
+                ? o => o.UseQueryMode(MongoQueryMode.NativeOnly)
+                : null);
 
 #if !EF8
     protected override async Task InitializeAsync(Func<DbContext> createContext, Func<DbContext, Task>? seed,
