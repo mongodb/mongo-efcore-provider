@@ -14,6 +14,7 @@
 */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
@@ -38,4 +39,18 @@ public class MongoDbContextOptionsBuilder : IMongoDbContextOptionsBuilderInfrast
     protected virtual DbContextOptionsBuilder OptionsBuilder { get; }
 
     DbContextOptionsBuilder IMongoDbContextOptionsBuilderInfrastructure.OptionsBuilder => OptionsBuilder;
+
+    /// <summary>
+    /// Specifies how the provider translates LINQ queries to MongoDB.
+    /// </summary>
+    /// <param name="queryMode">The <see cref="MongoQueryMode"/> to use.</param>
+    /// <returns>This builder, so that further configuration can be chained.</returns>
+    public virtual MongoDbContextOptionsBuilder UseQueryMode(MongoQueryMode queryMode)
+    {
+        var extension = (OptionsBuilder.Options.FindExtension<MongoOptionsExtension>()
+                         ?? new MongoOptionsExtension())
+            .WithQueryMode(queryMode);
+        ((IDbContextOptionsBuilderInfrastructure)OptionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
 }

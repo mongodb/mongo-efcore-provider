@@ -3975,14 +3975,12 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }
     public override async Task Skip_0_Take_0_works_when_parameter(bool async)
     {
         // Fails: Take zero EF-254
-        Assert.Contains(
-            "Value is not greater than 0: 0",
-            (await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => base.Skip_0_Take_0_works_when_parameter(async))).Message);
+        // (EF-323: native paging now validates bounds in MongoPipelineFactory.Build and throws
+        // ArgumentOutOfRangeException client-side, before the invalid $limit: 0 is sent to MongoDB —
+        // same known gap as before, just thrown by us rather than the driver, so no MQL is logged.)
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => base.Skip_0_Take_0_works_when_parameter(async));
 
-        AssertMql(
-            """
-            Customers.
-            """);
+        AssertMql();
     }
 
     public override async Task Skip_0_Take_0_works_when_constant(bool async)

@@ -77,6 +77,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         private bool _gotResults;
 
         private IEnumerator<TSource>? _enumerator;
+        private TSource? _currentRow;
 
         public Enumerator(QueryingEnumerable<TSource, TTarget> queryingEnumerable, CancellationToken cancellationToken = default)
         {
@@ -187,7 +188,14 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 // single null by the scalar path) must not be passed to the entity shaper, which would
                 // dereference a null BsonDocument. Yield default(TTarget); a projected identity shaper
                 // would produce the same null, so scalar/aggregate results are unaffected.
-                Current = _enumerator.Current is null ? default! : _shaper(_queryContext, _enumerator.Current);
+                var row = _enumerator.Current;
+                _currentRow = row;
+                Current = row is null ? default! : _shaper(_queryContext, row);
+
+                // Native streaming rows are IDisposable RawBsonDocuments backed by a byte buffer; the shaper
+                // has consumed them, so release immediately. No-op for the plain-BsonDocument paths. Releasing
+                // nulls out the tracked field so an abandoned-enumeration Dispose doesn't dispose it again.
+                ReleaseCurrentRow();
 
                 if (!_gotResults)
                 {
@@ -207,14 +215,33 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
             return hasNext;
         }
 
+        // Releases a fetched-but-not-yet-released streaming row (a RawBsonDocument byte buffer); nulls the
+        // tracked field afterwards so a subsequent Dispose / DisposeAsync does not double-dispose it. No-op
+        // for the plain-BsonDocument paths (the row is not IDisposable).
+        private void ReleaseCurrentRow()
+        {
+            if (_currentRow is IDisposable disposableRow)
+            {
+                disposableRow.Dispose();
+            }
+
+            _currentRow = default;
+        }
+
         public void Dispose()
         {
+            // Release a fetched-but-not-yet-released streaming row (enumeration abandoned early or threw
+            // mid-stream) before disposing the enumerator.
+            ReleaseCurrentRow();
+
             _enumerator?.Dispose();
             _enumerator = null;
         }
 
         public ValueTask DisposeAsync()
         {
+            ReleaseCurrentRow();
+
             var enumerator = _enumerator;
             _enumerator = null;
 
