@@ -51,6 +51,12 @@ internal sealed partial class MongoQueryExpression : Expression
     /// </summary>
     public Expression? CapturedExpression { get; set; }
 
+    /// <summary>
+    /// Set once this query has had a <c>GroupBy</c> applied. Composing a join over a grouped query is not
+    /// yet supported and produces wrong results if attempted, so the join translators reject it.
+    /// </summary>
+    public bool IsGroupByQuery { get; set; }
+
     /// <inheritdoc />
     public override Type Type
         => typeof(object);

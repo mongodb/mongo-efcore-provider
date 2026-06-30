@@ -255,11 +255,12 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
 
     public override async Task GroupBy_Select_Union(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.GroupBy_Select_Union(async));
+        await base.GroupBy_Select_Union(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "City" : "Berlin" } }, { "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "CustomerID" : "$_id", "Count" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_columns_with_different_nullability(bool async)
@@ -329,56 +330,57 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
 
     public override async Task Union_over_function_column(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_column(async));
+        await base.Union_over_function_column(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_function_function(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_function(async));
+        await base.Union_over_function_function(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_function_constant(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_constant(async));
+        await base.Union_over_function_constant(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_function_unary(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_unary(async));
+        await base.Union_over_function_unary(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_function_binary(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_binary(async));
+        await base.Union_over_function_binary(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_over_function_scalarsubquery(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Union_over_function_scalarsubquery(async));
-
-        AssertMql(
-        );
+        await AssertNoMultiCollectionQuerySupport(() => base.Union_over_function_scalarsubquery(async));
     }
 
     public override async Task Union_over_constant_column(bool async)

@@ -2163,8 +2163,12 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
     public override async Task Contains_inside_aggregate_function_with_GroupBy(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Contains_inside_aggregate_function_with_GroupBy(async));
+        await base.Contains_inside_aggregate_function_with_GroupBy(async);
+
+        AssertMql(
+            """
+Customers.{ "$group" : { "_id" : "$Country", "__agg0" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }
+""");
     }
 
     public override async Task Contains_inside_Average_without_GroupBy(bool async)

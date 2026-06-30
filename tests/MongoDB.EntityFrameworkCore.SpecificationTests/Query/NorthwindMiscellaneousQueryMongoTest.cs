@@ -5032,8 +5032,7 @@ Customers.
 
     public override async Task Parameter_collection_Contains_with_projection_and_ordering(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Parameter_collection_Contains_with_projection_and_ordering(async));
+        await AssertNoMultiCollectionQuerySupport(() => base.Parameter_collection_Contains_with_projection_and_ordering(async));
     }
 
     public override async Task Contains_over_concatenated_columns_with_different_sizes(bool async)

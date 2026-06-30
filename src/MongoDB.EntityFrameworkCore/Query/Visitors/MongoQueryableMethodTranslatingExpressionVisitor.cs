@@ -115,7 +115,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 case nameof(Queryable.Max) when methodDefinition == QueryableMethods.MaxWithoutSelector
                                                 || methodDefinition == QueryableMethods.MaxWithSelector:
 
-                // Join operations - delegate to base class which calls our Translate* overrides
+                // Join / GroupBy operations - delegate to base class which calls our Translate* overrides
                 case nameof(Queryable.Join) when methodDefinition == QueryableMethods.Join:
                 case nameof(Queryable.GroupJoin) when methodDefinition == QueryableMethods.GroupJoin:
 #if !EF8 && !EF9
@@ -123,13 +123,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 #endif
                 case nameof(Queryable.DefaultIfEmpty) when methodDefinition == QueryableMethods.DefaultIfEmptyWithArgument
                                                            || methodDefinition == QueryableMethods.DefaultIfEmptyWithoutArgument:
+                // All four GroupBy overloads route to TranslateGroupBy; unsupported shapes (element/result
+                // selectors) return null there and fail cleanly, rather than falling through to the no-op
+                // capture path below.
+                case nameof(Queryable.GroupBy) when methodDefinition == QueryableMethods.GroupByWithKeySelector
+                                                    || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector
+                                                    || methodDefinition == QueryableMethods.GroupByWithKeyResultSelector
+                                                    || methodDefinition == QueryableMethods.GroupByWithKeyElementResultSelector:
 
                 // Operations not supported, but we want to bubble through for better error messages
 #if !EF8 && !EF9
                 case nameof(Queryable.RightJoin) when methodDefinition == QueryableMethods.RightJoin:
 #endif
-                case nameof(Queryable.GroupBy) when methodDefinition == QueryableMethods.GroupByWithKeySelector
-                                                    || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector:
                 case nameof(Queryable.Contains) when methodDefinition == QueryableMethods.Contains:
                 case nameof(Queryable.Except) when methodDefinition == QueryableMethods.Except:
                 case nameof(Queryable.Intersect) when methodDefinition == QueryableMethods.Intersect:
@@ -579,7 +584,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateGroupBy(ShapedQueryExpression source, LambdaExpression keySelector,
         LambdaExpression? elementSelector, LambdaExpression? resultSelector)
-        => null;
+    {
+        // The driver's LINQ provider renders the captured GroupBy(...).Select(...) chain to a $group
+        // stage itself; our job is only the EF-side shaper. We represent the grouping with EF's
+        // GroupByShaperExpression, which TranslateSelect / the projection binder collapse into a scalar
+        // or anonymous projection of the key and aggregates.
+        //
+        // Element and result selectors are not yet supported (later phases of EF-149); returning null
+        // for them produces EF's canonical "could not be translated" message.
+        if (elementSelector != null || resultSelector != null)
+            return null;
+
+        // Grouping over a join/lookup source (GroupBy after Join/GroupJoin, or grouping by a cross-collection
+        // navigation key that nav-expansion turned into a $lookup) is not yet supported. Attempting it either
+        // produces wrong results or throws deep in shaping ("Property 'Key' is not defined for IGrouping<.,
+        // LeftJoinResult<..>>"); reject cleanly so EF reports "could not be translated".
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        if (mongoQueryExpression.IsJoinQuery || mongoQueryExpression.GetPendingLookups().Count > 0)
+            return null;
+
+        var keyShaper = ReplacingExpressionVisitor.Replace(
+            keySelector.Parameters.Single(), source.ShaperExpression, keySelector.Body);
+
+        mongoQueryExpression.IsGroupByQuery = true;
+        return source.UpdateShaperExpression(new GroupByShaperExpression(keyShaper, source));
+    }
 
     protected override ShapedQueryExpression? TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
@@ -608,6 +637,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     {
         var outerQueryExpression = (MongoQueryExpression)outer.QueryExpression;
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
+
+        // Joining over a grouped query (e.g. GroupBy(...).Select(...) on either side of a Join/GroupJoin) is
+        // not yet supported; the driver can't render Join against a $group pipeline and silently returns
+        // wrong results. Reject so EF reports the query as untranslatable.
+        if (outerQueryExpression.IsGroupByQuery || innerQueryExpression.IsGroupByQuery)
+            return null;
 
         outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType);
 
