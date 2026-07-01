@@ -114,6 +114,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case ConstantExpression:
                 return expression;
 
+            // g.Key over a grouping: bind against the (already root-rebound) key selector so a scalar key
+            // folds to a root member and a composite/anonymous key is walked by VisitNew.
+            case MemberExpression { Expression: GroupByShaperExpression groupByShaper, Member.Name: "Key" }:
+                return Visit(groupByShaper.KeySelector);
+
             case MemberExpression memberExpression:
                 var currentProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[currentProjectionMember] = memberExpression;
@@ -126,6 +131,17 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 _projectionMapping[projMember] = methodCallExpression;
 
                 return new ProjectionBindingExpression(_queryExpression, projMember, expression.Type);
+
+            // An aggregate over a grouping (g.Count(), g.Sum(o => o.X), g.Min/Max/Average/LongCount).
+            // A selector-bearing aggregate is lowered to Sum(Select(grouping, sel)), so the grouping is
+            // reached by unwrapping the Enumerable/Queryable source chain rather than being Arguments[0].
+            // The driver renders the actual accumulator from the captured chain; we only need a scalar
+            // projection binding so the shaper reads the aggregated field from the result document.
+            case MethodCallExpression aggregateCall when IsGroupByAggregate(aggregateCall):
+                var aggMember = GetCurrentProjectionMember();
+                _projectionMapping[aggMember] = aggregateCall;
+
+                return new ProjectionBindingExpression(_queryExpression, aggMember, expression.Type);
 
             default:
                 return base.Visit(expression);
@@ -636,6 +652,50 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// being fully visited. This covers <c>EF.Property</c> (for non-navigation properties) and
     /// <c>Mql.Field</c> calls.
     /// </summary>
+    /// <summary>
+    /// Whether a method call is a scalar aggregate terminal (<c>Count</c>/<c>LongCount</c>/<c>Sum</c>/
+    /// <c>Min</c>/<c>Max</c>/<c>Average</c>) whose source chain roots at a grouping. Selector-bearing
+    /// aggregates are lowered to <c>Sum(Select(grouping, sel))</c>, so the grouping is found by unwrapping
+    /// the <see cref="Enumerable"/>/<see cref="Queryable"/> source chain.
+    /// </summary>
+    private static bool IsGroupByAggregate(MethodCallExpression call)
+    {
+        if (call.Arguments.Count == 0)
+        {
+            return false;
+        }
+
+        switch (call.Method.Name)
+        {
+            case nameof(Enumerable.Count):
+            case nameof(Enumerable.LongCount):
+            case nameof(Enumerable.Sum):
+            case nameof(Enumerable.Min):
+            case nameof(Enumerable.Max):
+            case nameof(Enumerable.Average):
+                break;
+            default:
+                return false;
+        }
+
+        var source = call.Arguments[0];
+        while (true)
+        {
+            switch (source)
+            {
+                case GroupByShaperExpression:
+                    return true;
+                case MethodCallExpression { Arguments.Count: > 0 } inner
+                    when inner.Method.DeclaringType == typeof(Enumerable)
+                         || inner.Method.DeclaringType == typeof(Queryable):
+                    source = inner.Arguments[0];
+                    continue;
+                default:
+                    return false;
+            }
+        }
+    }
+
     private static bool IsScalarMethodPropertyAccess(MethodCallExpression methodCallExpression)
     {
         if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))

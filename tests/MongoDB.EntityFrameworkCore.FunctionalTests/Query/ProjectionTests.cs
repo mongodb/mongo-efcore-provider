@@ -1125,13 +1125,18 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Select_projection_group_by_not_supported()
+    public void Select_projection_group_by()
     {
-        Assert.ThrowsAny<Exception>(() =>
-            _db.Planets
-                .GroupBy(p => p.hasRings)
-                .Select(g => new { g.Key, Count = g.Count() })
-                .ToList());
+        var results = _db.Planets
+            .GroupBy(p => p.hasRings)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        // Planets group into exactly two buckets (with and without rings); every planet is counted once.
+        Assert.Equal(2, results.Count);
+        Assert.Equal(_db.Planets.Count(), results.Sum(r => r.Count));
+        Assert.All(results, r => Assert.True(r.Count > 0));
     }
 
     private class OrderWithDates
