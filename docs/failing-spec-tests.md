@@ -83,7 +83,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X001 | Sub-query selection across DbSets is not translated | 144 |
 | EF-X002 | Provider throws a different exception than the EF translation-failure message | 46 |
 | EF-X003 | Driver-level feature gaps surfaced as test failures | 19 |
-| EF-X004 | Float `Sum`/`Average` truncation (likely duplicate of EF-228) | 1 |
+| EF-X004 | Integer division truncation / data loss — MongoDB has no integer division, so `$divide` on integer operands yields a `double`. `Projection_when_arithmetic_expression_precedence` projects `_id / (…)` into an `int` property; the double result then fails to deserialize (`FormatException`, "An error occurred while deserializing the B property"). Same root cause underlies native predicate arithmetic added in EF-329 (`a / b > n` compares as a double, so integer division diverges from C#'s truncating semantics) — that path currently matches the driver-LINQ fallback, so no separate test fails, but the divergence-vs-LINQ is the same and should be resolved together (e.g. wrapping integer `$divide` in `$trunc`). | 1 |
 | EF-X005 | BSON document missing nested required reference (AdHoc JSON) | 2 |
 | EF-X006 | MongoDB `DateTimeKind` round-trip handling | 1 |
 | EF-X007 | Views / `HasDefiningQuery` semantics for MongoDB collections | 2 |

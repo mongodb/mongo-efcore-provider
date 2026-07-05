@@ -14,7 +14,9 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -128,10 +130,53 @@ internal sealed class MongoExpressionTranslator
             {
                 var operand = TranslateNode(Unwrap(not.Operand));
                 if (operand is null) return null;
+                // !list.Contains(x.Field) → flip Negated on the MongoInExpression rather than
+                // wrapping it in a generic Not node (there is no query-dialect "not $in" wrapper).
+                if (operand is MongoInExpression inExpr)
+                    return new MongoInExpression(inExpr.Field, inExpr.Values, negated: !inExpr.Negated);
+                // !s.StartsWith(...)/!s.EndsWith(...)/!s.Contains(...) → flip Negated on the
+                // MongoRegexExpression rather than wrapping in a generic Not node (there is no
+                // query-dialect "not $regularExpression" wrapper other than an enclosing $not,
+                // which the renderer applies based on this flag).
+                if (operand is MongoRegexExpression regexExpr)
+                    return new MongoRegexExpression(regexExpr.Field, regexExpr.Kind, regexExpr.Term, negated: !regexExpr.Negated);
                 // Only allow Not over a field or further translated expression; nullable bools fall back.
                 if (operand is MongoFieldExpression fieldExpr && fieldExpr.Property.IsNullable)
                     return null; // conservative: nullable bool Not could diverge from driver rendering
                 return new MongoUnaryExpression(MongoUnaryOperator.Not, operand);
+            }
+
+            // --- Collection membership: Enumerable.Contains / List<T>.Contains / ICollection<T>.Contains ---
+
+            case MethodCallExpression call when TryMatchContainsMethod(call, out var collectionExpr, out var itemExpr):
+            {
+                if (!TryResolveMember(Unwrap(itemExpr), out var property, out var fieldPath))
+                    return null; // item must resolve to a bare field
+
+                var valuesNode = TranslateInValues(collectionExpr, property);
+                if (valuesNode is null)
+                    return null;
+
+                var fieldExpr2 = new MongoFieldExpression(property, fieldPath);
+                return new MongoInExpression(fieldExpr2, valuesNode, negated: false);
+            }
+
+            // --- String prefix/suffix/substring: string.StartsWith/EndsWith/Contains(string) ---
+
+            case MethodCallExpression call when TryMatchRegexMethod(call, out var kind, out var receiver, out var termExpr):
+            {
+                if (!TryResolveMember(Unwrap(receiver), out var property, out var fieldPath))
+                    return null; // receiver must resolve to a bare string field
+
+                if (property!.ClrType != typeof(string))
+                    return null;
+
+                var termNode = TranslateValue(Unwrap(termExpr), property);
+                if (termNode is null)
+                    return null;
+
+                var fieldExpr3 = new MongoFieldExpression(property, fieldPath!);
+                return new MongoRegexExpression(fieldExpr3, kind, termNode, negated: false);
             }
 
             // --- Bare boolean member access (c.Active) ---
@@ -150,47 +195,91 @@ internal sealed class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Translate a comparison <see cref="BinaryExpression"/> into a <see cref="MongoBinaryExpression"/>
-    /// with <see cref="MongoFieldExpression"/> on the field side and a value node
-    /// (<see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/>) on the other.
+    /// Translate a comparison <see cref="BinaryExpression"/> into a <see cref="MongoBinaryExpression"/>.
     /// </summary>
+    /// <remarks>
+    /// Two shapes are recognized:
+    /// <list type="bullet">
+    /// <item>
+    /// <b>Query-native (SP1 parity, preserved exactly):</b> a bare member on exactly one side and a
+    /// constant/parameter value on the other. Always produces the field on <see cref="MongoBinaryExpression.Left"/>
+    /// — mirroring the operator when the member was originally on the right — so the renderer's
+    /// <c>IsQueryNativeComparison</c> check keeps routing this shape to the indexable <c>$match</c> dialect.
+    /// </item>
+    /// <item>
+    /// <b>Field-to-field / arithmetic-operand (EF-329, always <c>$expr</c>):</b> anything else — a member on
+    /// both sides, or an arithmetic sub-expression on either side — translated via <see cref="TranslateOperand"/>
+    /// without the "field on exactly one side" restriction, preserving operand order (no mirroring, since
+    /// non-commutative comparisons need their original left/right order inside <c>$expr</c>).
+    /// </item>
+    /// </list>
+    /// </remarks>
     private MongoBinaryExpression? TranslateComparison(BinaryExpression be)
     {
-        IProperty? property;
-        string? fieldPath;
-        Expression valueNode;
-        bool memberOnLeft;
-
         var leftUnwrapped = Unwrap(be.Left);
         var rightUnwrapped = Unwrap(be.Right);
 
-        if (TryResolveMember(leftUnwrapped, out property, out fieldPath))
+        // --- Query-native shape: member on exactly one side, value on the other ---
+
+        if (TryResolveMember(leftUnwrapped, out var leftProperty, out var leftPath) && IsSimpleValue(rightUnwrapped))
         {
-            valueNode = rightUnwrapped;
-            memberOnLeft = true;
-        }
-        else if (TryResolveMember(rightUnwrapped, out property, out fieldPath))
-        {
-            valueNode = leftUnwrapped;
-            memberOnLeft = false;
-        }
-        else
-        {
-            return null; // no member on either side — not supported
+            // Numeric cast on the member side changes comparison semantics — fall back.
+            if (HasNumericConvert(be.Left, leftProperty!.ClrType))
+                return null;
+
+            var mongoOp = MapComparisonOperator(be.NodeType);
+            if (mongoOp is null)
+                return null;
+
+            var valueExpr = TranslateValue(rightUnwrapped, leftProperty);
+            if (valueExpr is null)
+                return null;
+
+            return new MongoBinaryExpression(mongoOp.Value, new MongoFieldExpression(leftProperty, leftPath!), valueExpr);
         }
 
-        // Numeric cast on the member side changes comparison semantics — fall back.
-        if (HasNumericConvert(memberOnLeft ? be.Left : be.Right, property!.ClrType))
+        if (TryResolveMember(rightUnwrapped, out var rightProperty, out var rightPath) && IsSimpleValue(leftUnwrapped))
+        {
+            // Numeric cast on the member side changes comparison semantics — fall back.
+            if (HasNumericConvert(be.Right, rightProperty!.ClrType))
+                return null;
+
+            // Mirror the operator since the member is on the right-hand side but must render on the Left.
+            var mongoOp = MapComparisonOperator(Mirror(be.NodeType));
+            if (mongoOp is null)
+                return null;
+
+            var valueExpr = TranslateValue(leftUnwrapped, rightProperty);
+            if (valueExpr is null)
+                return null;
+
+            return new MongoBinaryExpression(mongoOp.Value, new MongoFieldExpression(rightProperty, rightPath!), valueExpr);
+        }
+
+        // --- Field-to-field / arithmetic-operand shape: always routes to $expr ---
+
+        var generalOp = MapComparisonOperator(be.NodeType);
+        if (generalOp is null)
             return null;
 
-        // Equality/inequality on nullable properties can diverge from driver rendering — fall back.
-        if (be.NodeType is ExpressionType.Equal or ExpressionType.NotEqual && property.IsNullable)
+        var leftOperand = TranslateOperand(be.Left);
+        if (leftOperand is null)
             return null;
 
-        // Mirror the operator when the member is on the right-hand side.
-        var effectiveNodeType = memberOnLeft ? be.NodeType : Mirror(be.NodeType);
+        var rightOperand = TranslateOperand(be.Right);
+        if (rightOperand is null)
+            return null;
 
-        var mongoOp = effectiveNodeType switch
+        return new MongoBinaryExpression(generalOp.Value, leftOperand, rightOperand);
+    }
+
+    // A "simple value" comparison operand — a bare constant or query parameter, not a member and not an
+    // arithmetic sub-expression. Used to detect the query-native (member vs. value) shape.
+    private static bool IsSimpleValue(Expression node)
+        => node is ConstantExpression || NativeQueryParameter.TryGetQueryParameterName(node, out _);
+
+    private static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
+        => nodeType switch
         {
             ExpressionType.Equal => MongoBinaryOperator.Equal,
             ExpressionType.NotEqual => MongoBinaryOperator.NotEqual,
@@ -198,18 +287,81 @@ internal sealed class MongoExpressionTranslator
             ExpressionType.LessThanOrEqual => MongoBinaryOperator.LessThanOrEqual,
             ExpressionType.GreaterThan => MongoBinaryOperator.GreaterThan,
             ExpressionType.GreaterThanOrEqual => MongoBinaryOperator.GreaterThanOrEqual,
-            _ => (MongoBinaryOperator?)null
+            _ => null
         };
 
-        if (mongoOp is null)
-            return null;
+    private static MongoBinaryOperator? MapArithmeticOperator(ExpressionType nodeType)
+        => nodeType switch
+        {
+            ExpressionType.Add => MongoBinaryOperator.Add,
+            ExpressionType.Subtract => MongoBinaryOperator.Subtract,
+            ExpressionType.Multiply => MongoBinaryOperator.Multiply,
+            ExpressionType.Divide => MongoBinaryOperator.Divide,
+            ExpressionType.Modulo => MongoBinaryOperator.Modulo,
+            _ => null
+        };
 
-        var valueExpr = TranslateValue(valueNode, property);
-        if (valueExpr is null)
-            return null;
+    /// <summary>
+    /// Translates one operand of a field-to-field / arithmetic comparison (a shape that always routes to
+    /// <c>$expr</c>) into a <see cref="MongoExpression"/>: a member becomes a <see cref="MongoFieldExpression"/>,
+    /// a constant/parameter becomes a value node, and an arithmetic <see cref="BinaryExpression"/>
+    /// (<c>+ - * / %</c>) becomes a <see cref="MongoBinaryExpression"/> with operands translated recursively.
+    /// </summary>
+    /// <remarks>
+    /// A numeric-widening <see cref="UnaryExpression"/> (e.g. <c>(double)c.Age</c>) is rejected here rather than
+    /// silently stripped: empirically, the driver's own LINQ translator renders a numeric cast on a bare
+    /// field-to-field comparison operand as an explicit <c>$toDouble</c> conversion, but renders the very same
+    /// cast on an arithmetic operand (e.g. <c>(double)c.Age + c.Score</c>) by simply dropping it — an
+    /// inconsistent, shape-dependent rule. Reproducing it exactly would require re-deriving the driver's
+    /// numeric-promotion logic; falling back to driver-LINQ for any numeric cast inside this operand position
+    /// avoids silently diverging from it. A benign (non-numeric, e.g. nullable-widening) convert is still
+    /// unwrapped, matching <see cref="Unwrap"/> elsewhere in this class.
+    /// </remarks>
+    private MongoExpression? TranslateOperand(Expression node)
+    {
+        if (node is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
+        {
+            var fromType = Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type;
+            var toType = Nullable.GetUnderlyingType(unary.Type) ?? unary.Type;
+            if (fromType != toType)
+                return null; // numeric (or other type-changing) cast — ambiguous $expr semantics, fall back
+            return TranslateOperand(unary.Operand); // benign nullable-widening convert — unwrap and recurse
+        }
 
-        var fieldExpr = new MongoFieldExpression(property, fieldPath!);
-        return new MongoBinaryExpression(mongoOp.Value, fieldExpr, valueExpr);
+        if (TryResolveMember(node, out var property, out var fieldPath))
+            return new MongoFieldExpression(property, fieldPath!);
+
+        // Restrict to numeric operand types: ExpressionType.Add on strings is compiler-generated
+        // concatenation (string.Concat), not arithmetic — it has no $add equivalent (confirmed empirically:
+        // the driver server rejects "$add" on strings with "$add only supports numeric or date types").
+        if (node is BinaryExpression arith && MapArithmeticOperator(arith.NodeType) is { } arithOp && IsNumericType(arith.Type))
+        {
+            var left = TranslateOperand(arith.Left);
+            if (left is null)
+                return null;
+
+            var right = TranslateOperand(arith.Right);
+            if (right is null)
+                return null;
+
+            return new MongoBinaryExpression(arithOp, left, right);
+        }
+
+        // A bare constant/parameter operand has no associated property for serialization context — these
+        // are pure numeric $expr operands, not stored field values, so they serialize via BsonValue.Create.
+        return TranslateValue(node, forSerialization: null);
+    }
+
+    // True for the numeric CLR types $add/$subtract/$multiply/$divide/$mod accept — used to keep
+    // TranslateOperand's arithmetic-operand handling scoped to genuine arithmetic (excluding e.g. string
+    // concatenation, which also compiles to ExpressionType.Add but is not representable as "$add").
+    private static bool IsNumericType(Type type)
+    {
+        var underlying = Nullable.GetUnderlyingType(type) ?? type;
+        return underlying == typeof(int) || underlying == typeof(long) || underlying == typeof(short)
+            || underlying == typeof(byte) || underlying == typeof(sbyte) || underlying == typeof(uint)
+            || underlying == typeof(ulong) || underlying == typeof(ushort)
+            || underlying == typeof(float) || underlying == typeof(double) || underlying == typeof(decimal);
     }
 
     /// <summary>
@@ -218,7 +370,7 @@ internal sealed class MongoExpressionTranslator
     /// <see cref="MongoParameterExpression"/> (B2 placeholder for a query parameter).
     /// Returns <see langword="null"/> for any node that cannot be represented.
     /// </summary>
-    private static MongoExpression? TranslateValue(Expression node, IProperty forSerialization)
+    private static MongoExpression? TranslateValue(Expression node, IProperty? forSerialization)
     {
         if (node is ConstantExpression constant)
             return new MongoConstantExpression(constant.Value, forSerialization);
@@ -285,6 +437,165 @@ internal sealed class MongoExpressionTranslator
             ExpressionType.GreaterThanOrEqual => ExpressionType.LessThanOrEqual,
             _ => nodeType
         };
+
+    /// <summary>
+    /// Recognizes a <c>Contains</c> call over a collection: either the static
+    /// <c>Enumerable.Contains(source, item)</c> form, or an instance <c>Contains(item)</c> call whose
+    /// declaring type is (or implements) the generic <c>ICollection&lt;T&gt;</c> contract
+    /// (<c>List&lt;T&gt;</c>, <c>HashSet&lt;T&gt;</c>, <c>IList&lt;T&gt;</c>, <c>ICollection&lt;T&gt;</c>).
+    /// Matches by <see cref="System.Reflection.MethodInfo"/> shape, not by name string alone.
+    /// </summary>
+    private static bool TryMatchContainsMethod(
+        MethodCallExpression call,
+        [NotNullWhen(true)] out Expression? collection,
+        [NotNullWhen(true)] out Expression? item)
+    {
+        collection = null;
+        item = null;
+
+        if (call.Method.Name != nameof(Enumerable.Contains))
+            return false;
+
+        // Static Enumerable.Contains<TSource>(IEnumerable<TSource>, TSource) — the two-argument form only;
+        // the three-argument IEqualityComparer<TSource> overload has no query-dialect equivalent.
+        if (call.Method.IsStatic && call.Method.DeclaringType == typeof(Enumerable) && call.Arguments.Count == 2)
+        {
+            collection = call.Arguments[0];
+            item = call.Arguments[1];
+            return true;
+        }
+
+        // Instance List<T>.Contains(item) / ICollection<T>.Contains(item) / HashSet<T>.Contains(item) /
+        // IList<T>.Contains(item).
+        if (!call.Method.IsStatic && call.Object is not null && call.Arguments.Count == 1)
+        {
+            var declaringType = call.Method.DeclaringType;
+            if (declaringType is { IsGenericType: true })
+            {
+                var def = declaringType.GetGenericTypeDefinition();
+                if (def == typeof(List<>) || def == typeof(HashSet<>) || def == typeof(IList<>) || def == typeof(ICollection<>))
+                {
+                    collection = call.Object;
+                    item = call.Arguments[0];
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Recognizes the single-argument, ordinal-equivalent overload of
+    /// <c>string.StartsWith(string)</c>/<c>EndsWith(string)</c>/<c>Contains(string)</c> — the only
+    /// overloads the driver-LINQ v3 provider translates for these methods (it throws
+    /// <c>ExpressionNotSupportedException</c> for the <c>StringComparison</c>-taking overloads, confirmed
+    /// empirically under <c>MongoQueryMode.DriverLinq</c> — see Task 6 report). Matching only this overload
+    /// keeps native and fallback behavior identical: anything else (a <see cref="StringComparison"/> arg,
+    /// or a receiver that isn't <see cref="string"/>) is left unmatched here and falls through to the
+    /// driver-LINQ path unchanged.
+    /// </summary>
+    private static bool TryMatchRegexMethod(
+        MethodCallExpression call,
+        out MongoRegexKind kind,
+        [NotNullWhen(true)] out Expression? receiver,
+        [NotNullWhen(true)] out Expression? term)
+    {
+        kind = default;
+        receiver = null;
+        term = null;
+
+        if (call.Method.IsStatic || call.Object is null || call.Object.Type != typeof(string))
+            return false;
+
+        if (call.Arguments.Count != 1 || call.Arguments[0].Type != typeof(string))
+            return false;
+
+        switch (call.Method.Name)
+        {
+            case nameof(string.StartsWith):
+                kind = MongoRegexKind.StartsWith;
+                break;
+            case nameof(string.EndsWith):
+                kind = MongoRegexKind.EndsWith;
+                break;
+            case nameof(string.Contains):
+                kind = MongoRegexKind.Contains;
+                break;
+            default:
+                return false;
+        }
+
+        receiver = call.Object;
+        term = call.Arguments[0];
+        return true;
+    }
+
+    /// <summary>
+    /// Translates the collection side of a <c>Contains</c> call into a <see cref="MongoConstantExpression"/>
+    /// (a captured/inline collection) or <see cref="MongoParameterExpression"/> (a query-parameter
+    /// collection), using <paramref name="property"/> as the element serialization context. Returns
+    /// <see langword="null"/> for any other shape, or when the collection's element type does not match
+    /// the property's CLR type.
+    /// </summary>
+    private static MongoExpression? TranslateInValues(Expression collectionExpr, IProperty property)
+    {
+        var unwrapped = Unwrap(collectionExpr);
+
+        var elementType = GetEnumerableElementType(unwrapped.Type);
+        if (elementType is null)
+            return null;
+
+        var propertyType = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
+        var underlyingElementType = Nullable.GetUnderlyingType(elementType) ?? elementType;
+        if (underlyingElementType != propertyType)
+            return null; // collection element type mismatches the property — not supported
+
+        if (unwrapped is ConstantExpression { Value: System.Collections.IEnumerable } constant)
+            return new MongoConstantExpression(constant.Value, property);
+
+        if (NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var parameterName))
+            return new MongoParameterExpression(parameterName, property);
+
+        // EF8 hands an inline array literal (`new[] { .. }.Contains(..)`) as a NewArrayExpression
+        // rather than a pre-folded ConstantExpression (the constant-folding that produces the latter
+        // only happens on EF9/net9+). Recognize this shape too, but only when every element is itself
+        // a constant — anything else (a captured variable reference, a computed element, etc.) is left
+        // unmatched here and falls back to driver-LINQ rather than attempting to evaluate arbitrary
+        // sub-expressions.
+        if (unwrapped is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray)
+        {
+            var values = Array.CreateInstance(elementType, newArray.Expressions.Count);
+            for (var i = 0; i < newArray.Expressions.Count; i++)
+            {
+                if (Unwrap(newArray.Expressions[i]) is not ConstantExpression elementConstant)
+                    return null; // non-constant element — not supported
+
+                values.SetValue(elementConstant.Value, i);
+            }
+
+            return new MongoConstantExpression(values, property);
+        }
+
+        return null; // any other node shape (method call, sub-expression, etc.) is not supported
+    }
+
+    private static Type? GetEnumerableElementType(Type type)
+    {
+        if (type.IsArray)
+            return type.GetElementType();
+
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            return type.GetGenericArguments()[0];
+
+        foreach (var iface in type.GetInterfaces())
+        {
+            if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                return iface.GetGenericArguments()[0];
+        }
+
+        return null;
+    }
 
     private static bool IsComparison(ExpressionType t)
         => t is ExpressionType.Equal or ExpressionType.NotEqual

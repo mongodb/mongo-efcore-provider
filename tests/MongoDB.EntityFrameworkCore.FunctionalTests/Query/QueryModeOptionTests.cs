@@ -56,4 +56,52 @@ public class QueryModeOptionTests
         new MongoDbContextOptionsBuilder(options).UseQueryMode(MongoQueryMode.NativeOnly);
         Assert.Equal(MongoQueryMode.NativeOnly, options.Options.FindExtension<MongoOptionsExtension>()!.QueryMode);
     }
+
+    [Fact]
+    public void WithQueryMode_does_not_mutate_original()
+    {
+        var original = new MongoOptionsExtension();
+        var clone = original.WithQueryMode(MongoQueryMode.DriverLinq);
+
+        Assert.Equal(MongoQueryMode.Native, original.QueryMode);
+        Assert.Equal(MongoQueryMode.DriverLinq, clone.QueryMode);
+    }
+
+    [Fact]
+    public void WithQueryMode_rejects_undefined_enum()
+    {
+        var extension = new MongoOptionsExtension();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => extension.WithQueryMode((MongoQueryMode)99));
+    }
+
+    [Fact]
+    public void QueryMode_survives_a_subsequent_With_clone()
+    {
+        var extension = new MongoOptionsExtension().WithQueryMode(MongoQueryMode.DriverLinq);
+
+        var clone = extension.WithDatabaseName("SomeDatabase");
+
+        Assert.Equal(MongoQueryMode.DriverLinq, clone.QueryMode);
+    }
+
+    [Fact]
+    public void Differing_query_mode_yields_distinct_service_provider_hash_and_not_same_provider()
+    {
+        var native = new MongoOptionsExtension().WithConnectionString("mongodb://localhost");
+        var driverLinq = native.WithQueryMode(MongoQueryMode.DriverLinq);
+
+        Assert.NotEqual(native.Info.GetServiceProviderHashCode(), driverLinq.Info.GetServiceProviderHashCode());
+        Assert.False(native.Info.ShouldUseSameServiceProvider(driverLinq.Info));
+    }
+
+    [Fact]
+    public void LogFragment_omits_query_mode_when_native_and_includes_when_not()
+    {
+        var native = new MongoOptionsExtension();
+        var driverLinq = native.WithQueryMode(MongoQueryMode.DriverLinq);
+
+        Assert.DoesNotContain("QueryMode", native.Info.LogFragment);
+        Assert.Contains("QueryMode=DriverLinq", driverLinq.Info.LogFragment);
+    }
 }

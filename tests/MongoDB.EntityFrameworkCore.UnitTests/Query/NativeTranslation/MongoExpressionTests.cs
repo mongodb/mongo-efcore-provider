@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore.Metadata;
 using System.Linq.Expressions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -20,6 +21,21 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 public class MongoExpressionTests
 {
+    // --- Entity model used across tests ---
+
+    private class Customer
+    {
+        public MongoDB.Bson.ObjectId Id { get; set; }
+        public int Age { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    private static IProperty GetProperty<T>(string propertyName) where T : class
+    {
+        using var db = SingleEntityDbContext.Create<T>();
+        return db.Model.FindEntityType(typeof(T))!.FindProperty(propertyName)!;
+    }
+
     [Fact]
     public void Binary_node_exposes_operator_and_operands()
     {
@@ -40,5 +56,31 @@ public class MongoExpressionTests
         var ordering = new MongoOrdering(key, Ascending: false);
         Assert.Same(key, ordering.KeySelector);
         Assert.False(ordering.Ascending);
+    }
+
+    [Fact]
+    public void MongoInExpression_exposes_operands()
+    {
+        var prop = GetProperty<Customer>("Age");
+        var field = new MongoFieldExpression(prop, "Age");
+        var values = new MongoConstantExpression(new[] { 1, 2, 3 }, prop);
+        var expr = new MongoInExpression(field, values, negated: true);
+
+        Assert.Same(field, expr.Field);
+        Assert.Same(values, expr.Values);
+        Assert.True(expr.Negated);
+        Assert.Equal(typeof(bool), expr.Type);
+    }
+
+    [Fact]
+    public void MongoRegexExpression_exposes_operands()
+    {
+        var prop = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(prop, "Name");
+        var term = new MongoConstantExpression("A", prop);
+        var expr = new MongoRegexExpression(field, MongoRegexKind.StartsWith, term, negated: false);
+
+        Assert.Equal(MongoRegexKind.StartsWith, expr.Kind);
+        Assert.Equal(typeof(bool), expr.Type);
     }
 }

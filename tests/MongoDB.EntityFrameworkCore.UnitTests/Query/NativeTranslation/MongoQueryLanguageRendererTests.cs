@@ -33,6 +33,8 @@ public class MongoQueryLanguageRendererTests
         public MongoDB.Bson.ObjectId Id { get; set; }
         public int Age { get; set; }
         public bool Active { get; set; }
+        public int Score { get; set; }
+        public string Name { get; set; } = null!;
     }
 
     private static IProperty GetProperty<T>(string propertyName) where T : class
@@ -315,5 +317,162 @@ public class MongoQueryLanguageRendererTests
         // The returned value must be a valid sentinel.
         Assert.True(PlaceholderTable.TryGetPlaceholderIndex(result, out var index));
         Assert.Equal(0, index);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 14: field-to-field comparison → { $expr: { $eq: ['$Age', '$Score'] } }
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Field_to_field_comparison_renders_as_expr()
+    {
+        var age = GetProperty<Customer>("Age");
+        var score = GetProperty<Customer>("Score");
+        var pred = new MongoBinaryExpression(MongoBinaryOperator.Equal,
+            new MongoFieldExpression(age, "Age"), new MongoFieldExpression(score, "Score"));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ $expr: { $eq: ['$Age', '$Score'] } }"), rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 15: mixed AND keeps the indexable branch in query dialect
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Mixed_and_keeps_indexable_branch_in_query_dialect()
+    {
+        var age = GetProperty<Customer>("Age");
+        var score = GetProperty<Customer>("Score");
+        // (Age == Score) && (Age > 20)
+        var pred = new MongoBinaryExpression(MongoBinaryOperator.AndAlso,
+            new MongoBinaryExpression(MongoBinaryOperator.Equal,
+                new MongoFieldExpression(age, "Age"), new MongoFieldExpression(score, "Score")),
+            new MongoBinaryExpression(MongoBinaryOperator.GreaterThan,
+                new MongoFieldExpression(age, "Age"), new MongoConstantExpression(20, age)));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $and: [ { $expr: { $eq: ['$Age', '$Score'] } }, { Age: { $gt: 20 } } ] }"),
+            rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 16: `== null` renders as a bare null value → { Name: null }
+    // Matches the driver-LINQ fallback's rendering, which also relies on
+    // MongoDB's standard { field: null } semantics (matches explicit null
+    // OR a missing field) for `== null` predicates.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_is_null_as_bare_null()
+    {
+        var name = GetProperty<Customer>("Name");
+        var pred = new MongoBinaryExpression(MongoBinaryOperator.Equal,
+            new MongoFieldExpression(name, "Name"), new MongoConstantExpression(null, name));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ Name: null }"), rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 17: MongoInExpression over an inline constant collection → { field: { $in: [...] } }
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_in_for_inline_collection()
+    {
+        var age = GetProperty<Customer>("Age");
+        var expr = new MongoInExpression(
+            new MongoFieldExpression(age, "Age"),
+            new MongoConstantExpression(new[] { 1, 2, 3 }, age),
+            negated: false);
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(BsonDocument.Parse("{ Age: { $in: [1, 2, 3] } }"), rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 18: negated MongoInExpression over an inline constant collection → { field: { $nin: [...] } }
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_nin_for_negated_inline_collection()
+    {
+        var age = GetProperty<Customer>("Age");
+        var expr = new MongoInExpression(
+            new MongoFieldExpression(age, "Age"),
+            new MongoConstantExpression(new[] { 1, 2, 3 }, age),
+            negated: true);
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(BsonDocument.Parse("{ Age: { $nin: [1, 2, 3] } }"), rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 19-23: MongoRegexExpression (EF-329) → $regularExpression, matching the driver-LINQ v3
+    // rendering shape empirically captured under MongoQueryMode.DriverLinq (see Task 6 report):
+    // { field: { $regularExpression: { pattern: "<anchored/escaped>", options: "s" } } }.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_starts_with_as_anchored_regex()
+    {
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.StartsWith, new MongoConstantExpression("A.b", name), negated: false);
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(
+            BsonDocument.Parse("{ Name: { $regularExpression: { pattern: '^A\\\\.b', options: 's' } } }"),
+            rendered);
+    }
+
+    [Fact]
+    public void Renders_ends_with_as_anchored_regex()
+    {
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.EndsWith, new MongoConstantExpression("A.b", name), negated: false);
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(
+            BsonDocument.Parse("{ Name: { $regularExpression: { pattern: 'A\\\\.b$', options: 's' } } }"),
+            rendered);
+    }
+
+    [Fact]
+    public void Renders_contains_as_unanchored_regex()
+    {
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.Contains, new MongoConstantExpression("A.b", name), negated: false);
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(
+            BsonDocument.Parse("{ Name: { $regularExpression: { pattern: 'A\\\\.b', options: 's' } } }"),
+            rendered);
+    }
+
+    [Fact]
+    public void Renders_negated_starts_with_as_not_wrapped_regex()
+    {
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.StartsWith, new MongoConstantExpression("A", name), negated: true);
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(
+            BsonDocument.Parse(
+                "{ Name: { $not: { $regularExpression: { pattern: '^A', options: 's' } } } }"),
+            rendered);
+    }
+
+    [Fact]
+    public void Regex_with_parameterized_term_throws_not_supported()
+    {
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.Contains, new MongoParameterExpression("term", name), negated: false);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable()));
     }
 }

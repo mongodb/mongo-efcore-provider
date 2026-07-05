@@ -35,12 +35,12 @@ internal sealed class PlaceholderTable
     /// </summary>
     internal const string SentinelKey = "__mongoef_param__";
 
-    private readonly List<(string Name, IBsonSerializer? Serializer)> _entries = [];
+    private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray)> _entries = [];
 
     /// <summary>
     /// A read-only view of all accumulated placeholder entries, in insertion order.
     /// </summary>
-    public IReadOnlyList<(string Name, IBsonSerializer? Serializer)> Entries => _entries;
+    public IReadOnlyList<(string Name, IBsonSerializer? Serializer, bool IsArray)> Entries => _entries;
 
     /// <summary>
     /// Appends a placeholder entry and returns a sentinel <see cref="BsonValue"/> to embed
@@ -58,7 +58,28 @@ internal sealed class PlaceholderTable
     public BsonValue CreatePlaceholder(string parameterName, IBsonSerializer? serializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, serializer));
+        _entries.Add((parameterName, serializer, false));
+        return new BsonDocument(SentinelKey, new BsonInt32(index));
+    }
+
+    /// <summary>
+    /// Appends an <em>array</em> placeholder entry — used for a parameterized collection
+    /// (e.g. the values side of a <c>$in</c>/<c>$nin</c> test) — and returns a sentinel
+    /// <see cref="BsonValue"/> to embed in the rendered BSON template.
+    /// </summary>
+    /// <param name="parameterName">The EF query-parameter name (e.g. <c>__p_0</c>).</param>
+    /// <param name="elementSerializer">
+    /// The <see cref="IBsonSerializer"/> that will serialize each element of the run-time collection
+    /// value (the field's element serializer, not the collection's own serializer).
+    /// </param>
+    /// <returns>
+    /// A sentinel <see cref="BsonDocument"/> of the form <c>{ __mongoef_param__: &lt;index&gt; }</c>
+    /// where <c>index</c> is the zero-based position in <see cref="Entries"/>.
+    /// </returns>
+    public BsonValue CreateArrayPlaceholder(string parameterName, IBsonSerializer elementSerializer)
+    {
+        var index = _entries.Count;
+        _entries.Add((parameterName, elementSerializer, true));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 

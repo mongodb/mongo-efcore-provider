@@ -162,6 +162,79 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
         Assert.Equal(["L00002", "L99999"], result);
     }
 
+    // ── (a2) Native query over a non-streaming-eligible entity, inside a transaction ──────────────
+
+    private class DiscriminatedItem
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public int Value { get; set; }
+    }
+
+    // A TPH discriminator hierarchy makes the base entity type non-streaming-eligible
+    // (StreamingEligibility.IsEligible returns false whenever GetDirectlyDerivedTypes().Any()),
+    // so the shaper compiles as DOM rather than the forward-only RawBsonDocument reader. Combined
+    // with an explicit transaction, this exercises the non-streaming `collection.Aggregate(session,
+    // pipeline)` branch in MongoClientWrapper.Execute (as opposed to the RawBsonDocument streaming
+    // branch exercised by the other tests in this file).
+    private class SpecialDiscriminatedItem : DiscriminatedItem
+    {
+        public string Note { get; set; } = "";
+    }
+
+    private IMongoCollection<DiscriminatedItem> SeedDiscriminatedRange(string name, int count)
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
+        var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
+        var rows = Enumerable.Range(0, count).Select(i => new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() }, { "Label", $"L{i:D5}" }, { "Value", i }, { "_t", nameof(DiscriminatedItem) }
+        }).ToList();
+        bson.InsertMany(rows);
+        return database.MongoDatabase.GetCollection<DiscriminatedItem>(collectionName);
+    }
+
+    private SingleEntityDbContext<DiscriminatedItem> CreateDiscriminatedContext(
+        IMongoCollection<DiscriminatedItem> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: b => b.Entity<SpecialDiscriminatedItem>(),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    [Fact]
+    public void NativeOnly_query_over_non_streaming_eligible_entity_inside_transaction_returns_correct_rows()
+    {
+        var collection = SeedDiscriminatedRange(
+            nameof(NativeOnly_query_over_non_streaming_eligible_entity_inside_transaction_returns_correct_rows), 6);
+        var expected = new[] { "L00002", "L00003", "L00004", "L00005" };
+
+        using var db = CreateDiscriminatedContext(collection, MongoQueryMode.NativeOnly);
+
+        // Sanity-check the premise: the base entity type has a derived sibling, so
+        // StreamingEligibility.IsEligible must be false and the DOM (non-streaming) shaper is used.
+        var entityType = db.Model.FindEntityType(typeof(DiscriminatedItem))!;
+        Assert.True(entityType.GetDirectlyDerivedTypes().Any());
+
+        using var tx = db.Database.BeginTransaction();
+
+        // Under NativeOnly a fallback would throw; success proves the native Aggregate ran via the
+        // non-streaming `collection.Aggregate(session, pipeline)` branch (BsonDocument, not
+        // RawBsonDocument) against the ambient session inside the transaction.
+        var result = db.Entities
+            .Where(x => x.Value >= 2)
+            .OrderBy(x => x.Value)
+            .ToList()
+            .Select(x => x.Label)
+            .ToList();
+        tx.Commit();
+
+        Assert.Equal(expected, result);
+    }
+
     // ── (b) Async cancellation mid-stream stops the native enumerator ─────────────────────────────
 
     [Fact]

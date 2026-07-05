@@ -44,6 +44,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </remarks>
 internal sealed class MongoQueryLanguageRenderer
 {
+    private readonly MongoAggregationExpressionRenderer _aggRenderer = new();
+
     /// <summary>
     /// Renders <paramref name="predicate"/> to a <c>$match</c>-filter body.
     /// </summary>
@@ -73,39 +75,31 @@ internal sealed class MongoQueryLanguageRenderer
     private BsonValue RenderNode(MongoExpression node, PlaceholderTable placeholders)
         => node switch
         {
-            MongoBinaryExpression binary => RenderBinary(binary, placeholders),
+            MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso } a
+                => CombineAnd((BsonDocument)RenderNode(a.Left, placeholders), (BsonDocument)RenderNode(a.Right, placeholders)),
+            MongoBinaryExpression { Operator: MongoBinaryOperator.OrElse } o
+                => CombineOr((BsonDocument)RenderNode(o.Left, placeholders), (BsonDocument)RenderNode(o.Right, placeholders)),
+            MongoBinaryExpression comparison when IsQueryNativeComparison(comparison)
+                => RenderComparison(comparison, placeholders),
             MongoUnaryExpression unary => RenderUnary(unary, placeholders),
             MongoFieldExpression field => RenderBareField(field, placeholders),
-            _ => throw new NativeTranslationNotSupportedException(
-                $"MongoQueryLanguageRenderer does not support node type '{node.GetType().Name}'.")
+            MongoInExpression inExpr => RenderIn(inExpr, placeholders),
+            MongoRegexExpression regex => RenderRegex(regex, placeholders),
+            _ => RenderAsExpr(node, placeholders)
         };
 
     // ------------------------------------------------------------------
-    // Binary nodes (AndAlso / OrElse / comparisons)
+    // Query-native classification: comparisons are query-native only when the
+    // left side is a bare field and the right side is a value (constant/parameter).
+    // Field-to-field and arithmetic operands have no query-dialect form and must
+    // be delegated to the $expr (aggregation-expression) renderer.
     // ------------------------------------------------------------------
 
-    private BsonDocument RenderBinary(MongoBinaryExpression binary, PlaceholderTable placeholders)
-    {
-        switch (binary.Operator)
-        {
-            case MongoBinaryOperator.AndAlso:
-            {
-                var left = (BsonDocument)RenderNode(binary.Left, placeholders);
-                var right = (BsonDocument)RenderNode(binary.Right, placeholders);
-                return CombineAnd(left, right);
-            }
+    private static bool IsQueryNativeComparison(MongoBinaryExpression b)
+        => b.Left is MongoFieldExpression && b.Right is MongoConstantExpression or MongoParameterExpression;
 
-            case MongoBinaryOperator.OrElse:
-            {
-                var left = (BsonDocument)RenderNode(binary.Left, placeholders);
-                var right = (BsonDocument)RenderNode(binary.Right, placeholders);
-                return CombineOr(left, right);
-            }
-
-            default:
-                return RenderComparison(binary, placeholders);
-        }
-    }
+    private BsonDocument RenderAsExpr(MongoExpression node, PlaceholderTable placeholders)
+        => new BsonDocument("$expr", _aggRenderer.Render(node, placeholders));
 
     private BsonDocument RenderComparison(MongoBinaryExpression binary, PlaceholderTable placeholders)
     {
@@ -164,6 +158,74 @@ internal sealed class MongoQueryLanguageRenderer
         // A bare bool property used as a predicate → { field: true }
         var trueValue = ToBsonValue(field.Property, true);
         return new BsonDocument(field.ElementName, trueValue);
+    }
+
+    // ------------------------------------------------------------------
+    // Collection-membership ($in / $nin)
+    // ------------------------------------------------------------------
+
+    private BsonDocument RenderIn(MongoInExpression inExpr, PlaceholderTable placeholders)
+    {
+        var op = inExpr.Negated ? "$nin" : "$in";
+        var array = RenderInValues(inExpr.Values, placeholders);
+        return new BsonDocument(inExpr.Field.ElementName, new BsonDocument(op, array));
+    }
+
+    private BsonValue RenderInValues(MongoExpression values, PlaceholderTable placeholders)
+    {
+        switch (values)
+        {
+            case MongoConstantExpression { Value: System.Collections.IEnumerable items } constant:
+            {
+                var array = new BsonArray();
+                foreach (var item in items)
+                    array.Add(ToBsonValue(constant.ForSerialization!, item));
+                return array;
+            }
+            case MongoParameterExpression parameter:
+            {
+                var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization!);
+                return placeholders.CreateArrayPlaceholder(parameter.Name, info.Serializer);
+            }
+            default:
+                throw new NativeTranslationNotSupportedException("Unsupported $in values node.");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // String StartsWith/EndsWith/Contains ($regularExpression)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Renders a <see cref="MongoRegexExpression"/> to a <c>$regularExpression</c> filter, matching the
+    /// shape the driver-LINQ v3 provider emits for <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>:
+    /// <c>{ field: { $regularExpression: { pattern: "...", options: "s" } } }</c> (negated via an
+    /// enclosing <c>$not</c>). Only a constant search term is baked into a native pattern; a parameterized
+    /// term is not supported here and must fall back to driver-LINQ (see Task 6 report).
+    /// </summary>
+    private BsonDocument RenderRegex(MongoRegexExpression regex, PlaceholderTable placeholders)
+    {
+        if (regex.Term is not MongoConstantExpression { Value: string literal })
+            throw new NativeTranslationNotSupportedException(
+                "Only constant regex terms are natively representable; parameterized string.StartsWith/EndsWith/Contains falls back to driver-LINQ.");
+
+        var escaped = System.Text.RegularExpressions.Regex.Escape(literal);
+        var pattern = regex.Kind switch
+        {
+            MongoRegexKind.StartsWith => "^" + escaped,
+            MongoRegexKind.EndsWith => escaped + "$",
+            MongoRegexKind.Contains => escaped,
+            _ => throw new NativeTranslationNotSupportedException($"Unsupported regex kind '{regex.Kind}'.")
+        };
+
+        // Matches the driver-LINQ v3 rendering exactly: a BsonRegularExpression value (canonical extended
+        // JSON: { $regularExpression: { pattern, options } }) with options "s" (dotall) — captured
+        // empirically from StartsWithContainsOrEndsWith translation under MongoQueryMode.DriverLinq.
+        BsonValue body = new BsonRegularExpression(pattern, "s");
+
+        return regex.Negated
+            ? new BsonDocument(regex.Field.ElementName, new BsonDocument("$not", body))
+            : new BsonDocument(regex.Field.ElementName, body);
     }
 
     // ------------------------------------------------------------------

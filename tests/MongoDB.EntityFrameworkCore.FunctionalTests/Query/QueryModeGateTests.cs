@@ -42,6 +42,8 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         public ObjectId Id { get; set; }
         public string Name { get; set; } = "";
         public int Score { get; set; }
+        public int? NullableScore { get; set; }
+        public string? NullableName { get; set; }
     }
 
     // ── Test fixtures ───────────────────────────────────────────────────────────────────────────
@@ -280,5 +282,253 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var query = db.Entities.Take(2).OrderByDescending(c => c.Score);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
+    }
+
+    // ── EF-329: nullable equality / `== null` are natively representable ──────────────────────────
+    // Under NativeOnly, a fallback shape would throw NativeTranslationNotSupportedException;
+    // success here proves the predicate went through the native $match pipeline.
+
+    [Fact]
+    public void NativeOnly_nullable_equality_does_not_throw()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_nullable_equality_does_not_throw));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // All seeded documents omit NullableScore, so this simply proves the predicate translates
+        // natively (and returns the empty, but correct, result) rather than throwing.
+        var results = db.Entities.Where(c => c.NullableScore == 5).ToList();
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public void NativeOnly_is_null_predicate_does_not_throw()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_is_null_predicate_does_not_throw));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var results = db.Entities.Where(c => c.NullableScore == null).ToList();
+
+        // All four seeded rows omit NullableScore, so `== null` (matching missing-or-null) must
+        // return all of them — proving both native translation AND correct match semantics.
+        Assert.Equal(4, results.Count);
+    }
+
+    // ── EF-329 Task 4: `!=`-on-nullable is the highest divergence-risk case — lifted C# `!=` treats
+    // null/missing as satisfying the predicate (three-valued logic collapsed to "not equal to a
+    // non-null value"), so the native $ne / $match rendering must match that, not naive Mongo $ne
+    // (which would exclude missing/null fields under some representations). These seed rows deliberately
+    // include a value equal to the comparand, a different value, and a row that omits the field entirely,
+    // then compare the native (NativeOnly) result set against plain C# LINQ-to-objects semantics over the
+    // same data to prove exact behavioral equivalence rather than merely "it doesn't throw".
+
+    [Fact]
+    public void NativeOnly_nullable_inequality_does_not_throw()
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(NativeOnly_nullable_inequality_does_not_throw)) + Guid.NewGuid().ToString("N")[..8];
+        var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
+        bson.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 }, { "NullableScore", 5 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 }, { "NullableScore", 7 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 } }, // omits NullableScore
+        ]);
+        var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
+        var logs = new List<string>();
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // Mirror the seeded data in-memory so we can derive the expected result via plain C# lifted-`!=`
+        // semantics (missing field ~ null, and `null != 5` is `true`), independent of the native pipeline.
+        var seeded = new List<Customer>
+        {
+            new() { Name = "Alice", Score = 10, NullableScore = 5 },
+            new() { Name = "Bob", Score = 20, NullableScore = 7 },
+            new() { Name = "Carol", Score = 30, NullableScore = null },
+        };
+        var expectedNames = seeded.Where(c => c.NullableScore != 5).Select(c => c.Name).OrderBy(n => n).ToArray();
+
+        var results = db.Entities.Where(c => c.NullableScore != 5).ToList();
+
+        Assert.Equal(expectedNames, results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        // Bob (7 != 5 → true) and Carol (missing/null != 5 → true under lifted C# semantics) must both
+        // be included; Alice (5 != 5 → false) must be excluded.
+        Assert.Equal(["Bob", "Carol"], expectedNames);
+    }
+
+    [Fact]
+    public void NativeOnly_nullable_string_inequality_does_not_throw()
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(NativeOnly_nullable_string_inequality_does_not_throw)) + Guid.NewGuid().ToString("N")[..8];
+        var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
+        bson.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 }, { "NullableName", "present" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 }, { "NullableName", BsonNull.Value } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 } }, // omits NullableName
+        ]);
+        var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
+        var logs = new List<string>();
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var seeded = new List<Customer>
+        {
+            new() { Name = "Alice", Score = 10, NullableName = "present" },
+            new() { Name = "Bob", Score = 20, NullableName = null },
+            new() { Name = "Carol", Score = 30, NullableName = null },
+        };
+        var expectedNames = seeded.Where(c => c.NullableName != null).Select(c => c.Name).OrderBy(n => n).ToArray();
+
+        var results = db.Entities.Where(c => c.NullableName != null).ToList();
+
+        Assert.Equal(expectedNames, results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        // Only Alice (a genuinely present, non-null value) must be returned; Bob (explicit null) and
+        // Carol (missing) are excluded, matching `c => c.NullableName != null` over the C# model.
+        Assert.Equal(["Alice"], expectedNames);
+    }
+
+    // ── EF-329: collection Contains → $in / $nin, both inline-literal and parameterized ────────────
+    // Under NativeOnly, a fallback shape would throw NativeTranslationNotSupportedException;
+    // success here proves the predicate went through the native $match pipeline.
+
+    [Fact]
+    public void NativeOnly_inline_collection_contains_uses_in()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_inline_collection_contains_uses_in));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var results = db.Entities.Where(c => new[] { 10, 30 }.Contains(c.Score)).ToList();
+
+        Assert.Equal(["Alice", "Carol"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        Assert.Contains("$in", Mql(logs));
+    }
+
+    [Fact]
+    public void NativeOnly_parameterized_collection_contains_uses_in()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_parameterized_collection_contains_uses_in));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var scores = new List<int> { 20, 40 };
+        var results = db.Entities.Where(c => scores.Contains(c.Score)).ToList();
+
+        Assert.Equal(["Bob", "Dave"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        Assert.Contains("$in", Mql(logs));
+    }
+
+    [Fact]
+    public void NativeOnly_negated_collection_contains_uses_nin()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_negated_collection_contains_uses_nin));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var scores = new[] { 10, 30 };
+        var results = db.Entities.Where(c => !scores.Contains(c.Score)).ToList();
+
+        Assert.Equal(["Bob", "Dave"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        Assert.Contains("$nin", Mql(logs));
+    }
+
+    // ── EF-329: string.StartsWith/EndsWith/Contains → $regularExpression ────────────────────────────
+    // Under NativeOnly, a fallback shape would throw NativeTranslationNotSupportedException; success
+    // here proves the predicate went through the native $match pipeline. The MQL shape asserted below
+    // (`$regularExpression` with `options: "s"`, anchored per kind) matches exactly what the driver-LINQ
+    // fallback emits for these methods — captured empirically under MongoQueryMode.DriverLinq (see the
+    // Task 6 report for the raw captured MQL).
+
+    [Fact]
+    public void NativeOnly_starts_with_uses_anchored_regex()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_starts_with_uses_anchored_regex));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var results = db.Entities.Where(c => c.Name.StartsWith("A")).ToList();
+
+        Assert.Equal(["Alice"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        var mql = Mql(logs);
+        Assert.Contains("$regularExpression", mql);
+        Assert.Contains("\"pattern\" : \"^A\"", mql);
+        Assert.Contains("\"options\" : \"s\"", mql);
+    }
+
+    [Fact]
+    public void NativeOnly_ends_with_uses_anchored_regex()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_ends_with_uses_anchored_regex));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var results = db.Entities.Where(c => c.Name.EndsWith("e")).ToList();
+
+        Assert.Equal(["Alice", "Dave"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        var mql = Mql(logs);
+        Assert.Contains("$regularExpression", mql);
+        Assert.Contains("\"pattern\" : \"e$\"", mql);
+    }
+
+    [Fact]
+    public void NativeOnly_contains_uses_unanchored_regex()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_contains_uses_unanchored_regex));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var results = db.Entities.Where(c => c.Name.Contains("o")).ToList();
+
+        Assert.Equal(["Bob", "Carol"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        var mql = Mql(logs);
+        Assert.Contains("$regularExpression", mql);
+        Assert.Contains("\"pattern\" : \"o\"", mql);
+    }
+
+    [Fact]
+    public void NativeOnly_negated_starts_with_uses_not_wrapped_regex()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_negated_starts_with_uses_not_wrapped_regex));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var results = db.Entities.Where(c => !c.Name.StartsWith("A")).ToList();
+
+        Assert.Equal(["Bob", "Carol", "Dave"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+        var mql = Mql(logs);
+        Assert.Contains("$not", mql);
+        Assert.Contains("$regularExpression", mql);
+    }
+
+    [Fact]
+    public void NativeOnly_regex_metacharacters_are_escaped()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_regex_metacharacters_are_escaped));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // "A.e" as a literal must not match "Alice" (which it would if '.' were an unescaped wildcard).
+        var results = db.Entities.Where(c => c.Name.StartsWith("A.")).ToList();
+
+        Assert.Empty(results);
+        Assert.Contains("\\\\.", Mql(logs));
+    }
+
+    [Fact]
+    public void Native_parameterized_starts_with_falls_back_to_driver_linq()
+    {
+        // A parameterized search term is not baked into a native $regularExpression (Task 6 decision:
+        // constant-only native regex; parameterized falls back to driver-LINQ, still zero-regression).
+        var (collection, logs) = SeedCustomers(nameof(Native_parameterized_starts_with_falls_back_to_driver_linq));
+        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+
+        var term = "A";
+        var results = db.Entities.Where(c => c.Name.StartsWith(term)).ToList();
+
+        Assert.Equal(["Alice"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+    }
+
+    [Fact]
+    public void NativeOnly_parameterized_starts_with_throws()
+    {
+        // Same shape, but under NativeOnly a fallback is not permitted — it must throw rather than
+        // silently execute via driver-LINQ.
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_parameterized_starts_with_throws));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var term = "A";
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => db.Entities.Where(c => c.Name.StartsWith(term)).ToList());
     }
 }

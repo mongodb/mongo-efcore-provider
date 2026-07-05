@@ -241,7 +241,7 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer) = _placeholders.Entries[index];
+        var (name, serializer, isArray) = _placeholders.Entries[index];
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(
@@ -251,6 +251,20 @@ internal sealed class MongoPipelineFactory
         // Property-less primitive (e.g. Skip/Take count): serialize via BsonValue.Create.
         if (serializer is null)
             return BsonValue.Create(rawValue);
+
+        // Array placeholder (a parameterized $in/$nin collection): serialize each element through
+        // the field's element serializer into a BsonArray.
+        if (isArray)
+        {
+            var array = new BsonArray();
+            foreach (var element in (System.Collections.IEnumerable)rawValue!)
+            {
+                var coerced = BsonValueSerializer.Coerce(serializer.ValueType, element);
+                array.Add(BsonValueSerializer.SerializeThroughWriter(serializer, coerced));
+            }
+
+            return array;
+        }
 
         // Coerce the CLR value to the serializer's expected type, then serialize through the shared
         // "v"-wrapper block so a run-time parameter and a compile-time constant of the same value emit

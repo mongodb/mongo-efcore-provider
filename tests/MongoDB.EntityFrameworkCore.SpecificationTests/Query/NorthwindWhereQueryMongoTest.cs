@@ -1218,7 +1218,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "QUICK" } }, { "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T00:00:00Z" } } } }
+            Orders.{ "$match" : { "CustomerID" : "QUICK", "OrderDate" : { "$gt" : { "$date" : "1998-01-01T00:00:00Z" } } } }
             """);
     }
 

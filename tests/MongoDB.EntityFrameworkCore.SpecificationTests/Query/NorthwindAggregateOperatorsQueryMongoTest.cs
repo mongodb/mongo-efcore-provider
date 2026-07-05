@@ -2017,11 +2017,11 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$match" : { "_id" : { "$in" : ["ABCDE", "ALFKI", "ANATR"] } } }
+            Customers.{ "$match" : { "City" : "México D.F.", "_id" : { "$in" : ["ABCDE", "ALFKI", "ANATR"] } } }
             """,
             //
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$match" : { "_id" : { "$in" : ["ABCDE", "ALFKI", "ANATR"] } } }
+            Customers.{ "$match" : { "City" : "México D.F.", "_id" : { "$in" : ["ABCDE", "ALFKI", "ANATR"] } } }
             """);
     }
 
@@ -2061,11 +2061,11 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$match" : { "_id" : { "$nin" : ["ABCDE", "ALFKI", "ANATR"] } } }
+            Customers.{ "$match" : { "City" : "México D.F.", "_id" : { "$nin" : ["ABCDE", "ALFKI", "ANATR"] } } }
             """,
             //
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$match" : { "_id" : { "$nin" : ["ABCDE", "ALFKI", "ANATR"] } } }
+            Customers.{ "$match" : { "City" : "México D.F.", "_id" : { "$nin" : ["ABCDE", "ALFKI", "ANATR"] } } }
             """);
     }
 

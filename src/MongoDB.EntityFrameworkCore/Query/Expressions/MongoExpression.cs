@@ -52,7 +52,12 @@ internal enum MongoBinaryOperator
     GreaterThan,
     GreaterThanOrEqual,
     AndAlso,
-    OrElse
+    OrElse,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo
 }
 
 /// <summary>

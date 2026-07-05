@@ -268,4 +268,66 @@ public class MongoPipelineFactoryTests
         var result = factory.Build(new Dictionary<string, object?> { ["skip_count"] = 0 });
         Assert.Equal(BsonDocument.Parse("{ $skip: 0 }"), result[0]);
     }
+
+    // ------------------------------------------------------------------
+    // Array-binding test: one template, two executions with different collections,
+    // each producing a distinct $in array that matches its own source collection.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Array_placeholder_binds_different_collections_across_executions()
+    {
+        var ageProperty = GetProperty<Customer>("Age");
+        var field = new MongoFieldExpression(ageProperty, "Age");
+        var inExpr = new MongoInExpression(
+            field,
+            new MongoParameterExpression("ages", ageProperty),
+            negated: false);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(inExpr) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var first = factory.Build(new Dictionary<string, object?> { ["ages"] = new[] { 1, 2, 3 } });
+        var second = factory.Build(new Dictionary<string, object?> { ["ages"] = new[] { 4, 5 } });
+
+        Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $in: [1, 2, 3] } } }"), first[0]);
+        Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $in: [4, 5] } } }"), second[0]);
+        Assert.NotEqual(first[0], second[0]);
+
+        // Re-binding the first collection again must reproduce the same result (template not mutated).
+        var third = factory.Build(new Dictionary<string, object?> { ["ages"] = new[] { 1, 2, 3 } });
+        Assert.Equal(first[0], third[0]);
+    }
+
+    // ------------------------------------------------------------------
+    // Inline vs. parameterized $in must serialize elements byte-identically.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Inline_and_parameterized_in_produce_byte_identical_element_bson()
+    {
+        var ageProperty = GetProperty<Customer>("Age");
+
+        var inlineStages = new List<MongoPipelineStage>
+        {
+            new MongoMatchStage(new MongoInExpression(
+                new MongoFieldExpression(ageProperty, "Age"),
+                new MongoConstantExpression(new[] { 1, 2, 3 }, ageProperty),
+                negated: false))
+        };
+        var inlineFactory = MongoPipelineFactory.Create(inlineStages, new MongoQueryLanguageRenderer());
+        var inlineResult = inlineFactory.Build(new Dictionary<string, object?>());
+
+        var paramStages = new List<MongoPipelineStage>
+        {
+            new MongoMatchStage(new MongoInExpression(
+                new MongoFieldExpression(ageProperty, "Age"),
+                new MongoParameterExpression("ages", ageProperty),
+                negated: false))
+        };
+        var paramFactory = MongoPipelineFactory.Create(paramStages, new MongoQueryLanguageRenderer());
+        var paramResult = paramFactory.Build(new Dictionary<string, object?> { ["ages"] = new[] { 1, 2, 3 } });
+
+        Assert.Equal(inlineResult[0], paramResult[0]);
+    }
 }
