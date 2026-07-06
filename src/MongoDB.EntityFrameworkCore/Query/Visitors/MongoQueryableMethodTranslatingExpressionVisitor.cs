@@ -585,15 +585,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override ShapedQueryExpression? TranslateGroupBy(ShapedQueryExpression source, LambdaExpression keySelector,
         LambdaExpression? elementSelector, LambdaExpression? resultSelector)
     {
-        // The driver's LINQ provider renders the captured GroupBy(...).Select(...) chain to a $group
-        // stage itself; our job is only the EF-side shaper. We represent the grouping with EF's
-        // GroupByShaperExpression, which TranslateSelect / the projection binder collapse into a scalar
-        // or anonymous projection of the key and aggregates.
-        //
-        // Element and result selectors are not yet supported (later phases of EF-149); returning null
-        // for them produces EF's canonical "could not be translated" message.
-        if (elementSelector != null || resultSelector != null)
-            return null;
+        // The driver's LINQ provider renders the captured GroupBy(...) chain to a $group stage itself;
+        // our job is only the EF-side shaper. We represent the grouping with EF's GroupByShaperExpression,
+        // which TranslateSelect / the projection binder collapse into a scalar or anonymous projection of
+        // the key and aggregates.
 
         // Grouping over a join/lookup source (GroupBy after Join/GroupJoin, or grouping by a cross-collection
         // navigation key that nav-expansion turned into a $lookup) is not yet supported. Attempting it either
@@ -606,8 +601,35 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var keyShaper = ReplacingExpressionVisitor.Replace(
             keySelector.Parameters.Single(), source.ShaperExpression, keySelector.Body);
 
+        // An element selector projects each grouping element; apply it to the grouping's shaper so aggregates
+        // and the result selector see the projected element rather than the source entity. (In practice EF
+        // usually pushes element selectors into the aggregate selectors before this point, but handle it here
+        // for the cases that reach us directly.)
+        var groupingSource = source;
+        if (elementSelector != null)
+        {
+            var elementShaper = ReplacingExpressionVisitor.Replace(
+                elementSelector.Parameters.Single(), source.ShaperExpression, elementSelector.Body);
+            groupingSource = source.UpdateShaperExpression(elementShaper);
+        }
+
+        var groupByShaper = new GroupByShaperExpression(keyShaper, groupingSource);
         mongoQueryExpression.IsGroupByQuery = true;
-        return source.UpdateShaperExpression(new GroupByShaperExpression(keyShaper, source));
+
+        if (resultSelector == null)
+            return source.UpdateShaperExpression(groupByShaper);
+
+        // A result selector (Func<TKey, IEnumerable<TSource>, TResult>) folds (key, grouping) directly into
+        // the final projection. Substitute the key parameter with the grouping's Key and the elements
+        // parameter with the grouping itself, then run the projection binder so it collapses the Key access
+        // and the aggregates exactly as it does for the GroupBy(...).Select(...) form.
+        var keyAccess = Expression.MakeMemberAccess(
+            groupByShaper, groupByShaper.Type.GetProperty(nameof(IGrouping<object, object>.Key))!);
+        var resultBody = ReplacingExpressionVisitor.Replace(
+            resultSelector.Parameters[0], keyAccess,
+            ReplacingExpressionVisitor.Replace(resultSelector.Parameters[1], groupByShaper, resultSelector.Body));
+
+        return source.UpdateShaperExpression(_projectionBindingExpressionVisitor.Translate(mongoQueryExpression, resultBody));
     }
 
     protected override ShapedQueryExpression? TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,

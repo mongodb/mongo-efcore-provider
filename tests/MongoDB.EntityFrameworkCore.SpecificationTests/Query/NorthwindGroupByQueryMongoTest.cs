@@ -864,7 +864,12 @@ Orders.{ "$group" : { "_id" : { "OrderID" : "$_id" }, "__agg0" : { "$sum" : { "$
 
     public override async Task GroupBy_conditional_properties(bool async)
     {
-        await AssertGroupByUnsupported(() => base.GroupBy_conditional_properties(async));
+        await base.GroupBy_conditional_properties(async);
+
+        AssertMql(
+            """
+Orders.{ "$group" : { "_id" : { "OrderMonth" : null, "Customer" : "$CustomerID" }, "__agg0" : { "$sum" : 1 } } }, { "$project" : { "OrderMonth" : "$_id.OrderMonth", "Customer" : "$_id.Customer", "Count" : "$__agg0", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_empty_key_Aggregate(bool async)
@@ -1317,7 +1322,12 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 }, "__agg1"
 
     public override async Task GroupBy_with_result_selector(bool async)
     {
-        await AssertGroupByUnsupported(() => base.GroupBy_with_result_selector(async));
+        await base.GroupBy_with_result_selector(async);
+
+        AssertMql(
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : "$_id" }, "__agg1" : { "$min" : "$_id" }, "__agg2" : { "$max" : "$_id" }, "__agg3" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$__agg0", "Min" : "$__agg1", "Max" : "$__agg2", "Avg" : "$__agg3", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Sum_constant(bool async)
@@ -2277,8 +2287,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : { "$add" : ["
 
     public override async Task Final_GroupBy_property_anonymous_type(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Final_GroupBy_property_anonymous_type(async));
+        await AssertGroupByUnsupported(() => base.Final_GroupBy_property_anonymous_type(async));
 
         AssertMql(
         );
@@ -2301,47 +2310,27 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : { "$add" : ["
 
     public override async Task Final_GroupBy_property_anonymous_type_element_selector(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Final_GroupBy_property_anonymous_type_element_selector(async));
-
-        AssertMql(
-        );
+        await AssertGroupByUnsupported(() => base.Final_GroupBy_property_anonymous_type_element_selector(async));
     }
 
     public override async Task Final_GroupBy_property_entity_Include_collection(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Final_GroupBy_property_entity_Include_collection(async));
-
-        AssertMql(
-        );
+        await AssertGroupByUnsupported(() => base.Final_GroupBy_property_entity_Include_collection(async));
     }
 
     public override async Task Final_GroupBy_property_entity_projecting_collection(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Final_GroupBy_property_entity_projecting_collection(async));
-
-        AssertMql(
-        );
+        await AssertGroupByUnsupported(() => base.Final_GroupBy_property_entity_projecting_collection(async));
     }
 
     public override async Task Final_GroupBy_property_entity_projecting_collection_composed(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Final_GroupBy_property_entity_projecting_collection_composed(async));
-
-        AssertMql(
-        );
+        await AssertGroupByUnsupported(() => base.Final_GroupBy_property_entity_projecting_collection_composed(async));
     }
 
     public override async Task Final_GroupBy_property_entity_projecting_collection_and_single_result(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Final_GroupBy_property_entity_projecting_collection_and_single_result(async));
-
-        AssertMql(
-        );
+        await AssertGroupByUnsupported(() => base.Final_GroupBy_property_entity_projecting_collection_and_single_result(async));
     }
 
     public override async Task GroupBy_Where_with_grouping_result(bool async)
