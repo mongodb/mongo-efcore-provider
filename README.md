@@ -77,6 +77,7 @@ Entity Framework Core and MongoDB have a wide variety of features. This provider
 - Querying with `Where`, `Find`, `First`, `Single`, `OrderBy`, `ThenBy`, `Skip`, `Take` etc.
 - Vector search with the `VectorSearch` extension method on DbSet and fluent vector index configuration
 - Top-level aggregate `Any`, `Count`, `LongCount`, `Sum`, `Min`, `Max`, `Average`, `All`
+- Single-collection `GroupBy` (scalar, composite and anonymous keys) with `Count`/`LongCount`/`Sum`/`Min`/`Max`/`Average` aggregates and post-group `Where`/`OrderBy`/`Select`/`Distinct`, translated to `$group`
 - Mapping properties to BSON elements using `[Column]` or `[BsonElement]` attributes or `HasElementName("name")` method
 - Mapping entities to collections via `[Table("name")]`,  `ToCollection("name")` or by convention from the DbSet property name
 - Single or composite keys of standard types including string, `Guid` and `ObjectId` etc.
@@ -109,7 +110,7 @@ in the mean-time consider using the existing [MongoDB C# Driver's](https://githu
 ### Planned for future releases
 
 - Select projections with client-side operations
-- GroupBy operations
+- `GroupBy` with element/result selectors, over joins/subqueries, or grouping by a cross-collection navigation; per-group entity (`IGrouping`) materialization
 - Includes/joins
 - Geospatial
 

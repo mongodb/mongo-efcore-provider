@@ -24,7 +24,7 @@ IQueryable<T>  (EF Core)
    ▼  MongoQueryableMethodTranslatingExpressionVisitor
    │      ├─ accepts only Queryable / MongoQueryableExtensions / MongoDB.Driver.Linq.MongoQueryable
    │      ├─ builds a MongoQueryExpression with a ProjectionMapping
-   │      └─ rejects unsupported shapes (Join / GroupBy / set ops) early
+   │      └─ rejects unsupported shapes (Join / set ops) early; single-collection GroupBy translates to $group
    ▼  MongoQueryTranslationPostprocessor     (apply final ProjectionMapping)
    ▼  MongoShapedQueryCompilingExpressionVisitor
    │      ├─ ProjectionAnalyzer decides what can push down to driver-LINQ
@@ -64,7 +64,7 @@ IQueryable<T>  (EF Core)
 - **ProjectionMapping discipline.** The `_projectionMapping` keys (`ProjectionMember`s) must match exactly what the shaper expects. A mismatch between the post-processor mapping and the shaper compilation produces silent wrong-results, not crashes.
 - **`MongoQueryExpression.CapturedExpression`** must be a *complete* method chain — set once at the tail of `MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall`. Setting it mid-chain truncates the query.
 - **Reference-equality on `MethodInfo`.** Translators that match by `MethodInfo` must use canonical constants — `QueryableMethods` for the top-level dispatch in `MongoQueryableMethodTranslatingExpressionVisitor`, `EnumerableMethods` inside the projection-binding visitors, and the driver's `*Method` reflection classes where the bridge to driver-LINQ needs them; open vs. constructed generic methods compare unequal.
-- **Unsupported shapes are detected, not silently translated.** Joins, `GroupBy`, set operations (`Intersect` / `Except`) throw early — see the early-fail branches in `MongoQueryableMethodTranslatingExpressionVisitor`.
+- **Unsupported shapes are detected, not silently translated.** Joins and set operations (`Intersect` / `Except`) throw early — see the early-fail branches in `MongoQueryableMethodTranslatingExpressionVisitor`. Single-collection `GroupBy` is translated (`TranslateGroupBy` returns a `GroupByShaperExpression`); unsupported GroupBy shapes (element/result selectors, GroupBy over a join/lookup source) return `null` so EF reports "could not be translated".
 - **EF Core query cache.** Compiled queries are cached by EF Core by expression-tree shape; if you change a translator's output for a previously-translatable tree, you've quietly invalidated user caches.
 - **Multi-EF guards.** Some visitor signatures changed between EF8/EF9/EF10. For representative guard shapes elsewhere in the tree see `Storage/MongoTypeMappingSource.cs` (`#if EF8 || EF9`), the `ChangeTracking/StringDictionaryComparer*.cs` pair (legacy vs. EF10 split), and the `ChangeTracking/ListOf*Comparer.cs` files (`#if EF8`); in Query itself, `QueryingEnumerable.cs` has a `#if !EF8` block.
 

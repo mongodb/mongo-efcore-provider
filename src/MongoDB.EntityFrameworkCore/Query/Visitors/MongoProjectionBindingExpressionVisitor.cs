@@ -647,12 +647,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         => _projectionMembers.Pop();
 
     /// <summary>
-    /// Checks whether a method call expression represents a scalar property access that should
-    /// be stored in the projection mapping (like <see cref="MemberExpression"/>), rather than
-    /// being fully visited. This covers <c>EF.Property</c> (for non-navigation properties) and
-    /// <c>Mql.Field</c> calls.
-    /// </summary>
-    /// <summary>
     /// Whether a method call is a scalar aggregate terminal (<c>Count</c>/<c>LongCount</c>/<c>Sum</c>/
     /// <c>Min</c>/<c>Max</c>/<c>Average</c>) whose source chain roots at a grouping. Selector-bearing
     /// aggregates are lowered to <c>Sum(Select(grouping, sel))</c>, so the grouping is found by unwrapping
@@ -665,17 +659,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        switch (call.Method.Name)
+        if (!EnumerableMethods.IsAggregate(call.Method))
         {
-            case nameof(Enumerable.Count):
-            case nameof(Enumerable.LongCount):
-            case nameof(Enumerable.Sum):
-            case nameof(Enumerable.Min):
-            case nameof(Enumerable.Max):
-            case nameof(Enumerable.Average):
-                break;
-            default:
-                return false;
+            return false;
         }
 
         var source = call.Arguments[0];
@@ -696,6 +682,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         }
     }
 
+    /// <summary>
+    /// Checks whether a method call expression represents a scalar property access that should
+    /// be stored in the projection mapping (like <see cref="MemberExpression"/>), rather than
+    /// being fully visited. This covers <c>EF.Property</c> (for non-navigation properties) and
+    /// <c>Mql.Field</c> calls.
+    /// </summary>
     private static bool IsScalarMethodPropertyAccess(MethodCallExpression methodCallExpression)
     {
         if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))
