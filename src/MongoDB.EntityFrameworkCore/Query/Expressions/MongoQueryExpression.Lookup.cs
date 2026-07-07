@@ -191,4 +191,21 @@ internal sealed partial class MongoQueryExpression
 
         return collection;
     }
+
+    /// <summary>
+    /// The ordered list of <c>$lookup</c> stages the native pipeline must emit for cross-collection
+    /// Include operations. Surfaces the reference-lookup reconstruction from
+    /// <see cref="GetStreamingReferenceLookups"/>: when no pending lookups are registered (the driver's
+    /// native LeftJoin path), the single-level reference lookups are synthesized from
+    /// <see cref="InnerCollections"/>; otherwise the already-registered pending lookups are returned
+    /// directly. Consumed by the native lowerer to emit <c>$lookup</c> + <c>$unwind</c> stages.
+    /// </summary>
+    /// <remarks>
+    /// This is NOT a stored slot: each access <b>recomputes</b> <see cref="GetStreamingReferenceLookups"/>,
+    /// an O(navigations) reconstruction off <see cref="InnerCollections"/>. Callers should not treat it as a
+    /// cheap field read. It is slated for structural replacement (a populated <c>Lookups</c> slot) in the
+    /// Collection Includes sub-project. It lives here (rather than on <see cref="MongoSelectDefinition"/>)
+    /// because it recomputes from the group-3 lookup state that stays on this type.
+    /// </remarks>
+    public IReadOnlyList<LookupExpression> Lookups => GetStreamingReferenceLookups();
 }

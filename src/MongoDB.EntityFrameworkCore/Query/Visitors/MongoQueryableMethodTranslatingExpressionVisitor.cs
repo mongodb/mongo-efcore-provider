@@ -175,7 +175,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
         if (!IsTransparentIdentifierSelector(selector))
         {
-            mongoQueryExpression.IsNativeRepresentable = false;
+            mongoQueryExpression.Select.IsNativeRepresentable = false;
         }
 
         var newSelectorBody =
@@ -537,7 +537,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 // the driver-LINQ path (via the captured chain / shaper), not captured into the native Predicate
                 // slot. The native pipeline would therefore return every document and the DOM shaper would fail
                 // to materialize a sibling type, so the query is not natively representable.
-                ((MongoQueryExpression)source.QueryExpression).IsNativeRepresentable = false;
+                ((MongoQueryExpression)source.QueryExpression).Select.IsNativeRepresentable = false;
                 return source.UpdateShaperExpression(entityShaperExpression.WithType(resultEntityType));
             }
         }
@@ -616,15 +616,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // the wrong rows. Such a query is not natively representable; fall back to driver-LINQ.
             if (PagingAlreadyApplied(mongoQ))
             {
-                mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.IsNativeRepresentable = false;
                 return;
             }
 
             var predicate = call.Arguments[1].UnwrapLambdaFromQuote();
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
-                mongoQ.AddPredicateConjunct(predicateNode);
+                mongoQ.Select.AddPredicateConjunct(predicateNode);
             else
-                mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.IsNativeRepresentable = false;
         }
         else if (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending)
         {
@@ -633,58 +633,58 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // returning the wrong rows. Not natively representable; fall back to driver-LINQ.
             if (PagingAlreadyApplied(mongoQ))
             {
-                mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.IsNativeRepresentable = false;
                 return;
             }
 
             var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
             var ascending = methodDefinition == QueryableMethods.OrderBy;
             if (translator.TryTranslateField(keySelector.Body, out var keyNode))
-                mongoQ.ResetOrderings(new MongoOrdering(keyNode, ascending));
+                mongoQ.Select.ResetOrderings(new MongoOrdering(keyNode, ascending));
             else
-                mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.IsNativeRepresentable = false;
         }
         else if (methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending)
         {
             // Same canonical-order guard as OrderBy: a $sort after paging is not natively representable.
             if (PagingAlreadyApplied(mongoQ))
             {
-                mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.IsNativeRepresentable = false;
                 return;
             }
 
             var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
             var ascending = methodDefinition == QueryableMethods.ThenBy;
             if (translator.TryTranslateField(keySelector.Body, out var keyNode))
-                mongoQ.AppendOrdering(new MongoOrdering(keyNode, ascending));
+                mongoQ.Select.AppendOrdering(new MongoOrdering(keyNode, ascending));
             else
-                mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.IsNativeRepresentable = false;
         }
         else if (methodDefinition == QueryableMethods.Skip)
         {
             // Enforce canonical order: Skip once, before Take.
-            if (mongoQ.Offset != null || mongoQ.Limit != null)
+            if (mongoQ.Select.Offset != null || mongoQ.Select.Limit != null)
             {
-                mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.IsNativeRepresentable = false;
             }
             else
             {
-                mongoQ.Offset = TranslateCountExpression(call.Arguments[1]);
-                if (mongoQ.Offset is null)
-                    mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.Offset = TranslateCountExpression(call.Arguments[1]);
+                if (mongoQ.Select.Offset is null)
+                    mongoQ.Select.IsNativeRepresentable = false;
             }
         }
         else if (methodDefinition == QueryableMethods.Take)
         {
-            if (mongoQ.Limit != null)
+            if (mongoQ.Select.Limit != null)
             {
-                mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.IsNativeRepresentable = false;
             }
             else
             {
-                mongoQ.Limit = TranslateCountExpression(call.Arguments[1]);
-                if (mongoQ.Limit is null)
-                    mongoQ.IsNativeRepresentable = false;
+                mongoQ.Select.Limit = TranslateCountExpression(call.Arguments[1]);
+                if (mongoQ.Select.Limit is null)
+                    mongoQ.Select.IsNativeRepresentable = false;
             }
         }
         else if (!IsNativeRepresentableSlotOperator(methodDefinition))
@@ -695,7 +695,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // collection scan), so it is conservatively marked non-native. Select / OfType set the flag in their
             // own Translate overrides. This is correctness-safe: the worst case is a missed native optimization
             // and a fall back to the driver-LINQ path, never a wrong result.
-            mongoQ.IsNativeRepresentable = false;
+            mongoQ.Select.IsNativeRepresentable = false;
         }
     }
 
@@ -704,7 +704,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // be hoisted ahead of it on the canonical native pipeline and silently return the wrong rows, so the
     // query is not natively representable.
     private static bool PagingAlreadyApplied(MongoQueryExpression mongoQ)
-        => mongoQ.Offset != null || mongoQ.Limit != null;
+        => mongoQ.Select.Offset != null || mongoQ.Select.Limit != null;
 
     // The operators PopulateNativeSlots lowers into a native slot. Everything else either sets the flag in its
     // own Translate override (Select/OfType) or must drop off the native path (handled by the catch-all above).

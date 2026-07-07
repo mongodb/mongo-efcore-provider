@@ -56,10 +56,10 @@ public class MongoSelectLowererTests
     public void Predicate_ordering_offset_limit_lower_in_canonical_order()
     {
         var select = TestSelect();
-        select.AddPredicateConjunct(new MongoConstantExpression(true, null));
-        select.AppendOrdering(new MongoOrdering(new MongoConstantExpression(0, null), true));
-        select.Offset = new MongoConstantExpression(5, null);
-        select.Limit = new MongoConstantExpression(10, null);
+        select.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
+        select.Select.AppendOrdering(new MongoOrdering(new MongoConstantExpression(0, null), true));
+        select.Select.Offset = new MongoConstantExpression(5, null);
+        select.Select.Limit = new MongoConstantExpression(10, null);
 
         var stages = new MongoSelectLowerer().Lower(select);
 
@@ -76,7 +76,7 @@ public class MongoSelectLowererTests
     public void Only_predicate_lowers_to_single_match_stage()
     {
         var select = TestSelect();
-        select.AddPredicateConjunct(new MongoConstantExpression(true, null));
+        select.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
 
         var stages = new MongoSelectLowerer().Lower(select);
 
@@ -91,7 +91,7 @@ public class MongoSelectLowererTests
     {
         var select = TestSelect();
         var predicate = new MongoConstantExpression(42, null);
-        select.AddPredicateConjunct(predicate);
+        select.Select.AddPredicateConjunct(predicate);
 
         var stages = new MongoSelectLowerer().Lower(select);
 
@@ -105,8 +105,8 @@ public class MongoSelectLowererTests
     public void Only_orderings_lower_to_single_sort_stage()
     {
         var select = TestSelect();
-        select.AppendOrdering(new MongoOrdering(new MongoConstantExpression(0, null), true));
-        select.AppendOrdering(new MongoOrdering(new MongoConstantExpression(1, null), false));
+        select.Select.AppendOrdering(new MongoOrdering(new MongoConstantExpression(0, null), true));
+        select.Select.AppendOrdering(new MongoOrdering(new MongoConstantExpression(1, null), false));
 
         var stages = new MongoSelectLowerer().Lower(select);
 
@@ -122,7 +122,7 @@ public class MongoSelectLowererTests
     {
         var select = TestSelect();
         var offset = new MongoConstantExpression(10, null);
-        select.Offset = offset;
+        select.Select.Offset = offset;
 
         var stages = new MongoSelectLowerer().Lower(select);
 
@@ -138,7 +138,7 @@ public class MongoSelectLowererTests
     {
         var select = TestSelect();
         var limit = new MongoConstantExpression(5, null);
-        select.Limit = limit;
+        select.Select.Limit = limit;
 
         var stages = new MongoSelectLowerer().Lower(select);
 
@@ -154,7 +154,7 @@ public class MongoSelectLowererTests
     {
         var select = TestSelect();
         var keyExpr = new MongoConstantExpression(0, null);
-        select.AppendOrdering(new MongoOrdering(keyExpr, Ascending: true));
+        select.Select.AppendOrdering(new MongoOrdering(keyExpr, Ascending: true));
 
         var stages = new MongoSelectLowerer().Lower(select);
 

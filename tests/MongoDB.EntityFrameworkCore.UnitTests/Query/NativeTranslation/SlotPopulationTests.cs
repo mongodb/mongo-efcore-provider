@@ -132,8 +132,8 @@ public class SlotPopulationTests
     {
         var mongoQ = TranslateToMongoQuery<Customer>(q => q.Where(c => c.Age > 21));
 
-        Assert.NotNull(mongoQ.Predicate);
-        Assert.True(mongoQ.IsNativeRepresentable);
+        Assert.NotNull(mongoQ.Select.Predicate);
+        Assert.True(mongoQ.Select.IsNativeRepresentable);
         Assert.NotNull(mongoQ.CapturedExpression);
     }
 
@@ -145,9 +145,9 @@ public class SlotPopulationTests
         var mongoQ = TranslateToMongoQuery<Customer>(
             q => q.OrderBy(c => c.Age).ThenByDescending(c => c.Name));
 
-        Assert.Equal(2, mongoQ.Orderings.Count);
-        Assert.True(mongoQ.Orderings[0].Ascending);
-        Assert.False(mongoQ.Orderings[1].Ascending);
+        Assert.Equal(2, mongoQ.Select.Orderings.Count);
+        Assert.True(mongoQ.Select.Orderings[0].Ascending);
+        Assert.False(mongoQ.Select.Orderings[1].Ascending);
     }
 
     // ── Test 3: Where after Take → non-canonical → IsNativeRepresentable = false ──
@@ -157,7 +157,7 @@ public class SlotPopulationTests
     {
         var mongoQ = TranslateToMongoQuery<Customer>(q => q.Take(10).Where(c => c.Age > 21));
 
-        Assert.False(mongoQ.IsNativeRepresentable);
+        Assert.False(mongoQ.Select.IsNativeRepresentable);
         Assert.NotNull(mongoQ.CapturedExpression);
     }
 
@@ -168,6 +168,6 @@ public class SlotPopulationTests
     {
         var mongoQ = TranslateToMongoQuery<Customer>(q => q.Select(c => c.Name));
 
-        Assert.False(mongoQ.IsNativeRepresentable);
+        Assert.False(mongoQ.Select.IsNativeRepresentable);
     }
 }

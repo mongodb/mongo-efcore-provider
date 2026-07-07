@@ -392,7 +392,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // gate still measures representability (below) — a representable reducer is not a coverage failure.
         if (resultCardinality != ResultCardinality.Enumerable)
         {
-            if (mode == MongoQueryMode.NativeOnly && !mongoQueryExpression.IsNativeRepresentable)
+            if (mode == MongoQueryMode.NativeOnly && !mongoQueryExpression.Select.IsNativeRepresentable)
             {
                 throw new NativeTranslationNotSupportedException(
                     "Query is not natively representable and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
@@ -405,7 +405,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // VectorSearch call) and carries the index-resolution / zero-results diagnostics. The native lowerer
         // reads only the logical slots and never the captured chain, so it would silently drop the vector
         // search. Vector search is therefore not natively representable; keep it on the driver path.
-        if (!mongoQueryExpression.IsNativeRepresentable || ContainsVectorSearch(mongoQueryExpression.CapturedExpression))
+        if (!mongoQueryExpression.Select.IsNativeRepresentable || ContainsVectorSearch(mongoQueryExpression.CapturedExpression))
         {
             if (mode == MongoQueryMode.NativeOnly)
             {

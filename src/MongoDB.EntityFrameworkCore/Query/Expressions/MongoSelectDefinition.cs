@@ -17,12 +17,23 @@ using System.Collections.Generic;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-// EF-323 SP1 — native-query-translation logical slots.
-// These slots are what the design document calls "MongoSelectExpression". They are implemented
-// in-place on MongoQueryExpression (controller decision) to avoid churning the QMTEV, shaper,
-// and factory plumbing. The existing CapturedExpression + projection machinery is untouched and
-// continues to serve the current fallback path.
-internal sealed partial class MongoQueryExpression
+/// <summary>
+/// The native-translation logical query IR (filter / sort / paging) for a single collection — the
+/// "MongoSelectExpression" of the EF-323 design. Populated by the QMTEV, read by the compile-time
+/// gate and the lowerer. Dialect-neutral: holds <see cref="MongoExpression"/> nodes, never BSON.
+/// </summary>
+/// <remarks>
+/// This is a plain data-holder, NOT a <see cref="System.Linq.Expressions.Expression"/> — hence the
+/// <c>Definition</c> name rather than the design document's "MongoSelectExpression": the
+/// <c>Expression</c> suffix is reserved for types that actually derive from
+/// <see cref="System.Linq.Expressions.Expression"/>. The <see cref="MongoExpression"/> base already
+/// carries dead/inconsistent visitor plumbing; there is nothing to gain from repeating it here, so
+/// this is a plain <see langword="internal"/> <see langword="sealed"/> class. It is composed into
+/// <see cref="MongoQueryExpression"/> via its <see cref="MongoQueryExpression.Select"/> property.
+/// Cross-collection <c>$lookup</c> state stays on <see cref="MongoQueryExpression"/> (it is entangled
+/// with the driver-LINQ fallback shaper).
+/// </remarks>
+internal sealed class MongoSelectDefinition
 {
     private readonly List<MongoOrdering> _orderings = [];
 
@@ -83,27 +94,9 @@ internal sealed partial class MongoQueryExpression
 
     /// <summary>
     /// Whether this query can be rendered to native MongoDB aggregation pipeline stages.
-    /// Starts as <see langword="true"/>; the QMTEV (Task 6) flips it to <see langword="false"/>
-    /// when it encounters a shape the native path cannot handle. The lowerer gate (Task 14)
+    /// Starts as <see langword="true"/>; the QMTEV flips it to <see langword="false"/>
+    /// when it encounters a shape the native path cannot handle. The compile-time gate
     /// reads this to decide whether to attempt native emission.
     /// </summary>
     public bool IsNativeRepresentable { get; set; } = true;
-
-    // ── Lookups accessor ─────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// The ordered list of <c>$lookup</c> stages the native pipeline must emit for cross-collection
-    /// Include operations. Surfaces the reference-lookup reconstruction from
-    /// <see cref="GetStreamingReferenceLookups"/>: when no pending lookups are registered (the driver's
-    /// native LeftJoin path), the single-level reference lookups are synthesized from
-    /// <see cref="InnerCollections"/>; otherwise the already-registered pending lookups are returned
-    /// directly. Consumed by the native lowerer (Task 14) to emit <c>$lookup</c> + <c>$unwind</c> stages.
-    /// </summary>
-    /// <remarks>
-    /// This is NOT a stored slot: each access <b>recomputes</b> <see cref="GetStreamingReferenceLookups"/>,
-    /// an O(navigations) reconstruction off <see cref="InnerCollections"/>. Callers should not treat it as a
-    /// cheap field read. It is slated for structural replacement (a populated <c>Lookups</c> slot) in the
-    /// Collection Includes sub-project.
-    /// </remarks>
-    public IReadOnlyList<LookupExpression> Lookups => GetStreamingReferenceLookups();
 }

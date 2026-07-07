@@ -36,9 +36,12 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal sealed class MongoSelectLowerer
 {
     /// <summary>
-    /// Lowers the native-translation slots of <paramref name="select"/> into typed pipeline stages.
+    /// Lowers the native-translation slots of <paramref name="query"/> into typed pipeline stages.
     /// </summary>
-    /// <param name="select">The <see cref="MongoQueryExpression"/> whose slots are lowered.</param>
+    /// <param name="query">
+    /// The <see cref="MongoQueryExpression"/> whose native scalar slots (on its
+    /// <see cref="MongoQueryExpression.Select"/>) and lookup state are lowered.
+    /// </param>
     /// <returns>
     /// An ordered, read-only list of <see cref="MongoPipelineStage"/> values in canonical pipeline
     /// order. Returns an empty list when no slots are populated.
@@ -46,8 +49,9 @@ internal sealed class MongoSelectLowerer
     /// <exception cref="NativeTranslationNotSupportedException">
     /// Thrown when the query contains a join or lookup shape that the native pipeline does not support.
     /// </exception>
-    public IReadOnlyList<MongoPipelineStage> Lower(MongoQueryExpression select)
+    public IReadOnlyList<MongoPipelineStage> Lower(MongoQueryExpression query)
     {
+        var select = query.Select;
         var stages = new List<MongoPipelineStage>();
 
         // 1. $match — filter predicate.
@@ -74,8 +78,8 @@ internal sealed class MongoSelectLowerer
             stages.Add(new MongoLimitStage(select.Limit));
         }
 
-        // 5. $lookup/$unwind — cross-collection includes.
-        AppendLookupStages(select, stages);
+        // 5. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
+        AppendLookupStages(query, stages);
 
         return stages;
     }
@@ -84,13 +88,13 @@ internal sealed class MongoSelectLowerer
     /// Appends <see cref="MongoLookupStage"/> + <see cref="MongoUnwindStage"/> pairs for each lookup,
     /// after validating that the native pipeline can handle the lookup shape.
     /// </summary>
-    private static void AppendLookupStages(MongoQueryExpression select, List<MongoPipelineStage> stages)
+    private static void AppendLookupStages(MongoQueryExpression query, List<MongoPipelineStage> stages)
     {
-        var lookups = select.Lookups;
+        var lookups = query.Lookups;
 
         // Join-coverage guard: if this is a join query and there are fewer lookups than inner
         // collections, emitting a partial pipeline would silently drop a join and return wrong results.
-        if (select.IsJoinQuery && lookups.Count < select.InnerCollections.Count)
+        if (query.IsJoinQuery && lookups.Count < query.InnerCollections.Count)
         {
             throw new NativeTranslationNotSupportedException(
                 "Native pipeline does not support this join shape (only single-level reference includes).");

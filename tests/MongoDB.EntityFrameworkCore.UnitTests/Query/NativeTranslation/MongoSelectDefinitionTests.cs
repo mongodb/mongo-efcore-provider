@@ -20,12 +20,11 @@ using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// Tests for the native-translation logical-slot additions on <see cref="MongoQueryExpression"/>.
-/// These slots are the "MongoSelectExpression" described in the EF-323 design; they are implemented
-/// in-place on <see cref="MongoQueryExpression"/> to avoid churning the QMTEV / shaper / factory
-/// plumbing (controller decision).
+/// Tests for the native-translation logical query IR, <see cref="MongoSelectDefinition"/> (the
+/// "MongoSelectExpression" of the EF-323 design), composed into <see cref="MongoQueryExpression"/>
+/// via its <see cref="MongoQueryExpression.Select"/> property.
 /// </summary>
-public class MongoSelectExpressionTests
+public class MongoSelectDefinitionTests
 {
     private class StubEntity
     {
@@ -33,11 +32,11 @@ public class MongoSelectExpressionTests
         public string Name { get; set; } = "";
     }
 
-    private static MongoQueryExpression TestSelect()
+    private static MongoSelectDefinition TestSelect()
     {
         using var db = SingleEntityDbContext.Create<StubEntity>();
         var entityType = db.Model.GetEntityTypes().First();
-        return new MongoQueryExpression(entityType);
+        return new MongoQueryExpression(entityType).Select;
     }
 
     [Fact]
