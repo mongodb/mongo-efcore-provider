@@ -123,9 +123,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 #endif
                 case nameof(Queryable.DefaultIfEmpty) when methodDefinition == QueryableMethods.DefaultIfEmptyWithArgument
                                                            || methodDefinition == QueryableMethods.DefaultIfEmptyWithoutArgument:
-                // All four GroupBy overloads route to TranslateGroupBy; unsupported shapes (element/result
-                // selectors) return null there and fail cleanly, rather than falling through to the no-op
-                // capture path below.
+                // All four GroupBy overloads route to TranslateGroupBy (key, element, result, and
+                // element+result selectors are all handled there); unsupported shapes (grouping over a
+                // join/lookup source) return null and fail cleanly, rather than falling through to the
+                // no-op capture path below.
                 case nameof(Queryable.GroupBy) when methodDefinition == QueryableMethods.GroupByWithKeySelector
                                                     || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector
                                                     || methodDefinition == QueryableMethods.GroupByWithKeyResultSelector
