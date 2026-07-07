@@ -183,9 +183,10 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_mode_throws_on_unrepresentable_query));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // A scalar projection is not natively representable; NativeOnly forbids the driver fallback, so the
-        // query must throw at compile time.
-        var query = db.Entities.Where(c => c.Score > 15).Select(c => new { c.Name, c.Score });
+        // A computed projection is not natively representable (native $project pushdown only handles member
+        // access, not arithmetic); NativeOnly forbids the driver fallback, so the query must throw at
+        // compile time.
+        var query = db.Entities.Where(c => c.Score > 15).Select(c => new { Doubled = c.Score * 2 });
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
     }

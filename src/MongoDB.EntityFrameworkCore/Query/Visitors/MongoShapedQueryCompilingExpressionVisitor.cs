@@ -161,6 +161,22 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         VerifyNoClientConstant(shapedQueryExpression.ShaperExpression);
 
+        var queryMode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+
+        // Native projection pushdown (SP3): a terminal member-access anonymous/DTO Select was lowered to a
+        // $project slot in the QMTEV. Emit it as a native pipeline and shape the projected documents with the
+        // DOM binding-removing shaper (which reads each field by its projection alias). Placed before the
+        // NativeOnly guard so a representable projection succeeds natively instead of being rejected.
+        if (queryMode != MongoQueryMode.DriverLinq
+            && mongoQueryExpression.Select.IsNativeRepresentable
+            && mongoQueryExpression.Select.Projection.Count > 0)
+        {
+            return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
+                (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
+                    rootEntityType, mongoQueryExpression, bsonDoc, behavior),
+                allowStreaming: false);
+        }
+
         // A projected query (anonymous/scalar projection, scalar aggregate, or a mixed projection containing
         // entity references) is never shaped from a full native document — it runs through the driver-LINQ
         // push-down path or the mixed client-side shaper. The native pipeline only covers full-entity results,
@@ -169,7 +185,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // IsNativeRepresentable for a pushed-down projection — the projection can be realized entirely in the
         // shaper without a translated Select node — so the projected-path gate keys off routing here, not the
         // representable flag.)
-        if (((MongoQueryCompilationContext)QueryCompilationContext).QueryMode == MongoQueryMode.NativeOnly)
+        if (queryMode == MongoQueryMode.NativeOnly)
         {
             throw new NativeTranslationNotSupportedException(
                 "Query projects a non-entity result and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
@@ -242,7 +258,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         ShapedQueryExpression shapedQueryExpression,
         MongoQueryExpression mongoQueryExpression,
         IEntityType rootEntityType,
-        Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor> createBindingRemover)
+        Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor> createBindingRemover,
+        bool allowStreaming = true)
     {
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
         var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
@@ -261,7 +278,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // and every cross-collection join is a streamable single-level reference lookup the streaming reader
         // can read back. Otherwise the native pipeline (if any) returns full BsonDocuments shaped by the DOM
         // shaper, exactly as the driver-LINQ path does.
-        var streaming = nativeFactory != null
+        var streaming = allowStreaming
+            && nativeFactory != null
             && shapedQueryExpression.ResultCardinality == ResultCardinality.Enumerable
             && StreamingEligibility.IsEligible(rootEntityType)
             && AllPendingLookupsAreStreamableReferences(mongoQueryExpression);

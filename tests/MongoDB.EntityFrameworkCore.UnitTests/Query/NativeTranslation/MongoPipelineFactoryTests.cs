@@ -330,4 +330,26 @@ public class MongoPipelineFactoryTests
 
         Assert.Equal(inlineResult[0], paramResult[0]);
     }
+
+    // ------------------------------------------------------------------
+    // $project stage rendering
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Project_stage_renders_alias_to_field_ref_with_id_suppressed()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var stage = new MongoProjectStage(new[]
+        {
+            new MongoProjection("Name", new MongoFieldExpression(nameProperty, "Name"))
+        });
+
+        var factory = MongoPipelineFactory.Create(new MongoPipelineStage[] { stage }, new MongoQueryLanguageRenderer());
+        var pipeline = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(pipeline);
+        var project = pipeline[0]["$project"].AsBsonDocument;
+        Assert.Equal("$Name", project["Name"].AsString);
+        Assert.Equal(0, project["_id"].AsInt32);
+    }
 }

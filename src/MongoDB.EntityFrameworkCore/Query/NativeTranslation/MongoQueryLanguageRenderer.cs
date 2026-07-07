@@ -280,7 +280,7 @@ internal sealed class MongoQueryLanguageRenderer
                                        or InvalidOperationException)
         {
             throw new NativeTranslationNotSupportedException(
-                $"Native predicate translation cannot serialize value '{value}' for property '{property.Name}'.");
+                $"Native predicate translation cannot serialize the constant value for property '{property.Name}'.");
         }
     }
 

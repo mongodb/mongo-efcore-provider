@@ -36,6 +36,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 internal sealed class MongoSelectDefinition
 {
     private readonly List<MongoOrdering> _orderings = [];
+    private readonly List<MongoProjection> _projections = [];
 
     // ── Predicate ────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,20 @@ internal sealed class MongoSelectDefinition
     /// The number of documents to skip before returning results, or <see langword="null"/> for no offset.
     /// </summary>
     public MongoExpression? Offset { get; set; }
+
+    // ── Projection ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The output fields of a server-side <c>$project</c> stage, in order. Empty means no projection
+    /// (whole-entity results) — the entity path never populates this.
+    /// </summary>
+    public IReadOnlyList<MongoProjection> Projection => _projections;
+
+    /// <summary>
+    /// Appends <paramref name="projection"/> to the projection list.
+    /// </summary>
+    public void AddProjection(MongoProjection projection)
+        => _projections.Add(projection);
 
     // ── Native-representable gate ─────────────────────────────────────────────────
 

@@ -85,6 +85,7 @@ internal sealed class MongoPipelineFactory
             MongoLimitStage limit => RenderLimit(limit, renderer, placeholders),
             MongoLookupStage lookup => RenderLookup(lookup.Lookup),
             MongoUnwindStage unwind => RenderUnwind(unwind.Lookup),
+            MongoProjectStage project => RenderProject(project, placeholders),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoPipelineFactory does not support stage type '{stage.GetType().Name}'.")
         };
@@ -109,6 +110,24 @@ internal sealed class MongoPipelineFactory
         }
 
         return new BsonDocument("$sort", body);
+    }
+
+    private static BsonDocument RenderProject(MongoProjectStage stage, PlaceholderTable placeholders)
+    {
+        var aggRenderer = new MongoAggregationExpressionRenderer();
+        var body = new BsonDocument();
+        foreach (var projection in stage.Projections)
+        {
+            body.Add(projection.Alias, aggRenderer.Render(projection.Expression, placeholders));
+        }
+
+        // Suppress the default _id unless the projection deliberately emits an "_id" output field.
+        if (!body.Contains("_id"))
+        {
+            body.Add("_id", 0);
+        }
+
+        return new BsonDocument("$project", body);
     }
 
     private static BsonDocument RenderSkip(

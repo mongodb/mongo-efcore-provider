@@ -40,6 +40,27 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
+    public void Anonymous_projection_after_filter_and_order_returns_correct_values()
+    {
+        // EF-331: terminal anonymous-type member-access projection after a filter and an OrderBy, under
+        // the file's default (Native) query mode. The Select is terminal (nothing follows it), so it is
+        // native-eligible and this exercises the real $project pushdown end-to-end.
+        var results = _db.Planets
+            .Where(p => p.orderFromSun > 4)
+            .OrderBy(p => p.name)
+            .Select(p => new { p.name, p.orderFromSun })
+            .ToList();
+
+        Assert.Equal(4, results.Count); // Jupiter, Neptune, Saturn, Uranus
+        Assert.All(results, r =>
+        {
+            Assert.False(string.IsNullOrEmpty(r.name));
+            Assert.InRange(r.orderFromSun, 5, 8);
+        });
+        Assert.Equal(["Jupiter", "Neptune", "Saturn", "Uranus"], results.Select(r => r.name));
+    }
+
+    [Fact]
     public void Select_projection_to_anonymous()
     {
         var results = _db.Planets.Take(10).Select(p => new {Name = p.name, Order = p.orderFromSun});
@@ -1277,6 +1298,48 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
 
         Assert.NotNull(result);
         Assert.Equal("Mercury", result);
+    }
+
+    [Fact]
+    public void Select_projection_after_orderby_take_returns_correct_paged_rows()
+    {
+        // EF-331: locks in that paging (Take) composed BEFORE a terminal Select still returns the correct
+        // rows — i.e. $limit is applied before $project in the emitted pipeline. FunctionalTests has no
+        // MQL-capture helper available (TestMqlLoggerFactory / AssertMql live only in the
+        // SpecificationTests project), so this is a correctness check rather than a direct pipeline-stage
+        // assertion: OrderBy ascending by orderFromSun, Take(2) must yield Mercury/Venus (orders 1 and 2),
+        // which would be wrong if $project ran first and dropped orderFromSun before $limit could use it,
+        // or if the stage ordering were otherwise reversed.
+        var results = _db.Planets
+            .OrderBy(p => p.orderFromSun)
+            .Select(p => new { p.name, p.orderFromSun })
+            .Take(2)
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("Mercury", results[0].name);
+        Assert.Equal(1, results[0].orderFromSun);
+        Assert.Equal("Venus", results[1].name);
+        Assert.Equal(2, results[1].orderFromSun);
+    }
+
+    [Fact]
+    public void Select_projection_with_case_differing_members_falls_back_and_throws()
+    {
+        // EF-331: an anonymous-type projection with two members differing only by case (Name / name) is
+        // legal C# but the native $project pushdown guard forces a driver-LINQ fallback (Mongo field
+        // names are case-sensitive at the wire level, so the naive alias mapping would collide).
+        // Investigating this shape (intending to assert the fallback still returns correct values for
+        // BOTH members) revealed that the driver-LINQ provider itself cannot represent a case-colliding
+        // anonymous-type constructor at all — it throws ExpressionNotSupportedException independently of
+        // this provider's native/fallback routing. That is safe behavior (a clear failure beats a
+        // silently dropped/null field), so this test locks in the throw rather than a returned-values
+        // assertion; it will catch a regression to a silent wrong-data result.
+        Assert.ThrowsAny<Exception>(() =>
+            _db.Planets
+                .Where(p => p.name == "Earth")
+                .Select(p => new { Name = p.name, name = p.hasRings })
+                .ToList());
     }
 
     public void Dispose()

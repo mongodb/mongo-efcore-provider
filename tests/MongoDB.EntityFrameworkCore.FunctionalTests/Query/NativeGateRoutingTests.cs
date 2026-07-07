@@ -387,4 +387,100 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         Assert.False(WentNative(collection,
             q => q.OfType<Cat>().OrderBy(c => c.Name).ToList(), TphModel));
     }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    //  Shape D — native projection pushdown (EF-331): terminal anonymous member-access Select
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+
+    private class Customer
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Age { get; set; }
+    }
+
+    private IMongoCollection<Customer> SeedCustomer(string name)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        coll.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Age", 30 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Age", 17 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Age", 45 } },
+        ]);
+        return database.MongoDatabase.GetCollection<Customer>(coll.CollectionNamespace.CollectionName);
+    }
+
+    [Fact]
+    public void D_anonymous_member_projection_runs_native_under_NativeOnly()
+    {
+        var collection = SeedCustomer(nameof(D_anonymous_member_projection_runs_native_under_NativeOnly));
+
+        // Under NativeOnly a driver-LINQ fallback throws; success proves the $project went native.
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var results = db.Entities
+            .Where(c => c.Age > 21)
+            .Select(c => new { c.Name, c.Age })
+            .ToList();
+
+        Assert.NotNull(results);
+        Assert.Equal(2, results.Count);
+    }
+
+    [Fact]
+    public void D_computed_projection_throws_under_NativeOnly()
+    {
+        var collection = SeedCustomer(nameof(D_computed_projection_throws_under_NativeOnly));
+
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => db.Entities.Select(c => new { Doubled = c.Age * 2 }).ToList());
+    }
+
+    [Fact]
+    public void D_renamed_alias_projection_runs_native_under_NativeOnly_and_carries_correct_values()
+    {
+        // EF-331: proves the alias -> element indirection ({ Renamed: "$Name" }) reads back correctly under
+        // the renamed member. Under NativeOnly a driver-LINQ fallback would throw; success proves the
+        // $project went native, and the value assertions prove the alias correctly maps to the source field.
+        var collection = SeedCustomer(nameof(D_renamed_alias_projection_runs_native_under_NativeOnly_and_carries_correct_values));
+
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var results = db.Entities
+            .OrderBy(c => c.Name)
+            .Select(c => new { Renamed = c.Name, c.Age })
+            .ToList();
+
+        Assert.Equal(3, results.Count);
+        Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.Renamed));
+        Assert.Contains(results, r => r.Renamed == "Alice" && r.Age == 30);
+        Assert.Contains(results, r => r.Renamed == "Bob" && r.Age == 17);
+        Assert.Contains(results, r => r.Renamed == "Carol" && r.Age == 45);
+    }
+
+    private sealed class CustomerDto
+    {
+        public string Name { get; set; } = "";
+        public int Age { get; set; }
+    }
+
+    [Fact]
+    public void D_member_init_dto_projection_runs_native_under_NativeOnly_and_carries_correct_values()
+    {
+        // EF-331: covers the MemberInitExpression arm of the projection translator (distinct from the
+        // anonymous-type arm exercised above). Under NativeOnly a driver-LINQ fallback would throw;
+        // success proves the $project went native for a named-DTO member-init projection.
+        var collection = SeedCustomer(nameof(D_member_init_dto_projection_runs_native_under_NativeOnly_and_carries_correct_values));
+
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var results = db.Entities
+            .OrderBy(c => c.Name)
+            .Select(c => new CustomerDto { Name = c.Name, Age = c.Age })
+            .ToList();
+
+        Assert.Equal(3, results.Count);
+        Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.Name));
+        Assert.Contains(results, r => r.Name == "Alice" && r.Age == 30);
+        Assert.Contains(results, r => r.Name == "Bob" && r.Age == 17);
+        Assert.Contains(results, r => r.Name == "Carol" && r.Age == 45);
+    }
 }

@@ -170,4 +170,54 @@ public class SlotPopulationTests
 
         Assert.False(mongoQ.Select.IsNativeRepresentable);
     }
+
+    // ── Test 5: Native projection slot population (EF-331 Task 4) ────────────────
+
+    [Fact]
+    public void Anonymous_member_projection_populates_projection_slot()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { c.Name, c.Age }));
+
+        Assert.True(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Equal(2, mongoQuery.Select.Projection.Count);
+        Assert.Equal("Name", mongoQuery.Select.Projection[0].Alias);
+        Assert.Equal("Age", mongoQuery.Select.Projection[1].Alias);
+        Assert.IsType<MongoFieldExpression>(mongoQuery.Select.Projection[0].Expression);
+    }
+
+    [Fact]
+    public void Computed_member_projection_is_not_native()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Doubled = c.Age * 2 }));
+
+        Assert.False(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    [Fact]
+    public void Bare_scalar_projection_is_not_native()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => c.Name));
+
+        Assert.False(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    [Fact]
+    public void Cast_member_projection_is_not_native()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Position = (long)c.Age }));
+
+        Assert.False(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    [Fact]
+    public void Case_insensitively_colliding_projection_aliases_are_not_native()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Name = c.Name, name = c.Age }));
+
+        Assert.False(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
 }

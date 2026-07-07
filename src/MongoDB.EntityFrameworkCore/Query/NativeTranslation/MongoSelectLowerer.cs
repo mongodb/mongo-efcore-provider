@@ -81,6 +81,13 @@ internal sealed class MongoSelectLowerer
         // 5. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
         AppendLookupStages(query, stages);
 
+        // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Last in
+        // canonical order: the projection is the final logical operation for the SP3 terminal slice.
+        if (select.Projection.Count > 0)
+        {
+            stages.Add(new MongoProjectStage(select.Projection));
+        }
+
         return stages;
     }
 

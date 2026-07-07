@@ -175,7 +175,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
         if (!IsTransparentIdentifierSelector(selector))
         {
-            mongoQueryExpression.Select.IsNativeRepresentable = false;
+            // Native projection pushdown (SP3): a terminal anonymous-type / DTO projection whose leaves are
+            // all top-level member accesses only is lowered to a $project stage. Anything else (bare scalar, computed
+            // leaves, entity references, non-member bindings) is not natively representable and falls back.
+            if (!TryPopulateNativeProjection(mongoQueryExpression, selector))
+            {
+                mongoQueryExpression.Select.IsNativeRepresentable = false;
+            }
         }
 
         var newSelectorBody =
@@ -199,8 +205,78 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return false;
 
         var typeName = newExpr.Type.Name;
-        return typeName.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
-               || typeName.StartsWith("<>f__AnonymousType", StringComparison.Ordinal);
+        if (!typeName.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
+            && !typeName.StartsWith("<>f__AnonymousType", StringComparison.Ordinal))
+            return false;
+
+        // The compiler-generated type-name prefix alone is ambiguous: EF's Join/GroupJoin/LeftJoin rewrite
+        // and a user's own two-member anonymous-type projection (e.g. Select(c => new { c.Name, c.Age }))
+        // both produce a "<>f__AnonymousType..." NewExpression. A genuine transparent identifier has exactly
+        // two members, literally named "Outer"/"Inner", each bound directly to one of the lambda's own
+        // parameters with no further transformation — that shape is what actually distinguishes it.
+        return newExpr.Members is { Count: 2 } members
+               && members[0].Name == "Outer" && members[1].Name == "Inner"
+               && newExpr.Arguments[0] is ParameterExpression
+               && newExpr.Arguments[1] is ParameterExpression;
+    }
+
+    // Attempts to populate the native $project slot from a terminal member-access anonymous/DTO selector.
+    // Returns true (and fills mongoQ.Select.Projection) only when EVERY leaf is a plain member access the
+    // translator can resolve to a document field; otherwise returns false and leaves the slot empty.
+    private static bool TryPopulateNativeProjection(MongoQueryExpression mongoQ, LambdaExpression selector)
+    {
+        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+        var projections = new List<MongoProjection>();
+        // EF's MongoQueryExpression.AddToProjection disambiguates aliases case-insensitively (appending a
+        // counter on collision). If two members here differ only by case, the DOM shaper would read the
+        // disambiguated alias while the native $project emits the un-disambiguated one, silently dropping
+        // a value. Bail to driver-LINQ rather than risk that.
+        var seenAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        switch (selector.Body)
+        {
+            case NewExpression newExpression
+                when newExpression.Members != null
+                     && newExpression.Members.Count == newExpression.Arguments.Count
+                     && newExpression.Arguments.Count > 0:
+                for (var i = 0; i < newExpression.Arguments.Count; i++)
+                {
+                    if (newExpression.Arguments[i] is not MemberExpression)
+                        return false;
+                    if (!translator.TryTranslateField(newExpression.Arguments[i], out var field))
+                        return false;
+                    var alias = newExpression.Members[i].Name;
+                    if (!seenAliases.Add(alias))
+                        return false;
+                    projections.Add(new MongoProjection(alias, field));
+                }
+                break;
+
+            case MemberInitExpression memberInit
+                when memberInit.NewExpression.Arguments.Count == 0
+                     && memberInit.Bindings.Count > 0:
+                foreach (var binding in memberInit.Bindings)
+                {
+                    if (binding is not MemberAssignment assignment)
+                        return false;
+                    if (assignment.Expression is not MemberExpression)
+                        return false;
+                    if (!translator.TryTranslateField(assignment.Expression, out var field))
+                        return false;
+                    var alias = binding.Member.Name;
+                    if (!seenAliases.Add(alias))
+                        return false;
+                    projections.Add(new MongoProjection(alias, field));
+                }
+                break;
+
+            default:
+                return false;
+        }
+
+        foreach (var projection in projections)
+            mongoQ.Select.AddProjection(projection);
+        return true;
     }
 
     protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
@@ -715,7 +791,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            || methodDefinition == QueryableMethods.ThenBy
            || methodDefinition == QueryableMethods.ThenByDescending
            || methodDefinition == QueryableMethods.Skip
-           || methodDefinition == QueryableMethods.Take;
+           || methodDefinition == QueryableMethods.Take
+           || methodDefinition == QueryableMethods.Select
+           || methodDefinition == QueryableMethods.OfType;
 
     #region Never called by visit as translation is handled by C# Driver LINQ (with some minor tweaks)
 

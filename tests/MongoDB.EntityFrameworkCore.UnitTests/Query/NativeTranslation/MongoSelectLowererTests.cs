@@ -163,4 +163,32 @@ public class MongoSelectLowererTests
         Assert.Same(keyExpr, ordering.KeySelector);
         Assert.True(ordering.Ascending);
     }
+
+    // ── Test 9: Projection lowers to a project stage last ──────────────────────────
+
+    [Fact]
+    public void Projection_lowers_to_a_project_stage_last()
+    {
+        var query = TestSelect();
+        query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
+        query.Select.AddProjection(new MongoProjection("Name", new MongoConstantExpression(0, null)));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.IsType<MongoMatchStage>(stages[0]);
+        var project = Assert.IsType<MongoProjectStage>(stages[^1]);
+        Assert.Single(project.Projections);
+        Assert.Equal("Name", project.Projections[0].Alias);
+    }
+
+    [Fact]
+    public void No_projection_produces_no_project_stage()
+    {
+        var query = TestSelect();
+        query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.DoesNotContain(stages, s => s is MongoProjectStage);
+    }
 }

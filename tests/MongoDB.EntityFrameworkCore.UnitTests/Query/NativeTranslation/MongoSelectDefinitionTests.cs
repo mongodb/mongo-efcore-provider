@@ -56,4 +56,23 @@ public class MongoSelectDefinitionTests
     [Fact]
     public void New_select_is_native_representable_by_default()
         => Assert.True(TestSelect().IsNativeRepresentable);
+
+    [Fact]
+    public void AddProjection_appends_in_order_to_Projection()
+    {
+        var select = TestSelect();
+        var a = new MongoProjection("Name", new MongoConstantExpression(1, null));
+        var b = new MongoProjection("Age", new MongoConstantExpression(2, null));
+
+        select.AddProjection(a);
+        select.AddProjection(b);
+
+        Assert.Equal(2, select.Projection.Count);
+        Assert.Equal("Name", select.Projection[0].Alias);
+        Assert.Equal("Age", select.Projection[1].Alias);
+    }
+
+    [Fact]
+    public void New_select_has_empty_projection()
+        => Assert.Empty(TestSelect().Projection);
 }

@@ -228,7 +228,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     }
 
     /// <summary>
-    /// Obtains the current <see cref="MongoQueryMode"/> that controls how LINQ queries are translated.
+    /// Gets the <see cref="MongoQueryMode"/> that controls how LINQ queries are translated.
     /// </summary>
     public MongoQueryMode QueryMode { get; private set; } = MongoQueryMode.Native;
 

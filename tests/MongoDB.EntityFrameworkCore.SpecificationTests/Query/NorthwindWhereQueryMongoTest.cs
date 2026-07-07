@@ -2073,19 +2073,19 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """,
             //
             """
-            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """,
             //
             """
-            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """,
             //
             """
-            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """);
     }
 
