@@ -287,9 +287,8 @@ public class MongoQueryLanguageRendererTests
         // MongoConstantExpression(5, forSerialization: null) — Skip/Take count
         var constant = new MongoConstantExpression(5, forSerialization: null);
         var placeholders = new PlaceholderTable();
-        var renderer = new MongoQueryLanguageRenderer();
 
-        var result = renderer.RenderValue(constant, placeholders);
+        var result = MongoValueRenderer.RenderValue(constant, placeholders);
 
         Assert.Equal(new BsonInt32(5), result);
     }
@@ -305,9 +304,8 @@ public class MongoQueryLanguageRendererTests
         // MongoParameterExpression("p", forSerialization: null) — Skip/Take count
         var parameter = new MongoParameterExpression("p", forSerialization: null);
         var placeholders = new PlaceholderTable();
-        var renderer = new MongoQueryLanguageRenderer();
 
-        var result = renderer.RenderValue(parameter, placeholders);
+        var result = MongoValueRenderer.RenderValue(parameter, placeholders);
 
         // Must record a placeholder entry with null serializer.
         Assert.Single(placeholders.Entries);

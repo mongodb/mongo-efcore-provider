@@ -25,13 +25,16 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <c>$match → $sort → $skip → $limit → $lookup/$unwind</c>.
 /// </summary>
 /// <remarks>
+/// <para>
 /// This lowerer is BSON-free. It produces typed stage IR objects only; BSON rendering is the
-/// responsibility of the downstream pipeline renderer (Task 9). Empty slots are dropped (no
+/// responsibility of the downstream pipeline renderer/factory. Empty slots are dropped (no
 /// predicate means no <see cref="MongoMatchStage"/>, and so on).
-///
+/// </para>
+/// <para>
 /// Lookup eligibility is guarded here. If the query contains a lookup shape the native pipeline
-/// cannot handle, a <see cref="NativeTranslationNotSupportedException"/> is thrown. The calling
-/// gate (Task 14) catches this and falls back to the driver-LINQ path.
+/// cannot handle, a <see cref="NativeTranslationNotSupportedException"/> is thrown. The compile-time
+/// gate catches this and falls back to the driver-LINQ path.
+/// </para>
 /// </remarks>
 internal sealed class MongoSelectLowerer
 {

@@ -168,8 +168,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // DOM binding-removing shaper (which reads each field by its projection alias). Placed before the
         // NativeOnly guard so a representable projection succeeds natively instead of being rejected.
         if (queryMode != MongoQueryMode.DriverLinq
-            && mongoQueryExpression.Select.IsNativeRepresentable
-            && mongoQueryExpression.Select.Projection.Count > 0)
+            && mongoQueryExpression.Select.Route == NativeRoute.Projection)
         {
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
                 (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
@@ -181,15 +180,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // entity references) is never shaped from a full native document — it runs through the driver-LINQ
         // push-down path or the mixed client-side shaper. The native pipeline only covers full-entity results,
         // so a projected query is outside the native parity slice. Under NativeOnly the driver fallback is
-        // forbidden, so any projected query is a compile-time coverage failure. (The QMTEV does not always flip
-        // IsNativeRepresentable for a pushed-down projection — the projection can be realized entirely in the
-        // shaper without a translated Select node — so the projected-path gate keys off routing here, not the
-        // representable flag.)
-        if (queryMode == MongoQueryMode.NativeOnly)
-        {
-            throw new NativeTranslationNotSupportedException(
-                "Query projects a non-entity result and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
-        }
+        // forbidden, so any projected query is a compile-time coverage failure. (The gate now keys off the
+        // single Select.Route predicate — NativeRoute.Projection encodes both "representable" and "has a
+        // projection" — so this projected-path gate keys off routing here, not a separate representable flag.)
+        ThrowIfNativeOnlyForbidsFallback(queryMode, "Query projects a non-entity result");
 
         if (ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression))
         {
@@ -410,10 +404,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // gate still measures representability (below) — a representable reducer is not a coverage failure.
         if (resultCardinality != ResultCardinality.Enumerable)
         {
-            if (mode == MongoQueryMode.NativeOnly && !mongoQueryExpression.Select.IsNativeRepresentable)
+            if (mongoQueryExpression.Select.Route == NativeRoute.Fallback)
             {
-                throw new NativeTranslationNotSupportedException(
-                    "Query is not natively representable and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
+                ThrowIfNativeOnlyForbidsFallback(mode, "Query is not natively representable");
             }
 
             return null;
@@ -423,14 +416,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // VectorSearch call) and carries the index-resolution / zero-results diagnostics. The native lowerer
         // reads only the logical slots and never the captured chain, so it would silently drop the vector
         // search. Vector search is therefore not natively representable; keep it on the driver path.
-        if (!mongoQueryExpression.Select.IsNativeRepresentable || ContainsVectorSearch(mongoQueryExpression.CapturedExpression))
+        if (mongoQueryExpression.Select.Route == NativeRoute.Fallback || ContainsVectorSearch(mongoQueryExpression.CapturedExpression))
         {
-            if (mode == MongoQueryMode.NativeOnly)
-            {
-                throw new NativeTranslationNotSupportedException(
-                    "Query is not natively representable and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
-            }
-
+            ThrowIfNativeOnlyForbidsFallback(mode, "Query is not natively representable");
             return null;
         }
 
@@ -444,6 +432,19 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             // A representable query whose lookup shape (or other stage) the native pipeline can't emit:
             // fall back to the driver-LINQ path. Under NativeOnly this rethrows as the coverage instrument.
             return null;
+        }
+    }
+
+    // Under MongoQueryMode.NativeOnly the driver-LINQ fallback is forbidden, so a query the native path cannot
+    // handle is a compile-time coverage failure rather than a silent fallback. Centralizes that policy so every
+    // gate site throws the same way; callers guard on the specific non-representable condition and pass the
+    // reason phrase. A no-op under Native / DriverLinq.
+    private static void ThrowIfNativeOnlyForbidsFallback(MongoQueryMode mode, string reason)
+    {
+        if (mode == MongoQueryMode.NativeOnly)
+        {
+            throw new NativeTranslationNotSupportedException(
+                $"{reason} and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
         }
     }
 

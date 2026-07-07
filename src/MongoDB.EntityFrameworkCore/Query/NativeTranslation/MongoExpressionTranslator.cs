@@ -30,13 +30,16 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// or sort document.
 /// </summary>
 /// <remarks>
+/// <para>
 /// This is a compile-time-only translator: it produces a <em>template</em> tree where
 /// captured constants become <see cref="MongoConstantExpression"/> nodes baked into the
 /// template, and query parameters become <see cref="MongoParameterExpression"/> placeholder
 /// nodes that are resolved per execution (the B2 binding step).
-///
+/// </para>
+/// <para>
 /// Returns <see langword="false"/> for any shape outside the parity acceptance set rather
 /// than throwing, so callers can fall back to the driver-LINQ path gracefully.
+/// </para>
 /// </remarks>
 internal sealed class MongoExpressionTranslator
 {
@@ -490,7 +493,7 @@ internal sealed class MongoExpressionTranslator
     /// <c>string.StartsWith(string)</c>/<c>EndsWith(string)</c>/<c>Contains(string)</c> — the only
     /// overloads the driver-LINQ v3 provider translates for these methods (it throws
     /// <c>ExpressionNotSupportedException</c> for the <c>StringComparison</c>-taking overloads, confirmed
-    /// empirically under <c>MongoQueryMode.DriverLinq</c> — see Task 6 report). Matching only this overload
+    /// empirically under <c>MongoQueryMode.DriverLinq</c>). Matching only this overload
     /// keeps native and fallback behavior identical: anything else (a <see cref="StringComparison"/> arg,
     /// or a receiver that isn't <see cref="string"/>) is left unmatched here and falls through to the
     /// driver-LINQ path unchanged.

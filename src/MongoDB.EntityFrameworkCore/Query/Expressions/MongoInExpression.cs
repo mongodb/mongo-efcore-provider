@@ -23,6 +23,12 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoInExpression : MongoExpression
 {
+    /// <summary>
+    /// Creates a <see cref="MongoInExpression"/>.
+    /// </summary>
+    /// <param name="field">The document field being tested for membership.</param>
+    /// <param name="values">The candidate values to test against.</param>
+    /// <param name="negated"><see langword="true"/> for negated membership (the value is not in the set).</param>
     public MongoInExpression(MongoFieldExpression field, MongoExpression values, bool negated)
     {
         Field = field;

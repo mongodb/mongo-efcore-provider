@@ -54,8 +54,27 @@ public class MongoSelectDefinitionTests
     }
 
     [Fact]
-    public void New_select_is_native_representable_by_default()
-        => Assert.True(TestSelect().IsNativeRepresentable);
+    public void Route_defaults_to_whole_entity()
+        => Assert.Equal(NativeRoute.WholeEntity, TestSelect().Route);
+
+    [Fact]
+    public void Route_is_projection_when_a_projection_is_added()
+    {
+        var select = TestSelect();
+        select.AddProjection(new MongoProjection("a", new MongoConstantExpression(1, null)));
+
+        Assert.Equal(NativeRoute.Projection, select.Route);
+    }
+
+    [Fact]
+    public void Route_is_fallback_after_MarkNotNativelyRepresentable()
+    {
+        var select = TestSelect();
+        select.AddProjection(new MongoProjection("a", new MongoConstantExpression(1, null)));
+        select.MarkNotNativelyRepresentable();
+
+        Assert.Equal(NativeRoute.Fallback, select.Route);
+    }
 
     [Fact]
     public void AddProjection_appends_in_order_to_Projection()

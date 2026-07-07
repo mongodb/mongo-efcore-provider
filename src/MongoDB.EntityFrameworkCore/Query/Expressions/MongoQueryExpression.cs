@@ -47,8 +47,9 @@ internal sealed partial class MongoQueryExpression : Expression
     public MongoCollectionExpression CollectionExpression { get; private set; }
 
     /// <summary>
-    /// The native-translation logical query IR (filter / sort / paging) for this collection.
-    /// The QMTEV populates its slots; the gate and lowerer read them. The property is get-only —
+    /// The native-translation logical query IR (filter / sort / paging / projection) for this collection.
+    /// <c>NativeSlotPopulator</c> / <c>NativeProjectionBinder</c> (invoked by the QMTEV) populate its slots;
+    /// the gate and lowerer read them. The property is get-only —
     /// callers mutate the <see cref="MongoSelectDefinition"/>'s members, they never reassign it.
     /// </summary>
     public MongoSelectDefinition Select { get; } = new();

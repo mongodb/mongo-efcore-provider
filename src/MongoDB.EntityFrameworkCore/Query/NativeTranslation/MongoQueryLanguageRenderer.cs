@@ -39,13 +39,12 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <see cref="MongoConstantExpression"/> values are serialized inline using the
 /// <see cref="IProperty"/> carried inside the node, and baked into the returned template.
 /// <see cref="MongoParameterExpression"/> sites are recorded as placeholder sentinels in
-/// the supplied <see cref="PlaceholderTable"/> for per-execution substitution by Task 10.
+/// the supplied <see cref="PlaceholderTable"/> for per-execution substitution by the pipeline
+/// factory (<see cref="MongoPipelineFactory.Build"/>).
 /// </para>
 /// </remarks>
 internal sealed class MongoQueryLanguageRenderer
 {
-    private readonly MongoAggregationExpressionRenderer _aggRenderer = new();
-
     /// <summary>
     /// Renders <paramref name="predicate"/> to a <c>$match</c>-filter body.
     /// </summary>
@@ -99,7 +98,7 @@ internal sealed class MongoQueryLanguageRenderer
         => b.Left is MongoFieldExpression && b.Right is MongoConstantExpression or MongoParameterExpression;
 
     private BsonDocument RenderAsExpr(MongoExpression node, PlaceholderTable placeholders)
-        => new BsonDocument("$expr", _aggRenderer.Render(node, placeholders));
+        => new BsonDocument("$expr", MongoAggregationExpressionRenderer.Render(node, placeholders));
 
     private BsonDocument RenderComparison(MongoBinaryExpression binary, PlaceholderTable placeholders)
     {
@@ -110,7 +109,7 @@ internal sealed class MongoQueryLanguageRenderer
                 $"Expected MongoFieldExpression on the left side of a comparison; got '{binary.Left.GetType().Name}'.");
 
         var elementName = field.ElementName;
-        var value = RenderValue(binary.Right, placeholders);
+        var value = MongoValueRenderer.RenderValue(binary.Right, placeholders);
 
         var op = binary.Operator switch
         {
@@ -145,7 +144,8 @@ internal sealed class MongoQueryLanguageRenderer
 
         // !boolProperty → { field: { $ne: true } }
         // (Matches driver-LINQ rendering; also matches missing/null-field semantics.)
-        var trueValue = ToBsonValue(field.Property, true);
+        var trueValue = MongoValueRenderer.RenderValue(
+            new MongoConstantExpression(true, field.Property), placeholders);
         return new BsonDocument(field.ElementName, new BsonDocument("$ne", trueValue));
     }
 
@@ -156,7 +156,8 @@ internal sealed class MongoQueryLanguageRenderer
     private BsonDocument RenderBareField(MongoFieldExpression field, PlaceholderTable placeholders)
     {
         // A bare bool property used as a predicate → { field: true }
-        var trueValue = ToBsonValue(field.Property, true);
+        var trueValue = MongoValueRenderer.RenderValue(
+            new MongoConstantExpression(true, field.Property), placeholders);
         return new BsonDocument(field.ElementName, trueValue);
     }
 
@@ -179,7 +180,8 @@ internal sealed class MongoQueryLanguageRenderer
             {
                 var array = new BsonArray();
                 foreach (var item in items)
-                    array.Add(ToBsonValue(constant.ForSerialization!, item));
+                    array.Add(MongoValueRenderer.RenderValue(
+                        new MongoConstantExpression(item, constant.ForSerialization!), placeholders));
                 return array;
             }
             case MongoParameterExpression parameter:
@@ -201,7 +203,7 @@ internal sealed class MongoQueryLanguageRenderer
     /// shape the driver-LINQ v3 provider emits for <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>:
     /// <c>{ field: { $regularExpression: { pattern: "...", options: "s" } } }</c> (negated via an
     /// enclosing <c>$not</c>). Only a constant search term is baked into a native pattern; a parameterized
-    /// term is not supported here and must fall back to driver-LINQ (see Task 6 report).
+    /// term is not supported here and must fall back to driver-LINQ.
     /// </summary>
     private BsonDocument RenderRegex(MongoRegexExpression regex, PlaceholderTable placeholders)
     {
@@ -220,68 +222,12 @@ internal sealed class MongoQueryLanguageRenderer
 
         // Matches the driver-LINQ v3 rendering exactly: a BsonRegularExpression value (canonical extended
         // JSON: { $regularExpression: { pattern, options } }) with options "s" (dotall) — captured
-        // empirically from StartsWithContainsOrEndsWith translation under MongoQueryMode.DriverLinq.
+        // empirically by observing the translation under MongoQueryMode.DriverLinq.
         BsonValue body = new BsonRegularExpression(pattern, "s");
 
         return regex.Negated
             ? new BsonDocument(regex.Field.ElementName, new BsonDocument("$not", body))
             : new BsonDocument(regex.Field.ElementName, body);
-    }
-
-    // ------------------------------------------------------------------
-    // Value rendering (constants vs. parameters)
-    // ------------------------------------------------------------------
-
-    internal BsonValue RenderValue(MongoExpression node, PlaceholderTable placeholders)
-    {
-        switch (node)
-        {
-            case MongoConstantExpression constant:
-            {
-                if (constant.ForSerialization is null)
-                    return BsonValue.Create(constant.Value);
-                return ToBsonValue(constant.ForSerialization, constant.Value);
-            }
-
-            case MongoParameterExpression parameter:
-            {
-                if (parameter.ForSerialization is null)
-                    return placeholders.CreatePlaceholder(parameter.Name, serializer: null);
-                var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization);
-                return placeholders.CreatePlaceholder(parameter.Name, info.Serializer);
-            }
-
-            default:
-                throw new NativeTranslationNotSupportedException(
-                    $"Cannot render value node of type '{node.GetType().Name}'.");
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Serialization helper (ported verbatim from the spike MongoPredicateTranslator)
-    // ------------------------------------------------------------------
-
-    /// <summary>
-    /// Serializes <paramref name="value"/> to a <see cref="BsonValue"/> using the property's
-    /// serializer, coercing the CLR type first so the serializer's hard cast succeeds.
-    /// </summary>
-    private static BsonValue ToBsonValue(IProperty property, object? value)
-    {
-        var info = BsonSerializerFactory.GetPropertySerializationInfo(property);
-        try
-        {
-            // Coerce to the property's CLR type (compile-time path); the factory coerces to the
-            // serializer's ValueType — these differ for value-converted properties, so each call site
-            // passes its own target into the shared helper.
-            value = BsonValueSerializer.Coerce(property.ClrType, value);
-            return BsonValueSerializer.SerializeThroughWriter(info.Serializer, value);
-        }
-        catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException
-                                       or InvalidOperationException)
-        {
-            throw new NativeTranslationNotSupportedException(
-                $"Native predicate translation cannot serialize the constant value for property '{property.Name}'.");
-        }
     }
 
     // ------------------------------------------------------------------

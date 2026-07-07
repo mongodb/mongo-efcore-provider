@@ -13,11 +13,8 @@
  * limitations under the License.
  */
 
-using System;
-using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
-using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -27,19 +24,34 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// Used only for subtrees that have no correct query-dialect rendering (field-to-field
 /// comparisons, arithmetic operands); the query renderer wraps the result in <c>$expr</c>.
 /// </summary>
-internal sealed class MongoAggregationExpressionRenderer
+internal static class MongoAggregationExpressionRenderer
 {
-    public BsonValue Render(MongoExpression node, PlaceholderTable placeholders)
+    /// <summary>
+    /// Renders <paramref name="node"/> to an aggregation-expression <see cref="BsonValue"/>
+    /// (the body that sits inside <c>{ $expr: … }</c>).
+    /// </summary>
+    /// <param name="node">The root <see cref="MongoExpression"/> subtree to render.</param>
+    /// <param name="placeholders">
+    /// Receives one entry per <see cref="MongoParameterExpression"/> encountered.
+    /// Each entry's corresponding sentinel is embedded in the returned <see cref="BsonValue"/>.
+    /// </param>
+    /// <returns>
+    /// A <see cref="BsonValue"/> representing the aggregation-expression body.
+    /// </returns>
+    /// <exception cref="NativeTranslationNotSupportedException">
+    /// Thrown for any node type or operator not handled by this renderer.
+    /// </exception>
+    public static BsonValue Render(MongoExpression node, PlaceholderTable placeholders)
         => node switch
         {
             MongoFieldExpression field => "$" + field.ElementName,
-            MongoConstantExpression or MongoParameterExpression => RenderValue(node, placeholders),
+            MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
 
-    private BsonValue RenderBinary(MongoBinaryExpression binary, PlaceholderTable placeholders)
+    private static BsonValue RenderBinary(MongoBinaryExpression binary, PlaceholderTable placeholders)
     {
         var op = binary.Operator switch
         {
@@ -63,33 +75,5 @@ internal sealed class MongoAggregationExpressionRenderer
         var left = Render(binary.Left, placeholders);
         var right = Render(binary.Right, placeholders);
         return new BsonDocument(op, new BsonArray { left, right });
-    }
-
-    // Constants/parameters serialize exactly as in the query renderer so a constant and a
-    // parameter of the same value emit identical BSON.
-    private BsonValue RenderValue(MongoExpression node, PlaceholderTable placeholders)
-    {
-        switch (node)
-        {
-            case MongoConstantExpression constant:
-                return constant.ForSerialization is null
-                    ? BsonValue.Create(constant.Value)
-                    : SerializeConstant(constant.ForSerialization, constant.Value);
-            case MongoParameterExpression parameter:
-                if (parameter.ForSerialization is null)
-                    return placeholders.CreatePlaceholder(parameter.Name, serializer: null);
-                var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization);
-                return placeholders.CreatePlaceholder(parameter.Name, info.Serializer);
-            default:
-                throw new NativeTranslationNotSupportedException(
-                    $"Cannot render value node of type '{node.GetType().Name}'.");
-        }
-    }
-
-    private static BsonValue SerializeConstant(IProperty property, object? value)
-    {
-        var info = BsonSerializerFactory.GetPropertySerializationInfo(property);
-        value = BsonValueSerializer.Coerce(property.ClrType, value);
-        return BsonValueSerializer.SerializeThroughWriter(info.Serializer, value);
     }
 }

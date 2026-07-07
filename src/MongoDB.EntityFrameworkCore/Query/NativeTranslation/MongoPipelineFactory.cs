@@ -58,7 +58,7 @@ internal sealed class MongoPipelineFactory
     /// shared <see cref="PlaceholderTable"/>, then returns a <see cref="MongoPipelineFactory"/>
     /// that can bind parameter values per execution.
     /// </summary>
-    /// <param name="stages">The typed pipeline stages produced by the lowerer (Task 8).</param>
+    /// <param name="stages">The typed pipeline stages produced by the lowerer.</param>
     /// <param name="renderer">The renderer used to emit <c>$match</c> bodies and scalar values.</param>
     public static MongoPipelineFactory Create(
         IReadOnlyList<MongoPipelineStage> stages,
@@ -81,8 +81,8 @@ internal sealed class MongoPipelineFactory
         {
             MongoMatchStage match => RenderMatch(match, renderer, placeholders),
             MongoSortStage sort => RenderSort(sort),
-            MongoSkipStage skip => RenderSkip(skip, renderer, placeholders),
-            MongoLimitStage limit => RenderLimit(limit, renderer, placeholders),
+            MongoSkipStage skip => RenderSkip(skip, placeholders),
+            MongoLimitStage limit => RenderLimit(limit, placeholders),
             MongoLookupStage lookup => RenderLookup(lookup.Lookup),
             MongoUnwindStage unwind => RenderUnwind(unwind.Lookup),
             MongoProjectStage project => RenderProject(project, placeholders),
@@ -114,11 +114,10 @@ internal sealed class MongoPipelineFactory
 
     private static BsonDocument RenderProject(MongoProjectStage stage, PlaceholderTable placeholders)
     {
-        var aggRenderer = new MongoAggregationExpressionRenderer();
         var body = new BsonDocument();
         foreach (var projection in stage.Projections)
         {
-            body.Add(projection.Alias, aggRenderer.Render(projection.Expression, placeholders));
+            body.Add(projection.Alias, MongoAggregationExpressionRenderer.Render(projection.Expression, placeholders));
         }
 
         // Suppress the default _id unless the projection deliberately emits an "_id" output field.
@@ -132,15 +131,13 @@ internal sealed class MongoPipelineFactory
 
     private static BsonDocument RenderSkip(
         MongoSkipStage stage,
-        MongoQueryLanguageRenderer renderer,
         PlaceholderTable placeholders)
-        => new BsonDocument("$skip", renderer.RenderValue(stage.Offset, placeholders));
+        => new BsonDocument("$skip", MongoValueRenderer.RenderValue(stage.Offset, placeholders));
 
     private static BsonDocument RenderLimit(
         MongoLimitStage stage,
-        MongoQueryLanguageRenderer renderer,
         PlaceholderTable placeholders)
-        => new BsonDocument("$limit", renderer.RenderValue(stage.Limit, placeholders));
+        => new BsonDocument("$limit", MongoValueRenderer.RenderValue(stage.Limit, placeholders));
 
     private static BsonDocument RenderLookup(LookupExpression lookup)
         => new BsonDocument("$lookup", new BsonDocument

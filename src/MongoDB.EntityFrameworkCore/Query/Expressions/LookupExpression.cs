@@ -22,15 +22,16 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents a pending $lookup aggregation stage needed to include
-/// a cross-collection navigation property.
+/// Represents the pending data needed to build a <c>$lookup</c> aggregation stage for including
+/// a cross-collection navigation property. This is a data holder, not a pipeline stage itself —
+/// the lowerer/pipeline factory render it into the actual <c>$lookup</c>/<c>$unwind</c> stage documents.
 /// </summary>
 internal sealed class LookupExpression
 {
     /// <summary>
     /// Create a <see cref="LookupExpression"/> for the given navigation.
     /// </summary>
-    /// <param name="navigation">The <see cref="INavigation"/> that requires a $lookup.</param>
+    /// <param name="navigation">The <see cref="INavigation"/> that requires a <c>$lookup</c>.</param>
     /// <param name="forceUnwind">Force $unwind even for collection navigations (used for explicit Join).</param>
     public LookupExpression(INavigation navigation, bool forceUnwind = false)
     {
@@ -109,9 +110,9 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// Pipeline stages to apply inside the $lookup for filtered Includes
+    /// Pipeline stages to apply inside the <c>$lookup</c> for filtered Includes
     /// (e.g., OrderBy, Skip, Take on the included collection).
-    /// When non-empty, the pipeline form of $lookup is used instead of localField/foreignField.
+    /// When non-empty, the pipeline form of <c>$lookup</c> is used instead of localField/foreignField.
     /// </summary>
     public List<BsonDocument> PipelineStages { get; } = [];
 
@@ -128,14 +129,14 @@ internal sealed class LookupExpression
     public bool IsStreamableReference
         => IsReference && !HasPipeline && !LocalField.StartsWith(LookupAliasPrefix, System.StringComparison.Ordinal);
 
-    /// <summary>Whether $unwind should be applied after $lookup.</summary>
+    /// <summary>Whether <c>$unwind</c> should be applied after <c>$lookup</c>.</summary>
     public bool ShouldUnwind => IsReference || ForceUnwind;
 
     /// <summary>Whether $unwind is forced regardless of navigation type.</summary>
     public bool ForceUnwind { get; }
 
     /// <summary>
-    /// Whether this $lookup must be injected right after the root collection source (before the user's
+    /// Whether this <c>$lookup</c> must be injected right after the root collection source (before the user's
     /// downstream pipeline stages) rather than tail-appended. Used for projected collection-navigation
     /// counts (<c>select new { ..., c.Orders.Count }</c>) where a later <c>$match</c>/<c>$project</c>
     /// reads the <c>_lookup_&lt;Nav&gt;</c> array via <c>{ $size: ... }</c> and so must see it already present.

@@ -297,6 +297,35 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
             q => q.OrderBy(e => e.Address.City).ThenBy(e => e.Name).ToList(), AddressModel));
     }
 
+    [Fact]
+    public void B_owned_subproperty_projection_falls_back_under_NativeOnly()
+    {
+        var collection = SeedAddress(nameof(B_owned_subproperty_projection_falls_back_under_NativeOnly));
+        // Locked fallback boundary: a projection whose leaf is an owned sub-property (e.Address.City) is NOT
+        // natively representable — the projection translator only resolves members rooted directly on the
+        // parameter — so it must fall back to driver-LINQ rather than emit a wrong-shape $project. Pins the
+        // boundary so a future loosening of the binder can't silently start emitting a nested $project.
+        Assert.False(WentNative(collection, q => q.Select(e => new { e.Address.City }), AddressModel));
+    }
+
+    [Fact]
+    public void B_owned_entity_projection_falls_back_under_NativeOnly()
+    {
+        var collection = SeedAddress(nameof(B_owned_entity_projection_falls_back_under_NativeOnly));
+        // Projecting the whole owned entity (e.Address) is likewise not natively representable (the leaf is a
+        // navigation, not a scalar field) and must fall back.
+        Assert.False(WentNative(collection, q => q.Select(e => new { e.Address }), AddressModel));
+    }
+
+    [Fact]
+    public void B_owned_subproperty_projection_parity()
+    {
+        var collection = SeedAddress(nameof(B_owned_subproperty_projection_parity));
+        // Correctness under the fallback path: results must still match driver-LINQ.
+        AssertParity(collection,
+            q => q.OrderBy(e => e.Name).Select(e => new { e.Name, e.Address.City }), AddressModel);
+    }
+
     // ════════════════════════════════════════════════════════════════════════════════════════════
     //  Shape C — TPH discriminator filtering
     // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -382,7 +411,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void C_tph_oftype_derived_routing()
     {
         var collection = SeedTph(nameof(C_tph_oftype_derived_routing));
-        // Locked routing: OfType<TDerived>() explicitly marks IsNativeRepresentable=false (the discriminator
+        // Locked routing: OfType<TDerived>() calls MarkNotNativelyRepresentable() (the discriminator
         // narrowing is applied by the driver-LINQ path, not the native Predicate slot), so it falls back.
         Assert.False(WentNative(collection,
             q => q.OfType<Cat>().OrderBy(c => c.Name).ToList(), TphModel));
@@ -482,5 +511,58 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         Assert.Contains(results, r => r.Name == "Alice" && r.Age == 30);
         Assert.Contains(results, r => r.Name == "Bob" && r.Age == 17);
         Assert.Contains(results, r => r.Name == "Carol" && r.Age == 45);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    //  Shape E — native projection that emits the _id output field (EF-331 $project _id-suppression)
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    //  MongoPipelineFactory.RenderProject suppresses the default _id ({ _id: 0 }) UNLESS the projection
+    //  deliberately emits an "_id" output field. Every other projection test exercises only the suppress
+    //  branch; this shape projects the key member (whose element name is literally "_id"), so the emitted
+    //  $project contains an "_id" entry and the suppression is correctly skipped. Load-bearing + otherwise
+    //  untested.
+
+    private class KeyedDoc
+    {
+        public ObjectId _id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    private IMongoCollection<KeyedDoc> SeedKeyedDoc(string name, out ObjectId[] ids)
+    {
+        ids = [ObjectId.GenerateNewId(), ObjectId.GenerateNewId()];
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        coll.InsertMany([
+            new BsonDocument { { "_id", ids[0] }, { "Name", "Alpha" } },
+            new BsonDocument { { "_id", ids[1] }, { "Name", "Beta" } },
+        ]);
+        return database.MongoDatabase.GetCollection<KeyedDoc>(coll.CollectionNamespace.CollectionName);
+    }
+
+    [Fact]
+    public void E_projected_id_member_runs_native_under_NativeOnly_and_preserves_id()
+    {
+        var collection = SeedKeyedDoc(nameof(E_projected_id_member_runs_native_under_NativeOnly_and_preserves_id), out var ids);
+
+        // Under NativeOnly a driver-LINQ fallback would throw; success proves the $project went native.
+        // Because the projected member is the key (element name "_id"), the emitted $project carries an
+        // "_id" field and the _id-suppression branch is skipped — the values below prove _id round-trips.
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var results = db.Entities
+            .OrderBy(e => e.Name)
+            .Select(e => new { e._id, e.Name })
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(["Alpha", "Beta"], results.Select(r => r.Name));
+        Assert.Equal(ids[0], results[0]._id);
+        Assert.Equal(ids[1], results[1]._id);
+    }
+
+    [Fact]
+    public void E_projected_id_member_parity()
+    {
+        var collection = SeedKeyedDoc(nameof(E_projected_id_member_parity), out _);
+        AssertParity(collection, q => q.OrderBy(e => e.Name).Select(e => new { e._id, e.Name }));
     }
 }

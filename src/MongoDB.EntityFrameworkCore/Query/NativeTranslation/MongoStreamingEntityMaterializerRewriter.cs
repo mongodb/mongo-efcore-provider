@@ -34,17 +34,20 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
+/// <para>
 /// Rewrites EF's post-injection entity-materializer block for a streaming-eligible entity so that each
 /// native-path row is materialized via a single forward <see cref="IBsonReader"/> pass into typed locals —
 /// instead of building a <see cref="BsonDocument"/> DOM. Handles flat (scalar / mapped-array) entities and
 /// entities with single (reference) owned sub-documents, recursively (an owned type may itself own further
 /// reference sub-documents). Owned <em>collections</em> and cross-collection / non-owned navigations are
 /// rejected with <see cref="NativeTranslationNotSupportedException"/>.
-///
+/// </para>
+/// <para>
 /// EF's construction / tracking blocks are reused verbatim, with their <c>ValueBufferTryReadValue</c> reads
 /// redirected to the typed locals and their <see cref="MaterializationContext"/> value-buffer source replaced
 /// by <see cref="ValueBuffer.Empty"/>. EF's <see cref="IncludeExpression"/> structure (and its navigation
 /// fixup) is preserved; only the value source and the owned null-guard inside each block are replaced.
+/// </para>
 /// </summary>
 internal sealed class MongoStreamingEntityMaterializerRewriter
 {

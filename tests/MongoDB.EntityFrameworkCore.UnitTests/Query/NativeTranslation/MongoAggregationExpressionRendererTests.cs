@@ -55,7 +55,7 @@ public class MongoAggregationExpressionRendererTests
             new MongoFieldExpression(age, "Age"),
             new MongoFieldExpression(score, "Score"));
 
-        var rendered = new MongoAggregationExpressionRenderer().Render(expr, new PlaceholderTable());
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
 
         Assert.Equal(BsonValue.Create(BsonDocument.Parse("{ $eq: ['$Age', '$Score'] }")), rendered);
     }
@@ -77,7 +77,7 @@ public class MongoAggregationExpressionRendererTests
                 new MongoFieldExpression(score, "Score")),
             new MongoConstantExpression(5, age));
 
-        var rendered = new MongoAggregationExpressionRenderer().Render(expr, new PlaceholderTable());
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
 
         Assert.Equal(BsonValue.Create(BsonDocument.Parse("{ $gt: [ { $add: ['$Age', '$Score'] }, 5 ] }")), rendered);
     }

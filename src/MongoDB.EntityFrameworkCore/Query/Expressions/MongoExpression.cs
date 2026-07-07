@@ -26,7 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <remarks>
 /// Deriving from <see cref="System.Linq.Expressions.Expression"/> (and the <see cref="VisitChildren"/> /
 /// <c>Update</c> plumbing) is forward-looking: it leaves room for visitor-driven transforms / pushdown over
-/// these nodes. That machinery is **not yet exercised at parity** — the renderer walks the tree with a
+/// these nodes. That machinery is <em>not yet exercised at parity</em> — the renderer walks the tree with a
 /// hand-written <c>switch</c> rather than via a visitor, and <see cref="VisitChildren"/> is a no-op identity.
 /// </remarks>
 internal abstract class MongoExpression : Expression

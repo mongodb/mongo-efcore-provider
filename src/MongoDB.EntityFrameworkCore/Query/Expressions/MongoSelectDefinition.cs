@@ -18,9 +18,10 @@ using System.Collections.Generic;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// The native-translation logical query IR (filter / sort / paging) for a single collection — the
-/// "MongoSelectExpression" of the EF-323 design. Populated by the QMTEV, read by the compile-time
-/// gate and the lowerer. Dialect-neutral: holds <see cref="MongoExpression"/> nodes, never BSON.
+/// The native-translation logical query IR (filter / sort / paging / projection) for a single collection —
+/// the "MongoSelectExpression" of the EF-323 design. Populated by <c>NativeSlotPopulator</c> /
+/// <c>NativeProjectionBinder</c> (invoked by the QMTEV), read by the compile-time gate and the lowerer.
+/// Dialect-neutral: holds <see cref="MongoExpression"/> nodes, never BSON.
 /// </summary>
 /// <remarks>
 /// This is a plain data-holder, NOT a <see cref="System.Linq.Expressions.Expression"/> — hence the
@@ -107,11 +108,42 @@ internal sealed class MongoSelectDefinition
 
     // ── Native-representable gate ─────────────────────────────────────────────────
 
+    private bool _hasUnsupportedOperator;
+
     /// <summary>
-    /// Whether this query can be rendered to native MongoDB aggregation pipeline stages.
-    /// Starts as <see langword="true"/>; the QMTEV flips it to <see langword="false"/>
-    /// when it encounters a shape the native path cannot handle. The compile-time gate
-    /// reads this to decide whether to attempt native emission.
+    /// Records that this query contains a shape the native path cannot handle, forcing
+    /// <see cref="Route"/> to <see cref="NativeRoute.Fallback"/>. Population-time signal set by the
+    /// slot populator / projection binder / QMTEV overrides; never unset.
     /// </summary>
-    public bool IsNativeRepresentable { get; set; } = true;
+    internal void MarkNotNativelyRepresentable()
+        => _hasUnsupportedOperator = true;
+
+    /// <summary>
+    /// The single authoritative native-execution decision for this query, computed from the populated
+    /// slots. <see cref="NativeRoute.Fallback"/> when any unsupported operator was seen; otherwise
+    /// <see cref="NativeRoute.Projection"/> when a <c>$project</c> was populated; otherwise
+    /// <see cref="NativeRoute.WholeEntity"/>. This is authoritative for <em>slot/projection</em> representability;
+    /// the gate additionally checks vector search and <c>$lookup</c> streamability separately, because that
+    /// state does not live on <see cref="MongoSelectDefinition"/> (see EF-334).
+    /// </summary>
+    internal NativeRoute Route
+        => _hasUnsupportedOperator ? NativeRoute.Fallback
+            : _projections.Count > 0 ? NativeRoute.Projection
+            : NativeRoute.WholeEntity;
+}
+
+/// <summary>
+/// The native-execution route the compile-time gate takes for a query, derived from
+/// <see cref="MongoSelectDefinition.Route"/>.
+/// </summary>
+internal enum NativeRoute
+{
+    /// <summary>Not natively representable — use the driver-LINQ fallback (or throw under NativeOnly).</summary>
+    Fallback,
+
+    /// <summary>Native pipeline over whole-entity results.</summary>
+    WholeEntity,
+
+    /// <summary>Native pipeline ending in a pushed-down <c>$project</c>.</summary>
+    Projection
 }

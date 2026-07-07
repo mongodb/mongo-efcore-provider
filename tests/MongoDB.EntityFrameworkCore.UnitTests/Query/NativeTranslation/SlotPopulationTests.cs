@@ -133,7 +133,7 @@ public class SlotPopulationTests
         var mongoQ = TranslateToMongoQuery<Customer>(q => q.Where(c => c.Age > 21));
 
         Assert.NotNull(mongoQ.Select.Predicate);
-        Assert.True(mongoQ.Select.IsNativeRepresentable);
+        Assert.Equal(NativeRoute.WholeEntity, mongoQ.Select.Route);
         Assert.NotNull(mongoQ.CapturedExpression);
     }
 
@@ -150,25 +150,25 @@ public class SlotPopulationTests
         Assert.False(mongoQ.Select.Orderings[1].Ascending);
     }
 
-    // ── Test 3: Where after Take → non-canonical → IsNativeRepresentable = false ──
+    // ── Test 3: Where after Take → non-canonical → Route = Fallback ──────────────
 
     [Fact]
     public void Where_after_Take_is_not_native_representable()
     {
         var mongoQ = TranslateToMongoQuery<Customer>(q => q.Take(10).Where(c => c.Age > 21));
 
-        Assert.False(mongoQ.Select.IsNativeRepresentable);
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
         Assert.NotNull(mongoQ.CapturedExpression);
     }
 
-    // ── Test 4: Projecting Select → IsNativeRepresentable = false ────────────────
+    // ── Test 4: Projecting Select → Route = Fallback ──────────────────────────────
 
     [Fact]
     public void Projecting_Select_is_not_native_representable()
     {
         var mongoQ = TranslateToMongoQuery<Customer>(q => q.Select(c => c.Name));
 
-        Assert.False(mongoQ.Select.IsNativeRepresentable);
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
     }
 
     // ── Test 5: Native projection slot population (EF-331 Task 4) ────────────────
@@ -178,7 +178,7 @@ public class SlotPopulationTests
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { c.Name, c.Age }));
 
-        Assert.True(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
         Assert.Equal(2, mongoQuery.Select.Projection.Count);
         Assert.Equal("Name", mongoQuery.Select.Projection[0].Alias);
         Assert.Equal("Age", mongoQuery.Select.Projection[1].Alias);
@@ -190,7 +190,7 @@ public class SlotPopulationTests
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Doubled = c.Age * 2 }));
 
-        Assert.False(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
@@ -199,7 +199,7 @@ public class SlotPopulationTests
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => c.Name));
 
-        Assert.False(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
@@ -208,7 +208,7 @@ public class SlotPopulationTests
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Position = (long)c.Age }));
 
-        Assert.False(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
@@ -217,7 +217,7 @@ public class SlotPopulationTests
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Name = c.Name, name = c.Age }));
 
-        Assert.False(mongoQuery.Select.IsNativeRepresentable);
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.Empty(mongoQuery.Select.Projection);
     }
 }

@@ -23,8 +23,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// Accumulates <c>MongoParameterExpression</c> sites encountered during rendering.
 /// Each entry records the parameter name and its <see cref="IBsonSerializer"/>, keyed by
 /// the zero-based index of the sentinel placeholder that was embedded in the rendered BSON
-/// template. Task 10's pipeline builder substitutes actual parameter values at per-execution
-/// time using these entries.
+/// template. The pipeline factory (<see cref="MongoPipelineFactory.Build"/>) substitutes actual
+/// parameter values at per-execution time using these entries.
 /// </summary>
 internal sealed class PlaceholderTable
 {
