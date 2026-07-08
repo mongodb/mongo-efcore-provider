@@ -47,6 +47,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoFieldExpression field => "$" + field.ElementName,
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders),
+            MongoSizeExpression size => new BsonDocument("$size", "$" + size.FieldName),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };

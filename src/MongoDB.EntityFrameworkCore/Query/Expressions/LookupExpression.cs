@@ -136,6 +136,21 @@ internal sealed class LookupExpression
     public bool ForceUnwind { get; }
 
     /// <summary>
+    /// A single-level collection Include the native pipeline can emit as a <c>$lookup</c> array (no
+    /// <c>$unwind</c>) and the DOM collection materializer can read back from a root-level
+    /// <c>_lookup_&lt;Nav&gt;</c> field: a collection nav, no filtered-Include pipeline stages, not
+    /// force-unwound (an explicit Join is not a collection Include), and un-prefixed — its <see cref="As"/>
+    /// equals the plain <c>_lookup_&lt;Nav&gt;</c> alias, which excludes the driver-LeftJoin
+    /// (<c>_outer</c>/<c>_inner</c>) and flat-nested (<c>_lookup_&lt;Nav&gt;._lookup_&lt;Coll&gt;</c>) shapes
+    /// that remain fallback-only in this sub-project.
+    /// </summary>
+    public bool IsNativeCollectionLookup
+        => Navigation.IsCollection
+           && !HasPipeline
+           && !ForceUnwind
+           && As == GetLookupAlias(Navigation);
+
+    /// <summary>
     /// Whether this <c>$lookup</c> must be injected right after the root collection source (before the user's
     /// downstream pipeline stages) rather than tail-appended. Used for projected collection-navigation
     /// counts (<c>select new { ..., c.Orders.Count }</c>) where a later <c>$match</c>/<c>$project</c>

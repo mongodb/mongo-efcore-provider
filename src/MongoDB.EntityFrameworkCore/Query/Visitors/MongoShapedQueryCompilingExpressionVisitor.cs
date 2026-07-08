@@ -305,11 +305,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // and every cross-collection join is a streamable single-level reference lookup the streaming reader
         // can read back. Otherwise the native pipeline (if any) returns full BsonDocuments shaped by the DOM
         // shaper, exactly as the driver-LINQ path does.
+        // NOTE: native-vs-driver was already decided above by TryBuildNativeFactory (the lowerer); this
+        // predicate only gates streaming-vs-DOM for a pipeline that is already native.
         var streaming = allowStreaming
             && nativeFactory != null
             && shapedQueryExpression.ResultCardinality == ResultCardinality.Enumerable
             && StreamingEligibility.IsEligible(rootEntityType)
-            && AllPendingLookupsAreStreamableReferences(mongoQueryExpression);
+            && AllPendingLookupsAreStreamable(mongoQueryExpression);
 
         var shaperBody = shapedQueryExpression.ShaperExpression;
         var bsonInjector = new BsonDocumentInjectingExpressionVisitor();
@@ -621,14 +623,18 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     }
 
     /// <summary>
-    /// Whether every cross-collection join on <paramref name="mongoQueryExpression"/> is a single-level
-    /// reference lookup the native pipeline can emit and the streaming materializer can read back from a
-    /// root-level <c>_lookup_&lt;Nav&gt;</c> field — the same set the native lowerer emits. A query with no
-    /// joins is trivially streamable; a query whose joins cannot ALL be expressed as such reference lookups
-    /// (a collection include, a filtered include with pipeline stages, a transitive/nested lookup, or any
-    /// join shape not mappable to a direct root reference navigation) stays on the DOM / driver-LINQ path.
+    /// The STREAMING gate: whether every cross-collection join on <paramref name="mongoQueryExpression"/> is a
+    /// single-level reference lookup the streaming reader can read back from a root-level
+    /// <c>_lookup_&lt;Nav&gt;</c> field. This does NOT decide native vs. driver-LINQ — that decision is made
+    /// upstream by <c>TryBuildNativeFactory</c> (the lowerer). This predicate only decides, for a pipeline that
+    /// is already native, whether it may additionally use the forward-only streaming shaper instead of the DOM
+    /// shaper. A query with no joins is trivially streamable. A native **collection** Include lookup is
+    /// deliberately treated as NOT streamable here (it stays on the native-DOM path) — do not change this to
+    /// admit collection lookups; a query whose joins cannot ALL be expressed as streamable reference lookups
+    /// (a collection include, a filtered include with pipeline stages, a transitive/nested lookup, or any join
+    /// shape not mappable to a direct root reference navigation) stays on the DOM / driver-LINQ path.
     /// </summary>
-    private static bool AllPendingLookupsAreStreamableReferences(MongoQueryExpression mongoQueryExpression)
+    private static bool AllPendingLookupsAreStreamable(MongoQueryExpression mongoQueryExpression)
     {
         var referenceLookups = mongoQueryExpression.GetStreamingReferenceLookups();
 

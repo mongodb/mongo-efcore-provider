@@ -82,6 +82,10 @@ internal sealed class MongoSelectLowerer
         }
 
         // 5. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
+        // A projected collection-navigation Count (NativeProjectionBinder.TryTranslateProjectedCollectionCount)
+        // registers an IsNativeCollectionLookup $lookup here (InjectAfterRoot=true) so its _lookup_<Nav> array
+        // is already present by the time stage 6's $project reads it via $size — this canonical ordering
+        // ($lookup before $project) already satisfies that without any lowerer change.
         AppendLookupStages(query, stages);
 
         // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Last in
@@ -135,17 +139,24 @@ internal sealed class MongoSelectLowerer
 
         foreach (var lookup in lookups)
         {
-            // Per-lookup guard: only single-level reference includes with no sub-pipeline and
-            // no transitive _lookup_ local field are supported.
-            if (!lookup.IsStreamableReference)
+            if (lookup.IsStreamableReference)
+            {
+                stages.Add(new MongoLookupStage(lookup));
+                stages.Add(new MongoUnwindStage(lookup));
+            }
+            else if (lookup.IsNativeCollectionLookup)
+            {
+                // Collection Include: keep the joined documents as an array under _lookup_<Nav>
+                // (no $unwind). The DOM collection materializer reads the array back and runs the
+                // IncludeCollection fixup, exactly as on the driver-LINQ path.
+                stages.Add(new MongoLookupStage(lookup));
+            }
+            else
             {
                 throw new NativeTranslationNotSupportedException(
                     $"Native pipeline does not support lookup for navigation '{lookup.Navigation.Name}' " +
-                    "(only single-level reference includes).");
+                    "(only single-level reference and single-level collection includes).");
             }
-
-            stages.Add(new MongoLookupStage(lookup));
-            stages.Add(new MongoUnwindStage(lookup));
         }
     }
 }

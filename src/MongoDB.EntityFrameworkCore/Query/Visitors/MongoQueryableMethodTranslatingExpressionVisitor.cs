@@ -25,6 +25,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -173,7 +174,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Any other (projecting) Select cannot be expressed as a native pipeline stage (SP3 work),
         // so mark the query as no longer natively representable.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
-        if (!IsTransparentIdentifierSelector(selector))
+        if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector))
         {
             // Native projection pushdown (SP3): a terminal anonymous-type / DTO projection whose leaves are
             // all top-level member accesses only is lowered to a $project stage. Anything else (bare scalar, computed
@@ -219,6 +220,24 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                && newExpr.Arguments[0] is ParameterExpression
                && newExpr.Arguments[1] is ParameterExpression;
     }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
+    /// <c>Select(x =&gt; IncludeExpression)</c> EF's nav-expansion generates for a single-level, root-level
+    /// collection <c>Include</c> (e.g. <c>Customers.Include(c =&gt; c.Orders)</c>) — the body is an
+    /// <see cref="IncludeExpression"/> directly over the lambda's own parameter (no further projection),
+    /// for a non-embedded collection navigation. This shape carries no native-unrepresentable projection of
+    /// its own: the actual <c>$lookup</c> registration happens later, during projection binding
+    /// (<see cref="MongoProjectionBindingExpressionVisitor"/>), so this Select must not be marked
+    /// non-natively-representable (EF-339). Anything more complex — nested/ThenInclude chains, a reference
+    /// navigation, or an Include composed with an actual projection — falls through to the existing
+    /// catch-all and stays on the driver-LINQ path.
+    /// </summary>
+    private static bool IsSingleLevelCollectionIncludeSelector(LambdaExpression selector)
+        => selector.Body is IncludeExpression { Navigation: INavigation navigation } includeExpression
+           && includeExpression.EntityExpression == selector.Parameters[0]
+           && navigation.IsCollection
+           && !navigation.IsEmbedded();
 
     protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
     {
