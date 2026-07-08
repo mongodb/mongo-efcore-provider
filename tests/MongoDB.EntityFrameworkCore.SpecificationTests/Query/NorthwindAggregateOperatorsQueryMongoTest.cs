@@ -133,7 +133,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 42 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : 42 } }, { "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
             """);
     }
 
@@ -209,7 +209,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Products.{ "$group" : { "_id" : null, "_v" : { "$sum" : "$SupplierID" } } }, { "$project" : { "_id" : 0 } }
+            Products.{ "$group" : { "_id" : null, "v" : { "$sum" : "$SupplierID" } } }
             """);
     }
 
@@ -229,21 +229,17 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
             """);
     }
 
     public override async Task Min_no_data_nullable(bool async)
     {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Min_no_data_nullable(async))).Message);
+        await base.Min_no_data_nullable(async);
 
         AssertMql(
             """
-            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "v" : { "$min" : "$SupplierID" } } }
             """);
     }
 
@@ -276,21 +272,17 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
             """);
     }
 
     public override async Task Max_no_data_nullable(bool async)
     {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Max_no_data_nullable(async))).Message);
+        await base.Max_no_data_nullable(async);
 
         AssertMql(
             """
-            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "v" : { "$max" : "$SupplierID" } } }
             """);
     }
 
@@ -323,7 +315,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$_id" } } }
             """);
     }
 
@@ -333,7 +325,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$SupplierID" } } }, { "$project" : { "_id" : 0 } }
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$SupplierID" } } }
             """);
     }
 
@@ -362,7 +354,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$count" : "_v" }
+            Orders.{ "$count" : "v" }
             """);
     }
 
@@ -372,7 +364,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$count" : "_v" }
+            Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$count" : "v" }
             """);
     }
 
@@ -550,7 +542,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$limit" : 1 }
+            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }
             """);
     }
 
@@ -560,7 +552,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$limit" : 1 }
+            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }
             """);
     }
 
@@ -580,7 +572,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$limit" : 1 }
+            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }
             """);
     }
 
@@ -590,7 +582,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$limit" : 1 }
+            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }
             """);
     }
 
@@ -630,7 +622,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
             """);
     }
 
@@ -772,7 +764,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$avg" : "$_id" } } }
             """);
     }
 
@@ -898,7 +890,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
             """);
     }
 
@@ -963,7 +955,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
             """);
     }
 
@@ -1018,7 +1010,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "_v" }
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "v" }
             """);
     }
 
@@ -1028,7 +1020,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$count" : "_v" }
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
             """);
     }
 
@@ -1038,7 +1030,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "_v" }
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
             """);
     }
 
@@ -1048,7 +1040,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "_v" }
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
             """);
     }
 
@@ -1058,7 +1050,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$gt" : 10 } } }, { "$match" : { "CustomerID" : { "$ne" : "ALFKI" } } }, { "$count" : "_v" }
+            Orders.{ "$match" : { "_id" : { "$gt" : 10 }, "CustomerID" : { "$ne" : "ALFKI" } } }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
             """);
     }
 
@@ -1680,8 +1672,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" 
         await base.OfType_Select_OfType_Select(async);
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }, { "$limit" : 1 }
-""");
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }, { "$limit" : 1 }
+            """);
 #endif
     }
 
@@ -2075,7 +2067,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$count" : "_v" }
+            Customers.{ "$count" : "v" }
             """);
     }
 
@@ -2115,15 +2107,15 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Orders.{ "$count" : "_v" }
+            Orders.{ "$count" : "v" }
             """,
             //
             """
-            Orders.{ "$count" : "_v" }
+            Orders.{ "$count" : "v" }
             """,
             //
             """
-            Orders.{ "$count" : "_v" }
+            Orders.{ "$count" : "v" }
             """);
     }
 
@@ -2142,7 +2134,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Orders.{ "$limit" : 1 }, { "$count" : "_v" }
+            Orders.{ "$limit" : 1 }, { "$count" : "v" }
             """);
     }
 
@@ -2193,7 +2185,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : { "$in" : ["London", "Berlin"] } } }, { "$count" : "_v" }
+            Customers.{ "$match" : { "City" : { "$in" : ["London", "Berlin"] } } }, { "$count" : "v" }
             """);
     }
 
@@ -2203,7 +2195,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : { "$in" : ["London", "Berlin"] } } }, { "$count" : "_v" }
+            Customers.{ "$match" : { "City" : { "$in" : ["London", "Berlin"] } } }, { "$count" : "v" }
             """);
     }
 

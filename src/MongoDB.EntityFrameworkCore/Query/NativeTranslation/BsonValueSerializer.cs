@@ -30,6 +30,14 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal static class BsonValueSerializer
 {
     /// <summary>
+    /// The conventional single-field name used to wrap a bare scalar value in a <see cref="BsonDocument"/> —
+    /// both here (per-value serialization) and by the scalar-aggregate output stages
+    /// (<c>$count</c>/<c>$group</c>) and their deserialization in
+    /// <see cref="Visitors.MongoShapedQueryCompilingExpressionVisitor"/>.
+    /// </summary>
+    internal const string ScalarField = "v";
+
+    /// <summary>
     /// Coerces a CLR value to <paramref name="target"/> so the property/value serializer (which casts hard to
     /// its exact type) accepts it. Handles <c>Nullable&lt;T&gt;</c> by unwrapping to the underlying type, then
     /// applies enum and numeric promotion. Returns the value unchanged if no safe coercion applies.
@@ -67,11 +75,11 @@ internal static class BsonValueSerializer
         using (var writer = new BsonDocumentWriter(doc))
         {
             writer.WriteStartDocument();
-            writer.WriteName("v");
+            writer.WriteName(ScalarField);
             serializer.Serialize(BsonSerializationContext.CreateRoot(writer), value);
             writer.WriteEndDocument();
         }
 
-        return doc["v"];
+        return doc[ScalarField];
     }
 }

@@ -122,6 +122,16 @@ internal static class NativeSlotPopulator
                     mongoQ.Select.MarkNotNativelyRepresentable();
             }
         }
+        else if (TryGetReducerKind(methodDefinition, out var reducerKind))
+        {
+            // First/FirstOrDefault/Single/SingleOrDefault (no predicate — EF normalizes the predicate
+            // overloads to Where(pred) followed by the no-arg terminal, so only the no-arg forms reach
+            // here). Synthesize a $limit (1 for First*, 2 for Single*) and record the reducer kind; EF
+            // Core's base cardinality reduction runs over the returned IEnumerable<T> to apply the actual
+            // First/Single semantics (empty => throw/null, >1 => throw for Single*).
+            if (!NativeCardinalityBinder.TryBindReducer(mongoQ, reducerKind, call.Method.ReturnType))
+                mongoQ.Select.MarkNotNativelyRepresentable();
+        }
         else if (!IsNativeRepresentableSlotOperator(methodDefinition))
         {
             // Any other top-level operator (Distinct, Cast, DefaultIfEmpty, scalar aggregates, cardinality
@@ -139,7 +149,7 @@ internal static class NativeSlotPopulator
     // be hoisted ahead of it on the canonical native pipeline and silently return the wrong rows, so the
     // query is not natively representable.
     private static bool PagingAlreadyApplied(MongoQueryExpression mongoQ)
-        => mongoQ.Select.Offset != null || mongoQ.Select.Limit != null;
+        => mongoQ.Select.HasPaging;
 
     // The operators PopulateNativeSlots lowers into a native slot. Everything else either sets the flag in its
     // own Translate override (Select/OfType) or must drop off the native path (handled by the catch-all above).
@@ -152,7 +162,57 @@ internal static class NativeSlotPopulator
            || methodDefinition == QueryableMethods.Skip
            || methodDefinition == QueryableMethods.Take
            || methodDefinition == QueryableMethods.Select
-           || methodDefinition == QueryableMethods.OfType;
+           || methodDefinition == QueryableMethods.OfType
+           || methodDefinition == QueryableMethods.FirstWithoutPredicate
+           || methodDefinition == QueryableMethods.FirstOrDefaultWithoutPredicate
+           || methodDefinition == QueryableMethods.SingleWithoutPredicate
+           || methodDefinition == QueryableMethods.SingleOrDefaultWithoutPredicate
+           || methodDefinition == QueryableMethods.CountWithoutPredicate
+           || methodDefinition == QueryableMethods.LongCountWithoutPredicate
+           || methodDefinition == QueryableMethods.AnyWithoutPredicate
+           || methodDefinition == QueryableMethods.All
+           || QueryableMethods.IsSumWithoutSelector(methodDefinition)
+           || QueryableMethods.IsSumWithSelector(methodDefinition)
+           || methodDefinition == QueryableMethods.MinWithoutSelector
+           || methodDefinition == QueryableMethods.MinWithSelector
+           || methodDefinition == QueryableMethods.MaxWithoutSelector
+           || methodDefinition == QueryableMethods.MaxWithSelector
+           || QueryableMethods.IsAverageWithoutSelector(methodDefinition)
+           || QueryableMethods.IsAverageWithSelector(methodDefinition);
+
+    // Maps the four no-predicate cardinality-reducer QueryableMethods to their MongoReducerKind. The
+    // predicate-taking overloads are normalized by EF to Where(pred).First()/... before reaching here, so
+    // they are intentionally not matched — leaving them off means the catch-all in PopulateNativeSlots
+    // marks them non-native if one somehow arrives unnormalized.
+    private static bool TryGetReducerKind(MethodInfo methodDefinition, out MongoReducerKind kind)
+    {
+        if (methodDefinition == QueryableMethods.FirstWithoutPredicate)
+        {
+            kind = MongoReducerKind.First;
+            return true;
+        }
+
+        if (methodDefinition == QueryableMethods.FirstOrDefaultWithoutPredicate)
+        {
+            kind = MongoReducerKind.FirstOrDefault;
+            return true;
+        }
+
+        if (methodDefinition == QueryableMethods.SingleWithoutPredicate)
+        {
+            kind = MongoReducerKind.Single;
+            return true;
+        }
+
+        if (methodDefinition == QueryableMethods.SingleOrDefaultWithoutPredicate)
+        {
+            kind = MongoReducerKind.SingleOrDefault;
+            return true;
+        }
+
+        kind = default;
+        return false;
+    }
 
     /// <summary>
     /// Translates a Skip/Take count expression to a <see cref="MongoExpression"/>

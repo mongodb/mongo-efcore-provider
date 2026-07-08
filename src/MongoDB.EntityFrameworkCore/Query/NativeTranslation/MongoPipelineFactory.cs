@@ -86,6 +86,8 @@ internal sealed class MongoPipelineFactory
             MongoLookupStage lookup => RenderLookup(lookup.Lookup),
             MongoUnwindStage unwind => RenderUnwind(unwind.Lookup),
             MongoProjectStage project => RenderProject(project, placeholders),
+            MongoCountStage count => new BsonDocument("$count", count.OutputField),
+            MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoPipelineFactory does not support stage type '{stage.GetType().Name}'.")
         };
@@ -128,6 +130,14 @@ internal sealed class MongoPipelineFactory
 
         return new BsonDocument("$project", body);
     }
+
+    private static BsonDocument RenderGroup(MongoGroupAccumulatorStage stage, PlaceholderTable placeholders)
+        => new BsonDocument("$group", new BsonDocument
+        {
+            { "_id", BsonNull.Value },
+            { stage.OutputField, new BsonDocument(
+                stage.Accumulator, MongoAggregationExpressionRenderer.Render(stage.Operand, placeholders)) }
+        });
 
     private static BsonDocument RenderSkip(
         MongoSkipStage stage,

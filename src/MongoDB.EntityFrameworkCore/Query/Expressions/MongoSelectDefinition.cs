@@ -92,6 +92,12 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public MongoExpression? Offset { get; set; }
 
+    /// <summary>
+    /// <see langword="true"/> when either <see cref="Offset"/> or <see cref="Limit"/> is populated —
+    /// i.e. paging has already been applied to this select.
+    /// </summary>
+    internal bool HasPaging => Offset != null || Limit != null;
+
     // ── Projection ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -105,6 +111,14 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public void AddProjection(MongoProjection projection)
         => _projections.Add(projection);
+
+    // ── Cardinality / aggregate ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// The terminal cardinality reducer or scalar aggregate, or <see langword="null"/> for a plain
+    /// enumerable result. Set by <c>NativeCardinalityBinder</c>.
+    /// </summary>
+    public MongoCardinality? Cardinality { get; set; }
 
     // ── Native-representable gate ─────────────────────────────────────────────────
 
@@ -128,6 +142,7 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal NativeRoute Route
         => _hasUnsupportedOperator ? NativeRoute.Fallback
+            : Cardinality?.Aggregate != null ? NativeRoute.ScalarAggregate
             : _projections.Count > 0 ? NativeRoute.Projection
             : NativeRoute.WholeEntity;
 }
@@ -145,5 +160,8 @@ internal enum NativeRoute
     WholeEntity,
 
     /// <summary>Native pipeline ending in a pushed-down <c>$project</c>.</summary>
-    Projection
+    Projection,
+
+    /// <summary>Native pipeline ending in a scalar aggregate ($count / $group) producing a single value.</summary>
+    ScalarAggregate
 }

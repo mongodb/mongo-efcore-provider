@@ -942,7 +942,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
         AssertMql(
             """
-Customers.{ "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+Customers.{ "$limit" : 1 }
 """);
     }
 

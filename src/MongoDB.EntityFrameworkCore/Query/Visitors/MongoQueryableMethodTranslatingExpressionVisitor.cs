@@ -564,15 +564,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     #region Methods that just require shaper reshaping
 
-    protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate) =>
-        ReshapeShaperExpression(source, typeof(bool));
+    protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate)
+        => BindAggregateOrFallback(source, MongoAggregateOperator.All, null, predicate, typeof(bool));
 
     protected override ShapedQueryExpression TranslateAny(ShapedQueryExpression source, LambdaExpression? predicate)
-        => ReshapeShaperExpression(source, typeof(bool));
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Any, null, predicate, typeof(bool));
 
     protected override ShapedQueryExpression TranslateAverage(ShapedQueryExpression source, LambdaExpression? selector,
         Type resultType)
-        => ReshapeShaperExpression(source, resultType);
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Average, selector, null, resultType);
 
     protected override ShapedQueryExpression TranslateCast(ShapedQueryExpression source, Type castType)
         => ReshapeShaperExpression(source, castType);
@@ -581,19 +581,36 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => ReshapeShaperExpression(source, typeof(bool)); // We don't support but a later step has a better error message
 
     protected override ShapedQueryExpression TranslateCount(ShapedQueryExpression source, LambdaExpression? predicate)
-        => ReshapeShaperExpression(source, typeof(int));
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Count, null, predicate, typeof(int));
 
     protected override ShapedQueryExpression TranslateLongCount(ShapedQueryExpression source, LambdaExpression? predicate)
-        => ReshapeShaperExpression(source, typeof(long));
+        => BindAggregateOrFallback(source, MongoAggregateOperator.LongCount, null, predicate, typeof(long));
 
     protected override ShapedQueryExpression TranslateMax(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => ReshapeShaperExpression(source, resultType);
+        Type resultType)
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Max, selector, null, resultType);
 
     protected override ShapedQueryExpression TranslateMin(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => ReshapeShaperExpression(source, resultType);
+        Type resultType)
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Min, selector, null, resultType);
 
     protected override ShapedQueryExpression TranslateSum(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => ReshapeShaperExpression(source, resultType);
+        Type resultType)
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Sum, selector, null, resultType);
+
+    /// <summary>
+    /// Attempts to bind a scalar aggregate terminal operator to <see cref="MongoSelectDefinition.Cardinality"/>
+    /// via <see cref="NativeCardinalityBinder.TryBindAggregate"/>, marking the query non-native on failure, and
+    /// reshapes the result to <paramref name="resultType"/> either way.
+    /// </summary>
+    private static ShapedQueryExpression BindAggregateOrFallback(ShapedQueryExpression source, MongoAggregateOperator op,
+        LambdaExpression? selector, LambdaExpression? predicate, Type resultType)
+    {
+        var mongoQ = (MongoQueryExpression)source.QueryExpression;
+        if (!NativeCardinalityBinder.TryBindAggregate(mongoQ, op, selector, predicate, resultType))
+            mongoQ.Select.MarkNotNativelyRepresentable();
+        return ReshapeShaperExpression(source, resultType);
+    }
 
     private static ShapedQueryExpression ReshapeShaperExpression(ShapedQueryExpression source, Type returnType)
         => source.UpdateShaperExpression(

@@ -324,11 +324,11 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : { "$ne" : null } } }, { "$count" : "_v" }
+            Customers.{ "$match" : { "City" : { "$ne" : null } } }, { "$count" : "v" }
             """,
             //
             """
-            Customers.{ "$match" : { "City" : { "$ne" : null } } }, { "$count" : "_v" }
+            Customers.{ "$match" : { "City" : { "$ne" : null } } }, { "$count" : "v" }
             """);
     }
 
@@ -1185,7 +1185,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }, { "$count" : "_v" }
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }, { "$count" : "v" }
             """);
     }
 
@@ -1205,7 +1205,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Customers.{ "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$limit" : 1 }
             """);
     }
 
@@ -1215,7 +1215,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$limit" : 1 }
             """);
     }
 
@@ -1281,7 +1281,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$not" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$match" : { "ContactName" : { "$not" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } } }, { "$limit" : 1 }
             """);
     }
 
@@ -1637,7 +1637,7 @@ Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$project" : { "_out
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$skip" : 5 }, { "$limit" : 10 }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$skip" : 5 }, { "$limit" : 10 }, { "$limit" : 1 }
             """);
     }
 
@@ -1787,7 +1787,7 @@ Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$project" : { "_out
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1, "ContactName" : 1 } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$sort" : { "_id" : 1, "ContactName" : 1 } }, { "$limit" : 1 }
             """);
     }
 
@@ -3117,7 +3117,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-            Customers.{ "$limit" : 7 }, { "$count" : "_v" }
+            Customers.{ "$limit" : 7 }, { "$count" : "v" }
             """);
     }
 
@@ -3127,7 +3127,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "Country" : 1 } }, { "$limit" : 7 }, { "$count" : "_v" }
+            Customers.{ "$sort" : { "Country" : 1 } }, { "$limit" : 7 }, { "$count" : "v" }
             """);
     }
 
@@ -3137,7 +3137,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-            Customers.{ "$limit" : 7 }, { "$count" : "_v" }
+            Customers.{ "$limit" : 7 }, { "$count" : "v" }
             """);
     }
 
@@ -3147,7 +3147,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "Country" : 1 } }, { "$limit" : 7 }, { "$count" : "_v" }
+            Customers.{ "$sort" : { "Country" : 1 } }, { "$limit" : 7 }, { "$count" : "v" }
             """);
     }
 
@@ -3197,7 +3197,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-            Customers.{ "$skip" : 7 }, { "$count" : "_v" }
+            Customers.{ "$skip" : 7 }, { "$count" : "v" }
             """);
     }
 
@@ -3207,7 +3207,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "Country" : 1 } }, { "$skip" : 7 }, { "$count" : "_v" }
+            Customers.{ "$sort" : { "Country" : 1 } }, { "$skip" : 7 }, { "$count" : "v" }
             """);
     }
 
@@ -3217,7 +3217,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-            Customers.{ "$skip" : 7 }, { "$count" : "_v" }
+            Customers.{ "$skip" : 7 }, { "$count" : "v" }
             """);
     }
 
@@ -3227,7 +3227,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "Country" : 1 } }, { "$skip" : 7 }, { "$count" : "_v" }
+            Customers.{ "$sort" : { "Country" : 1 } }, { "$skip" : 7 }, { "$count" : "v" }
             """);
     }
 
@@ -4039,7 +4039,7 @@ OrderDetails.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$add" : [{ "$toI
 
         AssertMql(
             """
-            Employees.{ "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Employees.{ "$limit" : 1 }
             """);
     }
 
@@ -4362,7 +4362,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
             """,
             //
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 1 }
             """,
             //
             """

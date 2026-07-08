@@ -945,8 +945,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
         AssertMql(
             """
-            Customers.{ "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
-            """);
+Customers.{ "$limit" : 1 }
+""");
     }
 
     public override async Task Include_duplicate_reference2(bool async)

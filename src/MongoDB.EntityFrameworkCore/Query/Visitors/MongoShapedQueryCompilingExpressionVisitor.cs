@@ -176,6 +176,39 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 allowStreaming: false);
         }
 
+        // Native scalar-aggregate path (EF-SP4 Task 5): Count/LongCount/Sum/Min/Max/Average/Any/All were
+        // bound to MongoSelectDefinition.Cardinality by NativeCardinalityBinder and lowered to a terminal
+        // $count/$group/$limit stage by MongoSelectLowerer. Emit the native pipeline and read the single
+        // "v" field, applying the empty-input contract. Placed before the NativeOnly guard so a
+        // representable aggregate succeeds natively instead of being rejected. The aggregate's predicate
+        // (Where clauses, or the negated predicate for All) may still contain a shape the lowerer/renderer
+        // can't emit (e.g. a parameterized string.Contains, which only supports constant terms) — that is
+        // an execution-time lowering failure, not a routing decision, so it is tried (and can fall back)
+        // here rather than baked unconditionally into a compile-time route.
+        if (queryMode != MongoQueryMode.DriverLinq
+            && mongoQueryExpression.Select.Route == NativeRoute.ScalarAggregate)
+        {
+            var aggregateFactory = TryBuildAggregateFactory(queryMode, mongoQueryExpression);
+            if (aggregateFactory != null)
+            {
+                var cardinality = mongoQueryExpression.Select.Cardinality!;
+                return Expression.Call(null,
+                    ExecuteAggregateMethodInfo.MakeGenericMethod(rootEntityType.ClrType, cardinality.ResultType),
+                    QueryCompilationContext.QueryContextParameter,
+                    Expression.Constant(rootEntityType),
+                    Expression.Constant(_bsonSerializerFactory),
+                    Expression.Constant(mongoQueryExpression),
+                    Expression.Constant(_contextType),
+                    Expression.Constant(_threadSafetyChecksEnabled),
+                    Expression.Constant(cardinality),
+                    Expression.Constant(aggregateFactory));
+            }
+
+            // Fell back (Native mode only; NativeOnly already threw inside TryBuildAggregateFactory): the
+            // aggregate itself is representable (Route == ScalarAggregate) but its predicate/selector could
+            // not be lowered/rendered. Continue below to the ordinary driver-LINQ push-down aggregate path.
+        }
+
         // A projected query (anonymous/scalar projection, scalar aggregate, or a mixed projection containing
         // entity references) is never shaped from a full native document — it runs through the driver-LINQ
         // push-down path or the mixed client-side shaper. The native pipeline only covers full-entity results,
@@ -266,7 +299,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // into the executor; per execution it is only re-bound (factory.Build(parameterValues)) — never
         // re-translated. Because fallback happens here (not at run time), we compile EXACTLY ONE shaper
         // (streaming, DOM-native, or driver-DOM) and need no run-time dual-shaper dispatch.
-        var nativeFactory = TryBuildNativeFactory(mode, mongoQueryExpression, shapedQueryExpression.ResultCardinality);
+        var nativeFactory = TryBuildNativeFactory(mode, mongoQueryExpression);
 
         // Streaming is only chosen when the native factory was built, the entity shape is streaming-eligible,
         // and every cross-collection join is a streamable single-level reference lookup the streaming reader
@@ -386,42 +419,56 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// query (the coverage instrument) — never falls back.</item>
     /// </list>
     /// The native pipeline returns full BsonDocuments (or RawBsonDocuments when streamed); the push-down
-    /// projection path (ExecuteProjectedQuery) is never routed here. A cardinality reducer (First/Single/…)
-    /// stays on the driver-LINQ path — the native path covers enumerable results.
+    /// projection path (ExecuteProjectedQuery) is never routed here. An entity reducer (First/Single/…)
+    /// stays on the native path when representable — it synthesizes a $limit and EF Core's base
+    /// cardinality reduction runs over the returned IEnumerable&lt;T&gt;. A scalar aggregate (Count/Sum/…)
+    /// still stays on the driver-LINQ path — it is not yet lowered by the native pipeline.
     /// </remarks>
     private static MongoPipelineFactory? TryBuildNativeFactory(
         MongoQueryMode mode,
-        MongoQueryExpression mongoQueryExpression,
-        ResultCardinality resultCardinality)
+        MongoQueryExpression mongoQueryExpression)
     {
         if (mode == MongoQueryMode.DriverLinq)
         {
             return null;
         }
 
-        // The native pipeline shapes from full documents via the client-side entity/mixed shaper, which only
-        // runs for an enumerable result. A cardinality reducer uses the driver-LINQ path. Under NativeOnly the
-        // gate still measures representability (below) — a representable reducer is not a coverage failure.
-        if (resultCardinality != ResultCardinality.Enumerable)
-        {
-            if (mongoQueryExpression.Select.Route == NativeRoute.Fallback)
-            {
-                ThrowIfNativeOnlyForbidsFallback(mode, "Query is not natively representable");
-            }
-
-            return null;
-        }
-
+        // An entity reducer (First/Single/…) keeps Route == WholeEntity with a synthesized $limit
+        // (NativeCardinalityBinder) and stays on the native path here: it shapes from the same full
+        // documents as an enumerable result, and EF Core's base cardinality reduction runs over the
+        // returned IEnumerable<T> to apply First/Single semantics. Scalar aggregates (Route ==
+        // ScalarAggregate) are not yet lowered by the pipeline and remain on the driver-LINQ path.
+        //
         // A VectorSearch query is realized by the driver-LINQ path ($vectorSearch stage built from the captured
         // VectorSearch call) and carries the index-resolution / zero-results diagnostics. The native lowerer
         // reads only the logical slots and never the captured chain, so it would silently drop the vector
         // search. Vector search is therefore not natively representable; keep it on the driver path.
-        if (mongoQueryExpression.Select.Route == NativeRoute.Fallback || ContainsVectorSearch(mongoQueryExpression.CapturedExpression))
+        if (mongoQueryExpression.Select.Route is NativeRoute.Fallback or NativeRoute.ScalarAggregate
+            || ContainsVectorSearch(mongoQueryExpression.CapturedExpression))
         {
             ThrowIfNativeOnlyForbidsFallback(mode, "Query is not natively representable");
             return null;
         }
 
+        return TryBuildPipeline(mongoQueryExpression, mode);
+    }
+
+    // Builds the native pipeline template for a scalar-aggregate query (Route == NativeRoute.ScalarAggregate),
+    // mirroring TryBuildNativeFactory's try/lower/render/fallback shape but without its ScalarAggregate
+    // exclusion (that exclusion exists precisely to route here instead). The aggregate's own shape (Count,
+    // Any, a plain member-access selector, ...) was already confirmed representable by NativeCardinalityBinder
+    // at bind time, but the predicate it composed (user Where clauses, or the negated predicate for All) can
+    // still contain something the lowerer/renderer can't emit (e.g. a parameterized string.Contains, which
+    // only supports constant terms) — that failure surfaces here as an ordinary NativeTranslationNotSupportedException.
+    private static MongoPipelineFactory? TryBuildAggregateFactory(
+        MongoQueryMode mode,
+        MongoQueryExpression mongoQueryExpression)
+        => TryBuildPipeline(mongoQueryExpression, mode);
+
+    // Shared lower→render tail for TryBuildNativeFactory and TryBuildAggregateFactory: each factory keeps its
+    // own up-front route/guard checks, then delegates to this common lower/render/fallback body.
+    private static MongoPipelineFactory? TryBuildPipeline(MongoQueryExpression mongoQueryExpression, MongoQueryMode mode)
+    {
         try
         {
             var stages = new MongoSelectLowerer().Lower(mongoQueryExpression);
@@ -433,6 +480,114 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             // fall back to the driver-LINQ path. Under NativeOnly this rethrows as the coverage instrument.
             return null;
         }
+    }
+
+    // Executes a native scalar-aggregate pipeline (Count/LongCount/Sum/Min/Max/Average/Any/All) and applies
+    // the empty-input contract. Reuses TranslateQuery<TEntity> exactly like the entity path — the native
+    // factory built at compile time (TryBuildAggregateFactory) takes the same nativeFactory-!= null branch,
+    // so the passed `translate` delegate is never invoked. Returns exactly one element (mirrors
+    // ExecuteScalar's historical [result] contract) so EF Core's base .Single() cardinality reduction yields
+    // the scalar.
+    // The return type is the concrete SingleValueEnumerable<TResult> — not the IEnumerable<TResult> interface
+    // — because EF Core's base VisitExtension picks Single(...) or SingleAsync(...) depending on
+    // QueryCompilationContext.IsAsync and calls Expression.Call(method, ourResultExpression); SingleAsync's
+    // parameter type is IAsyncEnumerable<TResult>. An IEnumerable<TResult>-typed expression is not assignable
+    // to that parameter, so the same executor must return a type implementing both sync and async enumeration
+    // (mirrors why the entity/projection paths use the dual-interface QueryingEnumerable<,>).
+    private static SingleValueEnumerable<TResult> ExecuteAggregate<TEntity, TResult>(
+        QueryContext queryContext,
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoQueryExpression queryExpression,
+        Type contextType,
+        bool threadSafetyChecksEnabled,
+        MongoCardinality cardinality,
+        MongoPipelineFactory nativeFactory)
+    {
+        var (mongoQueryContext, executableQuery) = TranslateQuery<TEntity>(
+            queryContext, entityType, bsonSerializerFactory, queryExpression, ResultCardinality.Single,
+            nativeFactory, streaming: false, static (_, _) => Expression.Empty());
+
+        using var rows = mongoQueryContext.MongoClient
+            .Execute<BsonDocument>(executableQuery, out var log)
+            .GetEnumerator();
+
+        TResult value;
+        try
+        {
+            if (rows.MoveNext())
+            {
+                var doc = rows.Current;
+
+                // Presence-only aggregates (Any/All): presence of a surviving row is the signal, not the field
+                // value. Any's $match already includes the user predicate (if any), so a surviving row means at
+                // least one element matched. All's $match holds the NEGATED predicate, so a surviving row means
+                // at least one element failed it — i.e. All is false. See MongoSelectLowerer /
+                // NativeCardinalityBinder.TryBindAggregate.
+                value = cardinality.PresenceOnly ? (TResult)cardinality.PresentValue! : DeserializeScalar<TResult>(doc);
+            }
+            else
+            {
+                value = cardinality.EmptyBehavior switch
+                {
+                    MongoEmptyAggregateBehavior.DefaultValue => (TResult)cardinality.EmptyValue!,
+                    MongoEmptyAggregateBehavior.ReturnNull => default!,
+                    MongoEmptyAggregateBehavior.Throw => throw new InvalidOperationException(
+                        "Sequence contains no elements"),
+                    _ => throw new InvalidOperationException("Sequence contains no elements")
+                };
+            }
+        }
+        finally
+        {
+            log();
+        }
+
+        return new SingleValueEnumerable<TResult>(value);
+    }
+
+    // A one-element sequence implementing both IEnumerable<T> and IAsyncEnumerable<T> so the same eagerly-
+    // computed ExecuteAggregate result can satisfy either EF Core's base Single(...) or SingleAsync(...)
+    // reduction (chosen at compile time based on QueryCompilationContext.IsAsync) without a second executor.
+    private sealed class SingleValueEnumerable<T>(T value) : IEnumerable<T>, IAsyncEnumerable<T>
+    {
+        public IEnumerator<T> GetEnumerator()
+        {
+            yield return value;
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public async IAsyncEnumerator<T> GetAsyncEnumerator(System.Threading.CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask.ConfigureAwait(false);
+            yield return value;
+        }
+    }
+
+    // Reads the "v" field written by the $count/$group terminal stage and coerces it to TResult. BsonTypeMapper
+    // maps the BSON numeric value to its natural CLR type (int/long/double/decimal/...); Convert.ChangeType then
+    // coerces to the exact result type the aggregate operator promises (e.g. long for LongCount, double for
+    // Average), honoring Nullable<T> result types.
+    private static TResult DeserializeScalar<TResult>(BsonDocument doc)
+    {
+        var bsonValue = doc[BsonValueSerializer.ScalarField];
+        var mapped = BsonTypeMapper.MapToDotNetValue(bsonValue);
+
+        // A non-empty aggregate can still yield a BSON-null accumulator (e.g. Min/Max/Average over a
+        // nullable field where every row's value is null/missing) — the empty-input path above is not
+        // taken since a $group row was returned. Convert.ChangeType(null, ...) throws for a value type,
+        // so short-circuit here: null for a nullable TResult; unreachable for non-nullable TResult since
+        // that case takes EmptyBehavior.Throw when there are no rows and can't yield null otherwise.
+        if (mapped is null)
+        {
+            return default!;
+        }
+
+        var targetType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);
+        var converted = targetType.IsInstanceOfType(mapped) ? mapped : Convert.ChangeType(mapped, targetType);
+
+        return (TResult)converted!;
     }
 
     // Under MongoQueryMode.NativeOnly the driver-LINQ fallback is forbidden, so a query the native path cannot
@@ -942,6 +1097,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             .GetTypeInfo()
             .DeclaredMethods
             .Single(m => m.Name == nameof(ExecuteShapedQuery));
+
+    private static readonly MethodInfo ExecuteAggregateMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(ExecuteAggregate));
 
     private static readonly MethodInfo ExecuteProjectedQueryMethodInfo =
         typeof(MongoShapedQueryCompilingExpressionVisitor)

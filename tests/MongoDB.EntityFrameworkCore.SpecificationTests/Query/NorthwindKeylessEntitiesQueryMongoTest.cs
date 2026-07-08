@@ -185,8 +185,8 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$count" : "_v" }
-            """);
+Customers.{ "$count" : "v" }
+""");
     }
 
     public override async Task Count_over_keyless_entity_with_pushdown(bool async)
@@ -195,7 +195,7 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 10 }, { "$count" : "_v" }
+Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 10 }, { "$count" : "v" }
 """);
     }
 
@@ -205,7 +205,7 @@ Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 10 }, { "$count" : 
 
         AssertMql(
             """
-Customers.{ "$limit" : 10 }, { "$count" : "_v" }
+Customers.{ "$limit" : 10 }, { "$count" : "v" }
 """);
     }
 

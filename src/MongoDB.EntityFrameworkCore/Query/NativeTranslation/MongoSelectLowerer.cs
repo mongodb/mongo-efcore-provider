@@ -91,6 +91,29 @@ internal sealed class MongoSelectLowerer
             stages.Add(new MongoProjectStage(select.Projection));
         }
 
+        // 7. Scalar aggregate terminal stage ($count / $group / $limit for Any/All).
+        var cardinality = select.Cardinality;
+        if (cardinality?.Aggregate is { } aggregate)
+        {
+            stages.Add(aggregate switch
+            {
+                MongoAggregateOperator.Count or MongoAggregateOperator.LongCount
+                    => new MongoCountStage(BsonValueSerializer.ScalarField),
+                MongoAggregateOperator.Sum
+                    => new MongoGroupAccumulatorStage("$sum", cardinality.Selector!, BsonValueSerializer.ScalarField),
+                MongoAggregateOperator.Min
+                    => new MongoGroupAccumulatorStage("$min", cardinality.Selector!, BsonValueSerializer.ScalarField),
+                MongoAggregateOperator.Max
+                    => new MongoGroupAccumulatorStage("$max", cardinality.Selector!, BsonValueSerializer.ScalarField),
+                MongoAggregateOperator.Average
+                    => new MongoGroupAccumulatorStage("$avg", cardinality.Selector!, BsonValueSerializer.ScalarField),
+                MongoAggregateOperator.Any or MongoAggregateOperator.All
+                    => new MongoLimitStage(new MongoConstantExpression(1, forSerialization: null)),
+                _ => throw new NativeTranslationNotSupportedException(
+                    $"Unsupported aggregate operator '{aggregate}'.")
+            });
+        }
+
         return stages;
     }
 

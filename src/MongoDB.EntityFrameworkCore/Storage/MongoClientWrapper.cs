@@ -89,7 +89,11 @@ public class MongoClientWrapper : IMongoClientWrapper
     {
         log = () => { };
 
-        if (executableQuery.Cardinality != ResultCardinality.Enumerable)
+        // A native entity reducer (First/Single/…) has Cardinality != Enumerable but still carries a
+        // NativePipeline (a synthesized $limit) — it must flow into the NativePipeline block below so EF
+        // Core's base cardinality reduction runs over the returned cursor enumerable. ExecuteScalar is
+        // only for the driver-LINQ scalar/reducer path, which has no NativePipeline.
+        if (executableQuery.Cardinality != ResultCardinality.Enumerable && executableQuery.NativePipeline is null)
             return ExecuteScalar<T>(executableQuery);
 
         if (executableQuery.NativePipeline is { } stages)
