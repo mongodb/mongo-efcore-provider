@@ -80,6 +80,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     public Expression TranslateProjected(Expression? efQueryExpression)
     {
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
+        GuardAgainstMultiHopCrossCollectionNavigation(efQueryExpression);
+        GuardAgainstLimitingOperatorInJoinInner(efQueryExpression);
 
         if (efQueryExpression == null)
         {
@@ -116,6 +118,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         ResultCardinality resultCardinality)
     {
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
+        GuardAgainstMultiHopCrossCollectionNavigation(efQueryExpression);
+        GuardAgainstLimitingOperatorInJoinInner(efQueryExpression);
 
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
         {
@@ -604,6 +608,220 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// translation cleanly (an <see cref="InvalidOperationException"/>) instead of emitting a pipeline that
     /// crashes on the server.
     /// </summary>
+    /// <summary>
+    /// A multi-hop cross-collection navigation used in a <em>predicate or ordering</em> — e.g.
+    /// <c>where od.Order.Customer.City == "Seattle"</c> or a collection navigation such as
+    /// <c>od.Order.Customer.Orders</c> compared to null — is lowered by EF Core into a chain of joins whose
+    /// filter/ordering lambda reads a member of the SECOND-hop inner. The parameter of such a lambda is a
+    /// <em>nested</em> transparent identifier (<c>TransparentIdentifier&lt;TransparentIdentifier&lt;…&gt;, …&gt;</c>)
+    /// and the body reads <c>&lt;param&gt;.Inner.…</c>. The provider's single-level <c>$lookup</c> composition
+    /// cannot faithfully evaluate/materialise that shape (the root entity is read from the wrong doubly-nested
+    /// position — <c>Document element is missing…</c> — or an unevaluated collection subquery leaks to BSON
+    /// serialization). The MongoDB C# driver's LINQ v3 provider (3.10+) now <em>attempts</em> the chain, so
+    /// rather than emit a pipeline that fails opaquely at materialization/serialization, detect the second-hop
+    /// filter/order read here and fail as a standard EF Core translation failure. Tracked by EF-216.
+    ///
+    /// The detection requires BOTH signals, which is what isolates the broken shape from superficially similar
+    /// working ones:
+    /// <list type="bullet">
+    /// <item>a join whose <em>outer key</em> reaches <em>through</em> a prior join's <c>Inner</c> — i.e. a
+    /// genuine chain a→b→c (<c>o => EF.Property(o.Inner, "CustomerID")</c>), as opposed to two sibling joins
+    /// from the same root (whose later outer keys reach through <c>.Outer</c>); and</item>
+    /// <item>a <c>Where</c>/<c>OrderBy</c>/<c>ThenBy</c> lambda that reads <c>.Inner</c> of a nested transparent
+    /// identifier — i.e. it filters/orders on that second-hop inner.</item>
+    /// </list>
+    /// Multi-level <c>Include</c>/<c>ThenInclude</c> has the first signal (same join chain) but never the
+    /// second (it only materialises); an explicit <c>Join</c>+<c>GroupJoin</c> with a <c>Where</c> on the inner
+    /// has the second signal but not the first (its joins are root-siblings). Only a true multi-hop navigation
+    /// used in a predicate/ordering has both.
+    /// </summary>
+    private void GuardAgainstMultiHopCrossCollectionNavigation(Expression? efQueryExpression)
+    {
+        if (efQueryExpression == null)
+        {
+            return;
+        }
+
+        var joinFinder = new ReachThroughInnerJoinFinder();
+        joinFinder.Visit(efQueryExpression);
+        if (!joinFinder.Found)
+        {
+            return;
+        }
+
+        var readFinder = new MultiHopNavigationReadFinder();
+        readFinder.Visit(efQueryExpression);
+        if (readFinder.Found)
+        {
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(efQueryExpression.Print()));
+        }
+    }
+
+    /// <summary>
+    /// Finds a <c>Join</c>/<c>LeftJoin</c>/<c>GroupJoin</c> whose outer key selector reaches <em>through</em> a
+    /// prior join's <c>Inner</c> transparent-identifier member (the signature of a chained multi-hop
+    /// navigation a→b→c). Sibling joins from the same root reach through <c>.Outer</c> and do not match.
+    /// </summary>
+    private sealed class ReachThroughInnerJoinFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.DeclaringType == typeof(Queryable)
+                && node.Method.Name is "Join" or "LeftJoin" or "GroupJoin"
+                && node.Arguments.Count >= 3
+                && node.Arguments[2] is UnaryExpression { Operand: LambdaExpression outerKeySelector }
+                && outerKeySelector.Parameters.Count > 0)
+            {
+                var reachThrough = new NestedInnerReadFinder(outerKeySelector.Parameters[0]);
+                reachThrough.Visit(outerKeySelector.Body);
+                if (reachThrough.Found)
+                {
+                    Found = true;
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+    }
+
+    private static bool IsTransparentIdentifier(Type type)
+        => type is { IsGenericType: true }
+           && type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
+
+    /// <summary>Detects a member access to <c>Inner</c> on the given transparent-identifier parameter.</summary>
+    private sealed class NestedInnerReadFinder(ParameterExpression param) : System.Linq.Expressions.ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (node.Member.Name == "Inner"
+                && node.Expression is ParameterExpression p
+                && ReferenceEquals(p, param))
+            {
+                Found = true;
+            }
+
+            return base.VisitMember(node);
+        }
+    }
+
+    /// <summary>
+    /// Finds a <c>Where</c>/<c>OrderBy</c>/<c>ThenBy</c> (and descending variants) whose lambda parameter is a
+    /// <em>nested</em> transparent identifier (its <c>Outer</c> type argument is itself a transparent
+    /// identifier) and whose body reads <c>&lt;param&gt;.Inner</c> — i.e. it filters/orders on a second-hop
+    /// cross-collection inner.
+    /// </summary>
+    private sealed class MultiHopNavigationReadFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        private static readonly HashSet<string> FilterOrOrderMethods =
+            ["Where", "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending"];
+
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.DeclaringType == typeof(Queryable)
+                && FilterOrOrderMethods.Contains(node.Method.Name)
+                && node.Arguments.Count >= 2
+                && node.Arguments[1] is UnaryExpression { Operand: LambdaExpression lambda }
+                && lambda.Parameters.Count > 0)
+            {
+                var param = lambda.Parameters[0];
+                // Nested transparent identifier: TransparentIdentifier<TransparentIdentifier<...>, ...>.
+                if (IsTransparentIdentifier(param.Type)
+                    && param.Type.GetGenericArguments() is [var outerArg, ..]
+                    && IsTransparentIdentifier(outerArg))
+                {
+                    var innerReadFinder = new NestedInnerReadFinder(param);
+                    innerReadFinder.Visit(lambda.Body);
+                    if (innerReadFinder.Found)
+                    {
+                        Found = true;
+                    }
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+    }
+
+    /// <summary>
+    /// A <c>Join</c>/<c>LeftJoin</c>/<c>GroupJoin</c> whose <em>inner</em> sequence is a subquery carrying a
+    /// membership-changing (cardinality) operator — <c>Take</c>/<c>Skip</c>/<c>Distinct</c>/<c>TakeLast</c>/
+    /// <c>SkipLast</c> applied to the whole inner <em>before</em> the join, e.g.
+    /// <c>customers.Join(orders.OrderBy(o =&gt; o.OrderID).Take(5), …)</c> — is mistranslated by the MongoDB C#
+    /// driver's LINQ v3 provider (3.10): it folds the operator into the correlated <c>$lookup</c> sub-pipeline,
+    /// so the limit/skip/distinct is applied <em>per outer row</em> instead of once globally before the join.
+    /// That silently returns wrong results (see the driver bug repro in <c>DriverJoinSpikeTests</c>). Until the
+    /// driver is fixed, fail as a clean EF Core translation failure rather than emit a pipeline that returns
+    /// wrong data. Ordering/filtering-only inners (<c>OrderBy</c>/<c>Where</c>/<c>Select</c>) are
+    /// membership-preserving and unaffected.
+    /// </summary>
+    private void GuardAgainstLimitingOperatorInJoinInner(Expression? efQueryExpression)
+    {
+        if (efQueryExpression == null)
+        {
+            return;
+        }
+
+        var finder = new LimitedJoinInnerFinder();
+        finder.Visit(efQueryExpression);
+        if (finder.Found)
+        {
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(efQueryExpression.Print()));
+        }
+    }
+
+    /// <summary>
+    /// Finds a <c>Join</c>/<c>LeftJoin</c>/<c>GroupJoin</c> whose inner argument subtree contains a
+    /// membership-changing operator (<c>Take</c>/<c>Skip</c>/<c>Distinct</c>/<c>TakeLast</c>/<c>SkipLast</c>).
+    /// </summary>
+    private sealed class LimitedJoinInnerFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.DeclaringType == typeof(Queryable)
+                && node.Method.Name is "Join" or "LeftJoin" or "GroupJoin"
+                && node.Arguments.Count >= 2)
+            {
+                var innerFinder = new LimitingOperatorFinder();
+                innerFinder.Visit(node.Arguments[1]);
+                if (innerFinder.Found)
+                {
+                    Found = true;
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        private sealed class LimitingOperatorFinder : System.Linq.Expressions.ExpressionVisitor
+        {
+            private static readonly HashSet<string> LimitingOperators =
+                ["Take", "Skip", "Distinct", "TakeLast", "SkipLast"];
+
+            public bool Found { get; private set; }
+
+            protected override Expression VisitMethodCall(MethodCallExpression node)
+            {
+                if ((node.Method.DeclaringType == typeof(Queryable) || node.Method.DeclaringType == typeof(Enumerable))
+                    && LimitingOperators.Contains(node.Method.Name))
+                {
+                    Found = true;
+                }
+
+                return base.VisitMethodCall(node);
+            }
+        }
+    }
+
     private void GuardAgainstMultiBranchNavigationCount(Expression? efQueryExpression)
     {
         if (efQueryExpression == null || !_pendingLookups.Any(l => l.InjectAfterRoot))

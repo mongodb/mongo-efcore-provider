@@ -1412,22 +1412,10 @@ Customers.
 
     public override async Task Reverse_in_join_inner_with_skip(bool async)
     {
-#if EF8 || EF9
-        // Fails: Reverse not supported CSHARP-5836
+        // Fails: Skip in join inner not supported EF-317
         await AssertTranslationFailed(() => base.Reverse_in_join_inner_with_skip(async));
 
         AssertMql();
-#else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Reverse_in_join_inner_with_skip(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-#endif
     }
 
     public override async Task Reverse_in_SelectMany(bool async)

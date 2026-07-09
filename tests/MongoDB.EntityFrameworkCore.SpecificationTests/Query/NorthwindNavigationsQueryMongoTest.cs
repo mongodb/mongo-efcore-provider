@@ -69,23 +69,11 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
     public override async Task Select_Where_Navigation_Deep(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-document navigation access issue EF-216
+        // Fails: Multi-hop cross-collection navigation not supported EF-216
         await AssertTranslationFailed(() => base.Select_Where_Navigation_Deep(async));
 
         AssertMql(
         );
-#else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Select_Where_Navigation_Deep(async))).Message);
-
-        AssertMql(
-            """
-OrderDetails.
-""");
-#endif
     }
 
     public override async Task Take_Select_Navigation(bool async)
@@ -611,21 +599,11 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
     public override async Task Navigation_in_subquery_referencing_outer_query(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-document navigation access issue EF-216
+        // Fails: Multi-hop cross-collection navigation not supported EF-216
         await AssertTranslationFailed(() => base.Navigation_in_subquery_referencing_outer_query(async));
 
         AssertMql(
         );
-#else
-        Assert.Contains(
-            "is not defined for type",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Navigation_in_subquery_referencing_outer_query(async))).Message);
-
-        AssertMql(
-        );
-#endif
     }
 
     public override async Task Project_single_scalar_value_subquery_is_properly_inlined(bool async)
@@ -723,22 +701,12 @@ Orders.
 
     public override async Task Navigation_in_subquery_referencing_outer_query_with_client_side_result_operator_and_count(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-document navigation access issue EF-216
+        // Fails: Multi-hop cross-collection navigation not supported EF-216
         await AssertTranslationFailed(() =>
             base.Navigation_in_subquery_referencing_outer_query_with_client_side_result_operator_and_count(async));
 
         AssertMql(
         );
-#else
-        Assert.Contains(
-            "is not defined for type",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Navigation_in_subquery_referencing_outer_query_with_client_side_result_operator_and_count(async))).Message);
-
-        AssertMql(
-        );
-#endif
     }
 
     public override async Task Select_Where_Navigation_Scalar_Equals_Navigation_Scalar(bool async)

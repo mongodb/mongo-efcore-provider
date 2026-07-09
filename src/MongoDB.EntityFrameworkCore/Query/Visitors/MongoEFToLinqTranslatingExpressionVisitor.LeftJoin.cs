@@ -208,31 +208,25 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         var outerType = newSourceItemType ?? oldOuterType;
 
         // A reference Include is a LEFT-OUTER join: the principal (outer) row must survive even when the
-        // related (inner) entity is absent (optional/nullable FK). The driver has no LeftJoin pipeline
-        // translator, and its Join translator emits a plain `$unwind` (INNER join — it silently drops
-        // null-FK principals). So for a bare single-reference LeftJoin (the outer is the root entity, not a
-        // nested LeftJoinResult from a prior join) we emit the equivalent `$lookup` + `$unwind` pipeline
-        // ourselves, but with `preserveNullAndEmptyArrays: true` — producing the same root-level
-        // _outer/_inner document shape the shaper already reads, only left-outer instead of inner.
+        // related (inner) entity is absent (optional/nullable FK). For a bare single-reference LeftJoin (the
+        // outer is the root entity, not a nested LeftJoinResult from a prior join) emit the driver's native
+        // MongoQueryable.LeftJoin, which the driver (3.10+) renders as a left-outer $lookup preserving
+        // unmatched principals — producing the same root-level _outer/_inner document shape the shaper reads.
+        // The inner EntityQueryRootExpression is replaced with its driver collection source when the emitted
+        // tree is subsequently Visit()ed (see the EntityQueryRootExpression case in the main visitor).
         if (isLeftJoin && shapedPath && outerType == oldOuterType)
         {
-            var leftOuter = TryBuildDriverNativeLeftJoinPipeline(call, newSource);
-            if (leftOuter != null)
-            {
-                return leftOuter;
-            }
+            var shapedOuterKey = call.Arguments[2].UnwrapLambdaFromQuote();
+            var shapedInnerKey = call.Arguments[3].UnwrapLambdaFromQuote();
+            return BuildDriverNativeLeftJoin(
+                newSource, call.Arguments[1], shapedOuterKey, shapedInnerKey, outerType, innerType);
         }
 
-        // The PROJECTED (push-down, non-shaped) path turns an Include/optional-navigation LeftJoin into a
-        // driver query whose element type is LeftJoinResult<TOuter,TInner>. Emitting Queryable.Join here would
-        // give the driver an INNER join ($unwind without preserve), silently dropping principals whose related
-        // entity is absent. Instead emit the canonical driver-translatable left-outer shape
-        // outer.GroupJoin(inner, ok, ik, (o, g) => carrier).SelectMany(c => c._inner.DefaultIfEmpty(),
-        //   (c, i) => new LeftJoinResult<TOuter,TInner>(c._outer, i))
-        // which the driver renders as $lookup (array) + $map/$cond + $unwind, preserving unmatched principals
-        // while producing the SAME root-level _outer/_inner document shape the inner-Join path produced (so the
-        // downstream result selector / shaper is unchanged). The shaped (entity-materializing) path keeps using
-        // its own manual $lookup + preserve-$unwind pipeline (TryBuildDriverNativeLeftJoinPipeline) above.
+        // The PROJECTED (push-down, non-shaped) path keeps the GroupJoin+SelectMany+DefaultIfEmpty rewrite.
+        // It serves both reference and *collection* navigation projections, and the native single-reference
+        // MongoQueryable.LeftJoin does not reproduce a collection navigation's empty-collection → null
+        // semantics (it materializes a default entity instead of null). Migrating the projected path to native
+        // is deferred to EF-317 / Slice 4 (collection navigations). The shaped path is already native above.
         if (convertToJoin && isLeftJoin && !shapedPath)
         {
             return BuildProjectedLeftOuterJoin(
@@ -280,161 +274,37 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return Expression.Call(null, newMethod, newArgs);
     }
 
-    /// <summary>
-    /// Emits the driver-native left-outer join pipeline for a single-reference <c>LeftJoin</c> as raw
-    /// aggregation stages (via <see cref="MongoQueryable.AppendStage"/>), mirroring the driver's
-    /// <c>JoinMethodToPipelineTranslator</c> output but with a <c>preserveNullAndEmptyArrays: true</c>
-    /// <c>$unwind</c> so principals with a null/absent related entity are preserved:
-    /// <code>
-    /// { $project: { _outer: "$$ROOT", _id: 0 } }
-    /// { $lookup:  { from: &lt;inner collection&gt;, localField: "_outer.&lt;fk&gt;", foreignField: "&lt;pk&gt;", as: "_inner" } }
-    /// { $unwind:  { path: "$_inner", preserveNullAndEmptyArrays: true } }
-    /// { $project: { _outer: "$_outer", _inner: "$_inner", _id: 0 } }
-    /// </code>
-    /// The output document shape (root-level <c>_outer</c>/<c>_inner</c>) is identical to the driver's Join,
-    /// so the client-side shaper is unchanged. Returns <see langword="null"/> (falling back to the driver's
-    /// inner Join) for any join shape this builder does not recognise (e.g. composite/anonymous join keys),
-    /// preserving prior behaviour for those cases.
-    /// </summary>
-    private Expression? TryBuildDriverNativeLeftJoinPipeline(
-        MethodCallExpression call, Expression newSource)
-    {
-        // Inner source must be a bare DbSet root so we can resolve its collection name.
-        if (call.Arguments[1] is not EntityQueryRootExpression innerRoot)
-        {
-            return null;
-        }
-
-        var innerEntityType = innerRoot.EntityType;
-        var outerKey = call.Arguments[2].UnwrapLambdaFromQuote();
-        var innerKey = call.Arguments[3].UnwrapLambdaFromQuote();
-
-        var outerEntityType = _queryContext.Context.Model.FindEntityType(outerKey.Parameters[0].Type);
-        if (outerEntityType == null)
-        {
-            return null;
-        }
-
-        var outerField = TryGetKeyFieldPath(outerKey.Body, outerEntityType);
-        var innerField = TryGetKeyFieldPath(innerKey.Body, innerEntityType);
-        if (outerField == null || innerField == null)
-        {
-            return null;
-        }
-
-        var collectionName = innerEntityType.GetCollectionName();
-        var outerClrType = newSource.Type.TryGetItemType()!;
-        var innerClrType = innerEntityType.ClrType;
-
-        var projectOuter = new BsonDocument("$project", new BsonDocument { { "_outer", "$$ROOT" }, { "_id", 0 } });
-        var lookup = new BsonDocument("$lookup", new BsonDocument
-        {
-            { "from", collectionName },
-            { "localField", $"_outer.{outerField}" },
-            { "foreignField", innerField },
-            { "as", "_inner" }
-        });
-        var unwind = new BsonDocument("$unwind",
-            new BsonDocument { { "path", "$_inner" }, { "preserveNullAndEmptyArrays", true } });
-        var projectResult = new BsonDocument("$project",
-            new BsonDocument { { "_outer", "$_outer" }, { "_inner", "$_inner" }, { "_id", 0 } });
-
-        // Type the manual pipeline's final stage as LeftJoinResult<TOuter,TInner> — the SAME element type the
-        // driver's own Queryable.Join produces — so that any downstream operators (OrderBy/Where/etc.) that
-        // read LeftJoinResult.Outer/.Inner (rewritten to _outer/_inner member access) translate against a
-        // source that actually has those members, and the terminal shaper reads the same root-level
-        // _outer/_inner document shape as the driver Join path. The intermediate $project/$lookup/$unwind
-        // stages stay BsonDocument-typed; only the result-shaping $project carries the LeftJoinResult
-        // serializer (built from the outer/inner entity serializers, mirroring the driver's Join translator).
-        var resultType = typeof(LeftJoinResult<,>).MakeGenericType(outerClrType, innerClrType);
-        var resultSerializer = BuildLeftJoinResultSerializer(outerClrType, innerClrType, outerEntityType, innerEntityType);
-
-        var query = AppendRawStage(newSource, outerClrType, projectOuter, typeof(BsonDocument));
-        query = AppendRawStage(query, typeof(BsonDocument), lookup);
-        query = AppendRawStage(query, typeof(BsonDocument), unwind);
-        query = AppendRawStage(query, typeof(BsonDocument), projectResult, resultType, resultSerializer);
-        return query;
-    }
+    private static readonly MethodInfo MongoQueryableLeftJoinMethod =
+        typeof(MongoQueryable).GetMethods()
+            .Single(m => m.Name == "LeftJoin" && m.GetParameters().Length == 5);
 
     /// <summary>
-    /// Builds an <see cref="IBsonSerializer"/> for <see cref="LeftJoinResult{TOuter,TInner}"/> whose
-    /// <c>_outer</c>/<c>_inner</c> members serialize with the provider's entity serializers, mirroring the
-    /// serializer the driver's own Join translator synthesizes for its <c>_outer</c>/<c>_inner</c> result
-    /// documents. Returning a <see cref="BsonClassMapSerializer{TClass}"/> (an
-    /// <c>IBsonDocumentSerializer</c>) lets the driver translate downstream <c>_outer</c>/<c>_inner</c> member
-    /// access exactly as for the driver Join path.
+    /// Emits the driver-native <see cref="MongoQueryable.LeftJoin{TOuter,TInner,TKey,TResult}"/> for a
+    /// single-reference left-outer join, producing the same root-level <c>_outer</c>/<c>_inner</c> document
+    /// shape (via <see cref="LeftJoinResult{TOuter,TInner}"/>) the shaper already reads. This replaces both the
+    /// hand-rolled <c>$lookup</c>/<c>$unwind</c> pipeline (shaped path) and the
+    /// <c>GroupJoin(...).SelectMany(...DefaultIfEmpty())</c> rewrite (projected path): driver 3.10.0 renders
+    /// <c>LeftJoin</c> as a left-outer <c>$lookup</c> directly, preserving principals whose related entity is
+    /// absent, so no manual preserve-<c>$unwind</c> is needed.
     /// </summary>
-    private IBsonSerializer BuildLeftJoinResultSerializer(
-        Type outerClrType, Type innerClrType, IEntityType outerEntityType, IEntityType innerEntityType)
+    private Expression BuildDriverNativeLeftJoin(
+        Expression outerSource, Expression innerSource,
+        LambdaExpression outerKey, LambdaExpression innerKey,
+        Type outerType, Type innerType)
     {
-        var resultType = typeof(LeftJoinResult<,>).MakeGenericType(outerClrType, innerClrType);
-        var outerSerializer = _bsonSerializerFactory.GetEntitySerializer(outerEntityType);
-        var innerSerializer = _bsonSerializerFactory.GetEntitySerializer(innerEntityType);
+        var keyType = outerKey.ReturnType;
+        var resultType = typeof(LeftJoinResult<,>).MakeGenericType(outerType, innerType);
+        var ctor = resultType.GetConstructors()[0];
+        var outerParam = Expression.Parameter(outerType, "o");
+        var innerParam = Expression.Parameter(innerType, "i");
+        var resultSelector = Expression.Lambda(
+            Expression.New(ctor, outerParam, innerParam), outerParam, innerParam);
 
-        var classMap = new BsonClassMap(resultType);
-        classMap.MapMember(resultType.GetProperty(nameof(LeftJoinResult<object, object>._outer))!)
-            .SetElementName("_outer").SetSerializer(outerSerializer);
-        classMap.MapMember(resultType.GetProperty(nameof(LeftJoinResult<object, object>._inner))!)
-            .SetElementName("_inner").SetSerializer(innerSerializer);
-        classMap.Freeze();
-
-        var serializerType = typeof(BsonClassMapSerializer<>).MakeGenericType(resultType);
-        return (IBsonSerializer)Activator.CreateInstance(serializerType, classMap)!;
-    }
-
-    /// <summary>
-    /// Resolves the dotted BSON field path for a simple <c>EF.Property(p, "Name")</c> / member-access join
-    /// key selector body. Returns <see langword="null"/> for shapes we don't handle (composite/anonymous
-    /// keys, conversions, computed keys).
-    /// </summary>
-    private static string? TryGetKeyFieldPath(Expression keyBody, IEntityType entityType)
-    {
-        var propertyName = keyBody.TryGetSimplePropertyName();
-        if (propertyName == null)
-        {
-            return null;
-        }
-
-        var property = entityType.FindProperty(propertyName);
-        if (property == null)
-        {
-            return null;
-        }
-
-        var elementName = property.GetElementName();
-        if (property.IsPrimaryKey() && entityType.FindPrimaryKey()?.Properties.Count > 1)
-        {
-            return $"_id.{elementName}";
-        }
-
-        return elementName;
-    }
-
-    /// <summary>
-    /// Appends a single raw aggregation stage via <see cref="MongoQueryable.AppendStage"/>, keeping the
-    /// queryable's element type unless <paramref name="newElementType"/> changes it (used on the final
-    /// stage to surface the LeftJoinResult shape downstream). When <paramref name="outSerializer"/> is
-    /// supplied it is registered as the output serializer so the driver can introspect the new element type's
-    /// members for downstream operators; otherwise the driver resolves the serializer for the output type.
-    /// </summary>
-    private static Expression AppendRawStage(
-        Expression query, Type elementType, BsonDocument stage, Type? newElementType = null,
-        IBsonSerializer? outSerializer = null)
-    {
-        var outType = newElementType ?? elementType;
-        var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
-            .MakeGenericMethod(elementType, outType);
-        var outSerializerType = typeof(IBsonSerializer<>).MakeGenericType(outType);
-        var stageDefinitionType = typeof(BsonDocumentPipelineStageDefinition<,>).MakeGenericType(elementType, outType);
-        var stageConstructor = stageDefinitionType.GetConstructor([typeof(BsonDocument), outSerializerType])!;
-
-        var serializerExpression = Expression.Constant(outSerializer, outSerializerType);
-
-        return Expression.Call(null, appendStageMethod, query,
-            Expression.New(stageConstructor,
-                Expression.Constant(stage),
-                serializerExpression),
-            serializerExpression);
+        var method = MongoQueryableLeftJoinMethod.MakeGenericMethod(outerType, innerType, keyType, resultType);
+        return Expression.Call(null, method,
+            outerSource, innerSource,
+            Expression.Quote(outerKey), Expression.Quote(innerKey),
+            Expression.Quote(resultSelector));
     }
 
     private static readonly MethodInfo QueryableJoinMethod =
@@ -457,16 +327,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             .Single(m => m.Name == nameof(Enumerable.DefaultIfEmpty) && m.GetParameters().Length == 1);
 
     /// <summary>
-    /// Builds the canonical driver-translatable left-outer join for the PROJECTED (non-shaped) path:
-    /// <code>
-    /// outer.GroupJoin(inner, outerKey, innerKey, (o, g) => new LeftJoinResult&lt;TOuter, IEnumerable&lt;TInner&gt;&gt;(o, g))
-    ///      .SelectMany(c => c._inner.DefaultIfEmpty(), (c, i) => new LeftJoinResult&lt;TOuter, TInner&gt;(c._outer, i))
-    /// </code>
-    /// The driver renders this as <c>$lookup</c> (array) + <c>$map</c>/<c>$cond</c> (substituting a single
-    /// <see langword="null"/> when the matched array is empty) + <c>$unwind</c>, so principals with no matching
-    /// related entity survive — and the terminal element type / document shape is the same
-    /// <see cref="LeftJoinResult{TOuter,TInner}"/> (<c>_outer</c>/<c>_inner</c>) the inner-Join path produced,
-    /// keeping the downstream result selector and shaper unchanged.
+    /// Builds the driver-translatable left-outer join for the PROJECTED (non-shaped) path via
+    /// <c>GroupJoin(...).SelectMany(c => c._inner.DefaultIfEmpty(), ...)</c>. The driver renders this as
+    /// <c>$lookup</c> (array) + <c>$map</c>/<c>$cond</c> (substituting a single <see langword="null"/> when the
+    /// matched array is empty) + <c>$unwind</c>. This is retained specifically for projected
+    /// <em>collection</em> navigations, whose empty-collection → <see langword="null"/> semantics the driver's
+    /// native single-reference <c>LeftJoin</c> does not reproduce (it materializes a default entity instead).
+    /// Single-reference projected joins use <see cref="BuildDriverNativeLeftJoin"/> instead. See EF-317 / Slice 4.
     /// </summary>
     private Expression BuildProjectedLeftOuterJoin(
         MethodCallExpression call, Expression newSource, Type outerType, Type innerType, Type keyType, Type oldOuterType)

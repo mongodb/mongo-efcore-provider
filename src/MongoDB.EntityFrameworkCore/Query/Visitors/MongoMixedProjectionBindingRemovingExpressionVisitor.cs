@@ -166,24 +166,40 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     {
         result = null!;
 
-        if (mappedExpression is not MemberExpression memberExpression
-            || memberExpression.Expression is not StructuralTypeShaperExpression shaper
-            || shaper.StructuralType is not IEntityType targetEntityType)
+        // Two source shapes read a scalar off a joined entity:
+        //   * a CLR member access on the entity's shaper — e.g. select o.Customer.City; and
+        //   * an EF.Property(<shaper>, "Name") call — e.g. select EF.Property<DateTime>(o2, "OrderDate")
+        //     over an explicit-join inner entity.
+        // Both carry a StructuralTypeShaperExpression whose StructuralType is the joined entity plus the
+        // accessed property; resolve those and fall through to the shared "_inner" read below.
+        StructuralTypeShaperExpression? shaper = null;
+        IProperty? property = null;
+
+        if (mappedExpression is MemberExpression memberExpression
+            && memberExpression.Expression is StructuralTypeShaperExpression memberShaper
+            && memberShaper.StructuralType is IEntityType memberEntityType)
+        {
+            shaper = memberShaper;
+            property = memberEntityType.FindProperty(memberExpression.Member);
+        }
+        else if (mappedExpression is MethodCallExpression methodCall
+                 && methodCall.Method.IsEFPropertyMethod()
+                 && methodCall.Arguments is [StructuralTypeShaperExpression efShaper, ConstantExpression { Value: string propertyName }]
+                 && efShaper.StructuralType is IEntityType efEntityType)
+        {
+            shaper = efShaper;
+            property = efEntityType.FindProperty(propertyName);
+        }
+
+        if (shaper == null || property == null)
         {
             return false;
         }
 
-        // Only handle member access on a JOINED navigation target. A member access on the root entity's own
-        // shaper (e.g. select new { o, o.CustomerID }) is a root-level property and is handled by the
-        // existing TryResolveFieldAccess path, which reads it from "_outer". Reading it from "_inner" here
-        // would return the wrong (joined) document's value.
-        if (targetEntityType == _rootEntityType)
-        {
-            return false;
-        }
-
-        var property = targetEntityType.FindProperty(memberExpression.Member);
-        if (property == null)
+        // Only handle access on a JOINED entity. Access on the root entity's own shaper (e.g.
+        // select new { o, o.CustomerID }) is a root-level property handled by the existing TryResolveFieldAccess
+        // path, which reads it from "_outer"; reading it from "_inner" here would return the wrong document's value.
+        if (shaper.StructuralType == _rootEntityType)
         {
             return false;
         }

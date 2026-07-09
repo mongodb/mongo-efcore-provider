@@ -148,86 +148,59 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task Join_customers_orders_with_subquery(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery(async))).Message);
+        await base.Join_customers_orders_with_subquery(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Inner.CustomerID" : "ALFKI" } }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
 """);
     }
 
     public override async Task Join_customers_orders_with_subquery_with_take(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_with_take(async))).Message);
+        // Fails: Take/Skip/Distinct in join inner not supported EF-317
+        await AssertTranslationFailed(() => base.Join_customers_orders_with_subquery_with_take(async));
 
         AssertMql(
-            """
-Customers.
-""");
+        );
     }
 
     public override async Task Join_customers_orders_with_subquery_anonymous_property_method(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_anonymous_property_method(async))).Message);
+        await base.Join_customers_orders_with_subquery_anonymous_property_method(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner.CustomerID" : "ALFKI" } }
 """);
     }
 
     public override async Task Join_customers_orders_with_subquery_anonymous_property_method_with_take(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_anonymous_property_method_with_take(async))).Message);
+        // Fails: Take/Skip/Distinct in join inner not supported EF-317
+        await AssertTranslationFailed(() => base.Join_customers_orders_with_subquery_anonymous_property_method_with_take(async));
 
         AssertMql(
-            """
-Customers.
-""");
+        );
     }
 
     public override async Task Join_customers_orders_with_subquery_predicate(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_predicate(async))).Message);
+        await base.Join_customers_orders_with_subquery_predicate(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 0 } } }, { "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Inner.CustomerID" : "ALFKI" } }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
 """);
     }
 
     public override async Task Join_customers_orders_with_subquery_predicate_with_take(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_predicate_with_take(async))).Message);
+        // Fails: Take/Skip/Distinct in join inner not supported EF-317
+        await AssertTranslationFailed(() => base.Join_customers_orders_with_subquery_predicate_with_take(async));
 
         AssertMql(
-            """
-Customers.
-""");
+        );
     }
 
     public override async Task Join_composite_key(bool async)
@@ -318,16 +291,11 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task GroupJoin_simple_subquery(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_simple_subquery(async))).Message);
+        // Fails: Take/Skip/Distinct in join inner not supported EF-317
+        await AssertTranslationFailed(() => base.GroupJoin_simple_subquery(async));
 
         AssertMql(
-            """
-Customers.
-""");
+        );
     }
 
     public override async Task GroupJoin_as_final_operator(bool async)
@@ -402,14 +370,11 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_DefaultIfEmpty2(async))).Message);
+        await base.GroupJoin_DefaultIfEmpty2(async);
 
         AssertMql(
             """
-Employees.
+Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "EmployeeID", "pipeline" : [{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }], "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
 #endif
     }
@@ -499,15 +464,11 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_SelectMany_subquery_with_filter(async))).Message);
+        await base.GroupJoin_SelectMany_subquery_with_filter(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 5 } } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
 """);
     }
 
@@ -529,11 +490,11 @@ Customers.
         AssertMql(
         );
 #else
-        await Assert.ThrowsAnyAsync<Exception>(() => base.GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(async));
+        await base.GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 5 } } }], "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
 #endif
     }
@@ -548,51 +509,29 @@ Customers.
 
     public override async Task GroupJoin_Subquery_with_Take_Then_SelectMany_Where(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_Subquery_with_Take_Then_SelectMany_Where(async))).Message);
+        // Fails: Take/Skip/Distinct in join inner not supported EF-317
+        await AssertTranslationFailed(() => base.GroupJoin_Subquery_with_Take_Then_SelectMany_Where(async));
 
         AssertMql(
-            """
-Customers.
-""");
+        );
     }
 
     public override async Task Inner_join_with_tautology_predicate_converts_to_cross_join(bool async)
     {
         // Fails: Multiple query roots issue EF-220
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Inner_join_with_tautology_predicate_converts_to_cross_join(async))).Message);
+        await AssertTranslationFailed(() => base.Inner_join_with_tautology_predicate_converts_to_cross_join(async));
 
         AssertMql(
-            """
-Customers.
-""");
+        );
     }
 
     public override async Task Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(bool async)
     {
-#if EF8 || EF9
         // Fails: Multiple query roots issue EF-220
         await AssertTranslationFailed(() => base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async));
 
         AssertMql(
         );
-#else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
-#endif
     }
 
     public override async Task SelectMany_with_client_eval(bool async)
@@ -759,30 +698,21 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task GroupJoin_customers_employees_subquery_shadow(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_customers_employees_subquery_shadow(async))).Message);
+        await base.GroupJoin_customers_employees_subquery_shadow(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer.City", "foreignField" : "City", "pipeline" : [{ "$sort" : { "City" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "Title" : "$Inner.Title", "_id" : "$Inner._id" } }
 """);
     }
 
     public override async Task GroupJoin_customers_employees_subquery_shadow_take(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_customers_employees_subquery_shadow_take(async))).Message);
+        // Fails: Take/Skip/Distinct in join inner not supported EF-317
+        await AssertTranslationFailed(() => base.GroupJoin_customers_employees_subquery_shadow_take(async));
 
         AssertMql(
-            """
-Customers.
-""");
+        );
     }
 
     public override async Task GroupJoin_projection(bool async)

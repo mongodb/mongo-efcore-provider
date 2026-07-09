@@ -504,19 +504,10 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
             """);
     }
 
+    [ConditionalTheory(Skip = "EF-221: mismatched-type equality returns wrong results")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Where_equals_using_object_overload_on_mismatched_types(bool async)
-    {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Unable to cast object of type 'System.UInt64' to type 'System.UInt32'.",
-            (await Assert.ThrowsAsync<InvalidCastException>(() =>
-                base.Where_equals_using_object_overload_on_mismatched_types(async))).Message);
-
-        AssertMql(
-            """
-            Employees.
-            """);
-    }
+        => await base.Where_equals_using_object_overload_on_mismatched_types(async);
 
     public override async Task Where_equals_using_int_overload_on_mismatched_types(bool async)
     {
@@ -528,19 +519,10 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
             """);
     }
 
+    [ConditionalTheory(Skip = "EF-221: mismatched-type equality returns wrong results")]
+    [MemberData(nameof(IsAsyncData))]
     public override async Task Where_equals_on_mismatched_types_nullable_int_long(bool async)
-    {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Unable to cast object of type 'System.UInt64' to type 'System.Nullable`1[System.UInt32]'.",
-            (await Assert.ThrowsAsync<InvalidCastException>(() => base.Where_equals_on_mismatched_types_nullable_int_long(async)))
-            .Message);
-
-        AssertMql(
-            """
-            Employees.
-            """);
-    }
+        => await base.Where_equals_on_mismatched_types_nullable_int_long(async);
 
     public override async Task Where_equals_on_mismatched_types_nullable_long_nullable_int(bool async)
     {

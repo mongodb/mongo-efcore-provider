@@ -137,11 +137,11 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
         AssertMql(
         );
 #else
-        await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query(async));
+        await base.Included_many_to_one_query(async);
 
         AssertMql(
             """
-Orders.
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }], "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner" : { "$ne" : null }, "_inner.CompanyName" : { "$ne" : null } } }
 """);
 #endif
     }
@@ -197,14 +197,11 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
         AssertMql(
 );
 #else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Entity_Equality(async))).Message);
+        await base.Entity_Equality(async);
 
         AssertMql(
             """
-Orders.
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }], "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner" : { "$ne" : null }, "_inner.CompanyName" : { "$ne" : null } } }
 """);
 #endif
     }
@@ -231,11 +228,11 @@ Products.
         AssertMql(
         );
 #else
-        await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query2(async));
+        await base.Included_many_to_one_query2(async);
 
         AssertMql(
             """
-Orders.
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }], "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner" : { "$ne" : null }, "_inner.CompanyName" : { "$ne" : null } } }
 """);
 #endif
     }

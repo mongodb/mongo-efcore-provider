@@ -85,33 +85,56 @@ public class DriverJoinSpikeTests(TemporaryDatabaseFixture database)
         Assert.Contains(result, r => r.Order.Description == "Order 1" && r.Customer!.Name == "Alice");
     }
 
-    [Fact(Skip = "Known driver limitation: GroupJoin/SelectMany with DefaultIfEmpty over BsonDocument collections "
-                 + "yields a null BsonDocument that the driver's serializer cannot serialize "
-                 + "(\"C# null values of type 'BsonDocument' cannot be serialized\").")]
-    public void Driver_GroupJoin_SelectMany_returns_BsonDocuments()
+    [Fact]
+    public void Driver_LeftJoin_preserves_unmatched_outer_and_serializes_null_inner()
     {
         var (orders, customers) = SetupData();
 
-        // Check the raw BsonDocument structure from the driver
+        // An order whose CustomerId matches no customer - must survive a left-outer join.
+        orders.InsertOne(new SpikeOrder
+        {
+            Id = ObjectId.GenerateNewId(), Description = "Orphan", CustomerId = ObjectId.GenerateNewId()
+        });
+
+        var result = orders.AsQueryable()
+            .LeftJoin(
+                customers.AsQueryable(),
+                o => o.CustomerId,
+                c => c.Id,
+                (o, c) => new { OrderDesc = o.Description, CustomerName = c == null ? null : c.Name })
+            .ToList();
+
+        Assert.Equal(4, result.Count);
+        Assert.Contains(result, r => r.OrderDesc == "Orphan" && r.CustomerName == null);
+        Assert.Contains(result, r => r.OrderDesc == "Order 1" && r.CustomerName == "Alice");
+        Assert.Contains(result, r => r.OrderDesc == "Order 3" && r.CustomerName == "Bob");
+    }
+
+    [Fact]
+    public void Driver_LeftJoin_over_BsonDocument_collections_serializes_null_inner()
+    {
+        var (orders, customers) = SetupData();
+        orders.InsertOne(new SpikeOrder
+        {
+            Id = ObjectId.GenerateNewId(), Description = "Orphan", CustomerId = ObjectId.GenerateNewId()
+        });
+
+        // The shaped Include path joins BsonDocument collections and reads _outer/_inner; probe that
+        // native LeftJoin over BsonDocument no longer hits "null BsonDocument cannot be serialized".
         var bsonOrders = database.MongoDatabase.GetCollection<BsonDocument>(orders.CollectionNamespace.CollectionName);
         var bsonCustomers = database.MongoDatabase.GetCollection<BsonDocument>(customers.CollectionNamespace.CollectionName);
 
         var result = bsonOrders.AsQueryable()
-            .GroupJoin(
+            .LeftJoin(
                 bsonCustomers.AsQueryable(),
                 o => o["CustomerId"],
                 c => c["_id"],
-                (o, group) => new { Outer = o, Group = group })
-            .SelectMany(
-                x => x.Group.DefaultIfEmpty(),
-                (x, c) => new { x.Outer, Inner = c })
+                (o, c) => new { Outer = o, Inner = c })
             .ToList();
 
-        Assert.Equal(3, result.Count);
-        // Check the structure - Outer should be a BsonDocument with order fields
-        var first = result.First();
-        Assert.NotNull(first.Outer);
-        Assert.True(first.Outer.Contains("Description"));
+        Assert.Equal(4, result.Count);
+        Assert.Contains(result, r => r.Outer["Description"] == "Orphan" && r.Inner == null);
+        Assert.All(result, r => Assert.True(r.Outer.Contains("Description")));
     }
 
     [Fact]
