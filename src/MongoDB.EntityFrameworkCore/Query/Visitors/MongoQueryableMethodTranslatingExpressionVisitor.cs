@@ -174,6 +174,33 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Any other (projecting) Select cannot be expressed as a native pipeline stage (SP3 work),
         // so mark the query as no longer natively representable.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        if (source.ShaperExpression is GroupByShaperExpression)
+        {
+            // GroupBy(key).Select(aggregate): bind the accumulators (and finalize MongoSelectDefinition.Grouping)
+            // when the projection is a supported shape (g.Key parts + Count/Sum/Min/Max/Average accumulators);
+            // otherwise mark non-native so the query falls back to driver-LINQ. Either way translation must
+            // complete without hard-throwing (the behavior change of this sub-project).
+            //
+            // Build the grouped-row result shaper: rewrite the projection's members onto ProjectionBinding
+            // reads of top-level result aliases. When the grouping bound natively (Grouping finalized +
+            // flatten projection populated) the gate emits the $group + flattening $project and this shaper
+            // reads each alias from the grouped output document. When it did not bind (computed key/operand),
+            // the query is marked non-native and this same anonymous-shaper (no GroupByShaperExpression left)
+            // lets the driver-LINQ push-down path run the GroupBy server-side and pass its objects straight
+            // through — CanPushDown succeeds because there is no entity reference in the shaper.
+            if (!NativeGroupByBinder.TryBindGroupProjection(mongoQueryExpression, selector))
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+
+            var groupShaper = TryBuildGroupResultShaper(mongoQueryExpression, selector);
+
+            // A projection shape we cannot rewrite (not an anonymous/DTO construction) keeps the placeholder
+            // GroupByShaperExpression; the gate rejects it under NativeOnly and the driver reports it under
+            // Native — matching a bare IGrouping.
+            return groupShaper == null ? source : source.UpdateShaperExpression(groupShaper);
+        }
+
         if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector))
         {
             // Native projection pushdown (SP3): a terminal anonymous-type / DTO projection whose leaves are
@@ -190,6 +217,56 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var newShaper = _projectionBindingExpressionVisitor.Translate(mongoQueryExpression, newSelectorBody);
 
         return source.UpdateShaperExpression(newShaper);
+    }
+
+    /// <summary>
+    /// Builds the result shaper for a <c>GroupBy(key).Select(aggregate)</c> projection by rewriting each
+    /// anonymous-type / DTO member onto a <see cref="ProjectionBindingExpression"/> that reads the member's
+    /// top-level result alias from the grouped output document. The alias is the member name — matching the
+    /// flattening <c>$project</c> the lowerer emits after <c>$group</c> — so the standard DOM binding-removing
+    /// shaper reads each value by name. Returns <see langword="null"/> for a shape that is not an
+    /// anonymous/DTO construction (kept as the placeholder <see cref="Microsoft.EntityFrameworkCore.Query.GroupByShaperExpression"/>).
+    /// </summary>
+    private static Expression? TryBuildGroupResultShaper(MongoQueryExpression mongoQueryExpression, LambdaExpression selector)
+    {
+        switch (selector.Body)
+        {
+            case NewExpression newExpression
+                when newExpression.Members != null
+                     && newExpression.Members.Count == newExpression.Arguments.Count
+                     && newExpression.Arguments.Count > 0:
+                var arguments = new Expression[newExpression.Arguments.Count];
+                for (var i = 0; i < arguments.Length; i++)
+                    arguments[i] = BindGroupMember(mongoQueryExpression, newExpression.Members[i].Name, newExpression.Arguments[i]);
+                return newExpression.Update(arguments);
+
+            case MemberInitExpression memberInit
+                when memberInit.NewExpression.Arguments.Count == 0
+                     && memberInit.Bindings.Count > 0:
+                var bindings = new MemberBinding[memberInit.Bindings.Count];
+                for (var i = 0; i < bindings.Length; i++)
+                {
+                    if (memberInit.Bindings[i] is not MemberAssignment assignment)
+                        return null;
+                    bindings[i] = assignment.Update(
+                        BindGroupMember(mongoQueryExpression, assignment.Member.Name, assignment.Expression));
+                }
+
+                return memberInit.Update((NewExpression)memberInit.NewExpression, bindings);
+
+            default:
+                return null;
+        }
+    }
+
+    // Registers a projection for one grouped-result member and returns a ProjectionBindingExpression reading
+    // it by index. The stored source expression (the original g.Key / g.Count() / g.Sum(...) argument) is kept
+    // only for its distinctness (AddToProjection dedups by expression) and CLR type; the DOM shaper reads the
+    // value raw by the alias (the member name) since these sources resolve to no IProperty.
+    private static Expression BindGroupMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
+    {
+        var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
+        return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
     }
 
     /// <summary>
@@ -670,7 +747,34 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateGroupBy(ShapedQueryExpression source, LambdaExpression keySelector,
         LambdaExpression? elementSelector, LambdaExpression? resultSelector)
-        => null;
+    {
+        // The base QueryableMethodTranslatingExpressionVisitor.TranslateGroupBy is abstract, so there is no base
+        // implementation to delegate to — the grouped shaped query is constructed here directly. The native $group
+        // path supports only GroupBy(key).Select(aggregate): no element selector shaping and no fused result
+        // selector (EF normalizes GroupBy-with-result-selector into GroupBy followed by Select, so a non-null
+        // resultSelector here is a shape we do not natively bind). When the key binds via TryBindGroupKey, the query
+        // routes native (Route becomes GroupBy once the Select finalizes the grouping); otherwise it is marked
+        // non-native so it falls back to driver-LINQ rather than hard-throwing (the behavior change of this
+        // sub-project — GroupBy previously produced NotTranslatedExpression and failed translation outright).
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+
+        // Record GroupBy provenance unconditionally so a later Join/GroupJoin/LeftJoin over this grouped
+        // source can be recognized as the wrong-data-on-fallback shape (see TranslateJoinCore).
+        mongoQueryExpression.Select.IsGroupBy = true;
+
+        if (elementSelector != null || resultSelector != null
+            || !NativeGroupByBinder.TryBindGroupKey(mongoQueryExpression, keySelector))
+        {
+            mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
+
+        // Carry a GroupByShaperExpression so a subsequent Select over the IGrouping is recognized (grouped branch
+        // in TranslateSelect). The definitive grouped-row shaper is compiled in the gate (Task 6); the key shaper
+        // here is a lightweight placeholder (the ungrouped source represents each group's elements).
+        var keyShaper = ReplacingExpressionVisitor.Replace(keySelector.Parameters[0], source.ShaperExpression, keySelector.Body);
+        var groupByShaper = new GroupByShaperExpression(keyShaper, source);
+        return source.UpdateShaperExpression(groupByShaper);
+    }
 
     protected override ShapedQueryExpression? TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
@@ -699,6 +803,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     {
         var outerQueryExpression = (MongoQueryExpression)outer.QueryExpression;
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
+
+        // A Join/GroupJoin/LeftJoin whose outer (or inner) is a grouped source is a shape the native path
+        // cannot represent AND whose driver-LINQ fallback silently returns wrong data (the joined entity is
+        // empty for every grouped row). Mark it fallback-unsafe so the gate fails cleanly instead of routing
+        // to the wrong-data fallback. Non-grouped joins fall back to driver-LINQ as before (correct results).
+        if (outerQueryExpression.Select.IsGroupBy || innerQueryExpression.Select.IsGroupBy)
+        {
+            outerQueryExpression.Select.MarkGroupByFallbackUnsafe();
+        }
 
         outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType);
 

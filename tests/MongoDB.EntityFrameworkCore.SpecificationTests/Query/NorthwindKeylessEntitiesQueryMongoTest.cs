@@ -158,10 +158,12 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
     public override async Task KeylessEntity_groupby(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.KeylessEntity_groupby(async));
+        await base.KeylessEntity_groupby(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$group" : { "_id" : "$City", "__agg0" : { "$sum" : 1 }, "__agg1" : { "$sum" : { "$strLenCP" : "$Address" } } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "Sum" : "$__agg1", "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_correlated_with_keyless_entity_in_predicate_works(bool async)

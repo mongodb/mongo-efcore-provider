@@ -191,4 +191,22 @@ public class MongoSelectLowererTests
 
         Assert.DoesNotContain(stages, s => s is MongoProjectStage);
     }
+
+    // ── Test 11: Grouping lowers to a $match then $group ────────────────────────
+
+    [Fact]
+    public void Lowers_grouping_to_group_stage_after_match()
+    {
+        var query = TestSelect();
+        query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
+        query.Select.Grouping = new MongoGrouping(
+            new[] { new MongoGroupingKeyPart(null, new MongoFieldExpression(property: null!, elementName: "country")) },
+            new[] { new MongoGroupAccumulator("Count", "$sum", null) });
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoMatchStage>(s),
+            s => Assert.IsType<MongoGroupStage>(s));
+    }
 }

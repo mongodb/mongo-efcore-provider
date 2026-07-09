@@ -137,6 +137,20 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             throw new NotSupportedException($" Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
         }
 
+        // A GroupBy combined with a Join family operator cannot go native, and — unlike an ordinary
+        // unsupported shape — its driver-LINQ fallback executes and returns silently wrong data (the joined
+        // entity is empty for every grouped row). Fail cleanly under Native/NativeOnly instead of routing to
+        // that wrong-data fallback. Explicit DriverLinq is the user's opt-in to driver-LINQ, so it is left
+        // untouched (it still runs, with the same wrong-data caveat the user opted into).
+        if (((MongoQueryCompilationContext)QueryCompilationContext).QueryMode != MongoQueryMode.DriverLinq
+            && mongoQueryExpression.Select.IsGroupByFallbackUnsafe)
+        {
+            throw new NativeTranslationNotSupportedException(
+                "Query combines GroupBy with a Join, which the native translator does not support and whose "
+                + "driver-LINQ fallback returns incorrect results; use MongoQueryMode.DriverLinq to opt in to "
+                + "the driver-LINQ execution of this query.");
+        }
+
         var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
         var projectedEntityType = QueryCompilationContext.Model.FindEntityType(
             shapedQueryExpression.ResultCardinality == ResultCardinality.Enumerable
@@ -159,9 +173,34 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         IEntityType rootEntityType,
         MongoQueryExpression mongoQueryExpression)
     {
+        var queryMode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+
+        // A grouping that never bound a supported aggregate projection (bare IGrouping sequence, an element
+        // selector, or a computed/unsupported grouped shape we could not rewrite) still carries the placeholder
+        // GroupByShaperExpression. That leaks into VerifyNoClientConstant below (which rejects it), so surface
+        // the coverage decision first: under NativeOnly this is a native-coverage failure (throw the native
+        // exception, not the raw "VisitChildren" error); under Native/DriverLinq fall through to the driver,
+        // which reports its own inability to materialize a bare IGrouping.
+        if (mongoQueryExpression.Select.Route == NativeRoute.Fallback
+            && shapedQueryExpression.ShaperExpression is GroupByShaperExpression)
+        {
+            ThrowIfNativeOnlyForbidsFallback(queryMode, "Query groups without a supported aggregate projection");
+        }
+
         VerifyNoClientConstant(shapedQueryExpression.ShaperExpression);
 
-        var queryMode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+        // Native GroupBy (EF-344): GroupBy(key).Select(aggregate) was bound to MongoSelectDefinition.Grouping
+        // and lowered to a $group + flattening $project. Emit the native pipeline and shape each grouped row
+        // with the DOM binding-removing shaper (which reads each result member by its top-level alias). Placed
+        // before the NativeOnly guard so a representable grouping succeeds natively instead of being rejected.
+        if (queryMode != MongoQueryMode.DriverLinq
+            && mongoQueryExpression.Select.Route == NativeRoute.GroupBy)
+        {
+            return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
+                (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
+                    rootEntityType, mongoQueryExpression, bsonDoc, behavior),
+                allowStreaming: false);
+        }
 
         // Native projection pushdown (SP3): a terminal member-access anonymous/DTO Select was lowered to a
         // $project slot in the QMTEV. Emit it as a native pipeline and shape the projected documents with the

@@ -88,6 +88,24 @@ internal sealed class MongoSelectLowerer
         // ($lookup before $project) already satisfies that without any lowerer change.
         AppendLookupStages(query, stages);
 
+        // 6b. Keyed $group terminal (GroupBy(key).Select(aggregate)). A GroupBy-route query has only
+        // $match + $group by construction — the binder rejects orderings/paging alongside a grouping —
+        // so no $sort/$skip/$limit precede it here. The $group is followed by a flattening $project
+        // (Select.Projection) that lifts the grouped output — the _id (scalar key), each _id.<Name>
+        // composite sub-key, and each accumulator output field — up to top-level result aliases the DOM
+        // shaper reads by name (see NativeGroupByBinder / MongoQueryLanguageRenderer). Returning here is
+        // safe: no further stages follow a grouping.
+        if (select.Grouping is { } grouping)
+        {
+            stages.Add(new MongoGroupStage(grouping));
+            if (select.Projection.Count > 0)
+            {
+                stages.Add(new MongoProjectStage(select.Projection));
+            }
+
+            return stages;
+        }
+
         // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Last in
         // canonical order: the projection is the final logical operation for the SP3 terminal slice.
         if (select.Projection.Count > 0)

@@ -88,6 +88,7 @@ internal sealed class MongoPipelineFactory
             MongoProjectStage project => RenderProject(project, placeholders),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
+            MongoGroupStage keyedGroup => RenderKeyedGroup(keyedGroup, placeholders),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoPipelineFactory does not support stage type '{stage.GetType().Name}'.")
         };
@@ -138,6 +139,35 @@ internal sealed class MongoPipelineFactory
             { stage.OutputField, new BsonDocument(
                 stage.Accumulator, MongoAggregationExpressionRenderer.Render(stage.Operand, placeholders)) }
         });
+
+    private static BsonDocument RenderKeyedGroup(MongoGroupStage stage, PlaceholderTable placeholders)
+    {
+        var grouping = stage.Grouping;
+
+        BsonValue id;
+        if (grouping.IsCompositeKey)
+        {
+            var idDoc = new BsonDocument();
+            foreach (var part in grouping.Key)
+                idDoc.Add(part.Name, MongoAggregationExpressionRenderer.Render(part.FieldRef, placeholders));
+            id = idDoc;
+        }
+        else
+        {
+            id = MongoAggregationExpressionRenderer.Render(grouping.Key[0].FieldRef, placeholders);
+        }
+
+        var group = new BsonDocument { { "_id", id } };
+        foreach (var acc in grouping.Accumulators)
+        {
+            var operand = acc.Operand is null
+                ? (BsonValue)1
+                : MongoAggregationExpressionRenderer.Render(acc.Operand, placeholders);
+            group.Add(acc.OutputField, new BsonDocument(acc.Operator, operand));
+        }
+
+        return new BsonDocument("$group", group);
+    }
 
     private static BsonDocument RenderSkip(
         MongoSkipStage stage,

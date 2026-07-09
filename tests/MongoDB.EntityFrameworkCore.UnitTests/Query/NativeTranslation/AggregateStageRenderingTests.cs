@@ -42,4 +42,40 @@ public class AggregateStageRenderingTests
             new MongoFieldExpression(property: null!, elementName: "price"), "v"));
         Assert.Equal(BsonDocument.Parse("{ $group: { _id: null, v: { $sum: '$price' } } }"), result[0]);
     }
+
+    [Fact]
+    public void Keyed_group_scalar_key_renders()
+    {
+        var grouping = new MongoGrouping(
+            new[] { new MongoGroupingKeyPart(null, new MongoFieldExpression(property: null!, elementName: "country")) },
+            new[]
+            {
+                new MongoGroupAccumulator("Count", "$sum", null),
+                new MongoGroupAccumulator("Total", "$sum", new MongoFieldExpression(property: null!, elementName: "amount")),
+            });
+
+        var result = Render(new MongoGroupStage(grouping));
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $group: { _id: '$country', Count: { $sum: 1 }, Total: { $sum: '$amount' } } }"),
+            result[0]);
+    }
+
+    [Fact]
+    public void Keyed_group_composite_key_renders()
+    {
+        var grouping = new MongoGrouping(
+            new[]
+            {
+                new MongoGroupingKeyPart("Country", new MongoFieldExpression(property: null!, elementName: "country")),
+                new MongoGroupingKeyPart("Year", new MongoFieldExpression(property: null!, elementName: "year")),
+            },
+            new[] { new MongoGroupAccumulator("Count", "$sum", null) });
+
+        var result = Render(new MongoGroupStage(grouping));
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $group: { _id: { Country: '$country', Year: '$year' }, Count: { $sum: 1 } } }"),
+            result[0]);
+    }
 }

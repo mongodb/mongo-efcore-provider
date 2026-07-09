@@ -45,6 +45,7 @@ internal static class MongoAggregationExpressionRenderer
         => node switch
         {
             MongoFieldExpression field => "$" + field.ElementName,
+            MongoElementRefExpression elementRef => "$" + elementRef.Path,
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders),
             MongoSizeExpression size => new BsonDocument("$size", "$" + size.FieldName),

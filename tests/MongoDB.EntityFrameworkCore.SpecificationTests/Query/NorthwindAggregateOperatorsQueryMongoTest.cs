@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 
@@ -2315,4 +2316,14 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => Assert.Contains("Unsupported cross-DbSet query between",
             (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+
+    // A GroupBy/aggregate shape the native translator does not support must fail as a *translation*
+    // failure, but the exact exception depends on the query mode and how far the driver-LINQ fallback
+    // gets: NativeTranslationNotSupportedException under MongoQueryMode.NativeOnly; an EF
+    // InvalidOperationException (CoreStrings.TranslationFailed or an internal guard) or a driver
+    // translation exception under the default Native mode. Data-assertion failures are NOT accepted so a
+    // future wrong-data regression still turns the test red.
+    // These three are the only exception types actually observed across the flipped GroupBy spec suites.
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

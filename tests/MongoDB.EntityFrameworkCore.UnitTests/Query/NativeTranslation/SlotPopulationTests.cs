@@ -220,4 +220,53 @@ public class SlotPopulationTests
         Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.Empty(mongoQuery.Select.Projection);
     }
+
+    // ── GroupBy wiring (EF-344 Task 5) ────────────────────────────────────────────
+    // These prove the QMTEV no longer HARD-THROWS on GroupBy(k).Select(agg) (it previously produced
+    // NotTranslatedExpression and failed translation): a supported group routes native (Route = GroupBy);
+    // any unsupported shape marks the query non-native (Route = Fallback) so it falls back to driver-LINQ.
+
+    [Fact]
+    public void GroupBy_key_with_aggregate_Select_routes_native_GroupBy()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(
+            q => q.GroupBy(c => c.Age).Select(g => new { g.Key, Count = g.Count() }));
+
+        Assert.Equal(NativeRoute.GroupBy, mongoQuery.Select.Route);
+        Assert.NotNull(mongoQuery.Select.Grouping);
+        Assert.NotNull(mongoQuery.CapturedExpression);
+    }
+
+    [Fact]
+    public void GroupBy_key_with_sum_aggregate_Select_routes_native_GroupBy()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(
+            q => q.GroupBy(c => c.Name).Select(g => new { g.Key, Total = g.Sum(c => c.Age) }));
+
+        Assert.Equal(NativeRoute.GroupBy, mongoQuery.Select.Route);
+        Assert.NotNull(mongoQuery.Select.Grouping);
+    }
+
+    [Fact]
+    public void GroupBy_with_computed_key_falls_back_without_throwing()
+    {
+        // A computed key (c.Age + 1) is not natively representable; translation must complete (no hard-throw)
+        // and mark the query for driver-LINQ fallback.
+        var mongoQuery = TranslateToMongoQuery<Customer>(
+            q => q.GroupBy(c => c.Age + 1).Select(g => new { g.Key, Count = g.Count() }));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+        Assert.NotNull(mongoQuery.CapturedExpression);
+    }
+
+    [Fact]
+    public void GroupBy_without_terminal_Select_falls_back_without_throwing()
+    {
+        // A bare GroupBy(key) (no aggregate Select) binds the key but never finalizes the grouping projection,
+        // so no accumulator is produced; the query must still translate and fall back rather than hard-throw.
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.GroupBy(c => c.Age));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+        Assert.NotNull(mongoQuery.CapturedExpression);
+    }
 }

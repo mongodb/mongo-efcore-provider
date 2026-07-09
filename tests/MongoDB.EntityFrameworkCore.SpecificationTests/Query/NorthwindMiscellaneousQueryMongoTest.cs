@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using Xunit.Abstractions;
 using Xunit.Sdk;
@@ -4617,7 +4618,19 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Client_OrderBy_GroupBy_Group_ordering_works(bool async)
     {
-        await base.Client_OrderBy_GroupBy_Group_ordering_works(async);
+        // Fails: GroupBy issue EF-149
+        // The base test asserts EF's CoreStrings.TranslationFailed message; the native GroupBy path now
+        // surfaces a different (still-unsupported) translation failure, so assert it here leniently.
+        await AssertTranslationFailed(
+            () => AssertQuery(
+                async,
+                ss => from o in ss.Set<Order>()
+                      orderby ClientEvalSelector(o)
+                      group o by o.CustomerID
+                      into g
+                      orderby g.Key
+                      select g.OrderByDescending(x => x.OrderID).ToList(),
+                assertOrder: true));
 
         AssertMql();
     }
@@ -5153,4 +5166,14 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => Assert.Contains("Unsupported cross-DbSet query between",
             (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+
+    // A GroupBy/aggregate shape the native translator does not support must fail as a *translation*
+    // failure, but the exact exception depends on the query mode and how far the driver-LINQ fallback
+    // gets: NativeTranslationNotSupportedException under MongoQueryMode.NativeOnly; an EF
+    // InvalidOperationException (CoreStrings.TranslationFailed or an internal guard) or a driver
+    // translation exception under the default Native mode. Data-assertion failures are NOT accepted so a
+    // future wrong-data regression still turns the test red.
+    // These three are the only exception types actually observed across the flipped GroupBy spec suites.
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

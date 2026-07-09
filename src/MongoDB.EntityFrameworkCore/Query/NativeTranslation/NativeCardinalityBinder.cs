@@ -39,6 +39,17 @@ internal static class NativeCardinalityBinder
     {
         var select = mongoQ.Select;
 
+        // Post-group guard (symmetric to NativeSlotPopulator's post-group slot-operator guard and to
+        // TryBindAggregate below). A reducer applied AFTER a finalized GroupBy(key).Select(anon) must fall
+        // back: a reducer sets Cardinality.Reducer (not .Aggregate), so Route stays GroupBy and the lowerer
+        // emits the [$group, $project] pipeline — but the reducer would also stamp a $limit onto that grouped
+        // pipeline (select.Limit below), truncating the group rows and yielding a wrong/non-deterministic
+        // single result instead of reducing over the grouped sequence. Fall back cleanly. See the Query
+        // AGENTS.md GroupBy note. (The aggregate path in TryBindAggregate is worse — it flips Route to
+        // ScalarAggregate and crashes; documented there.)
+        if (select.IsGroupBy)
+            return false;
+
         // A user Take/Skip already populated the limit slot; composing a reducer limit on top is not
         // representable in canonical order. Fall back rather than reconcile two limits.
         if (select.Limit != null)
@@ -64,6 +75,17 @@ internal static class NativeCardinalityBinder
         Type resultType)
     {
         var select = mongoQ.Select;
+
+        // Post-group guard (symmetric to NativeSlotPopulator's post-group slot-operator guard, and to
+        // TryBindReducer above). A scalar aggregate applied AFTER a finalized GroupBy(key).Select(anon)
+        // must fall back: setting Cardinality on an already-grouped select flips
+        // MongoSelectDefinition.Route to ScalarAggregate (Cardinality is prioritized above Grouping) while
+        // the lowerer's grouping branch still emits a [$group, $project] pipeline with no terminal
+        // $count/aggregate stage — the scalar shaper then reads a nonexistent element and crashes with
+        // KeyNotFoundException instead of falling back cleanly. See the Query AGENTS.md GroupBy note.
+        if (select.IsGroupBy)
+            return false;
+
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
         MongoFieldExpression? operand = null;

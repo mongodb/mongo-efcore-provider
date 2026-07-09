@@ -94,4 +94,27 @@ public class MongoSelectDefinitionTests
     [Fact]
     public void New_select_has_empty_projection()
         => Assert.Empty(TestSelect().Projection);
+
+    [Fact]
+    public void Route_is_GroupBy_when_grouping_set()
+    {
+        var select = new MongoSelectDefinition();
+        select.Grouping = new MongoGrouping(
+            new[] { new MongoGroupingKeyPart(null, new MongoFieldExpression(property: null!, elementName: "country")) },
+            new[] { new MongoGroupAccumulator("Count", "$sum", null) });
+
+        Assert.Equal(NativeRoute.GroupBy, select.Route);
+    }
+
+    [Fact]
+    public void Route_is_Fallback_even_when_grouping_set_if_marked_not_native()
+    {
+        var select = new MongoSelectDefinition();
+        select.Grouping = new MongoGrouping(
+            new[] { new MongoGroupingKeyPart(null, new MongoFieldExpression(property: null!, elementName: "country")) },
+            new[] { new MongoGroupAccumulator("Count", "$sum", null) });
+        select.MarkNotNativelyRepresentable();
+
+        Assert.Equal(NativeRoute.Fallback, select.Route);
+    }
 }

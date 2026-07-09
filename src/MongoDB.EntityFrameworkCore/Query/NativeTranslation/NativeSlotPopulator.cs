@@ -43,6 +43,26 @@ internal static class NativeSlotPopulator
         var mongoQ = (MongoQueryExpression)shapedQuery.QueryExpression;
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
+        // Post-group slot-operator guard. Once a GroupBy has been seen on this query (IsGroupBy), a slot
+        // operator applied AFTER it — a Where (HAVING) / OrderBy / ThenBy / Skip / Take — operates over the
+        // grouped result, NOT the entity. But every arm below resolves its member accesses against the ENTITY
+        // type (the translator is built from CollectionExpression.EntityType), so a post-group predicate/sort
+        // whose member name COLLIDES with a real entity property (e.g. an aggregate alias "Amount" shadowing
+        // Entity.Amount) would resolve and emit a PRE-$group $match/$sort — the operator would run BEFORE
+        // aggregation, silently returning wrong data. The native $group path does not support post-group
+        // operators, so mark the query non-native to force a clean driver-LINQ fallback (throws only under
+        // NativeOnly). Keyed on IsGroupBy (set unconditionally by TranslateGroupBy) rather than the finalized
+        // Grouping so it also covers a post-group operator over a bare/unsupported grouping (which is already
+        // Fallback anyway — no behavior change). Scoped to the seven slot operators only: the grouped
+        // Select/OfType and the reducer/aggregate arms are excluded, so the SUPPORTED
+        // GroupBy(key).Select(aggregate) (whose Select is dispatched here with IsGroupBy already true) still
+        // goes native.
+        if (mongoQ.Select.IsGroupBy && IsPostGroupSlotOperator(methodDefinition))
+        {
+            mongoQ.Select.MarkNotNativelyRepresentable();
+            return;
+        }
+
         if (methodDefinition == QueryableMethods.Where)
         {
             // Canonical-order guard: the native lowerer emits $match → $sort → $skip → $limit. A Where
@@ -151,6 +171,19 @@ internal static class NativeSlotPopulator
     private static bool PagingAlreadyApplied(MongoQueryExpression mongoQ)
         => mongoQ.Select.HasPaging;
 
+    // The seven slot operators whose native lowering (a $match / $sort / $skip / $limit) would be emitted
+    // BEFORE a $group when applied after a GroupBy — so they must force fallback on a grouped query (see the
+    // post-group guard in PopulateNativeSlots). Deliberately excludes Select / OfType / GroupBy and the
+    // reducer / scalar-aggregate operators so the supported grouped Select is not marked non-native.
+    private static bool IsPostGroupSlotOperator(MethodInfo methodDefinition)
+        => methodDefinition == QueryableMethods.Where
+           || methodDefinition == QueryableMethods.OrderBy
+           || methodDefinition == QueryableMethods.OrderByDescending
+           || methodDefinition == QueryableMethods.ThenBy
+           || methodDefinition == QueryableMethods.ThenByDescending
+           || methodDefinition == QueryableMethods.Skip
+           || methodDefinition == QueryableMethods.Take;
+
     // The operators PopulateNativeSlots lowers into a native slot. Everything else either sets the flag in its
     // own Translate override (Select/OfType) or must drop off the native path (handled by the catch-all above).
     internal static bool IsNativeRepresentableSlotOperator(MethodInfo methodDefinition)
@@ -163,6 +196,8 @@ internal static class NativeSlotPopulator
            || methodDefinition == QueryableMethods.Take
            || methodDefinition == QueryableMethods.Select
            || methodDefinition == QueryableMethods.OfType
+           || methodDefinition == QueryableMethods.GroupByWithKeySelector
+           || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector
            || methodDefinition == QueryableMethods.FirstWithoutPredicate
            || methodDefinition == QueryableMethods.FirstOrDefaultWithoutPredicate
            || methodDefinition == QueryableMethods.SingleWithoutPredicate
