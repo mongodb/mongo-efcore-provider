@@ -2238,16 +2238,11 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Static_equals_int_compared_to_long(bool async)
     {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Unable to cast object of type 'System.Int",
-            (await Assert.ThrowsAsync<InvalidCastException>(() => base.Static_equals_int_compared_to_long(async)))
-            .Message);
+        // Fails: mismatched-type equality would silently return wrong results on driver 3.10 EF-221
+        await AssertTranslationFailed(() => base.Static_equals_int_compared_to_long(async));
 
         AssertMql(
-            """
-            Orders.
-            """);
+        );
     }
 
     public override async Task Where_DateOnly_FromDateTime(bool async)

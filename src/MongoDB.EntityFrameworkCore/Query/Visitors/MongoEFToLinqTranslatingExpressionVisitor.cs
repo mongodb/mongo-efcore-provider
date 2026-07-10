@@ -82,6 +82,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
         GuardAgainstMultiHopCrossCollectionNavigation(efQueryExpression);
         GuardAgainstLimitingOperatorInJoinInner(efQueryExpression);
+        GuardAgainstMismatchedTypeEquality(efQueryExpression);
 
         if (efQueryExpression == null)
         {
@@ -120,6 +121,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
         GuardAgainstMultiHopCrossCollectionNavigation(efQueryExpression);
         GuardAgainstLimitingOperatorInJoinInner(efQueryExpression);
+        GuardAgainstMismatchedTypeEquality(efQueryExpression);
 
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
         {
@@ -600,40 +602,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         new(StringComparer.Ordinal) { "Union", "Concat", "Except", "Intersect" };
 
     /// <summary>
-    /// A projected collection-navigation count is materialized by a single <c>$lookup</c> injected right
-    /// after the root source. Under a set operation (e.g. <c>Union</c>) where more than one branch reads
-    /// the looked-up collection, the non-leading branch becomes a <c>$unionWith</c> sub-pipeline that does
-    /// not see that root-level <c>$lookup</c>, so its server-side <c>{ $size: "$_lookup_&lt;Nav&gt;" }</c>
-    /// would fail at runtime with "argument to $size must be an array". Detect that shape and fail
-    /// translation cleanly (an <see cref="InvalidOperationException"/>) instead of emitting a pipeline that
-    /// crashes on the server.
-    /// </summary>
-    /// <summary>
-    /// A multi-hop cross-collection navigation used in a <em>predicate or ordering</em> — e.g.
-    /// <c>where od.Order.Customer.City == "Seattle"</c> or a collection navigation such as
-    /// <c>od.Order.Customer.Orders</c> compared to null — is lowered by EF Core into a chain of joins whose
-    /// filter/ordering lambda reads a member of the SECOND-hop inner. The parameter of such a lambda is a
-    /// <em>nested</em> transparent identifier (<c>TransparentIdentifier&lt;TransparentIdentifier&lt;…&gt;, …&gt;</c>)
-    /// and the body reads <c>&lt;param&gt;.Inner.…</c>. The provider's single-level <c>$lookup</c> composition
-    /// cannot faithfully evaluate/materialise that shape (the root entity is read from the wrong doubly-nested
-    /// position — <c>Document element is missing…</c> — or an unevaluated collection subquery leaks to BSON
-    /// serialization). The MongoDB C# driver's LINQ v3 provider (3.10+) now <em>attempts</em> the chain, so
-    /// rather than emit a pipeline that fails opaquely at materialization/serialization, detect the second-hop
-    /// filter/order read here and fail as a standard EF Core translation failure. Tracked by EF-216.
-    ///
-    /// The detection requires BOTH signals, which is what isolates the broken shape from superficially similar
-    /// working ones:
-    /// <list type="bullet">
-    /// <item>a join whose <em>outer key</em> reaches <em>through</em> a prior join's <c>Inner</c> — i.e. a
-    /// genuine chain a→b→c (<c>o => EF.Property(o.Inner, "CustomerID")</c>), as opposed to two sibling joins
-    /// from the same root (whose later outer keys reach through <c>.Outer</c>); and</item>
-    /// <item>a <c>Where</c>/<c>OrderBy</c>/<c>ThenBy</c> lambda that reads <c>.Inner</c> of a nested transparent
-    /// identifier — i.e. it filters/orders on that second-hop inner.</item>
-    /// </list>
-    /// Multi-level <c>Include</c>/<c>ThenInclude</c> has the first signal (same join chain) but never the
-    /// second (it only materialises); an explicit <c>Join</c>+<c>GroupJoin</c> with a <c>Where</c> on the inner
-    /// has the second signal but not the first (its joins are root-siblings). Only a true multi-hop navigation
-    /// used in a predicate/ordering has both.
+    /// Rejects a multi-hop cross-collection navigation in a predicate/ordering (e.g.
+    /// <c>where od.Order.Customer.City == "Seattle"</c>), which the single-level <c>$lookup</c> composition
+    /// can't evaluate. Requires BOTH a join reaching through a prior join's <c>Inner</c> (a real a→b→c chain)
+    /// and a Where/OrderBy that reads that second-hop <c>Inner</c> — the two signals distinguish it from
+    /// multi-level Include (chain only) and root-sibling Join+GroupJoin (read only). EF-216.
     /// </summary>
     private void GuardAgainstMultiHopCrossCollectionNavigation(Expression? efQueryExpression)
     {
@@ -822,6 +795,109 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
     }
 
+    /// <summary>
+    /// A mismatched-type equality — <c>x.Equals(y)</c> through the <c>object</c> overload where <c>x</c> and
+    /// <c>y</c> have different underlying integral types (e.g. <c>uint.Equals(ulong)</c> or
+    /// <c>ReportsTo.Equals(longPrm)</c>, as in EF Core's <c>Where_equals_*_on_mismatched_types</c> tests) — is
+    /// mistranslated by the MongoDB C# driver's LINQ v3 provider (3.10): the CLR's <c>object.Equals</c> is
+    /// always <see langword="false"/> across distinct value types (the values are never equal), but the driver
+    /// emits a plain numeric match that returns rows anyway (previously the driver threw
+    /// <see cref="InvalidCastException"/>; 3.10 now silently returns wrong data). Until the driver coerces the
+    /// operand types correctly, reject this shape as a clean EF Core translation failure rather than run a
+    /// query that returns wrong results. The strongly-typed <c>Equals</c> overload (used when the argument
+    /// widens to the receiver's type, e.g. <c>uint.Equals(ushort)</c>) and same-underlying-type comparisons
+    /// (e.g. <c>uint?.Equals(uint)</c>) are correct and left alone. Tracked by EF-221.
+    /// </summary>
+    private void GuardAgainstMismatchedTypeEquality(Expression? efQueryExpression)
+    {
+        if (efQueryExpression == null)
+        {
+            return;
+        }
+
+        var finder = new MismatchedTypeEqualityFinder();
+        finder.Visit(efQueryExpression);
+        if (finder.Found)
+        {
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(efQueryExpression.Print()));
+        }
+    }
+
+    /// <summary>
+    /// Finds an <c>Equals</c> call comparing two different underlying integral types (nullable and
+    /// boxing <c>Convert</c>-to-<c>object</c> wrappers unwrapped first). See
+    /// <see cref="GuardAgainstMismatchedTypeEquality"/>.
+    /// </summary>
+    private sealed class MismatchedTypeEqualityFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        private static readonly HashSet<Type> IntegralTypes =
+        [
+            typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
+            typeof(int), typeof(uint), typeof(long), typeof(ulong)
+        ];
+
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.Name == nameof(object.Equals))
+            {
+                Expression? left = null;
+                Expression? right = null;
+                if (node.Object != null && node.Arguments.Count == 1)
+                {
+                    // Instance call: x.Equals(y).
+                    left = node.Object;
+                    right = node.Arguments[0];
+                }
+                else if (node.Object == null && node.Arguments.Count == 2)
+                {
+                    // Static call: object.Equals(x, y).
+                    left = node.Arguments[0];
+                    right = node.Arguments[1];
+                }
+
+                if (left != null && right != null
+                    && UnwrapIntegralType(left) is { } leftType
+                    && UnwrapIntegralType(right) is { } rightType
+                    && leftType != rightType)
+                {
+                    Found = true;
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        // Strips the boxing Convert-to-object that the object Equals overload wraps its operand in (and any
+        // Nullable<> wrapper), returning the underlying integral CLR type, or null if the operand is not an
+        // integral type. A widening Convert to a *concrete* numeric type (e.g. ushort->uint, when the argument
+        // binds to the strongly-typed Equals overload) is deliberately NOT stripped: that comparison unifies to
+        // the widened type and the driver translates it correctly, so it must not be flagged as mismatched.
+        private static Type? UnwrapIntegralType(Expression expression)
+        {
+            while (expression is UnaryExpression
+                   { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked, Type: var t } convert
+                   && t == typeof(object))
+            {
+                expression = convert.Operand;
+            }
+
+            var type = Nullable.GetUnderlyingType(expression.Type) ?? expression.Type;
+            return IntegralTypes.Contains(type) ? type : null;
+        }
+    }
+
+    /// <summary>
+    /// A projected collection-navigation count is materialized by a single <c>$lookup</c> injected right
+    /// after the root source. Under a set operation (e.g. <c>Union</c>) where more than one branch reads
+    /// the looked-up collection, the non-leading branch becomes a <c>$unionWith</c> sub-pipeline that does
+    /// not see that root-level <c>$lookup</c>, so its server-side <c>{ $size: "$_lookup_&lt;Nav&gt;" }</c>
+    /// would fail at runtime with "argument to $size must be an array". Detect that shape and fail
+    /// translation cleanly (an <see cref="InvalidOperationException"/>) instead of emitting a pipeline that
+    /// crashes on the server.
+    /// </summary>
     private void GuardAgainstMultiBranchNavigationCount(Expression? efQueryExpression)
     {
         if (efQueryExpression == null || !_pendingLookups.Any(l => l.InjectAfterRoot))
