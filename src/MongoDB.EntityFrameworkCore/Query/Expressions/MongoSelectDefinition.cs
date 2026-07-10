@@ -248,8 +248,10 @@ internal sealed class MongoSelectDefinition
     /// slots. <see cref="NativeRoute.Fallback"/> when any unsupported operator was seen; otherwise
     /// <see cref="NativeRoute.Projection"/> when a <c>$project</c> was populated; otherwise
     /// <see cref="NativeRoute.WholeEntity"/>. This is authoritative for <em>slot/projection</em> representability;
-    /// the gate additionally checks vector search and <c>$lookup</c> streamability separately, because that
-    /// state does not live on <see cref="MongoSelectDefinition"/> (see EF-334).
+    /// the full is-native decision is the gate's <c>ClassifyNativeDisposition</c> (EF-334), which layers vector
+    /// search (<c>ContainsVectorSearch</c> over the captured chain — not on <see cref="MongoSelectDefinition"/>)
+    /// and the GroupBy+Join hard-decline (<see cref="IsGroupByFallbackUnsafe"/>) onto this route. <c>$lookup</c>
+    /// streamability is a separate axis (streaming-vs-DOM), not an is-native signal.
     /// </summary>
     internal NativeRoute Route
         => _hasUnsupportedOperator ? NativeRoute.Fallback

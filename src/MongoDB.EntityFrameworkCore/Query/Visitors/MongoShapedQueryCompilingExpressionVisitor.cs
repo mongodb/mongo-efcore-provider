@@ -40,6 +40,28 @@ using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
+/// <summary>
+/// The native-execution disposition of a query at the compile-time gate: whether it builds a native
+/// pipeline, falls back to driver-LINQ gracefully (throwing only under <see cref="MongoQueryMode.NativeOnly"/>),
+/// or must hard-decline (throw under <see cref="MongoQueryMode.Native"/> too, because its driver-LINQ
+/// fallback returns silently wrong data). This is the single is-native classification the gate consults;
+/// it is a superset of <see cref="Expressions.NativeRoute"/> (which answers "which native shape / is it slot
+/// representable"), layering on the two is-native signals that are not slot representability: a lifted-out
+/// vector search, and the GroupBy+Join wrong-data decline. Streaming-vs-DOM is a SEPARATE axis
+/// (<c>AllPendingLookupsAreStreamable</c>) and is not part of this classification.
+/// </summary>
+internal enum NativeDisposition
+{
+    /// <summary>Build a native pipeline (via the <see cref="Expressions.NativeRoute"/>-appropriate builder).</summary>
+    Native,
+
+    /// <summary>Not natively representable: fall back to driver-LINQ; throw only under <see cref="MongoQueryMode.NativeOnly"/>.</summary>
+    Fallback,
+
+    /// <summary>Must throw under <see cref="MongoQueryMode.Native"/> AND <see cref="MongoQueryMode.NativeOnly"/>: the driver-LINQ fallback is wrong-data (GroupBy+Join).</summary>
+    HardDecline
+}
+
 /// <inheritdoc/>
 internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCompilingExpressionVisitor
 {
@@ -137,13 +159,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             throw new NotSupportedException($" Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
         }
 
-        // A GroupBy combined with a Join family operator cannot go native, and — unlike an ordinary
-        // unsupported shape — its driver-LINQ fallback executes and returns silently wrong data (the joined
-        // entity is empty for every grouped row). Fail cleanly under Native/NativeOnly instead of routing to
-        // that wrong-data fallback. Explicit DriverLinq is the user's opt-in to driver-LINQ, so it is left
-        // untouched (it still runs, with the same wrong-data caveat the user opted into).
-        if (((MongoQueryCompilationContext)QueryCompilationContext).QueryMode != MongoQueryMode.DriverLinq
-            && mongoQueryExpression.Select.IsGroupByFallbackUnsafe)
+        // The is-native disposition is centralized in ClassifyNativeDisposition (EF-334). Here we act only on
+        // HardDecline: a GroupBy+Join whose driver-LINQ fallback returns silently wrong data must throw under
+        // Native/NativeOnly rather than route to that fallback (explicit DriverLinq stays the user's opt-in).
+        // (The classification also evaluates ContainsVectorSearch, which the HardDecline outcome never depends
+        // on — a deliberate, negligible compile-time extra walk kept so the disposition has one source of truth.)
+        var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+        if (ClassifyNativeDisposition(mongoQueryExpression, mode) == NativeDisposition.HardDecline)
         {
             throw new NativeTranslationNotSupportedException(
                 "Query combines GroupBy with a Join, which the native translator does not support and whose "
@@ -484,8 +506,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // VectorSearch call) and carries the index-resolution / zero-results diagnostics. The native lowerer
         // reads only the logical slots and never the captured chain, so it would silently drop the vector
         // search. Vector search is therefore not natively representable; keep it on the driver path.
-        if (mongoQueryExpression.Select.Route is NativeRoute.Fallback or NativeRoute.ScalarAggregate
-            || ContainsVectorSearch(mongoQueryExpression.CapturedExpression))
+        // This builder handles the whole-entity / reducer / projection / group native pipelines. It declines
+        // when the query is not native at all (ClassifyNativeDisposition != Native — EF-334) AND, additionally,
+        // when Route == ScalarAggregate: that shape IS native but is built by TryBuildAggregateFactory, so
+        // control must fall through to it here. (A HardDecline was already thrown in VisitShapedQuery before
+        // reaching this builder under Native/NativeOnly; under DriverLinq no native factory is attempted.)
+        if (ClassifyNativeDisposition(mongoQueryExpression, mode) != NativeDisposition.Native
+            || mongoQueryExpression.Select.Route == NativeRoute.ScalarAggregate)
         {
             ThrowIfNativeOnlyForbidsFallback(mode, "Query is not natively representable");
             return null;
@@ -660,6 +687,52 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         return false;
     }
+
+    /// <summary>
+    /// Classify a query's native disposition from the three authoritative is-native signals, read here in one
+    /// place. This is the single source of truth for the is-native gate decision (EF-334); all gate sites
+    /// consult it rather than re-deriving. Pure over its inputs so it is unit-testable in isolation.
+    /// </summary>
+    /// <param name="route">The slot/projection representability route (<see cref="MongoSelectDefinition.Route"/>).</param>
+    /// <param name="isGroupByFallbackUnsafe">Whether this is a GroupBy+Join whose driver-LINQ fallback is wrong-data (<see cref="MongoSelectDefinition.IsGroupByFallbackUnsafe"/>).</param>
+    /// <param name="containsVectorSearch">Whether the captured chain contains a lifted-out <c>VectorSearch</c> (<see cref="ContainsVectorSearch"/>).</param>
+    /// <param name="mode">The active <see cref="MongoQueryMode"/>.</param>
+    internal static NativeDisposition ClassifyNativeDisposition(
+        NativeRoute route,
+        bool isGroupByFallbackUnsafe,
+        bool containsVectorSearch,
+        MongoQueryMode mode)
+    {
+        // GroupBy+Join is unsafe to fall back (driver-LINQ returns silently wrong data), so it hard-declines
+        // under Native/NativeOnly. Explicit DriverLinq is the user's opt-in and runs it (not a hard decline).
+        // Checked first so it takes precedence over the graceful-fallback signals.
+        if (mode != MongoQueryMode.DriverLinq && isGroupByFallbackUnsafe)
+        {
+            return NativeDisposition.HardDecline;
+        }
+
+        // Not natively representable (an unsupported slot/projection shape, or a lifted-out vector search the
+        // native lowerer never sees) -> graceful driver-LINQ fallback.
+        if (route == NativeRoute.Fallback || containsVectorSearch)
+        {
+            return NativeDisposition.Fallback;
+        }
+
+        return NativeDisposition.Native;
+    }
+
+    /// <summary>
+    /// Gather the three is-native signals from <paramref name="q"/> and classify (see the pure
+    /// <see cref="ClassifyNativeDisposition(NativeRoute, bool, bool, MongoQueryMode)"/> overload). The one
+    /// signal that cannot live on <see cref="MongoSelectDefinition"/> is vector search: the <c>VectorSearch</c>
+    /// call is lifted out of the tree before the Select is built, so it is read from the captured chain here.
+    /// </summary>
+    private static NativeDisposition ClassifyNativeDisposition(MongoQueryExpression q, MongoQueryMode mode)
+        => ClassifyNativeDisposition(
+            q.Select.Route,
+            q.Select.IsGroupByFallbackUnsafe,
+            ContainsVectorSearch(q.CapturedExpression),
+            mode);
 
     /// <summary>
     /// The STREAMING gate: whether every cross-collection join on <paramref name="mongoQueryExpression"/> is a
