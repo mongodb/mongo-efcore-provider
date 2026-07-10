@@ -113,6 +113,13 @@ internal sealed class MongoSelectDefinition
     public void AddProjection(MongoProjection projection)
         => _projections.Add(projection);
 
+    /// <summary>
+    /// Clears the projection list. Used by <c>NativeGroupByBinder.TryBindDistinctFromProjection</c> to
+    /// replace a terminal <c>$project</c>'s output fields with the flattening projection that reads the
+    /// value back out of the degenerate-<c>$group</c> <c>_id</c>.
+    /// </summary>
+    internal void ClearProjections() => _projections.Clear();
+
     // ── Cardinality / aggregate ───────────────────────────────────────────────────
 
     private MongoCardinality? _cardinality;
@@ -170,6 +177,35 @@ internal sealed class MongoSelectDefinition
     /// every group), so it must fail cleanly rather than fall back. See <see cref="IsGroupByFallbackUnsafe"/>.
     /// </summary>
     internal bool IsGroupBy { get; set; }
+
+    /// <summary>
+    /// <see langword="true"/> once a projected <c>Distinct</c> has bound natively on this query (set by
+    /// <c>NativeGroupByBinder.TryBindDistinctFromProjection</c>). Distinct reuses the degenerate-<c>$group</c>
+    /// machinery, so it shares the SAME post-group operator guards as <see cref="IsGroupBy"/>
+    /// (<c>NativeSlotPopulator</c>'s post-group slot guard and <c>NativeCardinalityBinder</c>'s aggregate/reducer
+    /// guards, both keyed on <c>IsGroupBy || IsDistinct</c>) — an operator applied AFTER the Distinct must fall
+    /// back cleanly. It is a SEPARATE flag from <see cref="IsGroupBy"/> because the Join-family decline is
+    /// grouping-semantics-specific: a real <c>GroupBy</c> joined via driver-LINQ returns silently-wrong (empty)
+    /// joins, so <c>TranslateJoinCore</c> HARD-declines it (<see cref="MarkGroupByFallbackUnsafe"/>). A
+    /// projected <c>Distinct</c> is just a flat set of rows the driver-LINQ path joins correctly, so
+    /// <c>Distinct</c>-then-<c>Join</c> must instead fall back GRACEFULLY
+    /// (<see cref="MarkNotNativelyRepresentable"/>) — not hard-throw. Keeping the flags distinct is what lets
+    /// <c>TranslateJoinCore</c> pick the right (hard vs. graceful) path per provenance.
+    /// </summary>
+    internal bool IsDistinct { get; set; }
+
+    /// <summary>
+    /// <see langword="true"/> once this query has seen ANY native terminal grouping/distinct provenance —
+    /// <see cref="IsGroupBy"/>, <see cref="IsDistinct"/>, or a finalized <see cref="Grouping"/>. Centralizes
+    /// the post-terminal gate that is otherwise duplicated across <c>NativeCardinalityBinder</c>,
+    /// <c>NativeSlotPopulator</c>, and the QMTEV's <c>TranslateSelect</c>/<c>TranslateGroupBy</c>: any operator
+    /// reached after a native <c>GroupBy</c> or projected <c>Distinct</c> must fall back rather than resolve
+    /// against the base entity type and silently emit a pre-<c>$group</c> stage. <c>Grouping != null</c> is
+    /// included for completeness (a finalized grouping always also sets <see cref="IsGroupBy"/> or
+    /// <see cref="IsDistinct"/> by construction, so including it here is a no-op in practice, not an
+    /// additional case).
+    /// </summary>
+    internal bool HasTerminalGrouping => IsGroupBy || IsDistinct || Grouping != null;
 
     private bool _isGroupByFallbackUnsafe;
 

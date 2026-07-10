@@ -800,6 +800,38 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
+    public void Select_after_GroupBy_is_unsupported_and_never_returns_silent_null_data()
+    {
+        // A second projected Select applied AFTER a native GroupBy(key).Select(aggregate) must NEVER silently
+        // go native and return null-valued rows. Structural hazard (guarded in TranslateSelect's non-grouped
+        // projection branch): the second Select reaches that branch (the shaper is no longer a
+        // GroupByShaperExpression — the grouped-aggregate Select already replaced it), bypassing the IsGroupBy
+        // slot/cardinality guards; without the guard TryPopulateNativeProjection would APPEND its field-ref onto
+        // the grouped Projection while Grouping is still set, and the lowerer would emit a flatten $project over
+        // fields gone after the $group → nulls.
+        //
+        // In practice this provider cannot build a shaper reading a prior grouped/anonymous projection's members
+        // (MongoProjectionBindingExpressionVisitor throws on the nested ProjectionBindingExpression BEFORE the
+        // gate), so the shape is UNSUPPORTED and throws during translation in EVERY mode — Native, DriverLinq,
+        // NativeOnly alike. The property this locks in: Native does NOT diverge from DriverLinq by silently
+        // returning null rows — both fail identically (no wrong/null data). The supported single grouped Select
+        // (GroupBy(k).Select(aggregate) with no further Select) still goes native — see
+        // GroupBy_aggregate_Select_with_no_post_group_op_goes_native.
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Select_after_GroupBy_is_unsupported_and_never_returns_silent_null_data) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Select_after_GroupBy_is_unsupported_and_never_returns_silent_null_data) + "D");
+
+        Exception? Run(SingleEntityDbContext<Order> db) => Record.Exception(() =>
+            db.Entities.GroupBy(o => o.Country).Select(g => new { g.Key, c = g.Count() }).Select(r => new { r.Key }).ToList());
+
+        Assert.NotNull(Run(nativeDb));   // Native throws — NOT a silent null-data success
+        Assert.NotNull(Run(driverDb));   // DriverLinq throws the same way — no Native-vs-DriverLinq divergence
+    }
+
+    [Fact]
     public void GroupBy_aggregate_projection_with_count_still_goes_native_after_guard()
     {
         // Positive guard: the supported GroupBy(key).Select(anonymous-with-Count) projection is bound by the

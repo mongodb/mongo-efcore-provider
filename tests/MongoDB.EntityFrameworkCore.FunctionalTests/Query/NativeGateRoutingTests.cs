@@ -411,9 +411,10 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void C_tph_oftype_derived_routing()
     {
         var collection = SeedTph(nameof(C_tph_oftype_derived_routing));
-        // Locked routing: OfType<TDerived>() calls MarkNotNativelyRepresentable() (the discriminator
-        // narrowing is applied by the driver-LINQ path, not the native Predicate slot), so it falls back.
-        Assert.False(WentNative(collection,
+        // Locked routing (EF-347): OfType<TDerived>() now builds a discriminator $eq/$in conjunct into the
+        // native Predicate slot (TryBuildDiscriminatorPredicate) instead of unconditionally calling
+        // MarkNotNativelyRepresentable(), so a representable TPH narrowing goes native.
+        Assert.True(WentNative(collection,
             q => q.OfType<Cat>().OrderBy(c => c.Name).ToList(), TphModel));
     }
 

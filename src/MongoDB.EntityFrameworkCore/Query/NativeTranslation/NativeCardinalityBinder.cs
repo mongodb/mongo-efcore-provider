@@ -46,8 +46,10 @@ internal static class NativeCardinalityBinder
         // pipeline (select.Limit below), truncating the group rows and yielding a wrong/non-deterministic
         // single result instead of reducing over the grouped sequence. Fall back cleanly. See the Query
         // AGENTS.md GroupBy note. (The aggregate path in TryBindAggregate is worse — it flips Route to
-        // ScalarAggregate and crashes; documented there.)
-        if (select.IsGroupBy)
+        // ScalarAggregate and crashes; documented there.) IsDistinct rides the same guard: a projected Distinct
+        // binds the same degenerate $group, so a post-Distinct reducer must fall back for the identical reason.
+        // (Centralized as HasTerminalGrouping, EF-347 review follow-up — see MongoSelectDefinition.)
+        if (select.HasTerminalGrouping)
             return false;
 
         // A user Take/Skip already populated the limit slot; composing a reducer limit on top is not
@@ -83,7 +85,10 @@ internal static class NativeCardinalityBinder
         // the lowerer's grouping branch still emits a [$group, $project] pipeline with no terminal
         // $count/aggregate stage — the scalar shaper then reads a nonexistent element and crashes with
         // KeyNotFoundException instead of falling back cleanly. See the Query AGENTS.md GroupBy note.
-        if (select.IsGroupBy)
+        // IsDistinct rides the same guard: a projected Distinct binds the same degenerate $group, so a
+        // post-Distinct scalar aggregate must fall back for the identical reason.
+        // (Centralized as HasTerminalGrouping, EF-347 review follow-up — see MongoSelectDefinition.)
+        if (select.HasTerminalGrouping)
             return false;
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);

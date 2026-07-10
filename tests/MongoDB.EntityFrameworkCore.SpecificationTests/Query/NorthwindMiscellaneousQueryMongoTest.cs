@@ -1880,8 +1880,8 @@ Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$project" : { "_out
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_id" : "$CustomerID", "Count" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-            """);
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "Id" : "$CustomerID", "Count" : "$_id" } } }, { "$project" : { "Id" : "$_id.Id", "Count" : "$_id.Count", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_nested_collection_count_using_DTO(bool async)

@@ -96,7 +96,9 @@ internal static class NativeGroupByBinder
     // (and throws only under NativeOnly), preserving the Native == DriverLinq invariant. The accumulator
     // OPERAND is deliberately NOT checked here: Sum/Min/Max over a represented field is the pre-existing,
     // documented EF-337 shared caveat (Native and DriverLinq are wrong the same way — no divergence).
-    private static bool HasDefaultKeySerialization(IProperty property)
+    // Internal (not private) — also shared by the QMTEV's TranslateOfType discriminator guard, which rejects a
+    // value-converted / non-default-BsonRepresentation discriminator for the identical generic-readback reason.
+    internal static bool HasDefaultKeySerialization(IProperty property)
         => property.GetValueConverter() == null
            && property.GetTypeMapping().Converter == null
            && property.GetBsonRepresentation() == null;
@@ -325,4 +327,44 @@ internal static class NativeGroupByBinder
         => e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u
             ? Unwrap(u.Operand)
             : e;
+
+    /// <summary>
+    /// <c>Distinct(projection)</c>: the terminal <c>Select</c> already populated <see cref="MongoSelectDefinition.Projection"/>
+    /// with (alias -&gt; field-ref) pairs. Convert them into a key-only grouping (group by the projected
+    /// value, zero accumulators) and replace the projections with a flatten that reads the value
+    /// back out of <c>_id</c>. Returns <see langword="false"/> (→ fall back) if there is no native projection, or any key
+    /// is not a default-serialized field ref (generic <c>_id</c> readback would diverge from DriverLinq).
+    /// </summary>
+    internal static bool TryBindDistinctFromProjection(MongoQueryExpression mongoQ)
+    {
+        var select = mongoQ.Select;
+        if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null || select.HasPaging)
+            return false;
+
+        var keyParts = new List<MongoGroupingKeyPart>();
+        var flatten = new List<MongoProjection>();
+        foreach (var projection in select.Projection)
+        {
+            if (projection.Expression is not MongoFieldExpression field || !HasDefaultKeySerialization(field.Property))
+                return false;
+            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, field));
+            flatten.Add(new MongoProjection(projection.Alias,
+                new MongoElementRefExpression("_id." + projection.Alias, field.Type)));
+        }
+
+        select.ClearProjections();
+        select.Grouping = new MongoGrouping(keyParts, []);
+        // Record DISTINCT provenance (NOT IsGroupBy) so the post-group operator guards in NativeSlotPopulator
+        // (slot ops) and NativeCardinalityBinder (aggregates/reducers) — both keyed on IsGroupBy || IsDistinct
+        // — also cover an operator applied AFTER this Distinct (e.g. a Where whose member name happens to
+        // collide with a real entity property, which would otherwise resolve against the entity and be hoisted
+        // to a pre-group $match). A separate flag (not IsGroupBy) is deliberate: the QMTEV's join-decline path
+        // must treat Distinct+Join as a GRACEFUL fallback (driver-LINQ joins a flat row set correctly), whereas
+        // a genuine GroupBy+Join is a HARD decline (driver-LINQ returns silently-empty joins). See IsDistinct's
+        // doc on MongoSelectDefinition and TranslateJoinCore.
+        select.IsDistinct = true;
+        foreach (var f in flatten)
+            select.AddProjection(f);
+        return true;
+    }
 }

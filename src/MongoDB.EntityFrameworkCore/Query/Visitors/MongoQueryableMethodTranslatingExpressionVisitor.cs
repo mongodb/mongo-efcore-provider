@@ -101,6 +101,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 // Operations that need tweaks
                 case nameof(Queryable.Select) when methodDefinition == QueryableMethods.Select:
                 case nameof(Queryable.OfType) when methodDefinition == QueryableMethods.OfType:
+                case nameof(Queryable.Distinct) when methodDefinition == QueryableMethods.Distinct:
 
                 // Operations that only require reshaping
                 case nameof(Queryable.Any) when methodDefinition == QueryableMethods.AnyWithoutPredicate:
@@ -203,10 +204,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector))
         {
+            // Post-terminal guard: a projected Select applied AFTER a native terminal grouping/distinct — a
+            // projected Distinct (IsDistinct, key-only Grouping), a prior GroupBy (IsGroupBy), or any finalized
+            // Grouping — must NOT push down a native $project. This Select reaches the NON-grouped branch (it is
+            // NOT a GroupByShaperExpression — the preceding native terminal already replaced the shaper with its
+            // projection shaper), so it bypasses the IsGroupBy||IsDistinct guards in NativeSlotPopulator/
+            // NativeCardinalityBinder. Without this guard TryPopulateNativeProjection would APPEND this Select's
+            // entity field-refs onto the already-populated Projection while Grouping is still set; Route stays
+            // GroupBy; the lowerer group branch then renders $group + a flatten $project referencing fields that
+            // no longer exist after the $group — yielding silent NULL data (e.g.
+            // Select(new{Country,City}).Distinct().Select(x => new{Nation = x.Country}) emits Nation:"$country"
+            // after $group{_id:{Country,City}} → null). Mark non-native so it falls back to driver-LINQ under
+            // Native (throws under NativeOnly), matching the correct driver-LINQ result. Mirrors the
+            // TranslateGroupBy guard. The legit GroupBy(key).Select(aggregate) reaches the grouped branch above
+            // (via GroupByShaperExpression) and is unaffected.
+            if (mongoQueryExpression.Select.HasTerminalGrouping)
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
             // Native projection pushdown (SP3): a terminal anonymous-type / DTO projection whose leaves are
             // all top-level member accesses only is lowered to a $project stage. Anything else (bare scalar, computed
             // leaves, entity references, non-member bindings) is not natively representable and falls back.
-            if (!NativeProjectionBinder.TryPopulateNativeProjection(mongoQueryExpression, selector))
+            else if (!NativeProjectionBinder.TryPopulateNativeProjection(mongoQueryExpression, selector))
             {
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
@@ -646,16 +665,92 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var resultEntityType = entityType.Model.FindEntityType(resultType);
             if (resultEntityType != null)
             {
-                // OfType<TDerived>() narrows a TPH hierarchy by a discriminator predicate that is applied by
-                // the driver-LINQ path (via the captured chain / shaper), not captured into the native Predicate
-                // slot. The native pipeline would therefore return every document and the DOM shaper would fail
-                // to materialize a sibling type, so the query is not natively representable.
-                ((MongoQueryExpression)source.QueryExpression).Select.MarkNotNativelyRepresentable();
+                // OfType<TDerived>() narrows a TPH hierarchy by a discriminator predicate. The native DOM
+                // shaper already materializes TPH derived types polymorphically (via EF's own discriminator-
+                // based MaterializationCondition), so all that is missing to keep this query natively
+                // representable is the discriminator $eq/$in conjunct itself.
+                var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+                if (TryBuildDiscriminatorPredicate(resultEntityType, out var predicate))
+                {
+                    mongoQueryExpression.Select.AddPredicateConjunct(predicate);
+                }
+                else
+                {
+                    mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+                }
+
                 return source.UpdateShaperExpression(entityShaperExpression.WithType(resultEntityType));
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Attempts to build a discriminator predicate (<c>$eq</c> for a single value, <c>$in</c> for the
+    /// subtree of a non-leaf type) that narrows a TPH hierarchy to <paramref name="targetType"/> and its
+    /// derived types, for use as the native <c>OfType&lt;TDerived&gt;()</c> conjunct.
+    /// </summary>
+    /// <param name="targetType">The entity type <c>OfType</c> narrows to.</param>
+    /// <param name="predicate">The built predicate, or a placeholder value when this method returns <see langword="false"/>.</param>
+    /// <returns>
+    /// <see langword="true"/> when a predicate was built; <see langword="false"/> when <paramref name="targetType"/>
+    /// has no discriminator property (non-TPH), the discriminator property has a value converter or a
+    /// non-default <c>BsonRepresentation</c> (see the <c>HasDefaultKeySerialization</c> check below), or there
+    /// are no discriminator values, in which case the caller should fall back to driver-LINQ.
+    /// </returns>
+    private static bool TryBuildDiscriminatorPredicate(IEntityType targetType, out MongoExpression predicate)
+    {
+        predicate = null!;
+        var discriminatorProperty = targetType.FindDiscriminatorProperty();
+        if (discriminatorProperty is null)
+            return false; // Non-TPH / no discriminator → fall back.
+
+        // The driver-LINQ discriminator filter (built from MongoEFDiscriminator.GetDiscriminatorsForTypeAndSubTypes
+        // → BsonValue.Create(GetDiscriminatorValue())) uses the RAW discriminator value and bypasses any value
+        // converter / non-default BsonRepresentation configured on the discriminator property. This native
+        // predicate, by contrast, serializes the value THROUGH the property serializer (via
+        // MongoConstantExpression.ForSerialization → BsonSerializerFactory), which applies that converter /
+        // representation. For a value-converted or represented discriminator the two therefore produce DIFFERENT
+        // discriminator BSON, so the native $eq/$in would return a different row set than the driver-LINQ path —
+        // violating the Native == DriverLinq invariant (empirically: the write applies the conversion, the driver
+        // filter does not, so the native and driver results diverge). Reject such a discriminator so the query
+        // falls back to driver-LINQ (throwing only under NativeOnly), keeping native results identical to the
+        // established driver-LINQ path — shared with NativeGroupByBinder.HasDefaultKeySerialization (same
+        // generic-readback divergence risk).
+        if (!NativeGroupByBinder.HasDefaultKeySerialization(discriminatorProperty))
+            return false;
+
+        var elementName = discriminatorProperty.GetElementName();
+        var values = targetType.GetDerivedTypes().Prepend(targetType)
+            .Select(t => t.GetDiscriminatorValue())
+            .ToArray();
+        if (values.Length == 0)
+            return false;
+
+        var field = new MongoFieldExpression(discriminatorProperty, elementName);
+        predicate = values.Length == 1
+            ? new MongoBinaryExpression(MongoBinaryOperator.Equal, field,
+                new MongoConstantExpression(values[0], forSerialization: discriminatorProperty))
+            : new MongoInExpression(field,
+                new MongoConstantExpression(values, forSerialization: discriminatorProperty), negated: false);
+        return true;
+    }
+
+    /// <summary>
+    /// <c>Distinct()</c> over a terminal anonymous/DTO projection (<c>Select(new {...}).Distinct()</c>)
+    /// translates to a degenerate <c>$group</c> — group by the projected value(s), zero accumulators — via
+    /// <see cref="NativeGroupByBinder.TryBindDistinctFromProjection"/>. The shaper is unchanged: it was
+    /// already built by the preceding <c>Select</c> to read the top-level result aliases, and those same
+    /// aliases survive as the flattening <c>$project</c> that follows the <c>$group</c>. A bare-scalar
+    /// projection (no native <c>Projection</c> populated) or a whole-entity source falls back to driver-LINQ.
+    /// </summary>
+    protected override ShapedQueryExpression? TranslateDistinct(ShapedQueryExpression source)
+    {
+        var mongoQ = (MongoQueryExpression)source.QueryExpression;
+        if (!NativeGroupByBinder.TryBindDistinctFromProjection(mongoQ))
+            mongoQ.Select.MarkNotNativelyRepresentable();
+        return source; // shaper unchanged: the Select's projection shaper reads the flatten aliases
     }
 
     #region Methods that just require shaper reshaping
@@ -731,9 +826,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override ShapedQueryExpression? TranslateDefaultIfEmpty(ShapedQueryExpression source, Expression? defaultValue)
         => null;
 
-    protected override ShapedQueryExpression? TranslateDistinct(ShapedQueryExpression source)
-        => null;
-
     protected override ShapedQueryExpression? TranslateElementAtOrDefault(ShapedQueryExpression source,
         Expression index, bool returnDefault)
         => null;
@@ -758,14 +850,37 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // sub-project — GroupBy previously produced NotTranslatedExpression and failed translation outright).
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
 
-        // Record GroupBy provenance unconditionally so a later Join/GroupJoin/LeftJoin over this grouped
-        // source can be recognized as the wrong-data-on-fallback shape (see TranslateJoinCore).
+        // Guard: a GroupBy applied on top of a query that ALREADY terminates in a native grouping/distinct —
+        // a projected Distinct (IsDistinct, which set a key-only Grouping), a prior GroupBy (IsGroupBy), or any
+        // finalized Grouping — must NOT rebind. TryBindGroupKey would OVERWRITE the existing Grouping with this
+        // GroupBy's own key, silently DROPPING the Distinct/prior-grouping (e.g.
+        // Select(new{a,b}).Distinct().GroupBy(x=>x.k) would emit $group{_id:$k, $sum:1} counting ALL rows, not
+        // distinct rows). GroupBy has its own Translate override, so it bypasses the IsGroupBy||IsDistinct
+        // post-group guards in NativeSlotPopulator/NativeCardinalityBinder — hence this dedicated guard. Mark
+        // the query non-native (so it falls back to driver-LINQ under Native, throws under NativeOnly, matching
+        // the correct driver-LINQ result) and return a valid grouped shaped query WITHOUT rebinding.
+        // The guard must read state as it stood BEFORE this GroupBy call — captured here, before the
+        // unconditional IsGroupBy assignment below (both the guard branch and the normal-binding branch set
+        // IsGroupBy, so it is hoisted above the if/else; reading Select.HasTerminalGrouping AFTER that
+        // assignment would always be true and defeat the guard).
+        var hadTerminalGrouping = mongoQueryExpression.Select.HasTerminalGrouping;
+
+        // Record GroupBy provenance unconditionally (both the guard branch below and the normal-binding branch
+        // need it — see TranslateJoinCore) so a later Join/GroupJoin/LeftJoin over this grouped source can be
+        // recognized as the wrong-data-on-fallback shape.
         mongoQueryExpression.Select.IsGroupBy = true;
 
-        if (elementSelector != null || resultSelector != null
-            || !NativeGroupByBinder.TryBindGroupKey(mongoQueryExpression, keySelector))
+        if (hadTerminalGrouping)
         {
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
+        else
+        {
+            if (elementSelector != null || resultSelector != null
+                || !NativeGroupByBinder.TryBindGroupKey(mongoQueryExpression, keySelector))
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
         }
 
         // Carry a GroupByShaperExpression so a subsequent Select over the IGrouping is recognized (grouped branch
@@ -811,6 +926,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         if (outerQueryExpression.Select.IsGroupBy || innerQueryExpression.Select.IsGroupBy)
         {
             outerQueryExpression.Select.MarkGroupByFallbackUnsafe();
+        }
+        // A join over a projected-Distinct source is ALSO not natively representable — the lowerer's group
+        // branch returns early after the $group + flatten $project, so allowing it native would silently DROP
+        // the join. But unlike the GroupBy case its driver-LINQ fallback is CORRECT (Distinct produces a flat
+        // set of rows the driver joins normally, no empty-join wrong-data hazard), so it must fall back
+        // GRACEFULLY rather than hard-decline: mark it merely non-native (throws only under NativeOnly, runs
+        // under Native/DriverLinq). Guarded on IsDistinct-and-not-IsGroupBy so a source that is somehow both
+        // keeps the stricter GroupBy hard-decline above. See MongoSelectDefinition.IsDistinct.
+        else if (outerQueryExpression.Select.IsDistinct || innerQueryExpression.Select.IsDistinct)
+        {
+            outerQueryExpression.Select.MarkNotNativelyRepresentable();
         }
 
         outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType);
