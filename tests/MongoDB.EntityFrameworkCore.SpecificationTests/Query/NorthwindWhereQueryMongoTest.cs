@@ -506,7 +506,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_equals_using_object_overload_on_mismatched_types(bool async)
     {
-        // Fails: mismatched-type equality would silently return wrong results on driver 3.10 EF-221
+        // Fails: mismatched-type equality would silently return wrong results EF-221
         await AssertTranslationFailed(() => base.Where_equals_using_object_overload_on_mismatched_types(async));
 
         AssertMql(
@@ -525,7 +525,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_equals_on_mismatched_types_nullable_int_long(bool async)
     {
-        // Fails: mismatched-type equality would silently return wrong results on driver 3.10 EF-221
+        // Fails: mismatched-type equality would silently return wrong results EF-221
         await AssertTranslationFailed(() => base.Where_equals_on_mismatched_types_nullable_int_long(async));
 
         AssertMql(
@@ -534,7 +534,7 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
     public override async Task Where_equals_on_mismatched_types_nullable_long_nullable_int(bool async)
     {
-        // Fails: mismatched-type equality would silently return wrong results on driver 3.10 EF-221
+        // Fails: mismatched-type equality would silently return wrong results EF-221
         await AssertTranslationFailed(() => base.Where_equals_on_mismatched_types_nullable_long_nullable_int(async));
 
         AssertMql(

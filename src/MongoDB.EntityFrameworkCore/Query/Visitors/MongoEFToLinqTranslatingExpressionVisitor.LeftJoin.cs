@@ -34,31 +34,11 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
-// TODO(EF-317): Join rewriting for the C# driver's LINQ provider. This file groups the join-handling
-// helpers so the LeftJoin-related code is visible in one place ahead of native driver LeftJoin support.
-// It mixes two concerns that will diverge when the driver ships that support:
-//   * Driver-native LeftJoin rewrite (EXPECTED TO REMAIN / SIMPLIFY): StripOuterSelectForJoin,
-//     RewriteLeftJoins, RewriteJoinNode, TryBuildDriverNativeLeftJoinPipeline, BuildLeftJoinResultSerializer,
-//     BuildProjectedLeftOuterJoin, RewriteLambdaForLeftJoinResult, TransparentIdentifierToLeftJoinResultRewriter,
-//     TryGetKeyFieldPath, AppendRawStage. These rewrite EF's LeftJoin into
-//     the driver's Join (the driver has no LeftJoin translator today); they stay relevant but should shrink
-//     once the driver accepts LeftJoin directly.
-//   * $lookup fallback plumbing (EXPECTED TO BE REMOVED): StripJoinForLookup, IsJoinRelatedMethod,
-//     FindBaseSourceThroughJoin, and the $lookup-stage emission (AppendLookupStages,
-//     InjectAfterRootLookupStages, EmitLookupStages). These peel a Join chain back to its root and emit
-//     the manual $lookup + $unwind stages that stand in where the driver join cannot express the shape.
-// The Visit/VisitMethodCall dispatch remains in the main visitor file and calls into the helpers here.
 internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Expressions.ExpressionVisitor
 {
     /// <summary>
-    /// For join queries, strip the outermost Select that EF adds to extract from TransparentIdentifier,
-    /// then rewrite every LeftJoin in the residual chain. The driver's LINQ v3 pipeline has no LeftJoin
-    /// translator: it dispatches on method name and only recognizes "Join" (routed to
-    /// <c>JoinMethodToPipelineTranslator</c>, which requires <c>method.Is(QueryableMethod.Join)</c>).
-    /// So every <c>Queryable.LeftJoin</c> the provider emits must be
-    /// rewritten to <c>Queryable.Join</c> with a
-    /// <see cref="LeftJoinResult{TOuter,TInner}"/> result selector — the driver produces documents with
-    /// _outer/_inner fields which match the LeftJoinResult property names.
+    /// Strips the outermost Select that EF adds over a join's <c>TransparentIdentifier</c>, then hands the
+    /// residual join chain to <see cref="RewriteLeftJoins"/> for translation.
     /// </summary>
     private Expression? StripOuterSelectForJoin(Expression expression)
     {
@@ -105,21 +85,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Recursively rewrites every <c>Queryable.LeftJoin</c> node in a
-    /// method-call chain into <c>Queryable.Join</c> with a
-    /// <see cref="LeftJoinResult{TOuter,TInner}"/> result selector, and cascades the resulting element-type
-    /// change (TransparentIdentifier&lt;O,I&gt; → LeftJoinResult&lt;O,I&gt;) into every downstream operator
-    /// (Select / Where / OrderBy / chained Join+LeftJoin / terminal ops) so member accesses
-    /// <c>.Outer</c>/<c>.Inner</c> become <c>._outer</c>/<c>._inner</c> and generic arguments stay consistent.
-    /// Works bottom-up so multi-level Includes (chained joins) and joins nested inside other operators are
-    /// all handled.
-    ///
-    /// <paramref name="convertExplicitJoins"/> controls whether an explicit user <c>Queryable.Join</c> also
-    /// gets a <see cref="LeftJoinResult{TOuter,TInner}"/> result selector. The shaped (entity-materializing)
-    /// path needs this — its client-side shaper reads <c>_outer</c>/<c>_inner</c> from the joined document.
-    /// The projected path must NOT convert explicit Joins: their result selector is the user's projection and
-    /// has to be emitted verbatim. (A <c>LeftJoin</c> is always converted regardless, since the driver has no
-    /// LeftJoin translator.)
+    /// Recursively rewrites every <c>Queryable.LeftJoin</c> in a method-call chain (bottom-up, so nested and
+    /// multi-level joins are handled) and cascades the resulting <c>TransparentIdentifier</c> →
+    /// <see cref="LeftJoinResult{TOuter,TInner}"/> element-type change into downstream operators. When
+    /// <paramref name="convertExplicitJoins"/> is set (the shaped path, whose shaper reads
+    /// <c>_outer</c>/<c>_inner</c>) an explicit user <c>Join</c> is also converted; the projected path leaves
+    /// it verbatim.
     /// </summary>
     private Expression RewriteLeftJoins(Expression expression, bool convertExplicitJoins)
     {
@@ -181,13 +152,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Rewrites a single Join/LeftJoin node given its (possibly already-rewritten) source. A LeftJoin is
-    /// converted to a <c>Queryable.Join</c> with a <see cref="LeftJoinResult{TOuter,TInner}"/> result
-    /// selector so the driver's Join translator (which has no LeftJoin equivalent) accepts it. An explicit
-    /// user <c>Queryable.Join</c> keeps its own result selector — it must round-trip unchanged so the
-    /// emitted projection matches what the user wrote; only its parameter/generic types are remapped when a
-    /// nested join below it changed the outer element type. Key selectors are remapped when the outer element
-    /// type changed.
+    /// Rewrites a single Join/LeftJoin node given its (possibly already-rewritten) source. An explicit user
+    /// <c>Join</c> keeps its own result selector so the emitted projection matches what the user wrote; its
+    /// parameter/generic and key-selector types are remapped only when a nested join changed the outer element
+    /// type.
     /// </summary>
     private Expression RewriteJoinNode(
         MethodCallExpression call, Expression newSource, Type? newSourceItemType, bool convertToJoin, bool isLeftJoin, bool shapedPath)
@@ -207,13 +175,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // When the outer source was rewritten, its element type changed (TransparentIdentifier → LeftJoinResult).
         var outerType = newSourceItemType ?? oldOuterType;
 
-        // A reference Include is a LEFT-OUTER join: the principal (outer) row must survive even when the
-        // related (inner) entity is absent (optional/nullable FK). For a bare single-reference LeftJoin (the
-        // outer is the root entity, not a nested LeftJoinResult from a prior join) emit the driver's native
-        // MongoQueryable.LeftJoin, which the driver (3.10+) renders as a left-outer $lookup preserving
-        // unmatched principals — producing the same root-level _outer/_inner document shape the shaper reads.
-        // The inner EntityQueryRootExpression is replaced with its driver collection source when the emitted
-        // tree is subsequently Visit()ed (see the EntityQueryRootExpression case in the main visitor).
+        // A bare single-reference LeftJoin (outer is the root entity, not a nested LeftJoinResult) emits the
+        // driver's native MongoQueryable.LeftJoin, which the driver renders as a left-outer $lookup that
+        // preserves unmatched principals in the same _outer/_inner shape the shaper reads. The inner
+        // EntityQueryRootExpression is resolved to its collection source when the emitted tree is re-Visit()ed.
         if (isLeftJoin && shapedPath && outerType == oldOuterType)
         {
             var shapedOuterKey = call.Arguments[2].UnwrapLambdaFromQuote();
@@ -222,11 +187,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 newSource, call.Arguments[1], shapedOuterKey, shapedInnerKey, outerType, innerType);
         }
 
-        // The PROJECTED (push-down, non-shaped) path keeps the GroupJoin+SelectMany+DefaultIfEmpty rewrite.
-        // It serves both reference and *collection* navigation projections, and the native single-reference
-        // MongoQueryable.LeftJoin does not reproduce a collection navigation's empty-collection → null
-        // semantics (it materializes a default entity instead of null). Migrating the projected path to native
-        // is deferred to EF-317 / Slice 4 (collection navigations). The shaped path is already native above.
+        // The projected (push-down) path keeps the GroupJoin+SelectMany+DefaultIfEmpty rewrite for both
+        // reference and collection navigations: native single-reference LeftJoin can't reproduce a collection
+        // navigation's empty-collection → null semantics (it materializes a default entity instead).
         if (convertToJoin && isLeftJoin && !shapedPath)
         {
             return BuildProjectedLeftOuterJoin(
@@ -256,7 +219,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 : resultSelector;
         }
 
-        // Emit Queryable.Join (the driver has no LeftJoin pipeline translator); an explicit Join stays a Join.
+        // Remaining shapes native LeftJoin doesn't cover — a nested/chained LeftJoin (outer is already a
+        // LeftJoinResult) or an explicit user Join — are emitted as Queryable.Join with a LeftJoinResult
+        // result selector; an explicit Join stays a Join.
         var joinDefinition = convertToJoin ? QueryableJoinMethod : call.Method.GetGenericMethodDefinition();
         var newMethod = joinDefinition.MakeGenericMethod(outerType, innerType, genericArgs[2], resultType);
 
@@ -274,18 +239,21 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return Expression.Call(null, newMethod, newArgs);
     }
 
+    // Match the result-selector overload structurally (last param Expression<Func<TOuter,TInner,TResult>>)
+    // so the lookup stays unambiguous if the driver adds another 5-parameter LeftJoin overload.
     private static readonly MethodInfo MongoQueryableLeftJoinMethod =
         typeof(MongoQueryable).GetMethods()
-            .Single(m => m.Name == "LeftJoin" && m.GetParameters().Length == 5);
+            .Single(m => m.Name == nameof(MongoQueryable.LeftJoin)
+                         && m.GetParameters() is { Length: 5 } ps
+                         && ps[4].ParameterType.IsGenericType
+                         && ps[4].ParameterType.GetGenericArguments()[0].GetGenericArguments().Length == 3);
 
     /// <summary>
     /// Emits the driver-native <see cref="MongoQueryable.LeftJoin{TOuter,TInner,TKey,TResult}"/> for a
-    /// single-reference left-outer join, producing the same root-level <c>_outer</c>/<c>_inner</c> document
-    /// shape (via <see cref="LeftJoinResult{TOuter,TInner}"/>) the shaper already reads. This replaces both the
-    /// hand-rolled <c>$lookup</c>/<c>$unwind</c> pipeline (shaped path) and the
-    /// <c>GroupJoin(...).SelectMany(...DefaultIfEmpty())</c> rewrite (projected path): driver 3.10.0 renders
-    /// <c>LeftJoin</c> as a left-outer <c>$lookup</c> directly, preserving principals whose related entity is
-    /// absent, so no manual preserve-<c>$unwind</c> is needed.
+    /// single-reference left-outer join on the shaped path, producing the same <c>_outer</c>/<c>_inner</c>
+    /// shape (<see cref="LeftJoinResult{TOuter,TInner}"/>) the shaper reads. The driver renders it as a
+    /// left-outer <c>$lookup</c> that preserves principals whose related entity is absent, so no manual
+    /// preserve-<c>$unwind</c> is needed. The projected path uses <see cref="BuildProjectedLeftOuterJoin"/>.
     /// </summary>
     private Expression BuildDriverNativeLeftJoin(
         Expression outerSource, Expression innerSource,
@@ -327,13 +295,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             .Single(m => m.Name == nameof(Enumerable.DefaultIfEmpty) && m.GetParameters().Length == 1);
 
     /// <summary>
-    /// Builds the driver-translatable left-outer join for the PROJECTED (non-shaped) path via
-    /// <c>GroupJoin(...).SelectMany(c => c._inner.DefaultIfEmpty(), ...)</c>. The driver renders this as
-    /// <c>$lookup</c> (array) + <c>$map</c>/<c>$cond</c> (substituting a single <see langword="null"/> when the
-    /// matched array is empty) + <c>$unwind</c>. This is retained specifically for projected
-    /// <em>collection</em> navigations, whose empty-collection → <see langword="null"/> semantics the driver's
-    /// native single-reference <c>LeftJoin</c> does not reproduce (it materializes a default entity instead).
-    /// Single-reference projected joins use <see cref="BuildDriverNativeLeftJoin"/> instead. See EF-317 / Slice 4.
+    /// Builds the left-outer join for the projected (non-shaped) path via
+    /// <c>GroupJoin(...).SelectMany(c => c._inner.DefaultIfEmpty(), ...)</c>, which the driver renders as
+    /// <c>$lookup</c> + <c>$map</c>/<c>$cond</c> + <c>$unwind</c>. Used for all projected LeftJoins (reference
+    /// and collection); native single-reference <c>LeftJoin</c> (<see cref="BuildDriverNativeLeftJoin"/>) can't
+    /// reproduce a collection navigation's empty-collection → <see langword="null"/> semantics.
     /// </summary>
     private Expression BuildProjectedLeftOuterJoin(
         MethodCallExpression call, Expression newSource, Type outerType, Type innerType, Type keyType, Type oldOuterType)

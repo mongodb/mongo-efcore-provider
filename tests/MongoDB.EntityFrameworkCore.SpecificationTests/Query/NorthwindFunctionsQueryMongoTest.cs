@@ -2238,7 +2238,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Static_equals_int_compared_to_long(bool async)
     {
-        // Fails: mismatched-type equality would silently return wrong results on driver 3.10 EF-221
+        // Fails: mismatched-type equality would silently return wrong results EF-221
         await AssertTranslationFailed(() => base.Static_equals_int_compared_to_long(async));
 
         AssertMql(

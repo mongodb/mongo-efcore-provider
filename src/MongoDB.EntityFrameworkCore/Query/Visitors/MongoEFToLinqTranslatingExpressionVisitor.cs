@@ -89,9 +89,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return AppendLookupStages(_source);
         }
 
-        // For explicit Join queries with pending lookups, strip the join and use $lookup instead.
-        // Otherwise rewrite any Include-generated LeftJoin into Queryable.Join + LeftJoinResult so the
-        // driver's pipeline translator (which has no LeftJoin translator) accepts it.
+        // For explicit Join queries with pending lookups, strip the join and use $lookup instead. Otherwise
+        // rewrite any Include-generated LeftJoin into a driver-translatable left-outer shape (see RewriteLeftJoins).
         Expression expressionToTranslate;
         if (_pendingLookups.Count > 0)
         {
@@ -727,7 +726,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// membership-changing (cardinality) operator — <c>Take</c>/<c>Skip</c>/<c>Distinct</c>/<c>TakeLast</c>/
     /// <c>SkipLast</c> applied to the whole inner <em>before</em> the join, e.g.
     /// <c>customers.Join(orders.OrderBy(o =&gt; o.OrderID).Take(5), …)</c> — is mistranslated by the MongoDB C#
-    /// driver's LINQ v3 provider (3.10): it folds the operator into the correlated <c>$lookup</c> sub-pipeline,
+    /// driver's LINQ v3 provider: it folds the operator into the correlated <c>$lookup</c> sub-pipeline,
     /// so the limit/skip/distinct is applied <em>per outer row</em> instead of once globally before the join.
     /// That silently returns wrong results (see the driver bug repro in <c>DriverJoinSpikeTests</c>). Until the
     /// driver is fixed, fail as a clean EF Core translation failure rather than emit a pipeline that returns
@@ -799,10 +798,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// A mismatched-type equality — <c>x.Equals(y)</c> through the <c>object</c> overload where <c>x</c> and
     /// <c>y</c> have different underlying integral types (e.g. <c>uint.Equals(ulong)</c> or
     /// <c>ReportsTo.Equals(longPrm)</c>, as in EF Core's <c>Where_equals_*_on_mismatched_types</c> tests) — is
-    /// mistranslated by the MongoDB C# driver's LINQ v3 provider (3.10): the CLR's <c>object.Equals</c> is
+    /// mistranslated by the MongoDB C# driver's LINQ v3 provider: the CLR's <c>object.Equals</c> is
     /// always <see langword="false"/> across distinct value types (the values are never equal), but the driver
-    /// emits a plain numeric match that returns rows anyway (previously the driver threw
-    /// <see cref="InvalidCastException"/>; 3.10 now silently returns wrong data). Until the driver coerces the
+    /// emits a plain numeric match that returns rows anyway (returning wrong data). Until the driver coerces the
     /// operand types correctly, reject this shape as a clean EF Core translation failure rather than run a
     /// query that returns wrong results. The strongly-typed <c>Equals</c> overload (used when the argument
     /// widens to the receiver's type, e.g. <c>uint.Equals(ushort)</c>) and same-underlying-type comparisons
