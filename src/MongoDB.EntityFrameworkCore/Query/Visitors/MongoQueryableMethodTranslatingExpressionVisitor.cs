@@ -102,6 +102,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 case nameof(Queryable.Select) when methodDefinition == QueryableMethods.Select:
                 case nameof(Queryable.OfType) when methodDefinition == QueryableMethods.OfType:
                 case nameof(Queryable.Distinct) when methodDefinition == QueryableMethods.Distinct:
+                case nameof(Queryable.Union) when methodDefinition == QueryableMethods.Union:
+                case nameof(Queryable.Concat) when methodDefinition == QueryableMethods.Concat:
 
                 // Operations that only require reshaping
                 case nameof(Queryable.Any) when methodDefinition == QueryableMethods.AnyWithoutPredicate:
@@ -202,7 +204,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return groupShaper == null ? source : source.UpdateShaperExpression(groupShaper);
         }
 
-        if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector))
+        if (IsSingleLevelCollectionIncludeSelector(selector) && mongoQueryExpression.Select.HasTerminalOperator)
+        {
+            // Post-terminal guard for a collection Include (EF-347 finding): EF Core's own
+            // NavigationExpandingExpressionVisitor requires the SAME Include on both operands of a set
+            // operation and, when that holds, HOISTS it to apply AFTER the combinator — i.e.
+            // "A.Include(x).Union(B.Include(x))" reaches this Select as "Union(A, B).Select(x =>
+            // Include(x))", with mongoQueryExpression.Select.IsSetOp (or IsGroupBy/IsDistinct for the
+            // analogous GroupBy/Distinct cases) already set by the preceding TranslateUnion/Concat/
+            // GroupBy/Distinct. Registering the $lookup here via the fall-through below would combine it
+            // with a $unionWith/$group the lowerer does not know how to reconcile — empirically, rows
+            // contributed by the $unionWith operand come back with an EMPTY Include collection (a silent
+            // wrong-data bug, not a translation failure). Fall back to driver-LINQ instead.
+            mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
+        else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector))
         {
             // Post-terminal guard: a projected Select applied AFTER a native terminal grouping/distinct — a
             // projected Distinct (IsDistinct, key-only Grouping), a prior GroupBy (IsGroupBy), or any finalized
@@ -218,7 +234,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // Native (throws under NativeOnly), matching the correct driver-LINQ result. Mirrors the
             // TranslateGroupBy guard. The legit GroupBy(key).Select(aggregate) reaches the grouped branch above
             // (via GroupByShaperExpression) and is unaffected.
-            if (mongoQueryExpression.Select.HasTerminalGrouping)
+            if (mongoQueryExpression.Select.HasTerminalOperator)
             {
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
@@ -670,6 +686,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 // based MaterializationCondition), so all that is missing to keep this query natively
                 // representable is the discriminator $eq/$in conjunct itself.
                 var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+                if (mongoQueryExpression.Select.HasTerminalOperator)
+                {
+                    // Post-terminal guard (EF-347 slice 2): OfType after a native terminal (Union/Concat, or GroupBy/
+                    // Distinct) is an own-Translate-override operator whose discriminator conjunct would be added to the
+                    // OUTER select's Predicate — emitted as a pre-$unionWith/$group $match that filters only the outer
+                    // rows, leaving the operand/grouped rows unfiltered (silent wrong data). Fall back to driver-LINQ.
+                    mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+                    return source.UpdateShaperExpression(entityShaperExpression.WithType(resultEntityType));
+                }
+
                 if (TryBuildDiscriminatorPredicate(resultEntityType, out var predicate))
                 {
                     mongoQueryExpression.Select.AddPredicateConjunct(predicate);
@@ -821,7 +847,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => throw new NotSupportedException("Subqueries are not supported by MongoDB.");
 
     protected override ShapedQueryExpression? TranslateConcat(ShapedQueryExpression source1, ShapedQueryExpression source2)
-        => null;
+        => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Concat);
 
     protected override ShapedQueryExpression? TranslateDefaultIfEmpty(ShapedQueryExpression source, Expression? defaultValue)
         => null;
@@ -861,9 +887,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // the correct driver-LINQ result) and return a valid grouped shaped query WITHOUT rebinding.
         // The guard must read state as it stood BEFORE this GroupBy call — captured here, before the
         // unconditional IsGroupBy assignment below (both the guard branch and the normal-binding branch set
-        // IsGroupBy, so it is hoisted above the if/else; reading Select.HasTerminalGrouping AFTER that
+        // IsGroupBy, so it is hoisted above the if/else; reading Select.HasTerminalOperator AFTER that
         // assignment would always be true and defeat the guard).
-        var hadTerminalGrouping = mongoQueryExpression.Select.HasTerminalGrouping;
+        var hadTerminalGrouping = mongoQueryExpression.Select.HasTerminalOperator;
 
         // Record GroupBy provenance unconditionally (both the guard branch below and the normal-binding branch
         // need it — see TranslateJoinCore) so a later Join/GroupJoin/LeftJoin over this grouped source can be
@@ -1135,7 +1161,66 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => null;
 
     protected override ShapedQueryExpression? TranslateUnion(ShapedQueryExpression source1, ShapedQueryExpression source2)
-        => null;
+        => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Union);
+
+    // Native whole-entity, terminal Union/Concat -> a $unionWith on source1's select. ALWAYS returns a
+    // non-null shaped query (source1): native when both operands are plain natively-lowerable whole-entity
+    // selects of the same type, otherwise source1 marked non-native so the query falls back GRACEFULLY to
+    // driver-LINQ (throws only under NativeOnly). Never returns null (would become a hard NotTranslated in
+    // the VisitMethodCall switch body). Mirrors TranslateGroupBy's always-non-null contract.
+    private ShapedQueryExpression TryTranslateSetOperation(
+        ShapedQueryExpression source1, ShapedQueryExpression source2, MongoSetOperationKind kind)
+    {
+        var mongo1 = (MongoQueryExpression)source1.QueryExpression;
+        var mongo2 = (MongoQueryExpression)source2.QueryExpression;
+
+        if (IsPlainWholeEntitySelect(mongo1) && IsPlainWholeEntitySelect(mongo2)
+            && mongo1.CollectionExpression.EntityType == mongo2.CollectionExpression.EntityType)
+        {
+            mongo1.Select.SetOperation = new MongoSetOperation(kind, mongo2.Select, mongo2.CollectionExpression.CollectionName);
+            mongo1.Select.IsSetOp = true;
+        }
+        else
+        {
+            mongo1.Select.MarkNotNativelyRepresentable();
+        }
+
+        // Same-entity-type both sides -> source1's whole-entity shaper materializes every union row.
+        return source1;
+    }
+
+    // A plain whole-entity select: filter/sort/paging slots only — no projection, grouping, scalar
+    // cardinality, its own set op, cross-collection lookups (Include), or a lifted-out VectorSearch.
+    private static bool IsPlainWholeEntitySelect(MongoQueryExpression mongo)
+        => mongo.Select.Route == NativeRoute.WholeEntity
+           && mongo.Select.SetOperation == null
+           && !mongo.Select.IsSetOp
+           && mongo.Select.Grouping == null
+           && mongo.Select.Cardinality == null
+           && mongo.Select.Projection.Count == 0
+           && !mongo.IsJoinQuery
+           && mongo.Lookups.Count == 0
+           && !ContainsVectorSearch(mongo.CapturedExpression);
+
+    // Local, minimal duplicate of MongoShapedQueryCompilingExpressionVisitor.ContainsVectorSearch (that
+    // gate method is private and deliberately not made public — see the Query area AGENTS.md for the
+    // rationale on why VectorSearch must be checked via the captured chain rather than a select-tree flag).
+    // Walks the captured Queryable method chain looking for a VectorSearch call, descending through the
+    // source argument of each call (VectorSearch sits at the root, optionally under a single pre-Where).
+    private static bool ContainsVectorSearch(Expression? captured)
+    {
+        while (captured is MethodCallExpression call)
+        {
+            if (call.IsVectorSearch())
+            {
+                return true;
+            }
+
+            captured = call.Arguments.Count > 0 ? call.Arguments[0] : null;
+        }
+
+        return false;
+    }
 
     protected override ShapedQueryExpression? TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate)
         => null;

@@ -57,29 +57,8 @@ internal sealed class MongoSelectLowerer
         var select = query.Select;
         var stages = new List<MongoPipelineStage>();
 
-        // 1. $match — filter predicate.
-        if (select.Predicate != null)
-        {
-            stages.Add(new MongoMatchStage(select.Predicate));
-        }
-
-        // 2. $sort — orderings.
-        if (select.Orderings.Count > 0)
-        {
-            stages.Add(new MongoSortStage(select.Orderings));
-        }
-
-        // 3. $skip — offset (pagination start).
-        if (select.Offset != null)
-        {
-            stages.Add(new MongoSkipStage(select.Offset));
-        }
-
-        // 4. $limit — result cap.
-        if (select.Limit != null)
-        {
-            stages.Add(new MongoLimitStage(select.Limit));
-        }
+        // 1-4. $match → $sort → $skip → $limit — filter / sort / paging.
+        AppendCanonicalStages(select, stages);
 
         // 5. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
         // A projected collection-navigation Count (NativeProjectionBinder.TryTranslateProjectedCollectionCount)
@@ -87,6 +66,17 @@ internal sealed class MongoSelectLowerer
         // is already present by the time stage 6's $project reads it via $size — this canonical ordering
         // ($lookup before $project) already satisfies that without any lowerer change.
         AppendLookupStages(query, stages);
+
+        // Set operation terminal ($unionWith [+ dedup]). Guaranteed terminal and whole-entity by the QMTEV
+        // guard (the operand is a plain whole-entity select — no grouping/projection/cardinality/lookups), so
+        // nothing follows it and the operand lowers to canonical stages only.
+        if (select.SetOperation is { } setOp)
+        {
+            var operandStages = new List<MongoPipelineStage>();
+            AppendCanonicalStages(setOp.OperandSelect, operandStages);
+            stages.Add(new MongoUnionWithStage(operandStages, setOp.OperandCollectionName, dedup: setOp.Kind == MongoSetOperationKind.Union));
+            return stages;
+        }
 
         // 6b. Keyed $group terminal (GroupBy(key).Select(aggregate)). A GroupBy-route query has only
         // $match + $group by construction — the binder rejects orderings/paging alongside a grouping —
@@ -137,6 +127,38 @@ internal sealed class MongoSelectLowerer
         }
 
         return stages;
+    }
+
+    /// <summary>
+    /// Appends the canonical <c>$match → $sort → $skip → $limit</c> block for <paramref name="select"/>.
+    /// Shared between the outer query and a set-operation operand (<see cref="MongoSetOperation.OperandSelect"/>),
+    /// which is a plain whole-entity select and so only ever needs these four stages.
+    /// </summary>
+    private static void AppendCanonicalStages(MongoSelectDefinition select, List<MongoPipelineStage> stages)
+    {
+        // 1. $match — filter predicate.
+        if (select.Predicate != null)
+        {
+            stages.Add(new MongoMatchStage(select.Predicate));
+        }
+
+        // 2. $sort — orderings.
+        if (select.Orderings.Count > 0)
+        {
+            stages.Add(new MongoSortStage(select.Orderings));
+        }
+
+        // 3. $skip — offset (pagination start).
+        if (select.Offset != null)
+        {
+            stages.Add(new MongoSkipStage(select.Offset));
+        }
+
+        // 4. $limit — result cap.
+        if (select.Limit != null)
+        {
+            stages.Add(new MongoLimitStage(select.Limit));
+        }
     }
 
     /// <summary>

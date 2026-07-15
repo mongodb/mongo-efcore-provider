@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
@@ -65,10 +66,15 @@ internal sealed class MongoPipelineFactory
         MongoQueryLanguageRenderer renderer)
     {
         var placeholders = new PlaceholderTable();
-        var template = new BsonDocument[stages.Count];
+        var template = new List<BsonDocument>(stages.Count);
 
-        for (var i = 0; i < stages.Count; i++)
-            template[i] = RenderStage(stages[i], renderer, placeholders);
+        foreach (var stage in stages)
+        {
+            if (stage is MongoUnionWithStage unionWith)
+                template.AddRange(RenderUnionWith(unionWith, renderer, placeholders));
+            else
+                template.Add(RenderStage(stage, renderer, placeholders));
+        }
 
         return new MongoPipelineFactory(template, placeholders);
     }
@@ -195,6 +201,30 @@ internal sealed class MongoPipelineFactory
             { "preserveNullAndEmptyArrays", true }
         });
 
+    // Renders a $unionWith over the operand's nested pipeline into the SAME placeholder table (so a
+    // parameter inside the operand substitutes at Build time), then, for Union, the full-document dedup.
+    private static IEnumerable<BsonDocument> RenderUnionWith(
+        MongoUnionWithStage stage,
+        MongoQueryLanguageRenderer renderer,
+        PlaceholderTable placeholders)
+    {
+        var innerPipeline = new BsonArray();
+        foreach (var operandStage in stage.OperandStages)
+            innerPipeline.Add(RenderStage(operandStage, renderer, placeholders));   // shared placeholders
+
+        yield return new BsonDocument("$unionWith", new BsonDocument
+        {
+            { "coll", stage.OperandCollectionName },
+            { "pipeline", innerPipeline }
+        });
+
+        if (stage.Dedup)
+        {
+            yield return new BsonDocument("$group", new BsonDocument("_id", "$$ROOT"));
+            yield return new BsonDocument("$replaceRoot", new BsonDocument("newRoot", "$_id"));
+        }
+    }
+
     // ------------------------------------------------------------------
     // Per-execution binding
     // ------------------------------------------------------------------
@@ -240,6 +270,12 @@ internal sealed class MongoPipelineFactory
                 if (skip < 0)
                     throw new ArgumentOutOfRangeException("count",
                         $"Skip must be non-negative; got {skip}.");
+            }
+
+            if (stage.TryGetValue("$unionWith", out var unionWithValue)
+                && unionWithValue.AsBsonDocument.TryGetValue("pipeline", out var innerPipeline))
+            {
+                ValidatePagingStages(innerPipeline.AsBsonArray.Select(d => d.AsBsonDocument).ToArray());
             }
         }
     }

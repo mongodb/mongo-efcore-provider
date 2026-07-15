@@ -61,8 +61,8 @@ internal static class NativeSlotPopulator
         // a slot operator applied after it must fall back cleanly for the identical reason (it would otherwise
         // resolve against the entity type and emit a pre-$group $match/$sort). Only the Join-family decline
         // differs between GroupBy and Distinct (see MongoSelectDefinition.IsDistinct); this slot guard is shared.
-        // (Centralized as HasTerminalGrouping, EF-347 review follow-up — see MongoSelectDefinition.)
-        if (mongoQ.Select.HasTerminalGrouping && IsPostGroupSlotOperator(methodDefinition))
+        // (Centralized as HasTerminalOperator, EF-347 review follow-up — see MongoSelectDefinition.)
+        if (mongoQ.Select.HasTerminalOperator && IsPostGroupSlotOperator(methodDefinition))
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
@@ -202,6 +202,8 @@ internal static class NativeSlotPopulator
            || methodDefinition == QueryableMethods.Select
            || methodDefinition == QueryableMethods.OfType
            || methodDefinition == QueryableMethods.Distinct
+           || methodDefinition == QueryableMethods.Union
+           || methodDefinition == QueryableMethods.Concat
            || methodDefinition == QueryableMethods.GroupByWithKeySelector
            || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector
            || methodDefinition == QueryableMethods.FirstWithoutPredicate

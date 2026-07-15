@@ -209,4 +209,62 @@ public class MongoSelectLowererTests
             s => Assert.IsType<MongoMatchStage>(s),
             s => Assert.IsType<MongoGroupStage>(s));
     }
+
+    // ── Test 12: Set-op select lowers to a single MongoUnionWithStage ───────────
+
+    [Fact]
+    public void SetOperation_appends_union_stage_after_canonical_stages()
+    {
+        var operand = new MongoSelectDefinition(); // empty operand → no inner stages
+        var query = TestSelect();
+        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers");
+        query.Select.IsSetOp = true;
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        var union = Assert.IsType<MongoUnionWithStage>(Assert.Single(stages));
+        Assert.Equal("customers", union.OperandCollectionName);
+        Assert.False(union.Dedup);
+        Assert.Empty(union.OperandStages);
+    }
+
+    // ── Test 13: Union sets Dedup and lowers the operand predicate to a $match ──
+
+    [Fact]
+    public void Union_sets_dedup_and_lowers_operand_predicate()
+    {
+        var operand = new MongoSelectDefinition();
+        operand.AddPredicateConjunct(new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoFieldExpression(property: null!, elementName: "country"),
+            new MongoConstantExpression("UK", null)));
+
+        var query = TestSelect();
+        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers");
+        query.Select.IsSetOp = true;
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        var union = Assert.IsType<MongoUnionWithStage>(Assert.Single(stages));
+        Assert.True(union.Dedup);
+        Assert.IsType<MongoMatchStage>(Assert.Single(union.OperandStages));
+    }
+
+    // ── Test 14: Outer $match precedes the union stage ───────────────────────────
+
+    [Fact]
+    public void Outer_where_precedes_the_union_stage()
+    {
+        var operand = new MongoSelectDefinition();
+        var query = TestSelect();
+        query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
+        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers");
+        query.Select.IsSetOp = true;
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoMatchStage>(s),
+            s => Assert.IsType<MongoUnionWithStage>(s));
+    }
 }

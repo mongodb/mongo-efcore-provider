@@ -352,4 +352,154 @@ public class MongoPipelineFactoryTests
         Assert.Equal("$Name", project["Name"].AsString);
         Assert.Equal(0, project["_id"].AsInt32);
     }
+
+    // ------------------------------------------------------------------
+    // $unionWith stage rendering (Concat/Union set-ops)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Concat_renders_unionWith_without_dedup()
+    {
+        var stages = new MongoPipelineStage[]
+        {
+            new MongoUnionWithStage(new List<MongoPipelineStage>(), "customers", dedup: false)
+        };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+        var pipeline = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(pipeline);
+        var unionWith = pipeline[0]["$unionWith"].AsBsonDocument;
+        Assert.Equal("customers", unionWith["coll"].AsString);
+        Assert.Empty(unionWith["pipeline"].AsBsonArray);
+    }
+
+    [Fact]
+    public void Union_appends_dollarRoot_dedup_group_and_replaceRoot()
+    {
+        var stages = new MongoPipelineStage[]
+        {
+            new MongoUnionWithStage(new List<MongoPipelineStage>(), "customers", dedup: true)
+        };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+        var pipeline = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Equal(3, pipeline.Length);
+        Assert.True(pipeline[0].Contains("$unionWith"));
+        Assert.Equal("$$ROOT", pipeline[1]["$group"]["_id"].AsString);
+        Assert.Equal("$_id", pipeline[2]["$replaceRoot"]["newRoot"].AsString);
+    }
+
+    [Fact]
+    public void Operand_predicate_renders_inside_the_union_pipeline()
+    {
+        var ageProperty = GetProperty<Customer>("Age");
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoFieldExpression(ageProperty, "Age"),
+            new MongoConstantExpression(21, ageProperty));
+
+        var operand = new List<MongoPipelineStage> { new MongoMatchStage(pred) };
+        var stages = new MongoPipelineStage[] { new MongoUnionWithStage(operand, "customers", dedup: false) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+        var pipeline = factory.Build(new Dictionary<string, object?>());
+
+        var innerPipeline = pipeline[0]["$unionWith"]["pipeline"].AsBsonArray;
+        Assert.True(innerPipeline[0].AsBsonDocument.Contains("$match"));
+        Assert.Equal(BsonDocument.Parse("{ $match: { Age: 21 } }"), innerPipeline[0].AsBsonDocument);
+    }
+
+    [Fact]
+    public void Operand_parameterized_predicate_shares_the_outer_placeholder_table()
+    {
+        // Proves operand stages render into the SAME PlaceholderTable as the outer pipeline:
+        // the parameter substitutes correctly at Build time even though it originates inside
+        // the nested $unionWith pipeline.
+        var ageProperty = GetProperty<Customer>("Age");
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(ageProperty, "Age"),
+            new MongoParameterExpression("minAge", ageProperty));
+
+        var operand = new List<MongoPipelineStage> { new MongoMatchStage(pred) };
+        var stages = new MongoPipelineStage[] { new MongoUnionWithStage(operand, "customers", dedup: false) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var pipeline = factory.Build(new Dictionary<string, object?> { ["minAge"] = 18 });
+
+        var innerPipeline = pipeline[0]["$unionWith"]["pipeline"].AsBsonArray;
+        Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $gt: 18 } } }"), innerPipeline[0].AsBsonDocument);
+    }
+
+    [Fact]
+    public void Operand_limit_zero_throws_ArgumentOutOfRangeException_from_Build()
+    {
+        var ageProperty = GetProperty<Customer>("Age");
+        var operand = new List<MongoPipelineStage>
+        {
+            new MongoLimitStage(new MongoConstantExpression(0, ageProperty))
+        };
+        var stages = new MongoPipelineStage[] { new MongoUnionWithStage(operand, "customers", dedup: false) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            factory.Build(new Dictionary<string, object?>()));
+    }
+
+    [Fact]
+    public void Operand_skip_negative_throws_ArgumentOutOfRangeException_from_Build()
+    {
+        // Mirrors Operand_limit_zero_throws_ArgumentOutOfRangeException_from_Build, but for $skip:
+        // proves ValidatePagingStages recurses into the union operand's stages for $skip too,
+        // symmetric with $limit.
+        var ageProperty = GetProperty<Customer>("Age");
+        var operand = new List<MongoPipelineStage>
+        {
+            new MongoSkipStage(new MongoConstantExpression(-1, ageProperty))
+        };
+        var stages = new MongoPipelineStage[] { new MongoUnionWithStage(operand, "customers", dedup: false) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            factory.Build(new Dictionary<string, object?>()));
+    }
+
+    [Fact]
+    public void Outer_and_operand_parameterized_predicates_each_substitute_their_own_value()
+    {
+        // Strengthens Operand_parameterized_predicate_shares_the_outer_placeholder_table: that test
+        // proves a fresh/empty placeholder table still resolves a single operand parameter. This test
+        // proves the shared table indexes TWO DIFFERENT parameters correctly — one bound in the OUTER
+        // pipeline and a DIFFERENT one nested inside the union OPERAND — guarding against an
+        // index-collision regression (not just a fresh-empty-table one).
+        var ageProperty = GetProperty<Customer>("Age");
+
+        var outerPred = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(ageProperty, "Age"),
+            new MongoParameterExpression("outerMinAge", ageProperty));
+
+        var operandPred = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(ageProperty, "Age"),
+            new MongoParameterExpression("operandMinAge", ageProperty));
+
+        var operand = new List<MongoPipelineStage> { new MongoMatchStage(operandPred) };
+        var stages = new MongoPipelineStage[]
+        {
+            new MongoMatchStage(outerPred),
+            new MongoUnionWithStage(operand, "customers", dedup: false)
+        };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var pipeline = factory.Build(new Dictionary<string, object?>
+        {
+            ["outerMinAge"] = 18,
+            ["operandMinAge"] = 25
+        });
+
+        Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $gt: 18 } } }"), pipeline[0]);
+
+        var innerPipeline = pipeline[1]["$unionWith"]["pipeline"].AsBsonArray;
+        Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $gt: 25 } } }"), innerPipeline[0].AsBsonDocument);
+    }
 }

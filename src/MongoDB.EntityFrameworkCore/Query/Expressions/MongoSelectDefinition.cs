@@ -195,17 +195,28 @@ internal sealed class MongoSelectDefinition
     internal bool IsDistinct { get; set; }
 
     /// <summary>
-    /// <see langword="true"/> once this query has seen ANY native terminal grouping/distinct provenance —
-    /// <see cref="IsGroupBy"/>, <see cref="IsDistinct"/>, or a finalized <see cref="Grouping"/>. Centralizes
-    /// the post-terminal gate that is otherwise duplicated across <c>NativeCardinalityBinder</c>,
-    /// <c>NativeSlotPopulator</c>, and the QMTEV's <c>TranslateSelect</c>/<c>TranslateGroupBy</c>: any operator
-    /// reached after a native <c>GroupBy</c> or projected <c>Distinct</c> must fall back rather than resolve
-    /// against the base entity type and silently emit a pre-<c>$group</c> stage. <c>Grouping != null</c> is
-    /// included for completeness (a finalized grouping always also sets <see cref="IsGroupBy"/> or
-    /// <see cref="IsDistinct"/> by construction, so including it here is a no-op in practice, not an
-    /// additional case).
+    /// <see langword="true"/> once this query has seen ANY native terminal grouping/distinct/set-op
+    /// provenance — <see cref="IsGroupBy"/>, <see cref="IsDistinct"/>, <see cref="IsSetOp"/>, or a finalized
+    /// <see cref="Grouping"/>. Centralizes the post-terminal gate that is otherwise duplicated across
+    /// <c>NativeCardinalityBinder</c>, <c>NativeSlotPopulator</c>, and the QMTEV's
+    /// <c>TranslateSelect</c>/<c>TranslateGroupBy</c>: any operator reached after a native <c>GroupBy</c>,
+    /// projected <c>Distinct</c>, or terminal <c>Union</c>/<c>Concat</c> must fall back rather than resolve
+    /// against the base entity type and silently emit a pre-<c>$group</c>/pre-<c>$unionWith</c> stage.
+    /// <c>Grouping != null</c> is included for completeness (a finalized grouping always also sets
+    /// <see cref="IsGroupBy"/> or <see cref="IsDistinct"/> by construction, so including it here is a no-op
+    /// in practice, not an additional case).
     /// </summary>
-    internal bool HasTerminalGrouping => IsGroupBy || IsDistinct || Grouping != null;
+    internal bool HasTerminalOperator => IsGroupBy || IsDistinct || IsSetOp || Grouping != null;
+
+    /// <summary>The terminal set operation (Union/Concat), when this select is a set-op query (EF-347 slice 2).</summary>
+    internal MongoSetOperation? SetOperation { get; set; }
+
+    /// <summary>
+    /// <see langword="true"/> when a terminal set operation is attached. A SEPARATE provenance flag (like
+    /// <see cref="IsDistinct"/>) that joins the post-terminal guard <see cref="HasTerminalOperator"/> so any
+    /// operator applied AFTER the union falls back (terminal-only scope).
+    /// </summary>
+    internal bool IsSetOp { get; set; }
 
     private bool _isGroupByFallbackUnsafe;
 
