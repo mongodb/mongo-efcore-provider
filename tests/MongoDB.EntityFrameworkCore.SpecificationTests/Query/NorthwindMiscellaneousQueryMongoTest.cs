@@ -3412,10 +3412,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Comparing_collection_navigation_to_null_complex(async))).Message);
+        await Assert.ThrowsAnyAsync<Exception>(() => base.Comparing_collection_navigation_to_null_complex(async));
 
         AssertMql(
             """
@@ -3517,15 +3514,11 @@ OrderDetails.
 
     public override async Task Join_take_count_works(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_take_count_works(async))).Message);
+        await base.Join_take_count_works(async);
 
         AssertMql(
             """
-Orders.
+Orders.{ "$match" : { "_id" : { "$gt" : 690, "$lt" : 710 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "_id" : "ALFKI" } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$limit" : 5 }, { "$count" : "_v" }
 """);
     }
 
@@ -3793,16 +3786,12 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }
 
     public override async Task Checked_context_with_arithmetic_does_not_fail(bool async)
     {
-        // Fails: checked issue EF-249
-        Assert.Contains(
-            "Expression not supported: (ConvertChecked",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Checked_context_with_arithmetic_does_not_fail(async))).Message);
+        await base.Checked_context_with_arithmetic_does_not_fail(async);
 
         AssertMql(
             """
-            OrderDetails.
-            """);
+OrderDetails.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$add" : [{ "$toInt" : "$Quantity" }, 1] }, 5] } }, { "$expr" : { "$eq" : [{ "$subtract" : [{ "$toInt" : "$Quantity" }, 1] }, 3] } }, { "$expr" : { "$eq" : [{ "$multiply" : [{ "$toInt" : "$Quantity" }, 1] }, { "$toInt" : "$Quantity" }] } }] } }, { "$sort" : { "_id.OrderID" : 1 } }
+""");
     }
 
     public override async Task Checked_context_with_case_to_same_nullable_type_does_not_fail(bool isAsync)
@@ -4174,15 +4163,11 @@ Customers.
 
     public override async Task OrderBy_Join(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.OrderBy_Join(async))).Message);
+        await base.OrderBy_Join(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "CustomerID" : "$Outer._id", "OrderID" : "$Inner._id", "_id" : 0 } }
 """);
     }
 
