@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore.Metadata;
+
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
@@ -21,8 +23,16 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoUnwindSource
 {
-    public MongoUnwindSource(string elementPath) => ElementPath = elementPath;
+    public MongoUnwindSource(string elementPath, IEntityType innerEntityType)
+    {
+        ElementPath = elementPath;
+        InnerEntityType = innerEntityType;
+    }
 
     /// <summary>The owned-collection element path to unwind (e.g. <c>"Items"</c>), rendered as <c>$Items</c>.</summary>
     public string ElementPath { get; }
+
+    /// <summary>The owned (inner) entity type unwound from <see cref="ElementPath"/> — used to resolve
+    /// ti.Inner member accesses to element names in the trailing SelectMany projection (EF-347 slice 4).</summary>
+    public IEntityType InnerEntityType { get; }
 }

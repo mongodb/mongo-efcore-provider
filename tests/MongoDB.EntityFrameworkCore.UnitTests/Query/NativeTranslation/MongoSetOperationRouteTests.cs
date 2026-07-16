@@ -58,7 +58,7 @@ public class MongoSetOperationRouteTests
     [Fact]
     public void UnwindSource_marks_HasTerminalOperator()
     {
-        var select = new MongoSelectDefinition { UnwindSource = new MongoUnwindSource("Items") };
+        var select = new MongoSelectDefinition { UnwindSource = new MongoUnwindSource("Items", innerEntityType: null!) };
         Assert.True(select.HasTerminalOperator);
     }
 }

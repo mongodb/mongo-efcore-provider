@@ -274,7 +274,7 @@ public class MongoSelectLowererTests
     public void UnwindSource_lowers_to_unwind_then_project_stage_in_order()
     {
         var query = TestSelect();
-        query.Select.UnwindSource = new MongoUnwindSource("Items");
+        query.Select.UnwindSource = new MongoUnwindSource("Items", innerEntityType: null!);
         query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
         query.Select.AddProjection(new MongoProjection("Price", new MongoFieldExpression(property: null!, elementName: "Items.Price")));
 

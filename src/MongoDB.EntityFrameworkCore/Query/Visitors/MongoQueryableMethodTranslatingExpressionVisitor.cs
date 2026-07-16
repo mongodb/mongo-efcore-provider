@@ -204,6 +204,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return groupShaper == null ? source : source.UpdateShaperExpression(groupShaper);
         }
 
+        // EF-347 slice 4: the trailing projection of an explicit-result-selector / query-syntax owned
+        // SelectMany. UnwindSource is set (by TranslateSelectMany's bare-nav bind) with no Projection yet;
+        // bind ti.Outer/ti.Inner two-scope, build the projected shaper (by-alias, like the inner-Select form /
+        // GroupBy), and skip the generic fold below (this Select's shaper is source.ShaperExpression's own
+        // TransparentIdentifier(Outer, Inner) unfolded — the fold would just re-derive the same leaves we
+        // already bound natively here). A projection this binder rejects (computed leaf, non-ti.Outer/Inner
+        // shape) falls through unchanged to the existing guards below.
+        if (mongoQueryExpression.Select.UnwindSource != null
+            && mongoQueryExpression.Select.Projection.Count == 0
+            && NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQueryExpression, selector))
+        {
+            var selectManyShaper = BuildSelectManyResultShaper(mongoQueryExpression, selector.Body);
+            return source.UpdateShaperExpression(selectManyShaper);
+        }
+
         if (IsSingleLevelCollectionIncludeSelector(selector) && mongoQueryExpression.Select.HasTerminalOperator)
         {
             // Post-terminal guard for a collection Include (EF-347 finding): EF Core's own
@@ -246,6 +261,53 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             {
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
+        }
+
+        // EF-347 slice 4 (review fix, refined): a bare-nav owned SelectMany (UnwindSource set by
+        // NativeSelectManyBinder.TryBindBareNavUnwind) whose trailing selector did NOT populate a projection —
+        // e.g. `from o in q from i in o.Items select i` / `SelectMany(o => o.Items, (o, i) => i)`, a whole-
+        // inner-entity `ti => ti.Inner` selector — bypasses BOTH the pending-SelectMany projection branch above
+        // (TryBindTransparentIdentifierProjection rejects a bare MemberExpression, not an anonymous/DTO
+        // construction) AND the post-terminal else-if guard (IsTransparentIdentifierMemberAccessSelector is
+        // true for it, so that branch is skipped too). Left alone, Select.Projection stays empty, Route falls
+        // through to WholeEntity, and the gate goes native — but a bare owned entity is never materialized
+        // natively (there is no whole-entity unwind shaper), so the lowerer emits a $unwind with no $project
+        // and the DOM shaper crashes with an internal KeyNotFoundException instead of cleanly declining.
+        //
+        // Originally this called MarkNotNativelyRepresentable() (a graceful fallback), on the assumption the
+        // driver-LINQ path would pick it up under Native/DriverLinq. Empirically it does not: the shaper built
+        // by TranslateSelectMany's BuildSelectManyWrappedShaper is a StructuralTypeShaperExpression for the
+        // bare Item entity with no owning-entity bsonDoc context, and MongoProjectionBindingRemovingExpression
+        // Visitor cannot materialize it either — so the "graceful" fallback ALSO crashes
+        // (KeyNotFoundException("The given key 'bsonDoc' was not present in the dictionary")), just one layer
+        // further down, under BOTH Native and DriverLinq. There is no working path for this shape at all, so
+        // decline it cleanly and unconditionally here instead of routing to a fallback that is itself broken.
+        // IsTransparentIdentifierMemberAccessSelector(selector) is exactly what distinguishes this whole-
+        // inner-entity shape from the computed-leaf case (e.g. `ti => new { X = ti.Inner.Price * 2 }`), whose
+        // selector body is a NewExpression, not a bare member access — that shape must keep falling back
+        // gracefully (MarkNotNativelyRepresentable(), the else branch below), because ITS driver-LINQ fallback
+        // genuinely succeeds with correct results (see
+        // NativeSelectManyTests.Explicit_result_selector_form_computed_leaf_falls_back_gracefully_except_under_NativeOnly).
+        // Thrown here at TRANSLATION time (not compile-time-gated), this propagates in EVERY MongoQueryMode
+        // alike — Native, DriverLinq, and NativeOnly — since MongoQueryMode is only consulted later, by the
+        // compile-time gate in MongoShapedQueryCompilingExpressionVisitor, which this code runs well before.
+        // Deliberately NOT NativeTranslationNotSupportedException: that type's own contract (see its XML doc)
+        // is "the compile-time gate catches this under Native and falls back" — a promise this call site
+        // cannot keep, since it runs before the gate and nothing downstream catches it in any mode. A plain
+        // NotSupportedException keeps that documented contract honest and is itself a clear, descriptive
+        // signal that this specific shape has no supported translation, in any mode.
+        if (mongoQueryExpression.Select.UnwindSource != null && mongoQueryExpression.Select.Projection.Count == 0)
+        {
+            if (IsTransparentIdentifierMemberAccessSelector(selector))
+            {
+                throw new NotSupportedException(
+                    "Projecting a whole entity (the owned collection element or the outer entity) from a "
+                    + "SelectMany (e.g. 'from o in q from i in o.Items select i' or '… select o', or "
+                    + "'SelectMany(o => o.Items, (o, i) => i)') is not supported. Project members instead, e.g. "
+                    + "'from o in q from i in o.Items select new { o.Name, i.SomeProperty }'.");
+            }
+
+            mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
 
         var newSelectorBody =
@@ -1176,6 +1238,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // "Outer" data of its own — EF's own ReplacingExpressionVisitor.VisitMember NewExpression-member fold
         // resolves ti.Inner directly back to our projected shaper with no bespoke unwrap logic needed here.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+
+        // EF-347 slice 4: the explicit-result-selector / query-syntax form arrives as a BARE owned nav
+        // collection selector (o => o.Items.AsQueryable(), no nested Select) + a trivial
+        // TransparentIdentifier(Outer,Inner) resultSelector; the real projection is the SEPARATE trailing
+        // Select (see NativeSelectManyBinder.TryBindTransparentIdentifierProjection, bound from TranslateSelect).
+        // Set UnwindSource here and hand EF the TransparentIdentifier(Outer, Inner) shape it expects — the item
+        // (Inner) shaper is never itself read when the trailing Select binds natively (that path builds the
+        // result shaper straight from Select.Projection by alias, bypassing this wrapper's Inner slot entirely);
+        // it exists only so this method's return type-checks as resultSelector's own TransparentIdentifier<TOuter,
+        // TInner> and so an unsupported trailing projection still folds through EF's ReplacingExpressionVisitor
+        // NewExpression-member mechanism during driver-LINQ-fallback shaper construction.
+        if (NativeSelectManyBinder.TryBindBareNavUnwind(mongoQueryExpression, collectionSelector))
+        {
+            var itemShaper = new StructuralTypeShaperExpression(
+                mongoQueryExpression.Select.UnwindSource!.InnerEntityType,
+                new ProjectionBindingExpression(mongoQueryExpression, new ProjectionMember(), typeof(ValueBuffer)),
+                false);
+
+            var wrapped = ReplacingExpressionVisitor.Replace(
+                resultSelector.Parameters[0], source.ShaperExpression,
+                ReplacingExpressionVisitor.Replace(resultSelector.Parameters[1], itemShaper, resultSelector.Body));
+
+            return source.UpdateShaperExpression(wrapped);
+        }
+
         if (!NativeSelectManyBinder.TryBind(mongoQueryExpression, collectionSelector))
             return null;
 

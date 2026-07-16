@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -179,5 +180,190 @@ public class NativeSelectManyBinderTests
 
         Assert.False(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
         Assert.Null(mongoQ.Select.UnwindSource);
+    }
+
+    // ── TryBindTransparentIdentifierProjection: explicit-result-selector / query-syntax form ───────
+    // (EF-347 slice 4, Task 1). EF's nav-expansion for THIS form produces a SEPARATE trailing Select
+    // over a TransparentIdentifier(Outer, Inner) source — the projection leaves are nested member
+    // accesses ti.Outer.<m> / ti.Inner.<m> on a SINGLE ti parameter (not pre-folded), synthesized here
+    // explicitly since the real EF nav-expansion output isn't reachable from a unit test.
+
+    private class TransparentIdentifier
+    {
+        public Owner Outer { get; set; } = null!;
+        public Item Inner { get; set; } = null!;
+        public Item Other { get; set; } = null!;
+    }
+
+    private class Projected
+    {
+        public string Name { get; set; } = "";
+        public decimal Price { get; set; }
+    }
+
+    private class NamedProjected
+    {
+        public string OuterName { get; set; } = "";
+        public string InnerName { get; set; } = "";
+    }
+
+    private class EntityLeafProjected
+    {
+        public Owner X { get; set; } = null!;
+    }
+
+    private class ComputedLeafProjected
+    {
+        public decimal X { get; set; }
+    }
+
+    private class OtherScopeProjected
+    {
+        public string X { get; set; } = "";
+    }
+
+    private class EntityValuedProjected
+    {
+        public List<Item> X { get; set; } = [];
+    }
+
+    private static IEntityType ItemEntityType(MongoQueryExpression mongoQ)
+        => mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(Owner.Items))!.TargetEntityType;
+
+    private static (ParameterExpression Ti, MemberExpression Outer, MemberExpression Inner) TiScopes()
+    {
+        var ti = Expression.Parameter(typeof(TransparentIdentifier), "ti");
+        var outer = Expression.Property(ti, nameof(TransparentIdentifier.Outer));
+        var inner = Expression.Property(ti, nameof(TransparentIdentifier.Inner));
+        return (ti, outer, inner);
+    }
+
+    private static LambdaExpression NameAndPriceSelector()
+    {
+        var (ti, outer, inner) = TiScopes();
+        var body = Expression.MemberInit(Expression.New(typeof(Projected)),
+            Expression.Bind(typeof(Projected).GetProperty(nameof(Projected.Name))!,
+                Expression.Property(outer, nameof(Owner.Name))),
+            Expression.Bind(typeof(Projected).GetProperty(nameof(Projected.Price))!,
+                Expression.Property(inner, nameof(Item.Price))));
+        return Expression.Lambda(body, ti);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_binds_two_scope_projection()
+    {
+        var mongoQ = TestQuery();
+        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, NameAndPriceSelector()));
+
+        Assert.Collection(mongoQ.Select.Projection,
+            p =>
+            {
+                Assert.Equal("Name", p.Alias);
+                var field = Assert.IsType<MongoFieldExpression>(p.Expression);
+                Assert.Equal("Name", field.ElementName);
+            },
+            p =>
+            {
+                Assert.Equal("Price", p.Alias);
+                var field = Assert.IsType<MongoFieldExpression>(p.Expression);
+                Assert.Equal("Items.Price", field.ElementName);
+            });
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_shared_member_name_resolves_by_scope_not_name()
+    {
+        var mongoQ = TestQuery();
+        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+
+        var (ti, outer, inner) = TiScopes();
+        var body = Expression.MemberInit(Expression.New(typeof(NamedProjected)),
+            Expression.Bind(typeof(NamedProjected).GetProperty(nameof(NamedProjected.OuterName))!,
+                Expression.Property(outer, nameof(Owner.Name))),
+            Expression.Bind(typeof(NamedProjected).GetProperty(nameof(NamedProjected.InnerName))!,
+                Expression.Property(inner, nameof(Item.Name))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+
+        var outerP = mongoQ.Select.Projection.Single(p => p.Alias == "OuterName");
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(outerP.Expression).ElementName);
+        var innerP = mongoQ.Select.Projection.Single(p => p.Alias == "InnerName");
+        Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(innerP.Expression).ElementName);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_no_unwind_source_returns_false()
+    {
+        var mongoQ = TestQuery();
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, NameAndPriceSelector()));
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_bare_scope_leaf_returns_false()
+    {
+        var mongoQ = TestQuery();
+        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+
+        var (ti, outer, _) = TiScopes();
+        var body = Expression.MemberInit(Expression.New(typeof(EntityLeafProjected)),
+            Expression.Bind(typeof(EntityLeafProjected).GetProperty(nameof(EntityLeafProjected.X))!, outer));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_computed_leaf_returns_false()
+    {
+        var mongoQ = TestQuery();
+        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+
+        var (ti, _, inner) = TiScopes();
+        var body = Expression.MemberInit(Expression.New(typeof(ComputedLeafProjected)),
+            Expression.Bind(typeof(ComputedLeafProjected).GetProperty(nameof(ComputedLeafProjected.X))!,
+                Expression.Multiply(Expression.Property(inner, nameof(Item.Price)), Expression.Constant(2m))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_member_off_neither_scope_returns_false()
+    {
+        var mongoQ = TestQuery();
+        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+
+        var (ti, _, _) = TiScopes();
+        var other = Expression.Property(ti, nameof(TransparentIdentifier.Other));
+        var body = Expression.MemberInit(Expression.New(typeof(OtherScopeProjected)),
+            Expression.Bind(typeof(OtherScopeProjected).GetProperty(nameof(OtherScopeProjected.X))!,
+                Expression.Property(other, nameof(Item.Name))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_entity_valued_leaf_returns_false()
+    {
+        var mongoQ = TestQuery();
+        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+
+        var (ti, outer, _) = TiScopes();
+        var body = Expression.MemberInit(Expression.New(typeof(EntityValuedProjected)),
+            Expression.Bind(typeof(EntityValuedProjected).GetProperty(nameof(EntityValuedProjected.X))!,
+                Expression.Property(outer, nameof(Owner.Items))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.Empty(mongoQ.Select.Projection);
     }
 }
