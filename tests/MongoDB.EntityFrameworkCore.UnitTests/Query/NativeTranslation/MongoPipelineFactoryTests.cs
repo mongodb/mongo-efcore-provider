@@ -502,4 +502,20 @@ public class MongoPipelineFactoryTests
         var innerPipeline = pipeline[1]["$unionWith"]["pipeline"].AsBsonArray;
         Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $gt: 25 } } }"), innerPipeline[0].AsBsonDocument);
     }
+
+    // ------------------------------------------------------------------
+    // MongoUnwindFieldStage — owned-collection SelectMany unwind (EF-347 slice 3)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void UnwindFieldStage_renders_dollar_unwind_of_the_element_path()
+    {
+        var stages = new List<MongoPipelineStage> { new MongoUnwindFieldStage("Items") };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        Assert.Equal(BsonDocument.Parse("{ $unwind: \"$Items\" }"), result[0]);
+    }
 }

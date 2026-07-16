@@ -54,4 +54,11 @@ public class MongoSetOperationRouteTests
         Assert.Same(operand, setOp.OperandSelect);
         Assert.Equal("orders", setOp.OperandCollectionName);
     }
+
+    [Fact]
+    public void UnwindSource_marks_HasTerminalOperator()
+    {
+        var select = new MongoSelectDefinition { UnwindSource = new MongoUnwindSource("Items") };
+        Assert.True(select.HasTerminalOperator);
+    }
 }

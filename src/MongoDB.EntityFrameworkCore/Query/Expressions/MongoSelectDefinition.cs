@@ -204,9 +204,10 @@ internal sealed class MongoSelectDefinition
     /// against the base entity type and silently emit a pre-<c>$group</c>/pre-<c>$unionWith</c> stage.
     /// <c>Grouping != null</c> is included for completeness (a finalized grouping always also sets
     /// <see cref="IsGroupBy"/> or <see cref="IsDistinct"/> by construction, so including it here is a no-op
-    /// in practice, not an additional case).
+    /// in practice, not an additional case). <see cref="UnwindSource"/> joins the same gate (EF-347 slice 3):
+    /// a native owned-collection SelectMany is terminal-only, exactly like Distinct/GroupBy/Union/Concat.
     /// </summary>
-    internal bool HasTerminalOperator => IsGroupBy || IsDistinct || IsSetOp || Grouping != null;
+    internal bool HasTerminalOperator => IsGroupBy || IsDistinct || IsSetOp || Grouping != null || UnwindSource != null;
 
     /// <summary>The terminal set operation (Union/Concat), when this select is a set-op query (EF-347 slice 2).</summary>
     internal MongoSetOperation? SetOperation { get; set; }
@@ -217,6 +218,10 @@ internal sealed class MongoSelectDefinition
     /// operator applied AFTER the union falls back (terminal-only scope).
     /// </summary>
     internal bool IsSetOp { get; set; }
+
+    /// <summary>Set when this select is a terminal owned-collection SelectMany (EF-347 slice 3): the element
+    /// path to $unwind before the result-selector $project. Route stays Projection (the result is a projection).</summary>
+    internal MongoUnwindSource? UnwindSource { get; set; }
 
     private bool _isGroupByFallbackUnsafe;
 

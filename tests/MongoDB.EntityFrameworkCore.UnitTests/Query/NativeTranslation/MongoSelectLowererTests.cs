@@ -267,4 +267,27 @@ public class MongoSelectLowererTests
             s => Assert.IsType<MongoMatchStage>(s),
             s => Assert.IsType<MongoUnionWithStage>(s));
     }
+
+    // ── Test 15: Owned-collection SelectMany unwind lowers to $unwind then $project (EF-347 slice 3) ──
+
+    [Fact]
+    public void UnwindSource_lowers_to_unwind_then_project_stage_in_order()
+    {
+        var query = TestSelect();
+        query.Select.UnwindSource = new MongoUnwindSource("Items");
+        query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
+        query.Select.AddProjection(new MongoProjection("Price", new MongoFieldExpression(property: null!, elementName: "Items.Price")));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.Equal("Items", Assert.IsType<MongoUnwindFieldStage>(s).ElementPath),
+            s =>
+            {
+                var project = Assert.IsType<MongoProjectStage>(s);
+                Assert.Equal(2, project.Projections.Count);
+                Assert.Equal("Name", project.Projections[0].Alias);
+                Assert.Equal("Price", project.Projections[1].Alias);
+            });
+    }
 }

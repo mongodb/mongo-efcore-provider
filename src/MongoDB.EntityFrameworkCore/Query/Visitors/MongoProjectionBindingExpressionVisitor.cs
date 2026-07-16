@@ -114,6 +114,33 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case ConstantExpression:
                 return expression;
 
+            // Already resolved by index against OUR OWN query expression, AND the query is still natively
+            // routed (Route == Projection) — pass through unchanged rather than trying to re-derive a
+            // projection mapping for it. This arises for a native SelectMany's projected element (EF-347
+            // slice 3): NativeSelectManyBinder/BuildSelectManyResultShaper build this shaper directly via
+            // MongoQueryExpression.AddToProjection (mirroring the GroupBy/Distinct alias-flatten shaper),
+            // embedded inside the trivial TransparentIdentifier(Outer, Inner) resultSelector EF's
+            // nav-expansion always synthesizes for SelectMany. That wrapper is then unwrapped by a MANDATORY
+            // subsequent .Select(ti => ti.Inner) which reaches THIS visitor a second time — folding to our
+            // already-resolved shaper via ReplacingExpressionVisitor's NewExpression-member fold — so it must
+            // be passed straight through rather than re-bound (the rest of this visitor assumes its input is
+            // raw member accesses over shaper types it resolves itself, not an already-bound
+            // ProjectionBindingExpression leaf). Mirrors the "already bound by index... (e.g., from join
+            // rebinding)" precedent in VisitExtension's StructuralTypeShaperExpression case.
+            // The Route == Projection guard is load-bearing, NOT redundant: it is what distinguishes this
+            // case from a projected Select applied AFTER a GroupBy/Distinct (also built via AddToProjection-
+            // by-index) — that shape's OWN post-terminal guard already called MarkNotNativelyRepresentable()
+            // (flipping Route to Fallback) BEFORE this visitor ever runs, specifically so the shape is
+            // detected as unsupported (see NativeGroupByTests.Select_after_GroupBy_is_unsupported_and_never_
+            // returns_silent_null_data) rather than silently reading a since-invalidated by-index projection
+            // through the driver-LINQ fallback path. Passing through unconditionally here would silently
+            // defeat that guard; gating on Route == Projection keeps it intact while still letting the
+            // still-native SelectMany case through.
+            case ProjectionBindingExpression { Index: not null } projectionBindingExpression
+                when projectionBindingExpression.QueryExpression == _queryExpression
+                     && _queryExpression.Select.Route == NativeRoute.Projection:
+                return projectionBindingExpression;
+
             case MemberExpression memberExpression:
                 var currentProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[currentProjectionMember] = memberExpression;

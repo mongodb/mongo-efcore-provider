@@ -78,6 +78,16 @@ internal sealed class MongoSelectLowerer
             return stages;
         }
 
+        // Owned-collection SelectMany (EF-347 slice 3): $unwind the embedded array, then $project the result
+        // selector (populated in Select.Projection by NativeSelectManyBinder). Terminal — nothing follows.
+        if (select.UnwindSource is { } unwind)
+        {
+            stages.Add(new MongoUnwindFieldStage(unwind.ElementPath));
+            if (select.Projection.Count > 0)
+                stages.Add(new MongoProjectStage(select.Projection));
+            return stages;
+        }
+
         // 6b. Keyed $group terminal (GroupBy(key).Select(aggregate)). A GroupBy-route query has only
         // $match + $group by construction — the binder rejects orderings/paging alongside a grouping —
         // so no $sort/$skip/$limit precede it here. The $group is followed by a flattening $project

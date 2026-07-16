@@ -218,7 +218,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // wrong-data bug, not a translation failure). Fall back to driver-LINQ instead.
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
-        else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector))
+        else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector)
+                 && !IsTransparentIdentifierMemberAccessSelector(selector))
         {
             // Post-terminal guard: a projected Select applied AFTER a native terminal grouping/distinct — a
             // projected Distinct (IsDistinct, key-only Grouping), a prior GroupBy (IsGroupBy), or any finalized
@@ -332,6 +333,32 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                && newExpr.Arguments[0] is ParameterExpression
                && newExpr.Arguments[1] is ParameterExpression;
     }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
+    /// <c>Select(ti =&gt; ti.Outer)</c> / <c>Select(ti =&gt; ti.Inner)</c> unwrap EF's nav-expansion ALWAYS
+    /// inserts immediately after a Join/GroupJoin/LeftJoin/SelectMany rewrite to peel a
+    /// <c>TransparentIdentifier(Outer, Inner)</c> back down to the operator's real result type (EF-347 slice
+    /// 3 — the native inner-<c>Select</c> owned-collection SelectMany's mandatory unwrap Select is exactly
+    /// this shape). This selector carries no projection of its own to push down — it is a pure field-of-a-
+    /// freshly-built-object read that <see cref="ReplacingExpressionVisitor"/>'s own <c>NewExpression</c>-
+    /// member fold resolves directly to whatever the wrapping Select/SelectMany already built for that slot —
+    /// so it must bypass BOTH the post-terminal guard and <see cref="NativeProjectionBinder"/> here (mirroring
+    /// <see cref="IsTransparentIdentifierSelector"/>/<see cref="IsSingleLevelCollectionIncludeSelector"/>).
+    /// Without this, a SelectMany whose own binder set <see cref="MongoSelectDefinition.UnwindSource"/> (which
+    /// makes <see cref="MongoSelectDefinition.HasTerminalOperator"/> true) would have this MANDATORY,
+    /// EF-synthesized unwrap Select immediately trip the post-terminal guard and mark the query non-native —
+    /// even though it is not a user-authored operator chained after a terminal, just EF's own internal
+    /// TransparentIdentifier bookkeeping. Safe for Join/GroupJoin/LeftJoin too: <c>TranslateJoinCore</c>
+    /// already unconditionally marks the outer side non-native at the join itself, independent of this
+    /// selector, so skipping this guard for their own <c>ti.Inner</c>/<c>ti.Outer</c> unwrap changes nothing
+    /// for them.
+    /// </summary>
+    private static bool IsTransparentIdentifierMemberAccessSelector(LambdaExpression selector)
+        => selector.Parameters.Count == 1
+           && selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
+           && selector.Body is MemberExpression { Member.Name: "Outer" or "Inner" } member
+           && member.Expression == selector.Parameters[0];
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
@@ -1135,7 +1162,111 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateSelectMany(ShapedQueryExpression source, LambdaExpression collectionSelector,
         LambdaExpression resultSelector)
-        => null;
+    {
+        // Slice 3: only the INNER-Select owned-collection form (projection nested in the collection selector,
+        // e.g. o => o.Items.Select(i => new {o.X, i.Y})) is handled here. EF's nav-expansion normalizes EVERY
+        // SelectMany shape to this overload with resultSelector always the trivial
+        // TransparentIdentifier(Outer=o, Inner=c) constructor. EMPIRICALLY (confirmed by running the actual
+        // pipeline — the earlier assumption that this call is terminal was wrong) a subsequent
+        // .Select(ti => ti.Inner) ALWAYS immediately follows and reaches TranslateSelect, unwrapping the
+        // transparent identifier back down to the SelectMany's real TResult (the nested Select's own
+        // projection, c) — this is how EF materializes a 2-arg SelectMany's result type via nav-expansion's
+        // internal 3-arg rewrite. So the shaper returned here must still be a TransparentIdentifier(Outer,
+        // Inner) shape (see BuildSelectManyWrappedShaper) even though the underlying native pipeline has no
+        // "Outer" data of its own — EF's own ReplacingExpressionVisitor.VisitMember NewExpression-member fold
+        // resolves ti.Inner directly back to our projected shaper with no bespoke unwrap logic needed here.
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        if (!NativeSelectManyBinder.TryBind(mongoQueryExpression, collectionSelector))
+            return null;
+
+        return BuildSelectManyWrappedShaper(source, mongoQueryExpression, collectionSelector, resultSelector);
+    }
+
+    /// <summary>
+    /// Builds the <see cref="ShapedQueryExpression"/> for a native inner-<c>Select</c> owned-collection
+    /// <c>SelectMany</c> once <see cref="NativeSelectManyBinder.TryBind"/> has populated
+    /// <see cref="MongoSelectDefinition.UnwindSource"/> and <see cref="MongoSelectDefinition.Projection"/>.
+    /// The projected element (the nested <c>Select</c>'s own anonymous/DTO projection, <c>c</c> in
+    /// <c>o.Items.Select(i => new {...})</c>) is built exactly like <see cref="TryBuildGroupResultShaper"/>/
+    /// <see cref="BindGroupMember"/> (GroupBy's analogous projected shaper): each member is rewritten onto a
+    /// <see cref="ProjectionBindingExpression"/> reading the member's top-level result alias — the SAME alias
+    /// <see cref="NativeSelectManyBinder.TryBind"/> already registered on <c>Select.Projection</c> — from the
+    /// flattened <c>$project</c> output document, so the existing DOM projection shaper
+    /// (<see cref="MongoProjectionBindingRemovingExpressionVisitor"/>) reads it back by name with no bespoke
+    /// shaper needed. That projected shaper is then wrapped into <paramref name="resultSelector"/>'s own
+    /// <c>TransparentIdentifier(Outer=o, Inner=c)</c> shape (substituting <paramref name="source"/>'s
+    /// EXISTING (unchanged) outer shaper for <c>o</c> and the projected shaper for <c>c</c>), because a
+    /// subsequent <c>.Select(ti =&gt; ti.Inner)</c> always reaches <see cref="TranslateSelect"/> immediately
+    /// after and expects that shape.
+    /// </summary>
+    private static ShapedQueryExpression BuildSelectManyWrappedShaper(
+        ShapedQueryExpression source, MongoQueryExpression mongoQueryExpression, LambdaExpression collectionSelector,
+        LambdaExpression resultSelector)
+    {
+        // TryBind already validated that collectionSelector.Body is Queryable.Select(<source>, innerLambda)
+        // with a new{...}/MemberInit body — re-extract that same nested lambda body here rather than thread
+        // the parsed member list through TryBind's bool-returning signature.
+        var innerLambda = ((MethodCallExpression)collectionSelector.Body).Arguments[1].UnwrapLambdaFromQuote();
+        var innerShaper = BuildSelectManyResultShaper(mongoQueryExpression, innerLambda.Body);
+
+        // Replace both transparent-identifier parameters via two nested single-argument Replace calls. The
+        // multi-argument ReplacingExpressionVisitor.Replace(IReadOnlyList<Expression>, IReadOnlyList<Expression>,
+        // Expression) overload does not exist in EF8's EF Core, so a collection-expression argument there binds
+        // to the single-Expression overload and fails to compile (CS9174). The params are distinct, so the
+        // nesting order is immaterial.
+        var wrappedShaper = ReplacingExpressionVisitor.Replace(
+            resultSelector.Parameters[0], source.ShaperExpression,
+            ReplacingExpressionVisitor.Replace(
+                resultSelector.Parameters[1], innerShaper, resultSelector.Body));
+
+        return source.UpdateShaperExpression(wrappedShaper);
+    }
+
+    private static Expression BuildSelectManyResultShaper(MongoQueryExpression mongoQueryExpression, Expression projectionBody)
+    {
+        switch (projectionBody)
+        {
+            case NewExpression newExpression
+                when newExpression.Members != null
+                     && newExpression.Members.Count == newExpression.Arguments.Count
+                     && newExpression.Arguments.Count > 0:
+                var arguments = new Expression[newExpression.Arguments.Count];
+                for (var i = 0; i < arguments.Length; i++)
+                    arguments[i] = BindSelectManyMember(mongoQueryExpression, newExpression.Members[i].Name, newExpression.Arguments[i]);
+                return newExpression.Update(arguments);
+
+            case MemberInitExpression memberInit
+                when memberInit.NewExpression.Arguments.Count == 0
+                     && memberInit.Bindings.Count > 0:
+                var bindings = new MemberBinding[memberInit.Bindings.Count];
+                for (var i = 0; i < bindings.Length; i++)
+                {
+                    var assignment = (MemberAssignment)memberInit.Bindings[i];
+                    bindings[i] = assignment.Update(
+                        BindSelectManyMember(mongoQueryExpression, assignment.Member.Name, assignment.Expression));
+                }
+
+                return memberInit.Update((NewExpression)memberInit.NewExpression, bindings);
+
+            default:
+                // NativeSelectManyBinder.TryBind already validated this shape (TryReadProjection accepts only
+                // these two forms), so this is unreachable in practice — defensive rather than silently
+                // mis-shaping the result.
+                throw new InvalidOperationException(
+                    $"Unexpected SelectMany projection shape '{projectionBody.GetType().Name}' after successful native binding.");
+        }
+    }
+
+    // Registers a projection for one SelectMany-result member and returns a ProjectionBindingExpression
+    // reading it by index — mirrors BindGroupMember (GroupBy's analogous helper). The stored source
+    // expression (the original o.X / i.Y argument) is kept only for its distinctness (AddToProjection dedups
+    // by expression) and CLR type; the DOM shaper reads the value raw by the alias (the member name), which
+    // NativeSelectManyBinder.TryBind already used as the matching Select.Projection alias.
+    private static Expression BindSelectManyMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
+    {
+        var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
+        return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
+    }
 
     protected override ShapedQueryExpression? TranslateSelectMany(ShapedQueryExpression source, LambdaExpression selector)
         => null;

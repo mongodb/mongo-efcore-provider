@@ -91,6 +91,7 @@ internal sealed class MongoPipelineFactory
             MongoLimitStage limit => RenderLimit(limit, placeholders),
             MongoLookupStage lookup => RenderLookup(lookup.Lookup),
             MongoUnwindStage unwind => RenderUnwind(unwind.Lookup),
+            MongoUnwindFieldStage unwindField => new BsonDocument("$unwind", "$" + unwindField.ElementPath),
             MongoProjectStage project => RenderProject(project, placeholders),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
