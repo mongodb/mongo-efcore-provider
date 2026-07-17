@@ -78,11 +78,16 @@ internal sealed class MongoSelectLowerer
             return stages;
         }
 
-        // Owned-collection SelectMany (EF-347 slice 3): $unwind the embedded array, then $project the result
-        // selector (populated in Select.Projection by NativeSelectManyBinder). Terminal — nothing follows.
+        // Terminal native SelectMany (EF-347 slices 3-5), then $project the result selector (populated in
+        // Select.Projection by NativeSelectManyBinder). Terminal — nothing follows.
+        // Owned (embedded, slice 3/4): $unwind the embedded array directly here.
+        // Reference (cross-collection, slice 5): the $lookup + $unwind were already appended above by
+        // AppendLookupStages (stage 5, ForceUnwind-collection branch) — nothing further to add here.
         if (select.UnwindSource is { } unwind)
         {
-            stages.Add(new MongoUnwindFieldStage(unwind.ElementPath));
+            if (unwind.Kind == MongoUnwindSourceKind.Owned)
+                stages.Add(new MongoUnwindFieldStage(unwind.InnerScopePath));
+
             if (select.Projection.Count > 0)
                 stages.Add(new MongoProjectStage(select.Projection));
             return stages;
@@ -200,6 +205,15 @@ internal sealed class MongoSelectLowerer
                 // (no $unwind). The DOM collection materializer reads the array back and runs the
                 // IncludeCollection fixup, exactly as on the driver-LINQ path.
                 stages.Add(new MongoLookupStage(lookup));
+            }
+            else if (lookup.Navigation.IsCollection && lookup.ForceUnwind)
+            {
+                // EF-347 slice 5: a cross-collection reference SelectMany flatten — $lookup the referenced
+                // collection, then $unwind to one row per child with INNER-JOIN semantics (preserve:false):
+                // a principal with no children drops out. (Include's reference $unwind uses preserve:true /
+                // LEFT-join; this is the opposite.)
+                stages.Add(new MongoLookupStage(lookup));
+                stages.Add(new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: false));
             }
             else
             {

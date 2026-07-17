@@ -76,6 +76,17 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// projection) — except a cardinality-only operator like <c>Count</c>, which needs no shaper at all and so
 /// falls back gracefully (and correctly) under <see cref="MongoQueryMode.Native"/>/<see cref="MongoQueryMode.DriverLinq"/>,
 /// throwing only under <see cref="MongoQueryMode.NativeOnly"/> like any other graceful-fallback shape.
+/// EF-347 slice 5 (see the <c>Reference_*</c> tests below) makes the SAME explicit-result-selector / query-
+/// syntax projected form ALSO go native over a cross-collection REFERENCE (non-owned) navigation — via
+/// <see cref="NativeSelectManyBinder.TryBindReferenceNavUnwind"/>, a <c>ForceUnwind</c> <c>$lookup</c> +
+/// inner-join <c>$unwind</c> (<c>preserveNullAndEmptyArrays: false</c>) — so "a SelectMany over a reference
+/// (non-owned) navigation" above is no longer categorically a hard-fail: it is the INNER-<c>Select</c> form
+/// specifically (<see cref="NativeSelectManyBinder.TryBind"/> rejecting it structurally) that still hard-fails
+/// for a reference nav, not the explicit/query-syntax form. UNLIKE the owned forms, the reference form has NO
+/// driver-LINQ baseline at all (the driver's own LINQ v3 provider rejects any cross-collection SelectMany
+/// outright), so its "graceful" <c>MarkNotNativelyRepresentable()</c> fallback paths (e.g. its computed-leaf
+/// case) still throw under Native/DriverLinq too — see <c>Reference_form_computed_leaf_hard_fails_in_every_mode</c>
+/// and <c>Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode</c>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -484,6 +495,11 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         public ObjectId Id { get; set; }
         public string Tag { get; set; } = "";
+
+        // Deliberately shares its "Name" member name with RefOwner (mirrors Item's "Name" vs. Owner's "Name"
+        // in the owned-collection fixture above), to prove the two-scope binder never conflates the outer
+        // ("$Name") and inner ("$_lookup_Refs.Name") field refs for the REFERENCE form either.
+        public string Name { get; set; } = "";
         public ObjectId? OwnerId { get; set; }
         public RefOwner? Owner { get; set; }
     }
@@ -497,18 +513,29 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         public DbSet<RefItem> Refs { get; set; } = null!;
 
         public RefOwnerItemDbContext(TemporaryDatabaseFixture database, string ownersCollection, string refsCollection, MongoQueryMode mode)
-            : base(BuildOptions(database, mode))
+            : base(BuildOptions(database, mode, null))
         {
             _ownersCollection = ownersCollection;
             _refsCollection = refsCollection;
         }
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        public RefOwnerItemDbContext(
+            TemporaryDatabaseFixture database, string ownersCollection, string refsCollection, MongoQueryMode mode,
+            ILoggerFactory loggerFactory)
+            : base(BuildOptions(database, mode, loggerFactory))
+        {
+            _ownersCollection = ownersCollection;
+            _refsCollection = refsCollection;
+        }
+
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
         {
             var optionsBuilder = new DbContextOptionsBuilder<RefOwnerItemDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+            if (loggerFactory != null)
+                optionsBuilder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
             new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
             return optionsBuilder.Options;
         }
@@ -530,25 +557,558 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
-    [Fact]
-    public void Explicit_result_selector_form_over_reference_nav_hard_fails_in_every_mode()
+    /// <summary>
+    /// Seeds three principals — Alice (2 children), Bob (0 children — proves inner-join semantics), Carol (1
+    /// child) — mirroring <see cref="SeedOwners"/>'s owned-collection shape, but as a REFERENCE (cross-
+    /// collection) relationship: <see cref="RefItem.OwnerId"/> is a real FK, not an embedded array.
+    /// </summary>
+    private static (RefOwner[] Owners, RefItem[] Items) SeedRefData()
     {
-        // A collection nav that is NOT owned (a real reference/cross-collection nav, its own $lookup-backed
-        // collection) must not be accepted by TryBindBareNavUnwind — $unwind only makes sense over an embedded
-        // (owned) array; a reference nav needs a $lookup instead, which this slice does not implement.
+        var alice = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Alice" };
+        var bob = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Bob" }; // no children
+        var carol = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Carol" };
+
+        var items = new[]
+        {
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Widget", Name = "WidgetName", OwnerId = alice.Id },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Gadget", Name = "GadgetName", OwnerId = alice.Id },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Thing", Name = "ThingName", OwnerId = carol.Id },
+        };
+
+        return ([alice, bob, carol], items);
+    }
+
+    private (string Owners, string Refs) NewRefCollectionNames(string name)
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        return (
+            TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Owners") + suffix,
+            TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Refs") + suffix);
+    }
+
+    private void SeedRefContext(string ownersCollection, string refsCollection, RefOwner[] owners, RefItem[] items)
+    {
+        using var seedDb = new RefOwnerItemDbContext(database, ownersCollection, refsCollection, MongoQueryMode.Native);
+        seedDb.Owners.AddRange(owners);
+        seedDb.Refs.AddRange(items);
+        seedDb.SaveChanges();
+    }
+
+    private RefOwnerItemDbContext CreateRefContext(MongoQueryMode mode, string name, out RefOwner[] owners, out RefItem[] items)
+    {
+        var (ownersCollection, refsCollection) = NewRefCollectionNames(name);
+        (owners, items) = SeedRefData();
+        SeedRefContext(ownersCollection, refsCollection, owners, items);
+        return new RefOwnerItemDbContext(database, ownersCollection, refsCollection, mode);
+    }
+
+    private RefOwnerItemDbContext CreateRefContextWithLogging(
+        MongoQueryMode mode, string name, out RefOwner[] owners, out RefItem[] items, out SpyLoggerProvider spyLogger)
+    {
+        var (ownersCollection, refsCollection) = NewRefCollectionNames(name);
+        (owners, items) = SeedRefData();
+        SeedRefContext(ownersCollection, refsCollection, owners, items);
+
+        var (loggerFactory, provider) = SpyLoggerProvider.Create();
+        spyLogger = provider;
+        return new RefOwnerItemDbContext(database, ownersCollection, refsCollection, mode, loggerFactory);
+    }
+
+    // EF-347 slice 5 PROBE (Task 4, Step 2): the spike that informed the design only ran EF10. This is the ONE
+    // core success test run first on EF10 and then, unmodified, on EF8/EF9 to determine whether cross-collection
+    // reference SelectMany translates identically across all three EF versions BEFORE the full suite below was
+    // written. Recorded outcome: all three EF versions produced identical (correct, native-under-NativeOnly)
+    // results for this shape — see NativeSelectManyBinder's/AGENTS.md's as-built notes and
+    // .superpowers/sdd/task4-report.md for the full record — so the suite below carries NO EF8/EF9 guard.
+    [Fact]
+    public void Reference_form_goes_native_with_correct_results()
+    {
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_goes_native_with_correct_results), out var owners, out var items);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable()
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        // Succeeding under NativeOnly is itself the "went native" signal.
+        Assert.Equal(expected, result);
+    }
+
+    private sealed class RefItemDto
+    {
+        public string Name { get; set; } = "";
+        public string Tag { get; set; } = "";
+    }
+
+    [Fact]
+    public void Reference_explicit_result_selector_form_goes_native_with_correct_results_and_mql()
+    {
+        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+            nameof(Reference_explicit_result_selector_form_goes_native_with_correct_results_and_mql),
+            out var owners, out var items, out var spyLogger);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable()
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        // Succeeding under NativeOnly is itself the "went native" signal.
+        Assert.Equal(expected, result);
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"from\" : \"", message);
+        Assert.Contains("\"localField\" : \"_id\"", message);
+        Assert.Contains("\"foreignField\" : \"OwnerId\"", message);
+        Assert.Contains("\"as\" : \"_lookup_Refs\"", message);
+        Assert.Contains("\"path\" : \"$_lookup_Refs\"", message);
+        Assert.Contains("\"preserveNullAndEmptyArrays\" : false", message);
+        Assert.Contains("\"Name\" : \"$Name\"", message);
+        Assert.Contains("\"Tag\" : \"$_lookup_Refs.Tag\"", message);
+    }
+
+    [Fact]
+    public void Reference_query_syntax_form_goes_native_with_correct_results_and_mql()
+    {
+        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+            nameof(Reference_query_syntax_form_goes_native_with_correct_results_and_mql),
+            out var owners, out var items, out var spyLogger);
+
+        var result = (from o in db.Owners
+                       from r in o.Refs
+                       select new { o.Name, r.Tag })
+            .AsEnumerable()
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        var expected = (from o in owners
+                         from r in items.Where(r => r.OwnerId == o.Id)
+                         select new { o.Name, r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        // Succeeding under NativeOnly is itself the "went native" signal.
+        Assert.Equal(expected, result);
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"localField\" : \"_id\"", message);
+        Assert.Contains("\"foreignField\" : \"OwnerId\"", message);
+        Assert.Contains("\"as\" : \"_lookup_Refs\"", message);
+        Assert.Contains("\"path\" : \"$_lookup_Refs\"", message);
+        Assert.Contains("\"preserveNullAndEmptyArrays\" : false", message);
+        Assert.Contains("\"Name\" : \"$Name\"", message);
+        Assert.Contains("\"Tag\" : \"$_lookup_Refs.Tag\"", message);
+    }
+
+    [Fact]
+    public void Reference_form_MemberInit_dto_form_goes_native_with_correct_results()
+    {
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_MemberInit_dto_form_goes_native_with_correct_results), out var owners, out var items);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs, (o, r) => new RefItemDto { Name = o.Name, Tag = r.Tag })
+            .AsEnumerable()
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => new RefItemDto { Name = o.Name, Tag = r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        Assert.Equal(expected.Count, result.Count);
+        for (var idx = 0; idx < expected.Count; idx++)
+        {
+            Assert.Equal(expected[idx].Name, result[idx].Name);
+            Assert.Equal(expected[idx].Tag, result[idx].Tag);
+        }
+    }
+
+    [Fact]
+    public void Reference_form_principal_with_zero_children_contributes_no_rows()
+    {
+        // Bob has no RefItems. This proves the FORCE-UNWIND $lookup+$unwind is an INNER join (preserve:false)
+        // — the key semantic difference from Include's reference $lookup+$unwind (a LEFT join, preserve:true):
+        // a principal with no matching children must contribute NO rows at all, not a row with null inner
+        // values.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_principal_with_zero_children_contributes_no_rows), out _, out _);
+
+        var result = db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).ToList();
+
+        Assert.Equal(3, result.Count); // 2 from Alice + 1 from Carol; Bob (0 children) contributes 0
+        Assert.DoesNotContain(result, x => x.Name == "Bob");
+    }
+
+    [Fact]
+    public void Reference_form_shared_outer_inner_member_name_resolves_to_distinct_values()
+    {
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_shared_outer_inner_member_name_resolves_to_distinct_values), out var owners, out var items);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs, (o, r) => new { OuterName = o.Name, InnerName = r.Name })
+            .AsEnumerable()
+            .OrderBy(x => x.OuterName).ThenBy(x => x.InnerName)
+            .ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => new { OuterName = o.Name, InnerName = r.Name })
+            .OrderBy(x => x.OuterName).ThenBy(x => x.InnerName)
+            .ToList();
+
+        Assert.Equal(expected, result);
+        // Sanity: outer/inner never conflated (an owner's own name never leaks into InnerName and vice versa).
+        Assert.All(result, r => Assert.NotEqual(r.OuterName, r.InnerName));
+    }
+
+    [Fact]
+    public void Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode()
+    {
+        // UNLIKE the owned-collection forms (where the same supported shape ALSO succeeds under explicit
+        // DriverLinq), the reference form has NO driver-LINQ baseline at all — spike/design-confirmed
+        // (.superpowers/sdd/refselectmany-spike.md; the design doc's Background §2 — "no driver-LINQ
+        // baseline") and reconfirmed empirically here: the driver's own LINQ v3 provider rejects ANY
+        // cross-collection SelectMany between two separate DbSets/collections ("Unsupported cross-DbSet
+        // query...", InvalidOperationException), regardless of whether the projection shape is one this
+        // provider's native translator supports. So forcing MongoQueryMode.DriverLinq (bypassing the native
+        // path this slice adds) still throws, exactly as it did before this slice existed — this slice only
+        // ever ADDS a native path; it does not create a driver-LINQ one where none existed.
+        using var db = CreateRefContext(MongoQueryMode.DriverLinq,
+            nameof(Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode), out _, out _);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_bare_entity_result_hard_fails_in_every_mode()
+    {
+        // A bare-nav owned SelectMany whose trailing selector projects the whole inner entity hard-declines
+        // cleanly via TranslateSelect's dedicated whole-inner-entity guard (see
+        // Whole_inner_entity_form_declines_cleanly_in_every_mode_AsNoTracking above) — that guard reads only
+        // UnwindSource != null && Projection.Count == 0 && the selector shape, all kind-agnostic, so the SAME
+        // clean NotSupportedException fires for the REFERENCE form too, in every mode.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
-            var suffix = Guid.NewGuid().ToString("N")[..8];
-            var ownersCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(
-                nameof(Explicit_result_selector_form_over_reference_nav_hard_fails_in_every_mode) + mode + "Owners") + suffix;
-            var refsCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(
-                nameof(Explicit_result_selector_form_over_reference_nav_hard_fails_in_every_mode) + mode + "Refs") + suffix;
+            using var db = CreateRefContext(mode, nameof(Reference_form_bare_entity_result_hard_fails_in_every_mode) + mode, out _, out _);
 
-            using var db = new RefOwnerItemDbContext(database, ownersCollection, refsCollection, mode);
+            Assert.Throws<NotSupportedException>(() => db.Owners.SelectMany(o => o.Refs, (o, r) => r).ToList());
+        }
+    }
+
+    [Fact]
+    public void Reference_form_bare_SelectMany_hard_fails_in_every_mode()
+    {
+        // The 1-arg overload (SelectMany(o => o.Refs)) normalizes to the identical whole-inner-entity tree as
+        // the explicit (o, r) => r form above — same clean decline, in every mode.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_bare_SelectMany_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<NotSupportedException>(() => db.Owners.SelectMany(o => o.Refs).ToList());
+        }
+    }
+
+    [Fact]
+    public void Reference_form_filtered_inner_hard_fails_in_every_mode()
+    {
+        // A user-supplied filter on the inner collection (c.Refs.Where(userPred)) is an EXTRA predicate
+        // conjunct beyond the FK correlation EF's nav-expansion itself injects — NativeCorrelationMatcher's
+        // exactly-one-correlation guard rejects it (TryBindReferenceNavUnwind returns false), and — same as
+        // every other native-SelectMany-binder rejection (see the class doc comment) — TranslateSelectMany
+        // then falls through the remaining binders, fails all of them, and returns null with NO
+        // MarkNotNativelyRepresentable() attempt at all, so EF's own translation-failure path is reached
+        // directly: this hard-fails in every mode, not just NativeOnly.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_filtered_inner_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs.Where(r => r.Tag != "Widget"), (o, r) => new { o.Name, r.Tag }).ToList());
+        }
+    }
+
+    [Fact]
+    public void Reference_form_computed_leaf_hard_fails_in_every_mode()
+    {
+        // DIFFERENT from the owned form's Explicit_result_selector_form_computed_leaf_falls_back_gracefully_
+        // except_under_NativeOnly, for the SAME reason as
+        // Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode above:
+        // TryBindReferenceNavUnwind still succeeds on STRUCTURE alone (the collectionSelector is a valid
+        // FK-correlated reference nav) before it can know the trailing projection is unsupported, so
+        // UnwindSource is set unconditionally; the SEPARATE trailing Select's
+        // TryBindTransparentIdentifierProjection then rejects the computed leaf (r.Tag + "!" is not a bare
+        // ti.Outer.<m>/ti.Inner.<m> access) and calls the ordinary MarkNotNativelyRepresentable() guard — the
+        // SAME "graceful fallback" mechanism the owned form's sibling test relies on. But here the graceful
+        // fallback does not actually work (empirically confirmed, not assumed): the reference form has no
+        // driver-LINQ baseline at all (see the DriverLinq test above), so the fallback attempt itself throws
+        // the SAME "Unsupported cross-DbSet query" InvalidOperationException under BOTH Native and DriverLinq;
+        // NativeOnly (which forbids the fallback attempt entirely) throws its own distinct
+        // NativeTranslationNotSupportedException before ever reaching that fallback code, hence ThrowsAny there.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_computed_leaf_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" }).ToList());
+        }
+
+        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_computed_leaf_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" }).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_followed_by_Where_hard_fails_in_every_mode()
+    {
+        // EF-347 slice 5 composition seam. UNLIKE the owned-form sibling
+        // (Explicit_result_selector_form_followed_by_Where_falls_back_gracefully_except_under_NativeOnly), this
+        // hard-fails in EVERY mode, not just NativeOnly — empirically confirmed (spiked against the running
+        // server, not assumed) rather than copied from the owned-form analogy. The mechanism up to the point of
+        // fallback is identical to the owned form: NativeSlotPopulator's post-terminal guard
+        // (HasTerminalOperator, true because UnwindSource is set) calls MarkNotNativelyRepresentable() for this
+        // Where, which is the SAME graceful-fallback call the owned form's Where relies on succeeding. But the
+        // reference form's captured chain still starts with a cross-collection SelectMany, and — per
+        // Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode above — the
+        // driver's own LINQ v3 provider rejects ANY cross-collection SelectMany outright, independent of what
+        // follows it. So the "graceful" fallback attempt itself throws the identical
+        // "Unsupported cross-DbSet query..." InvalidOperationException under BOTH Native and DriverLinq (the
+        // fallback is attempted and fails, rather than never being attempted); NativeOnly forbids the fallback
+        // attempt entirely and throws its own distinct NativeTranslationNotSupportedException first.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Where_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Where(x => x.Tag != "Widget").ToList());
+        }
+
+        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_followed_by_Where_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Where(x => x.Tag != "Widget").ToList());
+    }
+
+    [Fact]
+    public void Reference_form_followed_by_OrderBy_hard_fails_in_every_mode()
+    {
+        // Same outcome and mechanism as Reference_form_followed_by_Where_hard_fails_in_every_mode above — see
+        // its comment. UNLIKE the owned form's
+        // Explicit_result_selector_form_followed_by_OrderBy_falls_back_gracefully_except_under_NativeOnly,
+        // there is no driver-LINQ baseline to fall back to for a reference-nav SelectMany, so this hard-fails
+        // in every mode too (empirically confirmed).
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_OrderBy_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).OrderBy(x => x.Tag).ToList());
+        }
+
+        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_followed_by_OrderBy_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).OrderBy(x => x.Tag).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_followed_by_Skip_hard_fails_in_every_mode()
+    {
+        // Same outcome and mechanism as Reference_form_followed_by_Where_hard_fails_in_every_mode above. UNLIKE
+        // the owned form's Explicit_result_selector_form_followed_by_Skip_falls_back_gracefully_except_under_
+        // NativeOnly, no driver-LINQ baseline exists for the reference form, so this hard-fails in every mode.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Skip_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Skip(1).ToList());
+        }
+
+        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_followed_by_Skip_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Skip(1).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_followed_by_Take_hard_fails_in_every_mode()
+    {
+        // Same outcome and mechanism as Reference_form_followed_by_Where_hard_fails_in_every_mode above. UNLIKE
+        // the owned form's Explicit_result_selector_form_followed_by_Take_falls_back_gracefully_except_under_
+        // NativeOnly, no driver-LINQ baseline exists for the reference form, so this hard-fails in every mode.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Take_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Take(1).ToList());
+        }
+
+        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_followed_by_Take_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Take(1).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_followed_by_Count_hard_fails_in_every_mode()
+    {
+        // THE headline divergence from the owned form (per the brief's "even Count" prediction, empirically
+        // confirmed rather than assumed): the owned form's
+        // Count_after_SelectMany_falls_back_gracefully_except_under_NativeOnly demonstrates a cardinality-only
+        // operator falling back gracefully because Count needs no shaper at all — the driver-LINQ fallback
+        // rebuild for a shaper-less Count genuinely succeeds. That reasoning does NOT carry over to the
+        // reference form: the fallback still has to translate the CAPTURED CHAIN, which begins with a
+        // cross-collection SelectMany the driver's own LINQ v3 provider rejects unconditionally (per
+        // Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode above),
+        // regardless of what operator follows it or whether that operator needs a shaper. So Count is NOT a
+        // graceful-fallback exception here the way it is for the owned form — it hard-fails in every mode, same
+        // as Where/OrderBy/Skip/Take above.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Count_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Count());
+        }
+
+        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_followed_by_Count_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Count());
+    }
+
+    [Fact]
+    public void Reference_form_followed_by_GroupBy_hard_fails_in_every_mode()
+    {
+        // Same OUTCOME as the owned form's GroupBy_after_SelectMany_hard_fails_in_every_mode /
+        // Explicit_result_selector_form_followed_by_GroupBy_hard_fails_in_every_mode (GroupBy hard-fails for
+        // BOTH forms, unlike Where/OrderBy/Skip/Take/Count which differ between forms) — but empirically via a
+        // DIFFERENT underlying message under Native/DriverLinq: "Calling 'ShapedQueryExpression.VisitChildren'
+        // is not allowed" (the same shaper-rebuild failure the owned form hits — TranslateGroupBy's own
+        // Translate override bypasses the ordinary catch-all guards and its fallback cannot re-read the prior
+        // SelectMany projection's already-resolved-by-index members), NOT the "Unsupported cross-DbSet query"
+        // message the other operators above hit. Both failure modes are pre-empted before ever reaching the
+        // driver for real, so the "no driver-LINQ baseline" fact and the "GroupBy fallback shaper cannot
+        // rebuild" fact are both independently sufficient to hard-fail this shape; NativeOnly throws its own
+        // distinct NativeTranslationNotSupportedException, hence ThrowsAny across all three modes (mirroring the
+        // owned-form sibling tests' idiom for this same operator).
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_GroupBy_hard_fails_in_every_mode) + mode, out _, out _);
 
             Assert.ThrowsAny<Exception>(() =>
-                db.Owners.SelectMany(o => o.Refs, (o, r) => new { r.Tag }).ToList());
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).GroupBy(x => x.Name).ToList());
         }
+    }
+
+    [Fact]
+    public void Reference_form_followed_by_another_SelectMany_hard_fails_in_every_mode()
+    {
+        // Same outcome and reason as the owned form's Another_SelectMany_after_SelectMany_hard_fails_in_every_
+        // mode / Explicit_result_selector_form_followed_by_another_SelectMany_hard_fails_in_every_mode: the
+        // second SelectMany's collection-selector body (`new[] { x.Tag }`) is not a nested Queryable.Select(...)
+        // call, a bare owned/reference nav, nor a correlated Where-over-EntityQueryRoot, so EVERY
+        // NativeSelectManyBinder entry point rejects it structurally regardless of what the first SelectMany
+        // was over — TranslateSelectMany returns null with NO MarkNotNativelyRepresentable() attempt at all, so
+        // EF's own translation-failure path is reached directly, at TRANSLATION time, before MongoQueryMode is
+        // even consulted. Empirically (spiked against the running server) the identical "could not be
+        // translated" InvalidOperationException fires in ALL THREE modes alike, including DriverLinq — this is
+        // the translation-time failure itself, not the reference form's "no driver-LINQ baseline for cross-
+        // collection SelectMany" fact (which never even gets a chance to matter here).
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_another_SelectMany_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).SelectMany(x => new[] { x.Tag }).ToList());
+        }
+    }
+
+    [Fact]
+    public void Reference_form_followed_by_Distinct_hard_fails_in_every_mode()
+    {
+        // EF-347 Slice 5 fix (silent-null Distinct-after-SelectMany, whole-branch review): BEFORE the fix,
+        // NativeGroupByBinder.TryBindDistinctFromProjection did not guard on UnwindSource != null, so a
+        // Distinct after this (already-terminal) projected reference SelectMany "succeeded" — it converted the
+        // SelectMany's Projection into a degenerate $group and set IsDistinct, while UnwindSource stayed set.
+        // MongoSelectLowerer.Lower checks UnwindSource BEFORE Grouping, so it returned early with
+        // [$lookup, $unwind, $project(flatten)] and NEVER emitted the $group — the flatten $project then read
+        // "_id.Name", which doesn't exist without the $group, producing count=3 names=[null,null,null] under
+        // BOTH Native and NativeOnly (silently — NativeOnly didn't even throw). Empirically confirmed (this was
+        // the exact reproduction used to diagnose the bug) — see PROBE runs in the fix commit's history.
+        // AFTER the fix (UnwindSource != null added to the guard), TryBindDistinctFromProjection declines, so
+        // this collapses into the SAME "operator after reference SelectMany" family as Where/OrderBy/Skip/Take/
+        // Count/GroupBy above: no driver-LINQ baseline exists for a cross-collection SelectMany
+        // (Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode), so the
+        // graceful MarkNotNativelyRepresentable() fallback the guard would normally permit still throws the same
+        // "Unsupported cross-DbSet query..." InvalidOperationException under BOTH Native and DriverLinq, and
+        // NativeOnly forbids the fallback attempt entirely and throws its own distinct
+        // NativeTranslationNotSupportedException first — hard-failing in every mode, never returning wrong data.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Distinct_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name }).Distinct().ToList());
+        }
+
+        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_followed_by_Distinct_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name }).Distinct().ToList());
+    }
+
+    [Fact]
+    public void Reference_form_parametrized_outer_predicate_composes_correctly_with_native_SelectMany()
+    {
+        // Reference-form sibling of Explicit_result_selector_form_parametrized_outer_predicate_composes_
+        // correctly_with_native_SelectMany: a Where BEFORE the native reference SelectMany lowers into the
+        // normal pre-$lookup $match slot exactly like any other native query, proving a parametrized predicate
+        // (a captured local, not a constant) substitutes correctly through the shared PlaceholderTable when
+        // composed with the $lookup + inner-join-$unwind + $project pipeline this slice adds.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_parametrized_outer_predicate_composes_correctly_with_native_SelectMany), out var owners, out var items);
+        var captured = "Alice";
+
+        var result = db.Owners
+            .Where(o => o.Name == captured)
+            .SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable()
+            .OrderBy(x => x.Tag)
+            .ToList();
+
+        var expected = owners
+            .Where(o => o.Name == captured)
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Tag)
+            .ToList();
+
+        // Succeeding under NativeOnly is itself the "went native" signal.
+        Assert.Equal(expected, result);
     }
 
     [Fact]
@@ -1043,6 +1603,56 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         Assert.ThrowsAny<Exception>(() =>
             nativeOnlyDb.Entities.SelectMany(o => o.Items, (o, i) => new { o.Name, i.Price }).Count());
+    }
+
+    [Fact]
+    public void Explicit_result_selector_form_followed_by_Distinct_falls_back_gracefully_except_under_NativeOnly()
+    {
+        // EF-347 Slice 5 fix (silent-null Distinct-after-SelectMany, whole-branch review). This is the OWNED
+        // sibling of Reference_form_followed_by_Distinct_hard_fails_in_every_mode above — same root cause
+        // (predates this slice; the owned form was already reachable at base d2cacc5 = slice 4), same one-line
+        // fix (NativeGroupByBinder.TryBindDistinctFromProjection now also declines when UnwindSource != null).
+        // BEFORE the fix, this query "succeeded" under BOTH Native and NativeOnly with count=3
+        // names=[null,null,null] — empirically confirmed by direct reproduction (the UnwindSource branch in
+        // MongoSelectLowerer.Lower returns early with a flatten $project reading "_id.Name", which was never
+        // populated because the $group the flatten depends on was never emitted). Only DriverLinq mode
+        // returned the correct count=2 names=[Alice,Carol] (Bob's empty Items collection contributes no rows;
+        // Alice's two items collapse to one distinct Name; Carol contributes one) — that DriverLinq run is the
+        // baseline this test locks in.
+        // AFTER the fix, the Distinct declines to bind natively (same as the bare-scalar/whole-entity Distinct
+        // cases in NativeDistinctTests), so this collapses into the SAME "operator after (owned) SelectMany"
+        // graceful-fallback family as Where/OrderBy/Skip/Take/Count above: the captured chain
+        // (SelectMany(bareNav, trivialResultSelector).Select(ti => new{...}).Distinct()) is one the driver's own
+        // LINQ v3 provider already translates correctly, so Native and DriverLinq both return the CORRECT
+        // distinct rows — asserted here explicitly (not just "no exception") so the silent-null regression can
+        // never reappear — and only NativeOnly (which forbids the fallback) throws.
+        var seed = SeedOwners();
+        var expected = seed
+            .SelectMany(o => o.Items, (o, i) => new { o.Name })
+            .Distinct()
+            .OrderBy(r => r.Name)
+            .ToList();
+        Assert.Equal(new[] { "Alice", "Carol" }, expected.Select(r => r.Name).ToArray()); // Bob (0 items) contributes no rows
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Explicit_result_selector_form_followed_by_Distinct_falls_back_gracefully_except_under_NativeOnly) + mode);
+
+            var result = db.Entities
+                .SelectMany(o => o.Items, (o, i) => new { o.Name })
+                .Distinct()
+                .AsEnumerable()
+                .OrderBy(r => r.Name)
+                .ToList();
+            Assert.Equal(expected, result);
+        }
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Explicit_result_selector_form_followed_by_Distinct_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Entities.SelectMany(o => o.Items, (o, i) => new { o.Name }).Distinct().ToList());
     }
 
     [Fact]

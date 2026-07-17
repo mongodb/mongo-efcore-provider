@@ -19,6 +19,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -82,7 +83,7 @@ public class NativeSelectManyBinderTests
 
         Assert.True(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
 
-        Assert.Equal("Items", mongoQ.Select.UnwindSource!.ElementPath);
+        Assert.Equal("Items", mongoQ.Select.UnwindSource!.InnerScopePath);
         Assert.Collection(mongoQ.Select.Projection,
             p =>
             {
@@ -107,7 +108,7 @@ public class NativeSelectManyBinderTests
 
         Assert.True(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
 
-        Assert.Equal("Items", mongoQ.Select.UnwindSource!.ElementPath);
+        Assert.Equal("Items", mongoQ.Select.UnwindSource!.InnerScopePath);
         var outer = mongoQ.Select.Projection.Single(p => p.Alias == "OuterName");
         Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(outer.Expression).ElementName);
         var inner = mongoQ.Select.Projection.Single(p => p.Alias == "InnerName");
@@ -253,7 +254,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_binds_two_scope_projection()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
 
         Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, NameAndPriceSelector()));
 
@@ -276,7 +277,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_shared_member_name_resolves_by_scope_not_name()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
 
         var (ti, outer, inner) = TiScopes();
         var body = Expression.MemberInit(Expression.New(typeof(NamedProjected)),
@@ -307,7 +308,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_bare_scope_leaf_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
 
         var (ti, outer, _) = TiScopes();
         var body = Expression.MemberInit(Expression.New(typeof(EntityLeafProjected)),
@@ -322,7 +323,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_computed_leaf_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
 
         var (ti, _, inner) = TiScopes();
         var body = Expression.MemberInit(Expression.New(typeof(ComputedLeafProjected)),
@@ -338,7 +339,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_member_off_neither_scope_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
 
         var (ti, _, _) = TiScopes();
         var other = Expression.Property(ti, nameof(TransparentIdentifier.Other));
@@ -355,7 +356,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_entity_valued_leaf_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = new MongoUnwindSource("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
 
         var (ti, outer, _) = TiScopes();
         var body = Expression.MemberInit(Expression.New(typeof(EntityValuedProjected)),
@@ -365,5 +366,150 @@ public class NativeSelectManyBinderTests
 
         Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    // ── TryBindReferenceNavUnwind: cross-collection reference SelectMany (EF-347 slice 5, Task 2) ────
+    // The reference collectionSelector is a correlated subquery — Queryable.Where(EntityQueryRootExpression
+    // <Target>, o => c.pk == o.fk) — NOT a bare nav, per the spike (.superpowers/sdd/explicit-selectmany-spike.md)
+    // and the design doc. Owner.Tags (a genuine reference collection nav, FK Tag.OwnerId) is reused as the
+    // reference-nav fixture here.
+
+    private static readonly System.Reflection.MethodInfo EfPropertyOfInt =
+        typeof(EF).GetMethod(nameof(EF.Property))!.MakeGenericMethod(typeof(int));
+
+    private static Expression ShadowProperty(ParameterExpression param, string name)
+        => Expression.Call(EfPropertyOfInt, param, Expression.Constant(name));
+
+    private static INavigation TagsNavigation(MongoQueryExpression mongoQ)
+        => mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(Owner.Tags))!;
+
+    // Queryable.Where(EntityQueryRootExpression<Tag>, predicate) — the spike-confirmed correlated-subquery
+    // shape a reference-nav SelectMany's collectionSelector normalizes to.
+    private static LambdaExpression ReferenceCollectionSelector(
+        IEntityType targetEntityType, ParameterExpression outerParam, LambdaExpression predicate)
+    {
+        var whereCall = Expression.Call(
+            typeof(Queryable), nameof(Queryable.Where), [predicate.Parameters[0].Type],
+            new EntityQueryRootExpression(targetEntityType), Expression.Quote(predicate));
+        return Expression.Lambda(whereCall, outerParam);
+    }
+
+    private static LambdaExpression TagsCorrelatedSelector(IEntityType tagEntityType, ParameterExpression outerParam)
+    {
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var predicate = Expression.Lambda(
+            Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId))),
+            tParam);
+        return ReferenceCollectionSelector(tagEntityType, outerParam, predicate);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_binds_reference_collection_to_lookup_and_unwind_source()
+    {
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var collectionSelector = TagsCorrelatedSelector(tagNav.TargetEntityType, outerParam);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+
+        var unwind = mongoQ.Select.UnwindSource;
+        Assert.NotNull(unwind);
+        Assert.Equal(MongoUnwindSourceKind.Reference, unwind!.Kind);
+        Assert.Equal("_lookup_Tags", unwind.InnerScopePath);
+        Assert.Same(tagNav.TargetEntityType, unwind.InnerEntityType);
+        Assert.NotNull(unwind.Lookup);
+        Assert.True(unwind.Lookup!.ForceUnwind);
+        Assert.Contains(unwind.Lookup, mongoQ.Lookups);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_owned_collection_returns_false()
+    {
+        var mongoQ = TestQuery();
+        var itemEntityType = ItemEntityType(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var iParam = Expression.Parameter(typeof(Item), "i");
+        var predicate = Expression.Lambda(
+            Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), ShadowProperty(iParam, "OwnerId")),
+            iParam);
+        var collectionSelector = ReferenceCollectionSelector(itemEntityType, outerParam, predicate);
+
+        Assert.False(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.Null(mongoQ.Select.UnwindSource);
+        Assert.Empty(mongoQ.Lookups); // no partial mutation: the lookup is registered only AFTER a confirmed match
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_filtered_inner_returns_false()
+    {
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var correlation = Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId)));
+        var extra = Expression.NotEqual(Expression.Property(tParam, nameof(Tag.Label)), Expression.Constant("x"));
+        var predicate = Expression.Lambda(Expression.AndAlso(correlation, extra), tParam);
+        var collectionSelector = ReferenceCollectionSelector(tagNav.TargetEntityType, outerParam, predicate);
+
+        Assert.False(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.Null(mongoQ.Select.UnwindSource);
+        Assert.Empty(mongoQ.Lookups); // no partial mutation: the lookup is registered only AFTER a confirmed match
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_non_where_body_returns_false()
+    {
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var collectionSelector = Expression.Lambda(new EntityQueryRootExpression(tagNav.TargetEntityType), outerParam);
+
+        Assert.False(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.Null(mongoQ.Select.UnwindSource);
+        Assert.Empty(mongoQ.Lookups); // no partial mutation: the lookup is registered only AFTER a confirmed match
+    }
+
+    private class TagTransparentIdentifier
+    {
+        public Owner Outer { get; set; } = null!;
+        public Tag Inner { get; set; } = null!;
+    }
+
+    private class NameAndLabelProjected
+    {
+        public string Name { get; set; } = "";
+        public string Label { get; set; } = "";
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_reference_source_flows_through_two_scope_projection_binder()
+    {
+        // Proves the generalized InnerScopePath ("_lookup_Tags") flows unchanged through slice 4's
+        // TryBindTransparentIdentifierProjection — ti.Inner.<m> resolves against the inner scope with the
+        // lookup-alias prefix, ti.Outer.<m> resolves against the outer (root) scope, exactly as for an owned
+        // UnwindSource, just with a different (lookup-alias) InnerScopePath.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var lookup = new LookupExpression(tagNav, forceUnwind: true);
+        mongoQ.Select.UnwindSource =
+            MongoUnwindSource.Reference(LookupExpression.GetLookupAlias(tagNav), tagNav.TargetEntityType, lookup);
+
+        var ti = Expression.Parameter(typeof(TagTransparentIdentifier), "ti");
+        var outer = Expression.Property(ti, nameof(TagTransparentIdentifier.Outer));
+        var inner = Expression.Property(ti, nameof(TagTransparentIdentifier.Inner));
+        var body = Expression.MemberInit(Expression.New(typeof(NameAndLabelProjected)),
+            Expression.Bind(typeof(NameAndLabelProjected).GetProperty(nameof(NameAndLabelProjected.Name))!,
+                Expression.Property(outer, nameof(Owner.Name))),
+            Expression.Bind(typeof(NameAndLabelProjected).GetProperty(nameof(NameAndLabelProjected.Label))!,
+                Expression.Property(inner, nameof(Tag.Label))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+
+        var nameP = mongoQ.Select.Projection.Single(p => p.Alias == "Name");
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(nameP.Expression).ElementName);
+        var labelP = mongoQ.Select.Projection.Single(p => p.Alias == "Label");
+        Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(labelP.Expression).ElementName);
     }
 }

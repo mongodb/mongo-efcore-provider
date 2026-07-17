@@ -17,9 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
-using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -139,11 +137,12 @@ internal static class NativeProjectionBinder
     /// <c>(outerKey != null) AndAlso Equals(Convert(outerKey, object), Convert(dependentKey, object))</c>
     /// (or, when the key type can't be null, the bare <c>Equals</c>/<c>==</c> form) — comparing the
     /// dependent-side FK property against <paramref name="outerParameter"/>'s key. This is recognized
-    /// structurally via <see cref="TryExtractEqualitySides"/> plus an exactly-two-conjunct guard: any
-    /// ADDITIONAL predicate conjunct (e.g. <c>c.Orders.Where(o =&gt; o.Amount &gt; 5).Count()</c>) nests the
-    /// null-guard/equality pair one level deeper as the left operand of an outer <c>AndAlso</c>, so the
-    /// direct-conjunct match below fails and the whole projection bails to driver-LINQ — never emitting a
-    /// wrong-shape native count.
+    /// structurally via <see cref="NativeCorrelationMatcher.TryMatchCorrelatedCollection"/> (EF-347 slice 5 —
+    /// extracted so a reference-<c>SelectMany</c> binder can share the same recognition) plus an
+    /// exactly-two-conjunct guard: any ADDITIONAL predicate conjunct
+    /// (e.g. <c>c.Orders.Where(o =&gt; o.Amount &gt; 5).Count()</c>) nests the null-guard/equality pair one
+    /// level deeper as the left operand of an outer <c>AndAlso</c>, so the direct-conjunct match fails and
+    /// the whole projection bails to driver-LINQ — never emitting a wrong-shape native count.
     /// </para>
     /// </remarks>
     private static bool TryTranslateProjectedCollectionCount(
@@ -180,43 +179,15 @@ internal static class NativeProjectionBinder
         if (predicate.Parameters.Count != 1)
             return false;
 
-        var dependentParameter = predicate.Parameters[0];
-
-        if (!TryGetCorrelationEqualitySides(predicate.Body, out var side1, out var side2))
-            return false;
-
-        var side1Root = GetRootParameter(side1);
-        var side2Root = GetRootParameter(side2);
-
-        Expression dependentSide;
-        if (ReferenceEquals(side1Root, dependentParameter) && ReferenceEquals(side2Root, outerParameter))
-            dependentSide = side1;
-        else if (ReferenceEquals(side2Root, dependentParameter) && ReferenceEquals(side1Root, outerParameter))
-            dependentSide = side2;
-        else
-            return false;
-
-        var dependentPropertyName = dependentSide.TryGetSimplePropertyName();
-        if (dependentPropertyName == null)
-            return false;
-
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
         var targetEntityType = rootExpression.EntityType;
 
-        // Resolve the single collection navigation off the outer entity whose target and single-property FK
-        // match. If more than one navigation matches (ambiguous) or none does, decline rather than guess.
-        var candidates = outerEntityType.GetNavigations()
-            .Where(n => n.IsCollection
-                        && !n.IsEmbedded()
-                        && n.TargetEntityType == targetEntityType
-                        && n.ForeignKey.Properties.Count == 1
-                        && n.ForeignKey.Properties[0].Name == dependentPropertyName)
-            .ToList();
-
-        if (candidates.Count != 1)
+        // The Count binder wants a reference (non-embedded) collection navigation.
+        if (!NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                predicate.Body, outerEntityType, outerParameter, targetEntityType, requireEmbedded: false, out var navigation))
+        {
             return false;
-
-        var navigation = candidates[0];
+        }
 
         var lookup = new LookupExpression(navigation) { InjectAfterRoot = true };
         if (!lookup.IsNativeCollectionLookup)
@@ -226,92 +197,5 @@ internal static class NativeProjectionBinder
 
         result = new MongoSizeExpression(LookupExpression.GetLookupAlias(navigation), leafExpression.Type);
         return true;
-    }
-
-    /// <summary>
-    /// Extracts the two compared sides from a correlation predicate body that is EITHER a bare equality
-    /// (<c>Equal</c> <see cref="BinaryExpression"/>, or an <c>object.Equals(x, y)</c>/<c>x.Equals(y)</c>
-    /// call — the forms EF Core's nav-expansion emits for key comparisons) OR that same equality guarded by
-    /// exactly one null-check conjunct (<c>(k != null) AndAlso equality</c>, in either operand order — the
-    /// form EF Core emits when the outer key's CLR type is nullable). Any other shape — most importantly an
-    /// <c>AndAlso</c> with additional conjuncts beyond the single null-guard — returns
-    /// <see langword="false"/>, which correctly routes an actual filtered count
-    /// (<c>c.Orders.Where(pred).Count()</c> with a real user predicate) to fallback rather than
-    /// misidentifying it as a plain FK correlation.
-    /// </summary>
-    private static bool TryGetCorrelationEqualitySides(Expression body, out Expression left, out Expression right)
-    {
-        var stripped = body.RemoveConvert();
-
-        if (TryExtractEqualitySides(stripped, out left!, out right!))
-            return true;
-
-        if (stripped is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
-        {
-            if (IsNullGuard(andAlso.Left) && TryExtractEqualitySides(andAlso.Right, out left!, out right!))
-                return true;
-            if (IsNullGuard(andAlso.Right) && TryExtractEqualitySides(andAlso.Left, out left!, out right!))
-                return true;
-        }
-
-        left = right = null!;
-        return false;
-    }
-
-    private static bool TryExtractEqualitySides(Expression node, out Expression left, out Expression right)
-    {
-        switch (node.RemoveConvert())
-        {
-            case BinaryExpression { NodeType: ExpressionType.Equal } eq:
-                left = eq.Left;
-                right = eq.Right;
-                return true;
-
-            // object.Equals(x, y) — the static overload EF Core's nav-expansion uses for a null-safe
-            // key comparison inside the correlation predicate.
-            case MethodCallExpression
-            {
-                Method: { Name: nameof(Equals), IsStatic: true, DeclaringType: var declaringType },
-                Arguments: [var arg0, var arg1]
-            } when declaringType == typeof(object):
-                left = arg0;
-                right = arg1;
-                return true;
-
-            // x.Equals(y) — the instance overload, for completeness.
-            case MethodCallExpression
-            {
-                Method.Name: nameof(Equals),
-                Object: { } instance,
-                Arguments: [var arg]
-            }:
-                left = instance;
-                right = arg;
-                return true;
-
-            default:
-                left = right = null!;
-                return false;
-        }
-    }
-
-    private static bool IsNullGuard(Expression node)
-        => node.RemoveConvert() is BinaryExpression { NodeType: ExpressionType.NotEqual } bin
-           && (IsNullConstant(bin.Left) || IsNullConstant(bin.Right));
-
-    private static bool IsNullConstant(Expression node)
-        => node.RemoveConvert() is ConstantExpression { Value: null };
-
-    private static ParameterExpression? GetRootParameter(Expression expression)
-    {
-        var stripped = expression.RemoveConvert();
-        return stripped switch
-        {
-            MemberExpression { Expression: { } inner } => inner.RemoveConvert() as ParameterExpression,
-            MethodCallExpression call when call.Method.IsEFPropertyMethod() && call.Arguments.Count == 2
-                => call.Arguments[0].RemoveConvert() as ParameterExpression,
-            ParameterExpression parameter => parameter,
-            _ => null
-        };
     }
 }

@@ -1250,23 +1250,42 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // TInner> and so an unsupported trailing projection still folds through EF's ReplacingExpressionVisitor
         // NewExpression-member mechanism during driver-LINQ-fallback shaper construction.
         if (NativeSelectManyBinder.TryBindBareNavUnwind(mongoQueryExpression, collectionSelector))
-        {
-            var itemShaper = new StructuralTypeShaperExpression(
-                mongoQueryExpression.Select.UnwindSource!.InnerEntityType,
-                new ProjectionBindingExpression(mongoQueryExpression, new ProjectionMember(), typeof(ValueBuffer)),
-                false);
+            return BuildBareNavWrappedShaper(source, mongoQueryExpression, resultSelector);
 
-            var wrapped = ReplacingExpressionVisitor.Replace(
-                resultSelector.Parameters[0], source.ShaperExpression,
-                ReplacingExpressionVisitor.Replace(resultSelector.Parameters[1], itemShaper, resultSelector.Body));
-
-            return source.UpdateShaperExpression(wrapped);
-        }
+        // EF-347 slice 5: cross-collection REFERENCE bare-nav — the collectionSelector is a correlated
+        // Queryable.Where(EntityQueryRoot, o => c.pk==o.fk); same wrapped-shaper shape as owned bare-nav (the
+        // item shaper here is likewise never itself read once the trailing Select binds natively).
+        if (NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQueryExpression, collectionSelector))
+            return BuildBareNavWrappedShaper(source, mongoQueryExpression, resultSelector);
 
         if (!NativeSelectManyBinder.TryBind(mongoQueryExpression, collectionSelector))
             return null;
 
         return BuildSelectManyWrappedShaper(source, mongoQueryExpression, collectionSelector, resultSelector);
+    }
+
+    /// <summary>
+    /// Builds the <see cref="ShapedQueryExpression"/> EF expects immediately after a bare-nav terminal
+    /// SelectMany bind (<see cref="NativeSelectManyBinder.TryBindBareNavUnwind"/> — owned — or
+    /// <see cref="NativeSelectManyBinder.TryBindReferenceNavUnwind"/> — reference), both of which set only
+    /// <see cref="Expressions.MongoSelectDefinition.UnwindSource"/> and leave <see cref="Expressions.MongoSelectDefinition.Projection"/>
+    /// empty. The item (Inner) shaper is never itself read when the trailing Select binds natively — see the
+    /// <see cref="BuildSelectManyWrappedShaper"/> / <see cref="TranslateSelectMany(ShapedQueryExpression, LambdaExpression, LambdaExpression)"/>
+    /// comments. It exists only so this return type-checks as resultSelector's own <c>TransparentIdentifier(Outer, Inner)</c>.
+    /// </summary>
+    private static ShapedQueryExpression BuildBareNavWrappedShaper(
+        ShapedQueryExpression source, MongoQueryExpression mongoQueryExpression, LambdaExpression resultSelector)
+    {
+        var itemShaper = new StructuralTypeShaperExpression(
+            mongoQueryExpression.Select.UnwindSource!.InnerEntityType,
+            new ProjectionBindingExpression(mongoQueryExpression, new ProjectionMember(), typeof(ValueBuffer)),
+            false);
+
+        var wrapped = ReplacingExpressionVisitor.Replace(
+            resultSelector.Parameters[0], source.ShaperExpression,
+            ReplacingExpressionVisitor.Replace(resultSelector.Parameters[1], itemShaper, resultSelector.Body));
+
+        return source.UpdateShaperExpression(wrapped);
     }
 
     /// <summary>

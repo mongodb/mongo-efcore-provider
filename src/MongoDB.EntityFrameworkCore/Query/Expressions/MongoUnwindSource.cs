@@ -18,21 +18,64 @@ using Microsoft.EntityFrameworkCore.Metadata;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// A terminal SelectMany over an owned (embedded) collection: the document element path to <c>$unwind</c>
-/// before the result-selector <c>$project</c> (EF-347 slice 3). Whole native SelectMany is terminal-only.
+/// Which kind of collection a terminal native SelectMany's <see cref="MongoUnwindSource"/> unwinds:
+/// <see cref="Owned"/> — an embedded array already present on the root document (EF-347 slice 3/4) — or
+/// <see cref="Reference"/> — a separate collection reached via a <c>$lookup</c> (EF-347 slice 5).
+/// </summary>
+internal enum MongoUnwindSourceKind
+{
+    /// <summary>An owned (embedded) collection element path, unwound directly from the root document.</summary>
+    Owned,
+
+    /// <summary>A reference (cross-collection) navigation, unwound from its own <c>$lookup</c>'s output array.</summary>
+    Reference
+}
+
+/// <summary>
+/// A terminal SelectMany's collection source: the document scope to <c>$unwind</c> before the result-selector
+/// <c>$project</c>. EF-347 slice 3 introduced this for an owned (embedded) collection (<see cref="Kind"/> ==
+/// <see cref="MongoUnwindSourceKind.Owned"/> — no <see cref="Lookup"/>); EF-347 slice 5 generalizes it to also
+/// cover a reference (cross-collection) navigation (<see cref="Kind"/> == <see cref="MongoUnwindSourceKind.Reference"/>
+/// — unwound from its own <c>$lookup</c>, carried in <see cref="Lookup"/>). Whole native SelectMany is
+/// terminal-only, in either case. Construct via <see cref="Owned"/>/<see cref="Reference"/> rather than the
+/// constructor directly — they make the <see cref="Lookup"/> invariant (null for Owned, non-null for Reference)
+/// impossible to get wrong at the call site.
 /// </summary>
 internal sealed class MongoUnwindSource
 {
-    public MongoUnwindSource(string elementPath, IEntityType innerEntityType)
+    private MongoUnwindSource(MongoUnwindSourceKind kind, string innerScopePath, IEntityType innerEntityType, LookupExpression? lookup)
     {
-        ElementPath = elementPath;
+        Kind = kind;
+        InnerScopePath = innerScopePath;
         InnerEntityType = innerEntityType;
+        Lookup = lookup;
     }
 
-    /// <summary>The owned-collection element path to unwind (e.g. <c>"Items"</c>), rendered as <c>$Items</c>.</summary>
-    public string ElementPath { get; }
+    /// <summary>An owned (embedded) collection source: <paramref name="innerScopePath"/> is the element path
+    /// to unwind (e.g. <c>"Items"</c>), rendered as <c>$Items</c>.</summary>
+    public static MongoUnwindSource Owned(string innerScopePath, IEntityType innerEntityType)
+        => new(MongoUnwindSourceKind.Owned, innerScopePath, innerEntityType, lookup: null);
 
-    /// <summary>The owned (inner) entity type unwound from <see cref="ElementPath"/> — used to resolve
+    /// <summary>A reference (cross-collection) source: <paramref name="innerScopePath"/> is the
+    /// <c>$lookup</c> alias (e.g. <c>"_lookup_Orders"</c>) that <paramref name="lookup"/> writes its joined
+    /// array to and that the <c>$unwind</c> reads from.</summary>
+    public static MongoUnwindSource Reference(string innerScopePath, IEntityType innerEntityType, LookupExpression lookup)
+        => new(MongoUnwindSourceKind.Reference, innerScopePath, innerEntityType, lookup);
+
+    /// <summary>Whether this source is an owned (embedded) collection or a reference (cross-collection) one.</summary>
+    public MongoUnwindSourceKind Kind { get; }
+
+    /// <summary>The document scope to unwind: an owned-collection element path (<see cref="MongoUnwindSourceKind.Owned"/>,
+    /// e.g. <c>"Items"</c>) or a <c>$lookup</c> alias (<see cref="MongoUnwindSourceKind.Reference"/>, e.g.
+    /// <c>"_lookup_Orders"</c>) — either way, rendered as <c>$&lt;InnerScopePath&gt;</c>.</summary>
+    public string InnerScopePath { get; }
+
+    /// <summary>The inner entity type unwound from <see cref="InnerScopePath"/> — used to resolve
     /// ti.Inner member accesses to element names in the trailing SelectMany projection (EF-347 slice 4).</summary>
     public IEntityType InnerEntityType { get; }
+
+    /// <summary>The <c>$lookup</c> this source unwinds, for <see cref="MongoUnwindSourceKind.Reference"/>;
+    /// <see langword="null"/> for <see cref="MongoUnwindSourceKind.Owned"/> (no cross-collection join needed —
+    /// the array is already on the root document).</summary>
+    public LookupExpression? Lookup { get; }
 }

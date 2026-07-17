@@ -990,8 +990,12 @@ Customers.
 
     public override async Task SelectMany_without_result_selector_naked_collection_navigation(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.SelectMany_without_result_selector_naked_collection_navigation(async));
+        // EF-347 slice 5: a bare cross-collection reference SelectMany now declines at translation
+        // time with NotSupportedException (whole-inner-entity guard) rather than EF's generic
+        // InvalidOperationException; the shape is still unsupported, only the exception type changed.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.SelectMany_without_result_selector_naked_collection_navigation(async),
+            typeof(NotSupportedException));
 
         AssertMql();
     }

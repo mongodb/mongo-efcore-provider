@@ -518,4 +518,88 @@ public class MongoPipelineFactoryTests
         Assert.Single(result);
         Assert.Equal(BsonDocument.Parse("{ $unwind: \"$Items\" }"), result[0]);
     }
+
+    // ------------------------------------------------------------------
+    // MongoUnwindStage — preserveNullAndEmptyArrays (EF-347 slice 5, Task 3): the reference-Include
+    // $unwind (LEFT-join, unchanged) must keep preserve:true; the NEW ForceUnwind-collection SelectMany
+    // flatten (INNER-join) must render preserve:false.
+    // ------------------------------------------------------------------
+
+    private class LookupChild
+    {
+        public ObjectId Id { get; set; }
+        public ObjectId ParentId { get; set; }
+    }
+
+    private class LookupParent
+    {
+        public ObjectId Id { get; set; }
+        public List<LookupChild> Children { get; set; } = new();
+    }
+
+    private static INavigation ChildrenNavigation()
+    {
+        using var db = SingleEntityDbContext.Create<LookupParent>(mb =>
+        {
+            mb.Entity<LookupChild>();
+            mb.Entity<LookupParent>().HasMany(p => p.Children).WithOne().HasForeignKey(c => c.ParentId);
+        });
+        return db.Model.FindEntityType(typeof(LookupParent))!.FindNavigation(nameof(LookupParent.Children))!;
+    }
+
+    private class RefChild
+    {
+        public ObjectId Id { get; set; }
+    }
+
+    private class RefParent
+    {
+        public ObjectId Id { get; set; }
+        public ObjectId ChildId { get; set; }
+        public RefChild? Child { get; set; }
+    }
+
+    private static INavigation ReferenceNavigation()
+    {
+        using var db = SingleEntityDbContext.Create<RefParent>(mb =>
+        {
+            mb.Entity<RefChild>();
+            mb.Entity<RefParent>().HasOne(p => p.Child).WithMany().HasForeignKey(p => p.ChildId);
+        });
+        return db.Model.FindEntityType(typeof(RefParent))!.FindNavigation(nameof(RefParent.Child))!;
+    }
+
+    [Fact]
+    public void ForceUnwind_collection_unwind_stage_renders_preserve_false()
+    {
+        var navigation = ChildrenNavigation();
+        var lookup = new LookupExpression(navigation, forceUnwind: true);
+
+        var stages = new List<MongoPipelineStage> { new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: false) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        Assert.Equal(
+            BsonDocument.Parse("{ $unwind: { path: \"$_lookup_Children\", preserveNullAndEmptyArrays: false } }"),
+            result[0]);
+    }
+
+    [Fact]
+    public void Reference_include_unwind_stage_still_renders_preserve_true_by_default()
+    {
+        var navigation = ReferenceNavigation();
+        var lookup = new LookupExpression(navigation);
+
+        var stages = new List<MongoPipelineStage> { new MongoUnwindStage(lookup) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        Assert.Equal(
+            BsonDocument.Parse("{ $unwind: { path: \"$_lookup_Child\", preserveNullAndEmptyArrays: true } }"),
+            result[0]);
+    }
 }

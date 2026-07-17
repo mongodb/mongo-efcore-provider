@@ -26,13 +26,28 @@ internal sealed class MongoUnwindStage : MongoPipelineStage
     /// Initializes a new instance of the <see cref="MongoUnwindStage"/> class.
     /// </summary>
     /// <param name="lookup">The lookup expression that specifies which array field to unwind.</param>
-    public MongoUnwindStage(LookupExpression lookup)
+    /// <param name="preserveNullAndEmptyArrays">
+    /// Whether a principal document with no matching array element/document is preserved (LEFT-join
+    /// semantics, e.g. a reference Include's streaming <c>$unwind</c>) rather than dropped (INNER-join
+    /// semantics, e.g. the EF-347 slice-5 cross-collection reference SelectMany flatten). Defaults to
+    /// <see langword="true"/> so every pre-existing caller (the reference-Include <c>$unwind</c>) is
+    /// unchanged; only the SelectMany flatten passes <see langword="false"/>.
+    /// </param>
+    public MongoUnwindStage(LookupExpression lookup, bool preserveNullAndEmptyArrays = true)
     {
         Lookup = lookup;
+        PreserveNullAndEmptyArrays = preserveNullAndEmptyArrays;
     }
 
     /// <summary>
     /// Gets the lookup expression that specifies which array field to unwind.
     /// </summary>
     public LookupExpression Lookup { get; }
+
+    /// <summary>
+    /// Whether a principal document with no matching array element/document is preserved
+    /// (<see langword="true"/>, LEFT-join) or dropped (<see langword="false"/>, INNER-join). See the
+    /// constructor parameter docs for the two cases that set each value.
+    /// </summary>
+    public bool PreserveNullAndEmptyArrays { get; }
 }

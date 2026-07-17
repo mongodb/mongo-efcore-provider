@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -38,6 +40,36 @@ public class MongoSelectLowererTests
         using var db = SingleEntityDbContext.Create<StubEntity>();
         var entityType = db.Model.GetEntityTypes().First();
         return new MongoQueryExpression(entityType);
+    }
+
+    // ── Reference-collection fixture (EF-347 slice 5, Task 3) ───────────────────
+    // A genuine cross-collection reference nav (FK-based HasMany/WithOne), distinct from the owned
+    // (embedded) Items fixture Test 15 uses — needed to build a ForceUnwind-collection LookupExpression.
+
+    private class ReferenceChild
+    {
+        public ObjectId Id { get; set; }
+        public ObjectId ParentId { get; set; }
+        public decimal Total { get; set; }
+    }
+
+    private class ReferenceParent
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public List<ReferenceChild> Children { get; set; } = [];
+    }
+
+    private static (MongoQueryExpression Query, INavigation Navigation) TestReferenceSelect()
+    {
+        using var db = SingleEntityDbContext.Create<ReferenceParent>(mb =>
+        {
+            mb.Entity<ReferenceChild>();
+            mb.Entity<ReferenceParent>().HasMany(p => p.Children).WithOne().HasForeignKey(c => c.ParentId);
+        });
+        var entityType = db.Model.FindEntityType(typeof(ReferenceParent))!;
+        var navigation = entityType.FindNavigation(nameof(ReferenceParent.Children))!;
+        return (new MongoQueryExpression(entityType), navigation);
     }
 
     // ── Test 1: Empty slots → no stages ─────────────────────────────────────────
@@ -274,7 +306,7 @@ public class MongoSelectLowererTests
     public void UnwindSource_lowers_to_unwind_then_project_stage_in_order()
     {
         var query = TestSelect();
-        query.Select.UnwindSource = new MongoUnwindSource("Items", innerEntityType: null!);
+        query.Select.UnwindSource = MongoUnwindSource.Owned("Items", innerEntityType: null!);
         query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
         query.Select.AddProjection(new MongoProjection("Price", new MongoFieldExpression(property: null!, elementName: "Items.Price")));
 
@@ -289,5 +321,42 @@ public class MongoSelectLowererTests
                 Assert.Equal("Name", project.Projections[0].Alias);
                 Assert.Equal("Price", project.Projections[1].Alias);
             });
+    }
+
+    // ── Test 16: Reference-collection SelectMany unwind lowers to $lookup → $unwind → $project
+    // (EF-347 slice 5, Task 3). Distinct from Test 15 (Owned): AppendLookupStages (stage 5) already
+    // appends the $lookup+$unwind for a Reference UnwindSource BEFORE the UnwindSource block runs,
+    // so no MongoUnwindFieldStage should ever appear for this Kind.
+
+    [Fact]
+    public void Reference_UnwindSource_lowers_to_lookup_then_unwind_then_project_stage_in_order()
+    {
+        var (query, navigation) = TestReferenceSelect();
+        var lookup = new LookupExpression(navigation, forceUnwind: true);
+        query.AddLookup(lookup);
+        query.Select.UnwindSource = MongoUnwindSource.Reference(
+            LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup);
+        query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
+        query.Select.AddProjection(new MongoProjection("Total", new MongoFieldExpression(property: null!, elementName: "_lookup_Children.Total")));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup),
+            s =>
+            {
+                var unwind = Assert.IsType<MongoUnwindStage>(s);
+                Assert.Same(lookup, unwind.Lookup);
+                Assert.False(unwind.PreserveNullAndEmptyArrays);
+            },
+            s =>
+            {
+                var project = Assert.IsType<MongoProjectStage>(s);
+                Assert.Equal(2, project.Projections.Count);
+                Assert.Equal("Name", project.Projections[0].Alias);
+                Assert.Equal("Total", project.Projections[1].Alias);
+            });
+
+        Assert.DoesNotContain(stages, s => s is MongoUnwindFieldStage);
     }
 }

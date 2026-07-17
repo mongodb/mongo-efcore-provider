@@ -90,7 +90,7 @@ internal sealed class MongoPipelineFactory
             MongoSkipStage skip => RenderSkip(skip, placeholders),
             MongoLimitStage limit => RenderLimit(limit, placeholders),
             MongoLookupStage lookup => RenderLookup(lookup.Lookup),
-            MongoUnwindStage unwind => RenderUnwind(unwind.Lookup),
+            MongoUnwindStage unwind => RenderUnwind(unwind.Lookup, unwind.PreserveNullAndEmptyArrays),
             MongoUnwindFieldStage unwindField => new BsonDocument("$unwind", "$" + unwindField.ElementPath),
             MongoProjectStage project => RenderProject(project, placeholders),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
@@ -195,11 +195,11 @@ internal sealed class MongoPipelineFactory
             { "as", lookup.As }
         });
 
-    private static BsonDocument RenderUnwind(LookupExpression lookup)
+    private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)
         => new BsonDocument("$unwind", new BsonDocument
         {
             { "path", "$" + lookup.As },
-            { "preserveNullAndEmptyArrays", true }
+            { "preserveNullAndEmptyArrays", preserveNullAndEmptyArrays }
         });
 
     // Renders a $unionWith over the operand's nested pipeline into the SAME placeholder table (so a

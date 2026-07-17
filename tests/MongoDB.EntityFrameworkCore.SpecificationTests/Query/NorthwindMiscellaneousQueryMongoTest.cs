@@ -4610,11 +4610,31 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task SelectMany_after_client_method(bool async)
     {
-        await base.SelectMany_after_client_method(async);
+        // EF-347 slice 5: the base test's own AssertTranslationFailed expects a strict
+        // InvalidOperationException, so base cannot be wrapped directly here. Its query is replicated
+        // below (decompiled from NorthwindMiscellaneousQueryTestBase.SelectMany_after_client_method,
+        // Microsoft.EntityFrameworkCore.Specification.Tests 10.0.8) and wrapped in the lenient helper:
+        // the underlying cross-collection reference SelectMany (Customer.Orders) now declines at
+        // translation time with NotSupportedException (the whole-inner-entity guard) rather than EF's
+        // generic InvalidOperationException; the shape is still unsupported, only the exception type
+        // changed.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => AssertQueryScalar(
+                async,
+                ss => from o in (from c in ss.Set<Customer>()
+                                 orderby ClientOrderBy(c)
+                                 select c).SelectMany(c => c.Orders).Distinct()
+                      select o.OrderDate,
+                assertOrder: false,
+                assertEmpty: false),
+            typeof(NotSupportedException));
 
         AssertMql(
         );
     }
+
+    private static string ClientOrderBy(Customer c)
+        => c.CustomerID;
 
     public override async Task Client_OrderBy_GroupBy_Group_ordering_works(bool async)
     {

@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -103,7 +104,7 @@ internal static class NativeSelectManyBinder
             projections.Add(new MongoProjection(alias, field));
         }
 
-        mongoQ.Select.UnwindSource = new MongoUnwindSource(unwindPath, navigation.TargetEntityType);
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
         foreach (var p in projections)
             mongoQ.Select.AddProjection(p);
         return true;
@@ -135,7 +136,64 @@ internal static class NativeSelectManyBinder
         if (navigation.TargetEntityType.GetContainingElementName() is not { } unwindPath)
             return false;
 
-        mongoQ.Select.UnwindSource = new MongoUnwindSource(unwindPath, navigation.TargetEntityType);
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
+        return true;
+    }
+
+    /// <summary>
+    /// Binds a cross-collection REFERENCE-nav <c>SelectMany</c> (EF-347 slice 5) — <c>SelectMany(c =&gt; c.Orders,
+    /// (c, o) =&gt; new {...})</c> / <c>from c in q from o in c.Orders select new {...}</c> over a REFERENCE
+    /// (non-embedded) collection navigation. Unlike the owned bare-nav shape (<see cref="TryBindBareNavUnwind"/>),
+    /// EF's nav-expansion normalizes a reference collection selector to a CORRELATED SUBQUERY — spike-confirmed
+    /// (<c>.superpowers/sdd/explicit-selectmany-spike.md</c>) and design-doc-confirmed — of the form
+    /// <c>Queryable.Where(EntityQueryRootExpression&lt;Target&gt;, o =&gt; c.pk == o.fk)</c> (possibly wrapped in
+    /// <c>AsQueryable</c>), NOT a bare nav: the target collection is queried from its own root and filtered by
+    /// the FK correlation, rather than read off the outer entity directly. Recognizes that shape via
+    /// <see cref="NativeCorrelationMatcher.TryMatchCorrelatedCollection"/> (shared with
+    /// <see cref="NativeProjectionBinder"/>'s projected-<c>Count</c> recognition — EF-347 slice 5, Task 1),
+    /// requiring a REFERENCE (<c>requireEmbedded: false</c>) navigation — the mirror of
+    /// <see cref="TryBindBareNavUnwind"/>'s owned-only acceptance, so the two binders partition the shape space
+    /// rather than overlap. On a match, registers a <c>ForceUnwind</c> <c>$lookup</c> for the navigation and sets
+    /// <see cref="MongoSelectDefinition.UnwindSource"/> to a <see cref="MongoUnwindSourceKind.Reference"/> source
+    /// whose scope is the lookup's <c>_lookup_&lt;Nav&gt;</c> alias — the REAL projection is bound later, exactly
+    /// as for the owned bare-nav shape, by the UNCHANGED <see cref="TryBindTransparentIdentifierProjection"/>
+    /// against the SEPARATE trailing <c>Select</c> (its <c>InnerScopePath</c> read is scope-kind-agnostic, so
+    /// the generalized reference scope flows through with no changes there).
+    /// </summary>
+    internal static bool TryBindReferenceNavUnwind(MongoQueryExpression mongoQ, LambdaExpression collectionSelector)
+    {
+        var body = UnwrapAsQueryable(collectionSelector.Body);
+        if (body is not MethodCallExpression
+            {
+                Method: { Name: nameof(System.Linq.Queryable.Where), DeclaringType: var whereDecl },
+                Arguments: [EntityQueryRootExpression root, var predicateArg]
+            }
+            || whereDecl != typeof(System.Linq.Queryable))
+            return false;
+
+        var predicate = predicateArg.UnwrapLambdaFromQuote();
+        if (predicate.Parameters.Count != 1)
+            return false;
+
+        var outerEntityType = mongoQ.CollectionExpression.EntityType;
+        if (!NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                predicate.Body, outerEntityType, collectionSelector.Parameters[0], root.EntityType,
+                requireEmbedded: false, out var navigation))
+            return false;
+
+        var lookup = new LookupExpression(navigation, forceUnwind: true);
+        // AddLookup dedupes on the alias (As) — if a same-nav Include-registered lookup were already pending,
+        // this call would be a no-op and UnwindSource.Lookup below would point at an instance that was NOT the
+        // one actually in the pending list. That collision is UNREACHABLE for a reference SelectMany, confirmed
+        // once the QMTEV wiring (Task 4) made this method reachable end-to-end: reference SelectMany is
+        // projected-only (a bare-entity trailing selector hard-declines before reaching here — see
+        // TranslateSelect's whole-inner-entity guard), and EF Core drops any Include not applied to the query's
+        // final materialized entity — so a SelectMany's anonymous/DTO projection result carries no live
+        // same-nav Include to have registered a colliding lookup in the first place. This always registers our
+        // own instance.
+        mongoQ.AddLookup(lookup);
+        mongoQ.Select.UnwindSource = MongoUnwindSource.Reference(
+            LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup);
         return true;
     }
 
@@ -192,7 +250,7 @@ internal static class NativeSelectManyBinder
             var isInner = scopeAccess.Member.Name == "Inner";
             var rerooted = Expression.MakeMemberAccess(isInner ? innerParam : outerParam, member.Member);
 
-            if (!TryTranslateScopedField(outerTranslator, innerTranslator, unwind.ElementPath, rerooted, isInner, out var field))
+            if (!TryTranslateScopedField(outerTranslator, innerTranslator, unwind.InnerScopePath, rerooted, isInner, out var field))
                 return false;
 
             if (!seen.Add(alias)) return false;

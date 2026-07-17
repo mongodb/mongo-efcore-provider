@@ -140,8 +140,11 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => AssertTranslationFailed(() => base.Delete_Intersect(async));
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
+    // EF-347 slice 5: the underlying reference SelectMany now declines with NotSupportedException
+    // (whole-inner-entity guard) instead of EF's generic InvalidOperationException; still unsupported,
+    // only the exception type changed, so use the lenient helper rather than the strict local one.
     public override Task Delete_SelectMany(bool async)
-        => AssertTranslationFailed(() => base.Delete_SelectMany(async));
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Delete_SelectMany(async), typeof(NotSupportedException));
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
     public override Task Delete_SelectMany_subquery(bool async)
@@ -314,8 +317,11 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => base.Update_Where_OrderBy_set_constant(async);
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
+    // EF-347 slice 5: the underlying reference SelectMany now declines with NotSupportedException
+    // (whole-inner-entity guard) instead of EF's generic InvalidOperationException; still unsupported,
+    // only the exception type changed, so use the lenient helper rather than the strict local one.
     public override Task Update_Where_SelectMany_set_null(bool async)
-        => AssertTranslationFailed(() => base.Update_Where_SelectMany_set_null(async));
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Update_Where_SelectMany_set_null(async), typeof(NotSupportedException));
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
     public override Task Update_Where_SelectMany_subquery_set_null(bool async)

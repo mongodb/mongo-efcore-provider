@@ -338,7 +338,15 @@ internal static class NativeGroupByBinder
     internal static bool TryBindDistinctFromProjection(MongoQueryExpression mongoQ)
     {
         var select = mongoQ.Select;
-        if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null || select.HasPaging)
+        // A projected SelectMany is itself a terminal (its UnwindSource is set): converting its Projection
+        // into a degenerate $group here would leave UnwindSource set alongside the new Grouping, and the
+        // lowerer's UnwindSource branch runs BEFORE its Grouping branch and returns early — silently dropping
+        // the $group and emitting a flatten $project that reads "_id.<alias>" fields that were never grouped
+        // into existence (EF-347 slice 5 fix: silent-null Distinct-after-SelectMany). Decline so this falls
+        // back to driver-LINQ (or hard-fails, for the reference form, which has no driver-LINQ baseline)
+        // instead of building a pipeline that silently returns nulls.
+        if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null || select.HasPaging
+            || select.UnwindSource != null)
             return false;
 
         var keyParts = new List<MongoGroupingKeyPart>();
