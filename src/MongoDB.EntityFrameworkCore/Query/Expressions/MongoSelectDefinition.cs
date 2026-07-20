@@ -37,67 +37,75 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </remarks>
 internal sealed class MongoSelectDefinition
 {
-    private readonly List<MongoOrdering> _orderings = [];
     private readonly List<MongoProjection> _projections = [];
 
-    // ── Predicate ────────────────────────────────────────────────────────────────
+    // ── Ordered filter/sort/page pipeline ─────────────────────────────────────────
+    private readonly List<MongoSelectOp> _pipelineOps = [];
 
     /// <summary>
-    /// The conjunction of all <c>Where</c> predicates pushed down so far.
-    /// <see langword="null"/> means no predicate (match-all).
+    /// The ordered filter/sort/page operations, emitted verbatim by the lowerer. Arrival order IS emission
+    /// order — this is what represents non-canonical Skip/Take. Terminal shapes (projection/grouping/
+    /// cardinality/set-op/unwind) still follow this block; see <see cref="Route"/> and the lowerer.
     /// </summary>
-    public MongoExpression? Predicate { get; set; }
+    public IReadOnlyList<MongoSelectOp> PipelineOps => _pipelineOps;
 
     /// <summary>
-    /// AND-combines <paramref name="conjunct"/> into <see cref="Predicate"/>.
-    /// If <see cref="Predicate"/> is currently <see langword="null"/>, sets it directly;
-    /// otherwise wraps both sides in a <see cref="MongoBinaryExpression"/> with
-    /// <see cref="MongoBinaryOperator.AndAlso"/>.
+    /// ANDs <paramref name="conjunct"/> into the tail <see cref="MongoMatchOp"/> if the last op is one
+    /// (so consecutive Where's merge into a single $match); otherwise appends a new <see cref="MongoMatchOp"/>
+    /// at the current tail (so a Where/OfType/aggregate-predicate applied AFTER a sort or paging lands as a
+    /// later $match — the sequential semantics MongoDB's pipeline gives us).
     /// </summary>
     public void AddPredicateConjunct(MongoExpression conjunct)
-        => Predicate = Predicate is null
-            ? conjunct
-            : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, Predicate, conjunct);
-
-    // ── Orderings ────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// The ordered sequence of sort keys for this query.
-    /// </summary>
-    public IReadOnlyList<MongoOrdering> Orderings => _orderings;
-
-    /// <summary>
-    /// Clears any existing orderings and sets <paramref name="first"/> as the sole ordering.
-    /// </summary>
-    public void ResetOrderings(MongoOrdering first)
     {
-        _orderings.Clear();
-        _orderings.Add(first);
+        if (_pipelineOps.Count > 0 && _pipelineOps[^1] is MongoMatchOp match)
+            _pipelineOps[^1] = new MongoMatchOp(
+                new MongoBinaryExpression(MongoBinaryOperator.AndAlso, match.Predicate, conjunct));
+        else
+            _pipelineOps.Add(new MongoMatchOp(conjunct));
     }
 
     /// <summary>
-    /// Appends <paramref name="next"/> to the end of the orderings list.
+    /// OrderBy: if the tail op is a <see cref="MongoSortOp"/>, REPLACE it (a fresh primary sort, reproducing
+    /// the previous ResetOrderings semantics, so <c>OrderBy(a).OrderBy(b)</c> keeps only b); otherwise append
+    /// a new sort (e.g. an OrderBy after paging).
     /// </summary>
-    public void AppendOrdering(MongoOrdering next)
-        => _orderings.Add(next);
+    public void StartOrReplaceSort(MongoOrdering first)
+    {
+        if (_pipelineOps.Count > 0 && _pipelineOps[^1] is MongoSortOp)
+            _pipelineOps[^1] = new MongoSortOp([first]);
+        else
+            _pipelineOps.Add(new MongoSortOp([first]));
+    }
 
-    // ── Limit / Offset ───────────────────────────────────────────────────────────
+    /// <summary>ThenBy: extends the current (tail) sort. LINQ typing puts an OrderBy/ThenBy immediately before
+    /// a ThenBy, so the tail op is normally a <see cref="MongoSortOp"/> and this appends <paramref name="next"/>
+    /// to it. The one exception is when the preceding OrderBy/ThenBy could NOT be translated to a field (e.g. an
+    /// owned sub-property key) — that arm calls <see cref="MarkNotNativelyRepresentable"/> and appends no sort op,
+    /// so this query is already <see cref="NativeRoute.Fallback"/>. In that case the tail is not a sort op; start
+    /// a fresh one so this never throws (matching the old append-always <c>AppendOrdering</c> behavior). The
+    /// recorded op is inert — a Fallback query never lowers — so this cannot change the native pass-set.</summary>
+    public void AppendThenBy(MongoOrdering next)
+    {
+        if (_pipelineOps.Count > 0 && _pipelineOps[^1] is MongoSortOp sort)
+            _pipelineOps[^1] = new MongoSortOp([.. sort.Orderings, next]);
+        else
+            _pipelineOps.Add(new MongoSortOp([next]));
+    }
 
-    /// <summary>
-    /// The maximum number of documents to return, or <see langword="null"/> for no limit.
-    /// </summary>
-    public MongoExpression? Limit { get; set; }
+    /// <summary>Skip → append a <see cref="MongoSkipOp"/>.</summary>
+    public void AppendSkip(MongoExpression count) => _pipelineOps.Add(new MongoSkipOp(count));
 
-    /// <summary>
-    /// The number of documents to skip before returning results, or <see langword="null"/> for no offset.
-    /// </summary>
-    public MongoExpression? Offset { get; set; }
+    /// <summary>Take (and the synthesized reducer limit) → append a <see cref="MongoLimitOp"/>.</summary>
+    public void AppendLimit(MongoExpression count) => _pipelineOps.Add(new MongoLimitOp(count));
 
-    /// <summary>
-    /// <see langword="true"/> when either <see cref="Offset"/> or <see cref="Limit"/> is populated —
-    /// i.e. paging has already been applied to this select.
-    /// </summary>
-    internal bool HasPaging => Offset != null || Limit != null;
+    /// <summary><see langword="true"/> when any $skip or $limit op is present.</summary>
+    internal bool HasPaging => _pipelineOps.Exists(o => o is MongoSkipOp or MongoLimitOp);
+
+    /// <summary><see langword="true"/> when any $sort op is present.</summary>
+    internal bool HasOrdering => _pipelineOps.Exists(o => o is MongoSortOp);
+
+    /// <summary><see langword="true"/> when any $limit op is present.</summary>
+    internal bool HasLimit => _pipelineOps.Exists(o => o is MongoLimitOp);
 
     // ── Projection ───────────────────────────────────────────────────────────────
 

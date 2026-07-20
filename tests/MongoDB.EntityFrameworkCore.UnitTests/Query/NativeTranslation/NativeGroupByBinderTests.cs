@@ -114,7 +114,7 @@ public class NativeGroupByBinderTests
     public void Paging_present_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.Limit = new MongoConstantExpression(10, null);
+        mongoQ.Select.AppendLimit(new MongoConstantExpression(10, null));
         Expression<Func<Order, string>> key = x => x.Country;
 
         Assert.False(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -125,7 +125,7 @@ public class NativeGroupByBinderTests
     public void Orderings_present_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.AppendOrdering(new MongoOrdering(new MongoConstantExpression(0, null), true));
+        mongoQ.Select.StartOrReplaceSort(new MongoOrdering(new MongoConstantExpression(0, null), true));
         Expression<Func<Order, string>> key = x => x.Country;
 
         Assert.False(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));

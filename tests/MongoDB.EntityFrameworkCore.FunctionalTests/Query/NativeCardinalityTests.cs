@@ -331,23 +331,25 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Null(db.Entities.Average(e => e.NullableValue));
     }
 
-    // ── Aggregate-with-predicate after paging must fall back (EF-SP4 Task 6 defect fix) ────────────
+    // ── Aggregate-with-predicate after paging now goes native (EF-347 Task 3) ──────────────────────
+    // The paging guard in NativeCardinalityBinder.TryBindAggregate (originally added by EF-SP4 Task 6 to
+    // force fallback here) is gone: AddPredicateConjunct always ANDs the injected predicate into — or
+    // appends it after — the TAIL of the ordered op list, i.e. AFTER any $skip/$limit already recorded,
+    // so it can never hoist ahead of the paging. NativeOnly succeeding (rather than throwing) is the proof.
 
     [Fact]
-    public void All_after_Take_falls_back_and_is_correct()
+    public void All_after_Take_goes_native_and_is_correct()
     {
-        // Bare-bool predicate: goes native as a standalone All, but Take(2).All(...) must fall back to
-        // driver-LINQ because injecting the predicate as a $match would run BEFORE the $limit in the
-        // canonical native pipeline order, evaluating All over the wrong row set. First two elements are
-        // both active; the third (excluded by Take(2)) is not, so the whole-set answer would be false
-        // while the correct first-two-only answer is true.
+        // Bare-bool predicate: goes native as a standalone All, and Take(2).All(...) now goes native too.
+        // First two elements are both active; the third (excluded by Take(2)) is not, so the whole-set
+        // answer would be false while the correct first-two-only answer is true.
         using var db = CreateBoolContext(
-            [true, true, false], MongoQueryMode.Native, nameof(All_after_Take_falls_back_and_is_correct) + "native");
-        Assert.True(db.Entities.Take(2).All(e => e.IsActive)); // correct via driver-LINQ fallback
+            [true, true, false], MongoQueryMode.Native, nameof(All_after_Take_goes_native_and_is_correct) + "native");
+        Assert.True(db.Entities.Take(2).All(e => e.IsActive));
 
         using var nativeOnly = CreateBoolContext(
-            [true, true, false], MongoQueryMode.NativeOnly, nameof(All_after_Take_falls_back_and_is_correct) + "only");
-        Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities.Take(2).All(e => e.IsActive));
+            [true, true, false], MongoQueryMode.NativeOnly, nameof(All_after_Take_goes_native_and_is_correct) + "only");
+        Assert.True(nativeOnly.Entities.Take(2).All(e => e.IsActive)); // succeeds under NativeOnly => went native
     }
 
     [Fact]

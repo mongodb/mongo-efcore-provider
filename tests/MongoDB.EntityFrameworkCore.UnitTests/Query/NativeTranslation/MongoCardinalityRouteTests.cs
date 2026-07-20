@@ -31,9 +31,9 @@ public class MongoCardinalityRouteTests
     {
         var select = new MongoSelectDefinition
         {
-            Limit = new MongoConstantExpression(1, forSerialization: null),
             Cardinality = MongoCardinality.ForReducer(MongoReducerKind.First, typeof(object))
         };
+        select.AppendLimit(new MongoConstantExpression(1, forSerialization: null));
         Assert.Equal(NativeRoute.WholeEntity, select.Route);
     }
 

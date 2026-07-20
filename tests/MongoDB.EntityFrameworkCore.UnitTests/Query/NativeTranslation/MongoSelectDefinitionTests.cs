@@ -49,8 +49,73 @@ public class MongoSelectDefinitionTests
         select.AddPredicateConjunct(a);
         select.AddPredicateConjunct(b);
 
-        var binary = Assert.IsType<MongoBinaryExpression>(select.Predicate);
+        var op = Assert.IsType<MongoMatchOp>(Assert.Single(select.PipelineOps));
+        var binary = Assert.IsType<MongoBinaryExpression>(op.Predicate);
         Assert.Equal(MongoBinaryOperator.AndAlso, binary.Operator);
+    }
+
+    // ── Ordered select-op pipeline merge rules (EF-347 Task 1) ──────────────────────
+
+    private static MongoConstantExpression Const(int v) => new(v, forSerialization: null);
+    private static MongoOrdering Asc() => new(Const(1), Ascending: true);
+
+    [Fact]
+    public void Consecutive_predicates_merge_into_one_match_op()
+    {
+        var s = new MongoSelectDefinition();
+        s.AddPredicateConjunct(Const(1));
+        s.AddPredicateConjunct(Const(2));
+
+        var op = Assert.IsType<MongoMatchOp>(Assert.Single(s.PipelineOps));
+        Assert.IsType<MongoBinaryExpression>(op.Predicate); // AndAlso of the two conjuncts
+    }
+
+    [Fact]
+    public void Predicate_after_sort_appends_a_separate_match_op()
+    {
+        var s = new MongoSelectDefinition();
+        s.StartOrReplaceSort(Asc());
+        s.AddPredicateConjunct(Const(1));
+
+        Assert.Collection(s.PipelineOps,
+            o => Assert.IsType<MongoSortOp>(o),
+            o => Assert.IsType<MongoMatchOp>(o));
+    }
+
+    [Fact]
+    public void Consecutive_order_by_replaces_the_sort_op()
+    {
+        var s = new MongoSelectDefinition();
+        s.StartOrReplaceSort(Asc());
+        s.StartOrReplaceSort(new MongoOrdering(Const(2), Ascending: false));
+
+        var op = Assert.IsType<MongoSortOp>(Assert.Single(s.PipelineOps));
+        Assert.False(Assert.Single(op.Orderings).Ascending);
+    }
+
+    [Fact]
+    public void Then_by_extends_the_current_sort_op()
+    {
+        var s = new MongoSelectDefinition();
+        s.StartOrReplaceSort(Asc());
+        s.AppendThenBy(new MongoOrdering(Const(2), Ascending: false));
+
+        var op = Assert.IsType<MongoSortOp>(Assert.Single(s.PipelineOps));
+        Assert.Equal(2, op.Orderings.Count);
+    }
+
+    [Fact]
+    public void Take_before_skip_records_both_ops_in_arrival_order()
+    {
+        var s = new MongoSelectDefinition();
+        s.AppendLimit(Const(10));
+        s.AppendSkip(Const(5));
+
+        Assert.Collection(s.PipelineOps,
+            o => Assert.IsType<MongoLimitOp>(o),
+            o => Assert.IsType<MongoSkipOp>(o));
+        Assert.True(s.HasPaging);
+        Assert.True(s.HasLimit);
     }
 
     [Fact]

@@ -543,7 +543,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$limit" : 1 }
             """);
     }
 
@@ -553,7 +553,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$limit" : 1 }
             """);
     }
 
@@ -573,7 +573,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$limit" : 1 }
             """);
     }
 
@@ -583,7 +583,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 1 }
+            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$match" : { "City" : "London" } }, { "$limit" : 1 }
             """);
     }
 
@@ -1031,7 +1031,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "v" }
             """);
     }
 
@@ -1041,7 +1041,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "v" }
             """);
     }
 
@@ -1051,7 +1051,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$gt" : 10 }, "CustomerID" : { "$ne" : "ALFKI" } } }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$gt" : 10 }, "CustomerID" : { "$ne" : "ALFKI" } } }, { "$count" : "v" }
             """);
     }
 

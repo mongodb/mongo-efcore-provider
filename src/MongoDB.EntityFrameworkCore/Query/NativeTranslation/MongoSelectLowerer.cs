@@ -20,15 +20,16 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Converts the native-translation slots on a <see cref="MongoQueryExpression"/> into
-/// a fully-typed <see cref="MongoPipelineStage"/> list in canonical aggregation pipeline order:
-/// <c>$match → $sort → $skip → $limit → $lookup/$unwind</c>.
+/// Converts the native-translation IR on a <see cref="MongoQueryExpression"/> into a fully-typed
+/// <see cref="MongoPipelineStage"/> list: the filter/sort/page ops (<see cref="MongoSelectDefinition.PipelineOps"/>)
+/// are emitted verbatim in their recorded arrival order (EF-347 — no fixed canonical order), followed by
+/// <c>$lookup</c>/<c>$unwind</c> and any terminal stage (<c>$unionWith</c>/<c>$group</c>/<c>$project</c>/aggregate).
 /// </summary>
 /// <remarks>
 /// <para>
 /// This lowerer is BSON-free. It produces typed stage IR objects only; BSON rendering is the
-/// responsibility of the downstream pipeline renderer/factory. Empty slots are dropped (no
-/// predicate means no <see cref="MongoMatchStage"/>, and so on).
+/// responsibility of the downstream pipeline renderer/factory. An empty <see cref="MongoSelectDefinition.PipelineOps"/>
+/// list means no filter/sort/page ops are emitted at all.
 /// </para>
 /// <para>
 /// Lookup eligibility is guarded here. If the query contains a lookup shape the native pipeline
@@ -39,15 +40,16 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal sealed class MongoSelectLowerer
 {
     /// <summary>
-    /// Lowers the native-translation slots of <paramref name="query"/> into typed pipeline stages.
+    /// Lowers the native-translation IR of <paramref name="query"/> into typed pipeline stages.
     /// </summary>
     /// <param name="query">
-    /// The <see cref="MongoQueryExpression"/> whose native scalar slots (on its
+    /// The <see cref="MongoQueryExpression"/> whose native IR (on its
     /// <see cref="MongoQueryExpression.Select"/>) and lookup state are lowered.
     /// </param>
     /// <returns>
-    /// An ordered, read-only list of <see cref="MongoPipelineStage"/> values in canonical pipeline
-    /// order. Returns an empty list when no slots are populated.
+    /// An ordered, read-only list of <see cref="MongoPipelineStage"/> values: the recorded
+    /// <see cref="MongoSelectDefinition.PipelineOps"/> in arrival order, then lookups/terminal stages.
+    /// Returns an empty list when no ops are populated.
     /// </returns>
     /// <exception cref="NativeTranslationNotSupportedException">
     /// Thrown when the query contains a join or lookup shape that the native pipeline does not support.
@@ -57,23 +59,24 @@ internal sealed class MongoSelectLowerer
         var select = query.Select;
         var stages = new List<MongoPipelineStage>();
 
-        // 1-4. $match → $sort → $skip → $limit — filter / sort / paging.
-        AppendCanonicalStages(select, stages);
+        // 1. $match / $sort / $skip / $limit ops, emitted verbatim in the order they were recorded
+        // (Select.PipelineOps — EF-347: no fixed canonical order; arrival order IS emission order).
+        AppendSelectOpStages(select, stages);
 
-        // 5. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
+        // 2. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
         // A projected collection-navigation Count (NativeProjectionBinder.TryTranslateProjectedCollectionCount)
         // registers an IsNativeCollectionLookup $lookup here (InjectAfterRoot=true) so its _lookup_<Nav> array
-        // is already present by the time stage 6's $project reads it via $size — this canonical ordering
-        // ($lookup before $project) already satisfies that without any lowerer change.
+        // is already present by the time the $project below reads it via $size — placing lookups after the
+        // filter/sort/page block (but before $project) already satisfies that without any lowerer change.
         AppendLookupStages(query, stages);
 
         // Set operation terminal ($unionWith [+ dedup]). Guaranteed terminal and whole-entity by the QMTEV
         // guard (the operand is a plain whole-entity select — no grouping/projection/cardinality/lookups), so
-        // nothing follows it and the operand lowers to canonical stages only.
+        // nothing follows it and the operand lowers to its own filter/sort/page ops only.
         if (select.SetOperation is { } setOp)
         {
             var operandStages = new List<MongoPipelineStage>();
-            AppendCanonicalStages(setOp.OperandSelect, operandStages);
+            AppendSelectOpStages(setOp.OperandSelect, operandStages);
             stages.Add(new MongoUnionWithStage(operandStages, setOp.OperandCollectionName, dedup: setOp.Kind == MongoSetOperationKind.Union));
             return stages;
         }
@@ -111,8 +114,9 @@ internal sealed class MongoSelectLowerer
             return stages;
         }
 
-        // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Last in
-        // canonical order: the projection is the final logical operation for the SP3 terminal slice.
+        // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Emitted
+        // last here: the projection is the final logical operation for the SP3 terminal slice, after
+        // the filter/sort/page ops and any $lookup.
         if (select.Projection.Count > 0)
         {
             stages.Add(new MongoProjectStage(select.Projection));
@@ -145,34 +149,23 @@ internal sealed class MongoSelectLowerer
     }
 
     /// <summary>
-    /// Appends the canonical <c>$match → $sort → $skip → $limit</c> block for <paramref name="select"/>.
-    /// Shared between the outer query and a set-operation operand (<see cref="MongoSetOperation.OperandSelect"/>),
-    /// which is a plain whole-entity select and so only ever needs these four stages.
+    /// Appends the ordered filter/sort/page stages ($match / $sort / $skip / $limit) for
+    /// <paramref name="select"/> in their recorded order. Shared between the outer query and a set-operation
+    /// operand (<see cref="MongoSetOperation.OperandSelect"/>), which is a plain whole-entity select.
     /// </summary>
-    private static void AppendCanonicalStages(MongoSelectDefinition select, List<MongoPipelineStage> stages)
+    private static void AppendSelectOpStages(MongoSelectDefinition select, List<MongoPipelineStage> stages)
     {
-        // 1. $match — filter predicate.
-        if (select.Predicate != null)
+        foreach (var op in select.PipelineOps)
         {
-            stages.Add(new MongoMatchStage(select.Predicate));
-        }
-
-        // 2. $sort — orderings.
-        if (select.Orderings.Count > 0)
-        {
-            stages.Add(new MongoSortStage(select.Orderings));
-        }
-
-        // 3. $skip — offset (pagination start).
-        if (select.Offset != null)
-        {
-            stages.Add(new MongoSkipStage(select.Offset));
-        }
-
-        // 4. $limit — result cap.
-        if (select.Limit != null)
-        {
-            stages.Add(new MongoLimitStage(select.Limit));
+            stages.Add(op switch
+            {
+                MongoMatchOp m => new MongoMatchStage(m.Predicate),
+                MongoSortOp s => new MongoSortStage(s.Orderings),
+                MongoSkipOp k => new MongoSkipStage(k.Count),
+                MongoLimitOp l => new MongoLimitStage(l.Count),
+                _ => throw new NativeTranslationNotSupportedException(
+                    $"Unknown select op '{op.GetType().Name}'.")
+            });
         }
     }
 

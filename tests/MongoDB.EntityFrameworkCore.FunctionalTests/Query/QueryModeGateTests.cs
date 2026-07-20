@@ -44,6 +44,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         public int Score { get; set; }
         public int? NullableScore { get; set; }
         public string? NullableName { get; set; }
+        public bool IsPremium { get; set; }
     }
 
     // ── Test fixtures ───────────────────────────────────────────────────────────────────────────
@@ -53,10 +54,10 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
         bson.InsertMany([
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Dave" }, { "Score", 40 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 }, { "IsPremium", false } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 }, { "IsPremium", false } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 }, { "IsPremium", false } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Dave" }, { "Score", 40 }, { "IsPremium", false } },
         ]);
         return (database.MongoDatabase.GetCollection<Customer>(collectionName), []);
     }
@@ -203,86 +204,164 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         Assert.Contains("$match", Mql(logs));
     }
 
-    // ── Canonical-order guard: paging-then-filter / paging-then-sort must fall back ───────────────
-    // The native lowerer emits stages in canonical order ($match → $sort → $skip → $limit). If an
-    // operator that lowers to $match or $sort is applied AFTER paging (Skip/Take) has already been
-    // recorded, emitting it natively would reorder it ahead of the paging and silently return the
-    // wrong rows. These queries must therefore fall back to the driver-LINQ path under Native (and
-    // throw under NativeOnly).
+    // ── Non-canonical order: paging-then-filter / paging-then-sort now go native (EF-347 Task 2) ──
+    // PipelineOps are emitted verbatim in arrival order — a $match/$sort recorded AFTER paging is
+    // emitted AFTER it too, which is correct by MongoDB's sequential pipeline semantics. These shapes
+    // used to be forced to the driver-LINQ fallback (a canonical-order guard); the guard is gone, and
+    // NativeOnly succeeding (rather than throwing) is the proof these now execute natively.
 
     [Fact]
-    public void Native_where_after_skip_returns_correct_rows_via_fallback()
+    public void Native_where_after_skip_returns_correct_rows()
     {
-        var (collection, logs) = SeedCustomers(nameof(Native_where_after_skip_returns_correct_rows_via_fallback));
+        var (collection, logs) = SeedCustomers(nameof(Native_where_after_skip_returns_correct_rows));
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
 
         // Sorted by Score: Alice(10), Bob(20), Carol(30), Dave(40). Skip(1) drops Alice, leaving
-        // Bob, Carol, Dave; the Where(Score > 25) then keeps Carol and Dave. Emitting $match before
-        // $skip natively would instead keep {Carol, Dave} then skip the first → ["Dave"] (wrong).
+        // Bob, Carol, Dave; the Where(Score > 25) then keeps Carol and Dave — the $match is emitted
+        // AFTER the $skip, matching this sequential evaluation exactly.
         var results = db.Entities.OrderBy(c => c.Score).Skip(1).Where(c => c.Score > 25).ToList();
 
         Assert.Equal(["Carol", "Dave"], results.Select(c => c.Name).ToArray());
     }
 
     [Fact]
-    public void NativeOnly_where_after_skip_throws()
+    public void NativeOnly_where_after_skip_succeeds()
     {
-        var (collection, logs) = SeedCustomers(nameof(NativeOnly_where_after_skip_throws));
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_where_after_skip_succeeds));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        var query = db.Entities.OrderBy(c => c.Score).Skip(1).Where(c => c.Score > 25);
+        // Under NativeOnly a fallback would throw; success proves this shape executes natively.
+        var results = db.Entities.OrderBy(c => c.Score).Skip(1).Where(c => c.Score > 25).ToList();
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
+        Assert.Equal(["Carol", "Dave"], results.Select(c => c.Name).ToArray());
     }
 
     [Fact]
-    public void Native_order_after_skip_returns_correct_rows_via_fallback()
+    public void Native_order_after_skip_returns_correct_rows()
     {
-        var (collection, logs) = SeedCustomers(nameof(Native_order_after_skip_returns_correct_rows_via_fallback));
+        var (collection, logs) = SeedCustomers(nameof(Native_order_after_skip_returns_correct_rows));
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
 
         // Skip(1) (in document/insertion order) drops Alice, leaving Bob, Carol, Dave; then order
-        // those descending by Score → Dave, Carol, Bob. Emitting $sort before $skip natively would
-        // sort the full set first and skip Dave → ["Carol", "Bob"] (wrong).
+        // those descending by Score → Dave, Carol, Bob — the $sort is emitted AFTER the $skip,
+        // matching this sequential evaluation exactly.
         var results = db.Entities.Skip(1).OrderByDescending(c => c.Score).ToList();
 
         Assert.Equal(["Dave", "Carol", "Bob"], results.Select(c => c.Name).ToArray());
     }
 
     [Fact]
-    public void NativeOnly_order_after_skip_throws()
+    public void NativeOnly_order_after_skip_succeeds()
     {
-        var (collection, logs) = SeedCustomers(nameof(NativeOnly_order_after_skip_throws));
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_order_after_skip_succeeds));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        var query = db.Entities.Skip(1).OrderByDescending(c => c.Score);
+        var results = db.Entities.Skip(1).OrderByDescending(c => c.Score).ToList();
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
+        Assert.Equal(["Dave", "Carol", "Bob"], results.Select(c => c.Name).ToArray());
     }
 
     [Fact]
-    public void Native_order_after_take_returns_correct_rows_via_fallback()
+    public void Native_order_after_take_returns_correct_rows()
     {
-        var (collection, logs) = SeedCustomers(nameof(Native_order_after_take_returns_correct_rows_via_fallback));
+        var (collection, logs) = SeedCustomers(nameof(Native_order_after_take_returns_correct_rows));
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
 
         // Take(2) (in document/insertion order) keeps Alice, Bob; then order those descending by
-        // Score → Bob, Alice. Emitting $sort before $limit natively would sort all four descending
-        // and take the first two → ["Dave", "Carol"] (wrong).
+        // Score → Bob, Alice — the $sort is emitted AFTER the $limit, matching this sequential
+        // evaluation exactly.
         var results = db.Entities.Take(2).OrderByDescending(c => c.Score).ToList();
 
         Assert.Equal(["Bob", "Alice"], results.Select(c => c.Name).ToArray());
     }
 
     [Fact]
-    public void NativeOnly_order_after_take_throws()
+    public void NativeOnly_order_after_take_succeeds()
     {
-        var (collection, logs) = SeedCustomers(nameof(NativeOnly_order_after_take_throws));
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_order_after_take_succeeds));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        var query = db.Entities.Take(2).OrderByDescending(c => c.Score);
+        var results = db.Entities.Take(2).OrderByDescending(c => c.Score).ToList();
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
+        Assert.Equal(["Bob", "Alice"], results.Select(c => c.Name).ToArray());
+    }
+
+    // ── Take-before-Skip and repeated paging now go native too (EF-347 Task 2) ─────────────────────
+    // Same PipelineOps-verbatim-order mechanism as above; NativeOnly succeeding is the proof.
+
+    [Fact]
+    public void NativeOnly_take_before_skip_succeeds()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_take_before_skip_succeeds));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // Ordered ascending by Score: Alice(10), Bob(20), Carol(30), Dave(40). Take(3) keeps
+        // Alice, Bob, Carol; Skip(1) then drops Alice, leaving Bob, Carol.
+        var results = db.Entities.OrderBy(c => c.Score).Take(3).Skip(1).ToList();
+
+        Assert.Equal(["Bob", "Carol"], results.Select(c => c.Name).ToArray());
+    }
+
+    [Fact]
+    public void NativeOnly_repeated_paging_succeeds()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_repeated_paging_succeeds));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // Ordered ascending by Score: Alice(10), Bob(20), Carol(30), Dave(40). Skip(1) drops Alice,
+        // leaving Bob, Carol, Dave; Take(2) keeps Bob, Carol; the second Skip(1) then drops Bob,
+        // leaving Carol.
+        var results = db.Entities.OrderBy(c => c.Score).Skip(1).Take(2).Skip(1).ToList();
+
+        Assert.Equal(["Carol"], results.Select(c => c.Name).ToArray());
+    }
+
+    // ── A predicate-injecting aggregate after paging now goes native too (EF-347 Task 3) ───────────
+    // The injected $match (All's negated predicate, or an unnormalized Count/Any predicate) is ANDed
+    // into the TAIL of the ordered op list via AddPredicateConjunct, i.e. AFTER any $skip/$limit
+    // already recorded — so it correctly evaluates over only the paged rows. NativeOnly succeeding
+    // (rather than throwing) is the proof.
+
+    [Fact]
+    public void NativeOnly_take_then_all_with_predicate_succeeds()
+    {
+        // A bare-bool predicate (no comparison to negate) is used here rather than e.g. `c.Score < 15`:
+        // All(pred) always negates the predicate (Expression.Not(predicate.Body)) to push it as a $match,
+        // and MongoQueryLanguageRenderer.RenderUnary only supports Not over a bare-bool MongoFieldExpression
+        // — negating a comparison is a SEPARATE, pre-existing, out-of-scope gap (EF-335; see
+        // NativeCardinalityTests.All_with_failing_element_is_false). Using a bool field isolates this test
+        // to the paging guard this task removes.
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(NativeOnly_take_then_all_with_predicate_succeeds)) + Guid.NewGuid().ToString("N")[..8];
+        var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
+        bson.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 }, { "IsPremium", true } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 }, { "IsPremium", false } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 }, { "IsPremium", true } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Dave" }, { "Score", 40 }, { "IsPremium", true } },
+        ]);
+        var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
+        var logs = new List<string>();
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // Ordered ascending by Score: Alice(10, premium), Bob(20, NOT premium), Carol(30), Dave(40).
+        // Take(2) keeps only Alice and Bob; Bob fails the predicate, so All must be false.
+        var result = db.Entities.OrderBy(c => c.Score).Take(2).All(c => c.IsPremium);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void NativeOnly_take_then_count_with_predicate_succeeds()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_take_then_count_with_predicate_succeeds));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // Ordered ascending by Score: Alice(10), Bob(20), Carol(30), Dave(40). Take(2) keeps only
+        // Alice and Bob; only Bob (20) has Score > 15, so the count is 1.
+        var result = db.Entities.OrderBy(c => c.Score).Take(2).Count(c => c.Score > 15);
+
+        Assert.Equal(1, result);
     }
 
     // ── EF-329: nullable equality / `== null` are natively representable ──────────────────────────
@@ -330,9 +409,9 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
             nameof(NativeOnly_nullable_inequality_does_not_throw)) + Guid.NewGuid().ToString("N")[..8];
         var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
         bson.InsertMany([
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 }, { "NullableScore", 5 } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 }, { "NullableScore", 7 } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 } }, // omits NullableScore
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 }, { "NullableScore", 5 }, { "IsPremium", false } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 }, { "NullableScore", 7 }, { "IsPremium", false } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 }, { "IsPremium", false } }, // omits NullableScore
         ]);
         var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
         var logs = new List<string>();
@@ -363,9 +442,9 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
             nameof(NativeOnly_nullable_string_inequality_does_not_throw)) + Guid.NewGuid().ToString("N")[..8];
         var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
         bson.InsertMany([
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 }, { "NullableName", "present" } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 }, { "NullableName", BsonNull.Value } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 } }, // omits NullableName
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Score", 10 }, { "NullableName", "present" }, { "IsPremium", false } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Score", 20 }, { "NullableName", BsonNull.Value }, { "IsPremium", false } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Score", 30 }, { "IsPremium", false } }, // omits NullableName
         ]);
         var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
         var logs = new List<string>();

@@ -51,7 +51,7 @@ internal static class NativeGroupByBinder
         var select = mongoQ.Select;
 
         // Post-group paging / ordering on top of a pre-existing select is out of scope; fall back.
-        if (select.HasPaging || select.Orderings.Count > 0)
+        if (select.HasPaging || select.HasOrdering)
             return false;
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);

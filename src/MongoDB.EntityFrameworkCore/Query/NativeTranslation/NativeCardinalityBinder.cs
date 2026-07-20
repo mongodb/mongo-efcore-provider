@@ -43,7 +43,7 @@ internal static class NativeCardinalityBinder
         // TryBindAggregate below). A reducer applied AFTER a finalized GroupBy(key).Select(anon) must fall
         // back: a reducer sets Cardinality.Reducer (not .Aggregate), so Route stays GroupBy and the lowerer
         // emits the [$group, $project] pipeline — but the reducer would also stamp a $limit onto that grouped
-        // pipeline (select.Limit below), truncating the group rows and yielding a wrong/non-deterministic
+        // pipeline (select.AppendLimit below), truncating the group rows and yielding a wrong/non-deterministic
         // single result instead of reducing over the grouped sequence. Fall back cleanly. See the Query
         // AGENTS.md GroupBy note. (The aggregate path in TryBindAggregate is worse — it flips Route to
         // ScalarAggregate and crashes; documented there.) IsDistinct rides the same guard: a projected Distinct
@@ -54,11 +54,11 @@ internal static class NativeCardinalityBinder
 
         // A user Take/Skip already populated the limit slot; composing a reducer limit on top is not
         // representable in canonical order. Fall back rather than reconcile two limits.
-        if (select.Limit != null)
+        if (select.HasLimit)
             return false;
 
         var limit = kind is MongoReducerKind.Single or MongoReducerKind.SingleOrDefault ? 2 : 1;
-        select.Limit = new MongoConstantExpression(limit, forSerialization: null);
+        select.AppendLimit(new MongoConstantExpression(limit, forSerialization: null));
         select.Cardinality = MongoCardinality.ForReducer(kind, resultType);
         return true;
     }
@@ -103,15 +103,12 @@ internal static class NativeCardinalityBinder
         }
 
         // An aggregate that injects a predicate as a $match (All always does; Count/Any defensively when an
-        // unnormalized predicate overload reaches here) must run BEFORE any Take/Skip already applied to the
-        // select, since the canonical native pipeline order is $match -> $sort -> $skip -> $limit. If paging
-        // is already populated, injecting the predicate here would hoist it ahead of the $skip/$limit and
-        // evaluate it over the wrong row set (e.g. Take(n).All(pred) must see only the first n rows). Fall
-        // back to driver-LINQ rather than attempt a windowing rewrite. Aggregates that do NOT inject a
-        // predicate (plain Count()/Sum(x => x.V) after Take) are unaffected and stay native.
-        var injectsPredicate = op is MongoAggregateOperator.All || predicate != null;
-        if (injectsPredicate && select.HasPaging)
-            return false;
+        // unnormalized predicate overload reaches here) is safe to inject even when paging (Take/Skip) is
+        // already present on the select: AddPredicateConjunct (below) always ANDs into — or appends after —
+        // the TAIL of the ordered op list, i.e. AFTER any $skip/$limit already recorded, never hoisting ahead
+        // of it. So Take(n).All(pred)/Count(pred)/Any(pred) correctly evaluate the predicate over only the
+        // first n rows, matching MongoDB's sequential pipeline semantics (EF-347 Task 3 — this used to be a
+        // guarded fallback before the ordered op list made tail-append the natural, always-correct behavior).
 
         if (op is MongoAggregateOperator.All)
         {

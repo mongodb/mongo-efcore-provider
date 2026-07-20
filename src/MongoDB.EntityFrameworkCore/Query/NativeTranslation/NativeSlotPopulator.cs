@@ -21,10 +21,11 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Populates the native-translation slots (<see cref="Expressions.MongoSelectDefinition"/> Predicate /
-/// Orderings / Offset / Limit) on a <see cref="Expressions.MongoQueryExpression"/> for the seven
-/// slot-bearing LINQ operators, and owns the whitelist that suppresses the non-native catch-all. Extracted
-/// from the QMTEV (EF-332) so native-translation logic no longer lives inside the EF query dispatcher.
+/// Populates the native-translation ops (<see cref="Expressions.MongoSelectDefinition.PipelineOps"/> —
+/// match / sort / skip / limit, recorded in arrival order, EF-347) on a
+/// <see cref="Expressions.MongoQueryExpression"/> for the seven slot-bearing LINQ operators, and owns the
+/// whitelist that suppresses the non-native catch-all. Extracted from the QMTEV (EF-332) so
+/// native-translation logic no longer lives inside the EF query dispatcher.
 /// </summary>
 internal static class NativeSlotPopulator
 {
@@ -70,16 +71,9 @@ internal static class NativeSlotPopulator
 
         if (methodDefinition == QueryableMethods.Where)
         {
-            // Canonical-order guard: the native lowerer emits $match → $sort → $skip → $limit. A Where
-            // (→ $match) applied AFTER any paging (Skip → Offset, or Take → Limit) has already been
-            // recorded would be hoisted ahead of that paging on the native pipeline, silently returning
-            // the wrong rows. Such a query is not natively representable; fall back to driver-LINQ.
-            if (PagingAlreadyApplied(mongoQ))
-            {
-                mongoQ.Select.MarkNotNativelyRepresentable();
-                return;
-            }
-
+            // PipelineOps are emitted verbatim in arrival order (EF-347 Task 2): a Where (→ $match)
+            // applied AFTER paging is recorded AFTER it too, and the lowerer emits ops in that same
+            // order — correct by MongoDB's sequential pipeline semantics. No canonical-order guard.
             var predicate = call.Arguments[1].UnwrapLambdaFromQuote();
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
                 mongoQ.Select.AddPredicateConjunct(predicateNode);
@@ -88,64 +82,43 @@ internal static class NativeSlotPopulator
         }
         else if (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending)
         {
-            // Canonical-order guard: a $sort emitted after paging ($skip/$limit) has been recorded would
-            // be hoisted ahead of it on the native pipeline, sorting the full set instead of the page and
-            // returning the wrong rows. Not natively representable; fall back to driver-LINQ.
-            if (PagingAlreadyApplied(mongoQ))
-            {
-                mongoQ.Select.MarkNotNativelyRepresentable();
-                return;
-            }
-
+            // Same as Where above (EF-347 Task 2): a $sort recorded after paging is emitted after it,
+            // verbatim — correct by sequential pipeline semantics. No canonical-order guard.
             var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
             var ascending = methodDefinition == QueryableMethods.OrderBy;
             if (translator.TryTranslateField(keySelector.Body, out var keyNode))
-                mongoQ.Select.ResetOrderings(new MongoOrdering(keyNode, ascending));
+                mongoQ.Select.StartOrReplaceSort(new MongoOrdering(keyNode, ascending));
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
         else if (methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending)
         {
-            // Same canonical-order guard as OrderBy: a $sort after paging is not natively representable.
-            if (PagingAlreadyApplied(mongoQ))
-            {
-                mongoQ.Select.MarkNotNativelyRepresentable();
-                return;
-            }
-
+            // Same as OrderBy above (EF-347 Task 2): no canonical-order guard.
             var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
             var ascending = methodDefinition == QueryableMethods.ThenBy;
             if (translator.TryTranslateField(keySelector.Body, out var keyNode))
-                mongoQ.Select.AppendOrdering(new MongoOrdering(keyNode, ascending));
+                mongoQ.Select.AppendThenBy(new MongoOrdering(keyNode, ascending));
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
         else if (methodDefinition == QueryableMethods.Skip)
         {
-            // Enforce canonical order: Skip once, before Take.
-            if (mongoQ.Select.Offset != null || mongoQ.Select.Limit != null)
-            {
+            // Repeated / non-canonical-order paging is natively representable (EF-347 Task 2): each
+            // Skip appends a $skip op at its arrival position, and the lowerer emits ops verbatim.
+            var count = TranslateCountExpression(call.Arguments[1]);
+            if (count is null)
                 mongoQ.Select.MarkNotNativelyRepresentable();
-            }
             else
-            {
-                mongoQ.Select.Offset = TranslateCountExpression(call.Arguments[1]);
-                if (mongoQ.Select.Offset is null)
-                    mongoQ.Select.MarkNotNativelyRepresentable();
-            }
+                mongoQ.Select.AppendSkip(count);
         }
         else if (methodDefinition == QueryableMethods.Take)
         {
-            if (mongoQ.Select.Limit != null)
-            {
+            // Same as Skip above (EF-347 Task 2): repeated / non-canonical-order Take is representable.
+            var count = TranslateCountExpression(call.Arguments[1]);
+            if (count is null)
                 mongoQ.Select.MarkNotNativelyRepresentable();
-            }
             else
-            {
-                mongoQ.Select.Limit = TranslateCountExpression(call.Arguments[1]);
-                if (mongoQ.Select.Limit is null)
-                    mongoQ.Select.MarkNotNativelyRepresentable();
-            }
+                mongoQ.Select.AppendLimit(count);
         }
         else if (TryGetReducerKind(methodDefinition, out var reducerKind))
         {
@@ -168,13 +141,6 @@ internal static class NativeSlotPopulator
             mongoQ.Select.MarkNotNativelyRepresentable();
         }
     }
-
-    // Canonical-order guard shared by the Where / OrderBy / OrderByDescending / ThenBy / ThenByDescending
-    // arms: once any paging ($skip → Offset, or $take → Limit) has been recorded, a later $match/$sort would
-    // be hoisted ahead of it on the canonical native pipeline and silently return the wrong rows, so the
-    // query is not natively representable.
-    private static bool PagingAlreadyApplied(MongoQueryExpression mongoQ)
-        => mongoQ.Select.HasPaging;
 
     // The seven slot operators whose native lowering (a $match / $sort / $skip / $limit) would be emitted
     // BEFORE a $group when applied after a GroupBy — so they must force fallback on a grouped query (see the

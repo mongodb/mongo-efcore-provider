@@ -132,7 +132,7 @@ public class SlotPopulationTests
     {
         var mongoQ = TranslateToMongoQuery<Customer>(q => q.Where(c => c.Age > 21));
 
-        Assert.NotNull(mongoQ.Select.Predicate);
+        Assert.IsType<MongoMatchOp>(Assert.Single(mongoQ.Select.PipelineOps));
         Assert.Equal(NativeRoute.WholeEntity, mongoQ.Select.Route);
         Assert.NotNull(mongoQ.CapturedExpression);
     }
@@ -145,20 +145,66 @@ public class SlotPopulationTests
         var mongoQ = TranslateToMongoQuery<Customer>(
             q => q.OrderBy(c => c.Age).ThenByDescending(c => c.Name));
 
-        Assert.Equal(2, mongoQ.Select.Orderings.Count);
-        Assert.True(mongoQ.Select.Orderings[0].Ascending);
-        Assert.False(mongoQ.Select.Orderings[1].Ascending);
+        var sort = Assert.IsType<MongoSortOp>(Assert.Single(mongoQ.Select.PipelineOps));
+        Assert.Equal(2, sort.Orderings.Count);
+        Assert.True(sort.Orderings[0].Ascending);
+        Assert.False(sort.Orderings[1].Ascending);
     }
 
-    // ── Test 3: Where after Take → non-canonical → Route = Fallback ──────────────
+    // ── Test 3: Where after Take → non-canonical, now natively representable (EF-347 Task 2) ────
+    // The lowerer emits PipelineOps verbatim in arrival order, so a $match recorded AFTER a $limit
+    // is emitted AFTER it too — correct by MongoDB's sequential pipeline semantics. No more guard.
 
     [Fact]
-    public void Where_after_Take_is_not_native_representable()
+    public void Where_after_Take_is_native_representable()
     {
         var mongoQ = TranslateToMongoQuery<Customer>(q => q.Take(10).Where(c => c.Age > 21));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+        Assert.Collection(mongoQ.Select.PipelineOps,
+            o => Assert.IsType<MongoLimitOp>(o),
+            o => Assert.IsType<MongoMatchOp>(o));
+        Assert.False(mongoQ.Select.Route == NativeRoute.Fallback);
         Assert.NotNull(mongoQ.CapturedExpression);
+    }
+
+    // ── EF-347 Task 2: non-canonical Skip/Take families now go native ────────────────────────────
+    // Correctness is by MongoDB's sequential pipeline semantics — PipelineOps are emitted verbatim
+    // in arrival order, so these are no longer forced to Fallback. See QueryModeGateTests for the
+    // end-to-end (NativeOnly) proof that these shapes actually execute natively and return correct
+    // rows; these unit tests assert only the recorded op ordering / Route.
+
+    [Fact]
+    public void Take_before_Skip_is_native_representable()
+    {
+        var mongoQ = TranslateToMongoQuery<Customer>(q => q.Take(10).Skip(5));
+
+        Assert.Collection(mongoQ.Select.PipelineOps,
+            o => Assert.IsType<MongoLimitOp>(o),
+            o => Assert.IsType<MongoSkipOp>(o));
+        Assert.False(mongoQ.Select.Route == NativeRoute.Fallback);
+    }
+
+    [Fact]
+    public void Where_after_Skip_is_native_representable()
+    {
+        var mongoQ = TranslateToMongoQuery<Customer>(q => q.Skip(1).Where(c => c.Age > 21));
+
+        Assert.Collection(mongoQ.Select.PipelineOps,
+            o => Assert.IsType<MongoSkipOp>(o),
+            o => Assert.IsType<MongoMatchOp>(o));
+        Assert.False(mongoQ.Select.Route == NativeRoute.Fallback);
+    }
+
+    [Fact]
+    public void Repeated_paging_is_native_representable()
+    {
+        var mongoQ = TranslateToMongoQuery<Customer>(q => q.Skip(2).Take(3).Skip(1));
+
+        Assert.Collection(mongoQ.Select.PipelineOps,
+            o => Assert.IsType<MongoSkipOp>(o),
+            o => Assert.IsType<MongoLimitOp>(o),
+            o => Assert.IsType<MongoSkipOp>(o));
+        Assert.False(mongoQ.Select.Route == NativeRoute.Fallback);
     }
 
     // ── Test 4: Projecting Select → Route = Fallback ──────────────────────────────

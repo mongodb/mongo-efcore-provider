@@ -1196,7 +1196,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Orders.{ "$limit" : 5 }, { "$sort" : { "_id" : 1 } }, { "$count" : "_v" }
+            Orders.{ "$limit" : 5 }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
             """);
     }
 
@@ -1648,7 +1648,7 @@ Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$project" : { "_out
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 4 }, { "$limit" : 7 }, { "$match" : { "_id" : { "$not" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 4 }, { "$limit" : 7 }, { "$match" : { "_id" : { "$not" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } } }, { "$limit" : 1 }
             """);
     }
 
@@ -1658,7 +1658,7 @@ Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$project" : { "_out
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 4 }, { "$match" : { "_id" : { "$not" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 4 }, { "$match" : { "_id" : { "$not" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } } }, { "$limit" : 1 }
             """);
     }
 
@@ -1668,7 +1668,7 @@ Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$project" : { "_out
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$limit" : 7 }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^C", "options" : "s" } } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$limit" : 7 }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^C", "options" : "s" } } } }, { "$limit" : 1 }
             """);
     }
 
@@ -1678,7 +1678,7 @@ Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$project" : { "_out
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 5 }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$limit" : 1 }
             """);
     }
 
