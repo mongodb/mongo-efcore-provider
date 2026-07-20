@@ -60,10 +60,15 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Intersect(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Intersect(async));
-    }
+        // EF-347: a whole-entity, terminal Intersect over the same entity type now goes native (source-
+        // tagging $unionWith pipeline) instead of hard-failing translation.
+        await base.Intersect(async);
 
+        AssertMql(
+            """
+            Customers.{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
+    }
 
     public override async Task Union(bool async)
     {
@@ -87,11 +92,15 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Except(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except(async));
+        // EF-347: a whole-entity, terminal Except over the same entity type now goes native (source-tagging
+        // $unionWith pipeline) instead of hard-failing translation. Was previously tagged "Cross-document
+        // navigation access issue EF-216" (Except hard-failed unconditionally pre-EF-347).
+        await base.Except(async);
 
         AssertMql(
-        );
+            """
+            Customers.{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Union_OrderBy_Skip_Take(bool async)
@@ -709,11 +718,19 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
     public override async Task Except_simple_followed_by_projecting_constant(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+        // Fails: EF-347 -- Select(constant) after a whole-entity terminal Except composes past the IsSetOp
+        // terminal gate, so translation falls back to driver-LINQ (a graceful MarkNotNativelyRepresentable(),
+        // not a translation-time hard fail); the driver's own LINQ v3 provider has no Except translation at
+        // all, so it throws ExpressionNotSupportedException mid-enumeration -- after QueryingEnumerable's
+        // logging try/finally has already fired with whatever partial LoggedStages existed (none, here), so
+        // a single empty-pipeline "Customers." entry is logged despite the failure. Was previously tagged
+        // "Cross-document navigation access issue EF-216" (Except hard-failed unconditionally pre-EF-347).
         await AssertTranslationFailed(() => base.Except_simple_followed_by_projecting_constant(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task Except_nested(bool async)

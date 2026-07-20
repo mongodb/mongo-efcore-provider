@@ -170,6 +170,8 @@ internal static class NativeSlotPopulator
            || methodDefinition == QueryableMethods.Distinct
            || methodDefinition == QueryableMethods.Union
            || methodDefinition == QueryableMethods.Concat
+           || methodDefinition == QueryableMethods.Intersect
+           || methodDefinition == QueryableMethods.Except
            || methodDefinition == QueryableMethods.SelectManyWithCollectionSelector
            || methodDefinition == QueryableMethods.GroupByWithKeySelector
            || methodDefinition == QueryableMethods.GroupByWithKeyElementSelector

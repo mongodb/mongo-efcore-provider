@@ -946,7 +946,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => null;
 
     protected override ShapedQueryExpression? TranslateExcept(ShapedQueryExpression source1, ShapedQueryExpression source2)
-        => null;
+        => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Except);
 
     protected override ShapedQueryExpression? TranslateFirstOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
         Type returnType, bool returnDefault)
@@ -1011,7 +1011,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector);
 
     protected override ShapedQueryExpression? TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2)
-        => null;
+        => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Intersect);
 
     protected override ShapedQueryExpression? TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
@@ -1425,12 +1425,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     protected override ShapedQueryExpression? TranslateUnion(ShapedQueryExpression source1, ShapedQueryExpression source2)
         => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Union);
 
-    // Native whole-entity, terminal Union/Concat -> a $unionWith on source1's select. ALWAYS returns a
+    // Native whole-entity, terminal Union/Concat/Intersect/Except -> a $unionWith (or source-tagging
+    // $unionWith pipeline, for Intersect/Except) on source1's select. Union/Concat ALWAYS return a
     // non-null shaped query (source1): native when both operands are plain natively-lowerable whole-entity
     // selects of the same type, otherwise source1 marked non-native so the query falls back GRACEFULLY to
-    // driver-LINQ (throws only under NativeOnly). Never returns null (would become a hard NotTranslated in
-    // the VisitMethodCall switch body). Mirrors TranslateGroupBy's always-non-null contract.
-    private ShapedQueryExpression TryTranslateSetOperation(
+    // driver-LINQ (throws only under NativeOnly) -- mirrors TranslateGroupBy's always-non-null contract.
+    // Intersect/Except differ on the guard-decline path -- see the comment below.
+    private ShapedQueryExpression? TryTranslateSetOperation(
         ShapedQueryExpression source1, ShapedQueryExpression source2, MongoSetOperationKind kind)
     {
         var mongo1 = (MongoQueryExpression)source1.QueryExpression;
@@ -1441,13 +1442,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             mongo1.Select.SetOperation = new MongoSetOperation(kind, mongo2.Select, mongo2.CollectionExpression.CollectionName);
             mongo1.Select.IsSetOp = true;
-        }
-        else
-        {
-            mongo1.Select.MarkNotNativelyRepresentable();
+            return source1;
         }
 
-        // Same-entity-type both sides -> source1's whole-entity shaper materializes every union row.
+        // Out of scope. Union/Concat have a working driver-LINQ fallback, so mark non-native and return
+        // source1 -> graceful fallback (throws only under NativeOnly). Intersect/Except have NO driver-LINQ
+        // fallback (Task 1 probe confirmed the driver's LINQ v3 provider does not translate a cross-view
+        // Intersect/Except), so returning source1 would route to a fallback that then fails at execution;
+        // instead return null so the shape reaches EF's NotTranslatedExpression path and hard-fails cleanly
+        // in every mode (mirroring how reference SelectMany declines its no-baseline shapes).
+        if (kind is MongoSetOperationKind.Intersect or MongoSetOperationKind.Except)
+        {
+            return null;
+        }
+
+        mongo1.Select.MarkNotNativelyRepresentable();
         return source1;
     }
 

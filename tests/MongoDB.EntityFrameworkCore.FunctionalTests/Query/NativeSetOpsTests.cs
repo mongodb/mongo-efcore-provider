@@ -30,22 +30,29 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
 /// EF-347 (Task 4, slice 2) native <c>Union</c>/<c>Concat</c> -&gt; a <c>$unionWith</c> stage (<c>Union</c>
-/// additionally dedups via <c>$group{_id:"$$ROOT"}</c> + <c>$replaceRoot</c>). Proves that a supported
-/// whole-entity, terminal <c>Union</c>/<c>Concat</c> over the SAME entity type executes as a native
-/// aggregation pipeline (rather than falling back to driver-LINQ), with correct dedup/duplicate-keeping
-/// semantics, and that out-of-scope shapes (<c>Intersect</c>/<c>Except</c>, a projected union, an operand
-/// carrying an <c>Include</c>, and mismatched operand entity types) fall back to driver-LINQ gracefully --
-/// correct results under <see cref="MongoQueryMode.Native"/>, throwing
-/// <see cref="NativeTranslationNotSupportedException"/> only under <see cref="MongoQueryMode.NativeOnly"/>
-/// (the "went native" signal). Unlike plain filter/sort/paging shapes (see the Query area AGENTS.md "MQL
-/// shape cannot prove native" pitfall), the <c>$unionWith</c>/<c>$group</c>/<c>$replaceRoot</c> shape IS
-/// distinctive versus the driver-LINQ fallback, so both the MQL shape AND the <c>NativeOnly</c> signal are
-/// asserted for the native-success tests.
+/// additionally dedups via <c>$group{_id:"$$ROOT"}</c> + <c>$replaceRoot</c>), and (Task 2 of the
+/// Intersect/Except sub-project) native <c>Intersect</c>/<c>Except</c> -&gt; a source-tagging
+/// <c>$unionWith</c> pipeline (each side deduped and tagged, re-unified by full document, discriminated by
+/// a final <c>$match</c>, unwrapped via <c>$replaceRoot</c>). Proves that a supported whole-entity, terminal
+/// <c>Union</c>/<c>Concat</c>/<c>Intersect</c>/<c>Except</c> over the SAME entity type executes as a native
+/// aggregation pipeline (rather than falling back to driver-LINQ, or -- for Intersect/Except -- hard-failing
+/// translation), with correct dedup/duplicate-keeping/intersection/difference semantics, and that
+/// out-of-scope shapes (a projected union, an operand carrying an <c>Include</c>, and mismatched operand
+/// entity types) fall back to driver-LINQ gracefully -- correct results under
+/// <see cref="MongoQueryMode.Native"/>, throwing <see cref="NativeTranslationNotSupportedException"/> only
+/// under <see cref="MongoQueryMode.NativeOnly"/> (the "went native" signal). Unlike plain filter/sort/paging
+/// shapes (see the Query area AGENTS.md "MQL shape cannot prove native" pitfall), the
+/// <c>$unionWith</c>/<c>$group</c>/<c>$replaceRoot</c> shape IS distinctive versus the driver-LINQ fallback,
+/// so both the MQL shape AND the <c>NativeOnly</c> signal are asserted for the native-success tests. Unlike
+/// Union/Concat, an out-of-scope Intersect/Except shape has NO driver-LINQ fallback at all (confirmed by a
+/// prior spike), so it hard-fails translation in every mode rather than falling back gracefully.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
-    private class Item
+    // Public (not private): IntersectComposedOps's MemberData exposes Func<IQueryable<Item>, object> on a
+    // public test method parameter, which requires Item to be at least as accessible as that method.
+    public class Item
     {
         public ObjectId Id { get; set; }
         public string Name { get; set; } = "";
@@ -131,6 +138,200 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.DoesNotContain("$group", mql); // no dedup stage for Concat
     }
 
+    [Fact]
+    public void Intersect_whole_entity_goes_native()
+    {
+        var collection = SeedCollection(nameof(Intersect_whole_entity_goes_native));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        // Set op stays TERMINAL (a queryable .OrderBy after it composes past the terminal gate and would
+        // fall back / throw under NativeOnly). Result order is not guaranteed, so sort the materialized list.
+        var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3)).ToList();
+
+        Assert.Equal([3], result.Select(i => i.Value).OrderBy(v => v)); // present in both {1,2,3} and {3,4,5}
+
+        var mql = Mql(logs);
+        Assert.Contains("$unionWith", mql);
+        Assert.Contains("$replaceRoot", mql);
+        Assert.Contains("_doc", mql);   // the source-tagging shape
+    }
+
+    [Fact]
+    public void Except_whole_entity_goes_native()
+    {
+        var collection = SeedCollection(nameof(Except_whole_entity_goes_native));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        var result = db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 3)).ToList();
+
+        Assert.Equal([1, 2], result.Select(i => i.Value).OrderBy(v => v)); // in {1,2,3}, not in {3,4,5}
+
+        var mql = Mql(logs);
+        Assert.Contains("$unionWith", mql);
+        Assert.Contains("$replaceRoot", mql);
+    }
+
+    // ── Intersect/Except result-set correctness (EF-347 Task 3): NO driver-LINQ oracle exists for these
+    // operators (confirmed by a prior spike), so results are verified against expected in-memory
+    // (LINQ-to-Objects) data rather than Native == DriverLinq parity. The set op MUST stay TERMINAL in
+    // every one of these -- a queryable .OrderBy/.Where/.Count() applied AFTER Intersect/Except composes
+    // past the terminal gate, falls back, and the driver can't do Intersect/Except either, so it throws
+    // (see the composition-seam tests below). Sort the MATERIALIZED list in memory instead. ─────────────
+
+    [Fact]
+    public void Intersect_disjoint_operands_yields_empty()
+    {
+        var collection = SeedCollection(nameof(Intersect_disjoint_operands_yields_empty));
+        using var db = Make(collection, MongoQueryMode.Native);
+        var result = db.Entities.Where(i => i.Value <= 2).Intersect(db.Entities.Where(i => i.Value >= 4)).ToList();
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Except_disjoint_operands_yields_all_of_first()
+    {
+        var collection = SeedCollection(nameof(Except_disjoint_operands_yields_all_of_first));
+        using var db = Make(collection, MongoQueryMode.Native);
+        var result = db.Entities.Where(i => i.Value <= 2).Except(db.Entities.Where(i => i.Value >= 4)).ToList();
+        Assert.Equal([1, 2], result.Select(i => i.Value).OrderBy(v => v));
+    }
+
+    [Fact]
+    public void Intersect_full_overlap_yields_deduped_first()
+    {
+        var collection = SeedCollection(nameof(Intersect_full_overlap_yields_deduped_first));
+        using var db = Make(collection, MongoQueryMode.Native);
+        var result = db.Entities.Where(i => i.Value >= 1).Intersect(db.Entities.Where(i => i.Value >= 1)).ToList();
+        Assert.Equal([1, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+    }
+
+    [Fact]
+    public void Except_whole_second_operand_yields_empty()
+    {
+        var collection = SeedCollection(nameof(Except_whole_second_operand_yields_empty));
+        using var db = Make(collection, MongoQueryMode.Native);
+        var result = db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 1)).ToList();
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Intersect_parametrized_operand_predicate_substitutes()
+    {
+        var collection = SeedCollection(nameof(Intersect_parametrized_operand_predicate_substitutes));
+        using var db = Make(collection, MongoQueryMode.NativeOnly); // NativeOnly => proves it went native (would throw on fallback)
+        var threshold = 3;
+        var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= threshold)).ToList();
+        Assert.Equal([3], result.Select(i => i.Value).OrderBy(v => v)); // captured `threshold` substitutes inside the operand pipeline
+    }
+
+    // ── Guard decline: out-of-scope Intersect/Except must hard-fail in EVERY mode (no graceful fallback --
+    // there is no driver-LINQ oracle for Intersect/Except at all) ──────────────────────────────────────
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Projected_intersect_hard_fails_in_every_mode(MongoQueryMode mode)
+    {
+        var collection = SeedCollection(nameof(Projected_intersect_hard_fails_in_every_mode) + mode);
+        using var db = Make(collection, mode);
+        Assert.ThrowsAny<Exception>(() =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => i.Value)
+                .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => i.Value)).ToList());
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Except_then_Where_hard_fails_in_every_mode(MongoQueryMode mode)
+    {
+        var collection = SeedCollection(nameof(Except_then_Where_hard_fails_in_every_mode) + mode);
+        using var db = Make(collection, mode);
+        Assert.ThrowsAny<Exception>(() =>
+            db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 3))
+                .Where(i => i.Value > 0).ToList());
+    }
+
+    // ── Composition-seam hard-fail (EF-347 Task 3): the IsSetOp terminal gate rejects every operator
+    // composed after Intersect/Except. Because there is no driver fallback for Intersect/Except, these
+    // hard-fail in every mode rather than falling back gracefully like the Union/Concat seam tests above. ──
+
+    public static IEnumerable<object[]> IntersectComposedOps() => new[]
+    {
+        new object[] { "OrderBy", (Func<IQueryable<Item>, object>)(q => q.OrderBy(i => i.Value).ToList()) },
+        new object[] { "Skip",    (Func<IQueryable<Item>, object>)(q => q.Skip(1).ToList()) },
+        new object[] { "Take",    (Func<IQueryable<Item>, object>)(q => q.Take(1).ToList()) },
+        new object[] { "GroupBy", (Func<IQueryable<Item>, object>)(q => q.GroupBy(i => i.Value).Select(g => g.Key).ToList()) },
+    };
+
+    [Theory]
+    [MemberData(nameof(IntersectComposedOps))]
+    public void Intersect_then_op_hard_fails_under_native(string name, Func<IQueryable<Item>, object> compose)
+    {
+        var collection = SeedCollection(nameof(Intersect_then_op_hard_fails_under_native) + name);
+        using var db = Make(collection, MongoQueryMode.Native);
+        var q = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3));
+        Assert.ThrowsAny<Exception>(() => compose(q));
+    }
+
+    // ── Field-name-collision isolation (EF-347 Task 3): RenderSetDifference tags each side of the
+    // $unionWith with sibling fields _a/_b under a synthesized _doc wrapper (see MongoPipelineFactory).
+    // A real stored element literally named _a must not collide with that tag -- it lives INSIDE _doc
+    // (_doc.<realField>), never as a sibling of it. Confirmed [BsonElement] is honored via
+    // BsonElementAttributeConvention (Metadata/Conventions/BsonAttributes) -- same mechanism as the
+    // driver's own attribute, and distinct from the fluent .HasElementName(...) used elsewhere in this
+    // file/CrossCollection*Tests.cs; either forces a non-default stored element name. ──────────────────
+
+    private class TaggyItem
+    {
+        public ObjectId Id { get; set; }
+
+        [MongoDB.Bson.Serialization.Attributes.BsonElement("_a")] // a real stored element literally named _a
+        public int A { get; set; }
+
+        public int Value { get; set; }
+    }
+
+    private IMongoCollection<TaggyItem> SeedTaggyCollection(string name, TaggyItem[] items)
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<TaggyItem>(collectionName);
+        collection.InsertMany(items);
+        return collection;
+    }
+
+    private static SingleEntityDbContext<TaggyItem> MakeTaggy(IMongoCollection<TaggyItem> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    [Fact]
+    public void Intersect_with_real_element_named_underscore_a_is_not_corrupted_by_the_source_tag()
+    {
+        var items = new[]
+        {
+            new TaggyItem { Id = ObjectId.GenerateNewId(), A = 100, Value = 1 },
+            new TaggyItem { Id = ObjectId.GenerateNewId(), A = 200, Value = 2 },
+            new TaggyItem { Id = ObjectId.GenerateNewId(), A = 300, Value = 3 },
+        };
+        var collection = SeedTaggyCollection(
+            nameof(Intersect_with_real_element_named_underscore_a_is_not_corrupted_by_the_source_tag), items);
+        using var db = MakeTaggy(collection, MongoQueryMode.Native);
+
+        var result = db.Entities.Where(i => i.Value <= 2).Intersect(db.Entities.Where(i => i.Value >= 2)).ToList();
+
+        var single = Assert.Single(result);
+        Assert.Equal(2, single.Value);
+        Assert.Equal(200, single.A); // the real _a element survives the $unionWith source-tag round-trip intact
+    }
+
     // ── Parity: Native == DriverLinq (the driver's own LINQ provider already implements Union/Concat) ──
 
     [Fact]
@@ -169,31 +370,14 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     // under the default Native mode (TryTranslateSetOperation ALWAYS returns non-null, so these never
     // hard-fail translation -- they simply mark source1 non-native and let driver-LINQ take over) ────
 
-    // Intersect/Except are NOT touched by this task -- they stay in the pre-existing "not supported, but
-    // bubble through for a clearer error message" switch group (TranslateIntersect/TranslateExcept always
-    // return null, unconditionally). Unlike Union/Concat, that failure happens at translation time
-    // (QMTEV.Visit throws a generic EF CoreStrings.TranslationFailed InvalidOperationException) and is
-    // NOT gated on MongoQueryMode.NativeOnly -- it fails the same way under every mode, including the
-    // default Native. These two tests document that this task leaves that scope boundary unchanged.
-    [Fact]
-    public void Intersect_falls_back()
-    {
-        var collection = SeedCollection(nameof(Intersect_falls_back));
-        using var db = Make(collection, MongoQueryMode.Native);
-
-        Assert.Throws<InvalidOperationException>(() =>
-            db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3)).ToList());
-    }
-
-    [Fact]
-    public void Except_falls_back()
-    {
-        var collection = SeedCollection(nameof(Except_falls_back));
-        using var db = Make(collection, MongoQueryMode.Native);
-
-        Assert.Throws<InvalidOperationException>(() =>
-            db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 3)).ToList());
-    }
+    // NOTE: Intersect/Except's whole-entity, terminal shape now goes NATIVE as of this task (EF-347 Task 2,
+    // "core native translation") -- see Intersect_whole_entity_goes_native / Except_whole_entity_goes_native
+    // above, which supersede the pre-Task-2 Intersect_falls_back / Except_falls_back tests that used to
+    // document TranslateIntersect/TranslateExcept unconditionally returning null. Unlike Union/Concat,
+    // Intersect/Except have NO driver-LINQ fallback at all (Task 1's spike confirmed the driver's own LINQ v3
+    // provider cannot translate a cross-view Intersect/Except), so an out-of-scope shape still hard-fails --
+    // just via TryTranslateSetOperation returning null (reaching EF's own NotTranslatedExpression path)
+    // rather than the never-attempted TranslateIntersect/TranslateExcept of before.
 
     [Fact]
     public void Projected_union_falls_back()

@@ -61,4 +61,23 @@ public class MongoSetOperationRouteTests
         var select = new MongoSelectDefinition { UnwindSource = MongoUnwindSource.Owned("Items", innerEntityType: null!) };
         Assert.True(select.HasTerminalOperator);
     }
+
+    [Fact]
+    public void Intersect_setoperation_keeps_WholeEntity_route_and_is_terminal()
+    {
+        var select = new MongoSelectDefinition
+        {
+            SetOperation = new MongoSetOperation(MongoSetOperationKind.Intersect, OperandSelect(), "customers"),
+            IsSetOp = true
+        };
+        Assert.Equal(NativeRoute.WholeEntity, select.Route);
+        Assert.True(select.HasTerminalOperator);
+    }
+
+    [Fact]
+    public void Except_setoperation_holds_kind()
+    {
+        var setOp = new MongoSetOperation(MongoSetOperationKind.Except, OperandSelect(), "orders");
+        Assert.Equal(MongoSetOperationKind.Except, setOp.Kind);
+    }
 }

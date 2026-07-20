@@ -257,13 +257,20 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
     public override Task Update_Concat_set_constant(bool async)
         => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Concat_set_constant(async));
 
-    // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; set operations unsupported EF-X016
+    // Fails: EF-347 -- the source's whole-entity, terminal Except now translates (goes native), so the
+    // conformance asserter's before/after snapshot read actually executes the $unionWith pipeline, which the
+    // server rejects inside the multi-document transaction the asserter (and the two-phase bulk path) runs
+    // in ("Stage not supported inside of a multi-document transaction: $unionWith") -- a runtime
+    // MongoCommandException rather than the provider's own compile-time bulk-source rejection. Same root
+    // cause as Update_Concat_set_constant/Update_Union_set_constant just above; still a genuine failure
+    // either way EF-X002.
     public override Task Update_Except_set_constant(bool async)
-        => AssertTranslationFailed(() => base.Update_Except_set_constant(async));
+        => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Except_set_constant(async));
 
-    // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; set operations unsupported EF-X016
+    // Fails: EF-347 -- see Update_Except_set_constant immediately above; the same now-native whole-entity
+    // Intersect source hits the identical $unionWith-inside-a-transaction rejection EF-X002.
     public override Task Update_Intersect_set_constant(bool async)
-        => AssertTranslationFailed(() => base.Update_Intersect_set_constant(async));
+        => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Intersect_set_constant(async));
 
     // Fails: Throws a non-translation exception, but still throws EF-X002
     public override Task Update_Union_set_constant(bool async)

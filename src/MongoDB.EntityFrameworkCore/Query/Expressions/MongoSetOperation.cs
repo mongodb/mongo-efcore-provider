@@ -22,7 +22,13 @@ internal enum MongoSetOperationKind
     Concat,
 
     /// <summary><c>Union</c> — <c>$unionWith</c> followed by full-document (<c>$$ROOT</c>) de-duplication.</summary>
-    Union
+    Union,
+
+    /// <summary><c>Intersect</c> — documents present (by full-document value) in BOTH operands (deduped).</summary>
+    Intersect,
+
+    /// <summary><c>Except</c> — distinct documents of the first operand not present in the second.</summary>
+    Except
 }
 
 /// <summary>

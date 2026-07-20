@@ -77,7 +77,15 @@ internal sealed class MongoSelectLowerer
         {
             var operandStages = new List<MongoPipelineStage>();
             AppendSelectOpStages(setOp.OperandSelect, operandStages);
-            stages.Add(new MongoUnionWithStage(operandStages, setOp.OperandCollectionName, dedup: setOp.Kind == MongoSetOperationKind.Union));
+            if (setOp.Kind is MongoSetOperationKind.Intersect or MongoSetOperationKind.Except)
+            {
+                stages.Add(new MongoSetDifferenceStage(setOp.Kind, operandStages, setOp.OperandCollectionName));
+            }
+            else
+            {
+                stages.Add(new MongoUnionWithStage(
+                    operandStages, setOp.OperandCollectionName, dedup: setOp.Kind == MongoSetOperationKind.Union));
+            }
             return stages;
         }
 

@@ -72,6 +72,8 @@ internal sealed class MongoPipelineFactory
         {
             if (stage is MongoUnionWithStage unionWith)
                 template.AddRange(RenderUnionWith(unionWith, renderer, placeholders));
+            else if (stage is MongoSetDifferenceStage setDiff)
+                template.AddRange(RenderSetDifference(setDiff, renderer, placeholders));
             else
                 template.Add(RenderStage(stage, renderer, placeholders));
         }
@@ -224,6 +226,59 @@ internal sealed class MongoPipelineFactory
             yield return new BsonDocument("$group", new BsonDocument("_id", "$$ROOT"));
             yield return new BsonDocument("$replaceRoot", new BsonDocument("newRoot", "$_id"));
         }
+    }
+
+    // Renders a synthesized Intersect/Except as a source-tagging pipeline. Both operands are the SAME
+    // collection, so full-document ($$ROOT) value-equality is well-defined. Each side is deduped and tagged
+    // (_a for the outer/first operand, _b for the inner/second), unioned, re-unified by full document
+    // ($group{_id:"$_doc"}), then discriminated by the final $match. Intersect keeps rows present in both
+    // (_a && _b); Except keeps rows in the first operand only (_a && !_b). The operand stages render into the
+    // SAME placeholder table (a parameter inside the operand substitutes at Build time). _a/_b are siblings
+    // of the wrapped document (under _doc), so they never collide with real entity fields.
+    private static IEnumerable<BsonDocument> RenderSetDifference(
+        MongoSetDifferenceStage stage,
+        MongoQueryLanguageRenderer renderer,
+        PlaceholderTable placeholders)
+    {
+        static BsonDocument Tag(bool a, bool b) => new("$project", new BsonDocument
+        {
+            { "_id", 0 },
+            { "_doc", "$_id" },
+            { "_a", new BsonDocument("$literal", a) },
+            { "_b", new BsonDocument("$literal", b) }
+        });
+
+        // Outer (first operand) side: dedup + tag as _a.
+        yield return new BsonDocument("$group", new BsonDocument("_id", "$$ROOT"));
+        yield return Tag(a: true, b: false);
+
+        // Inner (second operand) side, rendered into the shared placeholder table, itself deduped + tagged.
+        var innerPipeline = new BsonArray();
+        foreach (var operandStage in stage.OperandStages)
+            innerPipeline.Add(RenderStage(operandStage, renderer, placeholders));   // shared placeholders
+        innerPipeline.Add(new BsonDocument("$group", new BsonDocument("_id", "$$ROOT")));
+        innerPipeline.Add(Tag(a: false, b: true));
+        yield return new BsonDocument("$unionWith", new BsonDocument
+        {
+            { "coll", stage.OperandCollectionName },
+            { "pipeline", innerPipeline }
+        });
+
+        // Re-unify by full document; collapse the side flags (BSON false < true, so $max over the group is
+        // "present on that side").
+        yield return new BsonDocument("$group", new BsonDocument
+        {
+            { "_id", "$_doc" },
+            { "_a", new BsonDocument("$max", "$_a") },
+            { "_b", new BsonDocument("$max", "$_b") }
+        });
+
+        // Discriminate. Intersect: in both (_b true). Except: in the first only (_b false).
+        var keepInB = stage.Kind == MongoSetOperationKind.Intersect;
+        yield return new BsonDocument("$match", new BsonDocument { { "_a", true }, { "_b", keepInB } });
+
+        // Restore the plain document (the re-unify $group put _doc under _id).
+        yield return new BsonDocument("$replaceRoot", new BsonDocument("newRoot", "$_id"));
     }
 
     // ------------------------------------------------------------------
