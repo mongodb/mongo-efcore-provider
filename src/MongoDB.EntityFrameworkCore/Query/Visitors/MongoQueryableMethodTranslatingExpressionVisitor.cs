@@ -1239,6 +1239,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // resolves ti.Inner directly back to our projected shaper with no bespoke unwrap logic needed here.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
 
+        // Post-terminal guard (composition-seam audit): a SelectMany composed AFTER a native terminal — a
+        // Union/Concat (IsSetOp), GroupBy (IsGroupBy), projected Distinct (IsDistinct), or a prior SelectMany
+        // (UnwindSource) — must NOT let its own UnwindSource coexist with the earlier terminal on the same
+        // select. The lowerer (MongoSelectLowerer.Lower) selects exactly ONE terminal by fixed precedence
+        // (SetOperation > UnwindSource > Grouping > Projection > Cardinality) and returns early, so a second
+        // terminal is SILENTLY DROPPED: e.g. `Union(a,b).SelectMany(o => o.Items.Select(...))` emits only the
+        // $unionWith and never the SelectMany's $unwind/$project — returning whole outer rows (wrong row count,
+        // or a shaper crash when a projected alias is absent at top level) under BOTH Native and NativeOnly
+        // (Route stays non-Fallback, so NativeOnly does not even throw). Every other own-Translate-override
+        // operator (TranslateSelect/OfType/GroupBy) already gates on HasTerminalOperator; SelectMany's binders
+        // set UnwindSource with no such gate and SelectManyWithCollectionSelector is whitelisted in
+        // NativeSlotPopulator, so the catch-all does not back it up either — hence this dedicated guard.
+        //
+        // Decline by returning null (before any binder mutates the query), reaching EF Core's own
+        // translation-failure path directly — the established SelectMany contract for an unsupported shape:
+        // a clean hard-fail in EVERY MongoQueryMode, never silent wrong data. A GRACEFUL
+        // MarkNotNativelyRepresentable() fallback is NOT viable here: the native SelectMany builds a by-index
+        // ProjectionBindingExpression shaper that the driver-LINQ fallback cannot re-read ("'ProjectionBinding
+        // Expression: 0' could not be translated") — the same shaper-rebuild limitation that makes operators
+        // composed AFTER a SelectMany hard-fail in every mode (see NativeSelectManyTests). (DriverLinq MODE
+        // succeeds on this chain only because it skips native slot population entirely and re-translates the raw
+        // captured chain; that path is unavailable once the native binders have run under Native.)
+        if (mongoQueryExpression.Select.HasTerminalOperator)
+            return null;
+
         // EF-347 slice 4: the explicit-result-selector / query-syntax form arrives as a BARE owned nav
         // collection selector (o => o.Items.AsQueryable(), no nested Select) + a trivial
         // TransparentIdentifier(Outer,Inner) resultSelector; the real projection is the SEPARATE trailing
