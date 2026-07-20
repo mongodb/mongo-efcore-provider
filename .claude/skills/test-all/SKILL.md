@@ -80,6 +80,27 @@ project unless the user passed an explicit filter (see Arguments).
 or the project path — to the test command; otherwise run the full solution so
 unit, functional, and specification tests all execute.)
 
+### Execution hygiene (include verbatim in every sub-agent's prompt)
+
+Each sub-agent runs its build+test in the **foreground** and reports only **after
+the test process has exited** with a summary:
+
+- **Do NOT background the run** — no `&`, no `nohup`, no background-run tool, no
+  "I'll report once the background task notifies me." Run the command, block until
+  it exits, then parse. A reply sent while the run is still going is a failed
+  dispatch, not a status — the controller must re-run it.
+- **`tee` the output to a log file and parse the log** (not scrollback), so the
+  counts survive: `dotnet test … 2>&1 | tee <logfile>`.
+- **A whole-solution run prints THREE summary blocks — one per test assembly**
+  (`UnitTests`, `FunctionalTests`, `SpecificationTests`). Grep the log for every
+  one (`grep -E "Passed!|Failed!|error"`) and sum the three per-assembly
+  `Passed`/`Failed`/`Skipped` totals. Reporting only the last block silently drops
+  two assemblies — `SpecificationTests` is usually last and is roughly half the
+  tests, so reading only it undercounts by thousands.
+- `--no-build` above is correct **because Phase 2 built first**. If the build step
+  did not run in this same invocation, drop `--no-build` — a stale binary produces
+  a false green.
+
 ## Important Rules
 
 - Always use absolute paths — never `cd` into directories.
@@ -97,8 +118,10 @@ unit, functional, and specification tests all execute.)
 
 Populate the summary table with the actual results from each sub-agent.
 For each EF version, parse the `dotnet test` output and extract the real
-`Passed`, `Failed`, and `Skipped` totals from the final test summary
-(for example, the line containing `Passed:`, `Failed:`, and `Skipped:`).
+`Passed`, `Failed`, and `Skipped` totals from the test summary. A whole-solution
+run prints a **separate summary block per test assembly (three total)** — sum all
+three. If a sub-agent reports only a single block, the run is incomplete or it
+read the wrong block; send it back rather than reporting a partial count.
 Set the `Build` column to the actual build result for that version (`OK` or `FAILED`).
 
 Use this format for the console summary:
