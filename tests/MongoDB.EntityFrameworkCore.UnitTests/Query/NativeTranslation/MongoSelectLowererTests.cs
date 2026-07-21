@@ -359,4 +359,47 @@ public class MongoSelectLowererTests
 
         Assert.DoesNotContain(stages, s => s is MongoUnwindFieldStage);
     }
+
+    // ── EF-347 slice B: trailing ops emit AFTER the set-op stage; cardinality falls through ──
+
+    [Fact]
+    public void Trailing_ops_lower_after_the_set_op_stage()
+    {
+        var query = TestSelect();
+        // source1's own pre-set-op predicate:
+        query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
+        query.Select.SetOperation = new MongoSetOperation(
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers");
+        query.Select.IsSetOp = true;
+        // post-set-op (trailing) sort — routes to TrailingOps because SetOperation is now attached:
+        query.Select.StartOrReplaceSort(new MongoOrdering(new MongoConstantExpression(0, null), true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        // $match (pre-set-op) → $unionWith (set op) → $sort (trailing), in that order.
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoMatchStage>(s),
+            s => Assert.IsType<MongoUnionWithStage>(s),
+            s => Assert.IsType<MongoSortStage>(s));
+    }
+
+    [Fact]
+    public void Trailing_cardinality_lowers_after_the_set_op_stage()
+    {
+        var query = TestSelect();
+        query.Select.SetOperation = new MongoSetOperation(
+            MongoSetOperationKind.Intersect, new MongoSelectDefinition(), "customers");
+        query.Select.IsSetOp = true;
+        query.Select.Cardinality = MongoCardinality.ForAggregate(
+            MongoAggregateOperator.Count, selector: null, MongoEmptyAggregateBehavior.DefaultValue,
+            emptyValue: 0, typeof(int), presenceOnly: false, presentValue: null);
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        // set-difference stage (Intersect/Except) → $count. The lowerer must NOT early-return after the
+        // set-op stage — it must fall through to the Cardinality block.
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoSetDifferenceStage>(s),
+            s => Assert.IsType<MongoCountStage>(s));
+    }
 }

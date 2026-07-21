@@ -49,32 +49,58 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoSelectOp> PipelineOps => _pipelineOps;
 
+    // ── Trailing ops (post-set-op composition, EF-347 slice B) ────────────────────
+    // A SECOND ordered filter/sort/page list, emitted by the lowerer AFTER the set-op stage. A set op is
+    // terminal for everything except the operators relaxed in slice B (Where/OrderBy/ThenBy/Skip/Take +
+    // aggregates/reducers); those record here instead of PipelineOps so they filter/sort/page the COMBINED
+    // set-op result, not source1's pre-set-op rows. The flip point is single and well-defined: once
+    // SetOperation is attached, ActiveOps is _trailingOps (see below).
+    private readonly List<MongoSelectOp> _trailingOps = [];
+
+    /// <summary>
+    /// The ordered filter/sort/page operations recorded AFTER a set op was attached (EF-347 slice B). The
+    /// lowerer emits these verbatim after the set-op stage. Empty for every non-set-op query and for a set op
+    /// with no post-composition.
+    /// </summary>
+    public IReadOnlyList<MongoSelectOp> TrailingOps => _trailingOps;
+
+    /// <summary>
+    /// The op list the five merge methods currently target: <see cref="TrailingOps"/> once a set op has been
+    /// attached (so post-set-op ops are trailing), otherwise <see cref="PipelineOps"/> (source1's own /
+    /// pre-terminal ops). The single flip point for the post-set-op composition machinery.
+    /// </summary>
+    private List<MongoSelectOp> ActiveOps => SetOperation != null ? _trailingOps : _pipelineOps;
+
     /// <summary>
     /// ANDs <paramref name="conjunct"/> into the tail <see cref="MongoMatchOp"/> if the last op is one
     /// (so consecutive Where's merge into a single $match); otherwise appends a new <see cref="MongoMatchOp"/>
     /// at the current tail (so a Where/OfType/aggregate-predicate applied AFTER a sort or paging lands as a
-    /// later $match — the sequential semantics MongoDB's pipeline gives us).
+    /// later $match — the sequential semantics MongoDB's pipeline gives us). Targets <see cref="TrailingOps"/>
+    /// once a set op is attached (EF-347 slice B), else <see cref="PipelineOps"/>.
     /// </summary>
     public void AddPredicateConjunct(MongoExpression conjunct)
     {
-        if (_pipelineOps.Count > 0 && _pipelineOps[^1] is MongoMatchOp match)
-            _pipelineOps[^1] = new MongoMatchOp(
+        var ops = ActiveOps;
+        if (ops.Count > 0 && ops[^1] is MongoMatchOp match)
+            ops[^1] = new MongoMatchOp(
                 new MongoBinaryExpression(MongoBinaryOperator.AndAlso, match.Predicate, conjunct));
         else
-            _pipelineOps.Add(new MongoMatchOp(conjunct));
+            ops.Add(new MongoMatchOp(conjunct));
     }
 
     /// <summary>
     /// OrderBy: if the tail op is a <see cref="MongoSortOp"/>, REPLACE it (a fresh primary sort, reproducing
     /// the previous ResetOrderings semantics, so <c>OrderBy(a).OrderBy(b)</c> keeps only b); otherwise append
-    /// a new sort (e.g. an OrderBy after paging).
+    /// a new sort (e.g. an OrderBy after paging). Targets <see cref="TrailingOps"/> once a set op is attached
+    /// (EF-347 slice B), else <see cref="PipelineOps"/>.
     /// </summary>
     public void StartOrReplaceSort(MongoOrdering first)
     {
-        if (_pipelineOps.Count > 0 && _pipelineOps[^1] is MongoSortOp)
-            _pipelineOps[^1] = new MongoSortOp([first]);
+        var ops = ActiveOps;
+        if (ops.Count > 0 && ops[^1] is MongoSortOp)
+            ops[^1] = new MongoSortOp([first]);
         else
-            _pipelineOps.Add(new MongoSortOp([first]));
+            ops.Add(new MongoSortOp([first]));
     }
 
     /// <summary>ThenBy: extends the current (tail) sort. LINQ typing puts an OrderBy/ThenBy immediately before
@@ -83,21 +109,28 @@ internal sealed class MongoSelectDefinition
     /// owned sub-property key) — that arm calls <see cref="MarkNotNativelyRepresentable"/> and appends no sort op,
     /// so this query is already <see cref="NativeRoute.Fallback"/>. In that case the tail is not a sort op; start
     /// a fresh one so this never throws (matching the old append-always <c>AppendOrdering</c> behavior). The
-    /// recorded op is inert — a Fallback query never lowers — so this cannot change the native pass-set.</summary>
+    /// recorded op is inert — a Fallback query never lowers — so this cannot change the native pass-set. Targets
+    /// <see cref="TrailingOps"/> once a set op is attached (EF-347 slice B), else <see cref="PipelineOps"/>.</summary>
     public void AppendThenBy(MongoOrdering next)
     {
-        if (_pipelineOps.Count > 0 && _pipelineOps[^1] is MongoSortOp sort)
-            _pipelineOps[^1] = new MongoSortOp([.. sort.Orderings, next]);
+        var ops = ActiveOps;
+        if (ops.Count > 0 && ops[^1] is MongoSortOp sort)
+            ops[^1] = new MongoSortOp([.. sort.Orderings, next]);
         else
-            _pipelineOps.Add(new MongoSortOp([next]));
+            ops.Add(new MongoSortOp([next]));
     }
 
-    /// <summary>Skip → append a <see cref="MongoSkipOp"/>.</summary>
-    public void AppendSkip(MongoExpression count) => _pipelineOps.Add(new MongoSkipOp(count));
+    /// <summary>Skip → append a <see cref="MongoSkipOp"/>. Targets <see cref="TrailingOps"/> once a set op is
+    /// attached (EF-347 slice B), else <see cref="PipelineOps"/>.</summary>
+    public void AppendSkip(MongoExpression count) => ActiveOps.Add(new MongoSkipOp(count));
 
-    /// <summary>Take (and the synthesized reducer limit) → append a <see cref="MongoLimitOp"/>.</summary>
-    public void AppendLimit(MongoExpression count) => _pipelineOps.Add(new MongoLimitOp(count));
+    /// <summary>Take (and the synthesized reducer limit) → append a <see cref="MongoLimitOp"/>. Targets
+    /// <see cref="TrailingOps"/> once a set op is attached (EF-347 slice B), else <see cref="PipelineOps"/>.</summary>
+    public void AppendLimit(MongoExpression count) => ActiveOps.Add(new MongoLimitOp(count));
 
+    // HasPaging/HasOrdering/HasLimit deliberately scan _pipelineOps only: they gate a PRE-terminal GroupBy
+    // (NativeGroupByBinder), which is unreachable after a set op (a trailing GroupBy is rejected by
+    // HasTerminalOperator), so they must not see the post-set-op _trailingOps (EF-347 slice B).
     /// <summary><see langword="true"/> when any $skip or $limit op is present.</summary>
     internal bool HasPaging => _pipelineOps.Exists(o => o is MongoSkipOp or MongoLimitOp);
 
@@ -216,6 +249,18 @@ internal sealed class MongoSelectDefinition
     /// a native owned-collection SelectMany is terminal-only, exactly like Distinct/GroupBy/Union/Concat.
     /// </summary>
     internal bool HasTerminalOperator => IsGroupBy || IsDistinct || IsSetOp || Grouping != null || UnwindSource != null;
+
+    /// <summary>
+    /// <see langword="true"/> when the ONLY terminal on this select is a set operation — i.e. a set op is
+    /// attached and no grouping/distinct/unwind terminal is (EF-347 slice B). A set op only ever attaches to a
+    /// plain whole-entity select, so <see cref="IsSetOp"/> already implies the rest; the explicit conjunction
+    /// is defensive so the slice-B guard relaxation can never accidentally open a GroupBy/Distinct/SelectMany
+    /// terminal. Used to relax the two catch-all post-terminal guards (NativeSlotPopulator,
+    /// NativeCardinalityBinder) for the operators composed after a set op, while every deferred operator's own
+    /// HasTerminalOperator guard stays tripped.
+    /// </summary>
+    internal bool IsSetOpTerminalOnly
+        => IsSetOp && !IsGroupBy && !IsDistinct && Grouping == null && UnwindSource == null;
 
     /// <summary>The terminal set operation (Union/Concat), when this select is a set-op query (EF-347 slice 2).</summary>
     internal MongoSetOperation? SetOperation { get; set; }

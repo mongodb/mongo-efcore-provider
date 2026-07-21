@@ -61,7 +61,7 @@ internal sealed class MongoSelectLowerer
 
         // 1. $match / $sort / $skip / $limit ops, emitted verbatim in the order they were recorded
         // (Select.PipelineOps — EF-347: no fixed canonical order; arrival order IS emission order).
-        AppendSelectOpStages(select, stages);
+        AppendSelectOpStages(select.PipelineOps, stages);
 
         // 2. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
         // A projected collection-navigation Count (NativeProjectionBinder.TryTranslateProjectedCollectionCount)
@@ -70,13 +70,13 @@ internal sealed class MongoSelectLowerer
         // filter/sort/page block (but before $project) already satisfies that without any lowerer change.
         AppendLookupStages(query, stages);
 
-        // Set operation terminal ($unionWith [+ dedup]). Guaranteed terminal and whole-entity by the QMTEV
-        // guard (the operand is a plain whole-entity select — no grouping/projection/cardinality/lookups), so
-        // nothing follows it and the operand lowers to its own filter/sort/page ops only.
+        // Set operation terminal ($unionWith [+ dedup] or a set-difference shape for Intersect/Except).
+        // Guaranteed whole-entity by the QMTEV guard (the operand is a plain whole-entity select — no
+        // grouping/projection/cardinality/lookups), so the operand lowers to its own filter/sort/page ops only.
         if (select.SetOperation is { } setOp)
         {
             var operandStages = new List<MongoPipelineStage>();
-            AppendSelectOpStages(setOp.OperandSelect, operandStages);
+            AppendSelectOpStages(setOp.OperandSelect.PipelineOps, operandStages);
             if (setOp.Kind is MongoSetOperationKind.Intersect or MongoSetOperationKind.Except)
             {
                 stages.Add(new MongoSetDifferenceStage(setOp.Kind, operandStages, setOp.OperandCollectionName));
@@ -86,7 +86,14 @@ internal sealed class MongoSelectLowerer
                 stages.Add(new MongoUnionWithStage(
                     operandStages, setOp.OperandCollectionName, dedup: setOp.Kind == MongoSetOperationKind.Union));
             }
-            return stages;
+
+            // EF-347 slice B: post-set-op composition. Trailing $match/$sort/$skip/$limit emit AFTER the
+            // set-op stage (they operate on the COMBINED result), then fall through to the Cardinality block
+            // for a post-set-op aggregate/reducer. A set op only attaches to a plain whole-entity select, so
+            // UnwindSource/Grouping/Projection are all empty here and their blocks below are skipped; a future
+            // slice composing one of those after a set op MUST revisit this precedence.
+            AppendSelectOpStages(select.TrailingOps, stages);
+            // NB: no early return — control continues to the Cardinality block.
         }
 
         // Terminal native SelectMany (EF-347 slices 3-5), then $project the result selector (populated in
@@ -157,13 +164,15 @@ internal sealed class MongoSelectLowerer
     }
 
     /// <summary>
-    /// Appends the ordered filter/sort/page stages ($match / $sort / $skip / $limit) for
-    /// <paramref name="select"/> in their recorded order. Shared between the outer query and a set-operation
-    /// operand (<see cref="MongoSetOperation.OperandSelect"/>), which is a plain whole-entity select.
+    /// Appends the ordered filter/sort/page stages ($match / $sort / $skip / $limit) for <paramref name="ops"/>
+    /// in their recorded order. Shared by the outer query's own <see cref="MongoSelectDefinition.PipelineOps"/>,
+    /// a set-operation operand's <see cref="MongoSelectDefinition.PipelineOps"/>
+    /// (<see cref="MongoSetOperation.OperandSelect"/>, a plain whole-entity select), and the outer query's
+    /// post-set-op <see cref="MongoSelectDefinition.TrailingOps"/> (EF-347 slice B).
     /// </summary>
-    private static void AppendSelectOpStages(MongoSelectDefinition select, List<MongoPipelineStage> stages)
+    private static void AppendSelectOpStages(IReadOnlyList<MongoSelectOp> ops, List<MongoPipelineStage> stages)
     {
-        foreach (var op in select.PipelineOps)
+        foreach (var op in ops)
         {
             stages.Add(op switch
             {

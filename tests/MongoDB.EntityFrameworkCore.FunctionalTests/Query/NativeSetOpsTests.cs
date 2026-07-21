@@ -242,17 +242,19 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => i.Value)).ToList());
     }
 
-    [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Except_then_Where_hard_fails_in_every_mode(MongoQueryMode mode)
+    // EF-347 slice B: a trailing Where after Except now goes native (no driver-LINQ baseline for
+    // Intersect/Except, so assert the result set vs expected in-memory data + prove native via NativeOnly).
+    [Fact]
+    public void Except_then_Where_goes_native()
     {
-        var collection = SeedCollection(nameof(Except_then_Where_hard_fails_in_every_mode) + mode);
-        using var db = Make(collection, mode);
-        Assert.ThrowsAny<Exception>(() =>
-            db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 3))
-                .Where(i => i.Value > 0).ToList());
+        var collection = SeedCollection(nameof(Except_then_Where_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        // {1,2,3} Except {3,4,5} = {1,2}; then Where(Value >= 2) = {2}. If the $match wrongly emitted BEFORE
+        // the set-difference stage this would still be {2} by coincidence, so this test is backed by the
+        // seam-discriminating paging/Count tests below — it exists to prove Except+Where goes native at all.
+        var result = db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 3))
+            .Where(i => i.Value >= 2).ToList();
+        Assert.Equal([2], result.Select(i => i.Value).OrderBy(v => v));
     }
 
     // ── Composition-seam hard-fail (EF-347 Task 3): the IsSetOp terminal gate rejects every operator
@@ -261,9 +263,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
 
     public static IEnumerable<object[]> IntersectComposedOps() => new[]
     {
-        new object[] { "OrderBy", (Func<IQueryable<Item>, object>)(q => q.OrderBy(i => i.Value).ToList()) },
-        new object[] { "Skip",    (Func<IQueryable<Item>, object>)(q => q.Skip(1).ToList()) },
-        new object[] { "Take",    (Func<IQueryable<Item>, object>)(q => q.Take(1).ToList()) },
+        // Only DEFERRED operators remain here (EF-347 slice B): GroupBy after a set op still hard-fails.
+        // OrderBy/Skip/Take moved to Intersect_then_paging_goes_native below.
         new object[] { "GroupBy", (Func<IQueryable<Item>, object>)(q => q.GroupBy(i => i.Value).Select(g => g.Key).ToList()) },
     };
 
@@ -275,6 +276,65 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         using var db = Make(collection, MongoQueryMode.Native);
         var q = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3));
         Assert.ThrowsAny<Exception>(() => compose(q));
+    }
+
+    [Fact]
+    public void Intersect_then_paging_goes_native()
+    {
+        var collection = SeedCollection(nameof(Intersect_then_paging_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        // {1,2,3} Intersect {2,3,4} = {2,3}; OrderBy(Value).Take(1) = {2}.
+        var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 2 && i.Value <= 4))
+            .OrderBy(i => i.Value).Take(1).ToList();
+        Assert.Equal([2], result.Select(i => i.Value));
+    }
+
+    // EF-347 slice B review follow-up: exercises the NativeCardinalityBinder.TryBindReducer HasLimit guard
+    // when a Take already recorded a trailing limit before the reducer runs -- HasLimit deliberately scans
+    // PipelineOps only, not TrailingOps, so it does not see this preceding Take and the reducer appends its
+    // OWN trailing $limit alongside it (two consecutive $limit stages, which compose correctly). Union has a
+    // driver-LINQ baseline, so assert Native == DriverLinq parity.
+    [Fact]
+    public void First_after_union_with_preceding_take_goes_native()
+    {
+        var collection = SeedCollection(nameof(First_after_union_with_preceding_take_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        // Union({1,2,3},{3,4,5}) deduped = {1,2,3,4,5}; ordered, Take(4) = {1,2,3,4}; First = 1.
+        int Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .OrderBy(i => i.Value).Take(4).First().Value;
+
+        var native = Run(nativeOnlyDb); // NativeOnly succeeding proves it went native
+        Assert.Equal(1, native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    // EF-347 slice B review follow-up: Skip alone (no preceding Take) after Intersect -- the one uncovered
+    // paging shape (Intersect_then_paging_goes_native above covers OrderBy+Take only). No driver-LINQ oracle
+    // for Intersect, so assert the literal expected result under NativeOnly.
+    [Fact]
+    public void Intersect_then_Skip_goes_native()
+    {
+        var collection = SeedCollection(nameof(Intersect_then_Skip_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        // {1,2,3} Intersect {2,3,4} = {2,3}; OrderBy(Value).Skip(1) = {3}.
+        var result = db.Entities.Where(i => i.Value <= 3)
+            .Intersect(db.Entities.Where(i => i.Value >= 2 && i.Value <= 4))
+            .OrderBy(i => i.Value).Skip(1).ToList();
+        Assert.Equal([3], result.Select(i => i.Value));
+    }
+
+    [Fact]
+    public void Union_then_parametrized_trailing_Where_goes_native()
+    {
+        var collection = SeedCollection(nameof(Union_then_parametrized_trailing_Where_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        var threshold = 4;
+        var result = db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+            .Where(i => i.Value >= threshold).ToList();
+        Assert.Equal([4, 5], result.Select(i => i.Value).OrderBy(v => v));
     }
 
     // ── Field-name-collision isolation (EF-347 Task 3): RenderSetDifference tags each side of the
@@ -506,101 +566,134 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Single(result.Single(i => i.Value == 2).Details);
     }
 
-    // ── Composition-seam regression tests (EF-347 Task 5): a set operation is TERMINAL-ONLY, so ANY
-    // operator applied AFTER a Union/Concat must fall back gracefully -- throw under NativeOnly (the
-    // "went native" signal), return correct results under the default Native mode. This is the SAME
+    // ── Composition-seam regression tests (EF-347 Task 5, updated by slice B Task 3): a set operation is
+    // TERMINAL-ONLY, so every operator applied AFTER a Union/Concat must either go native correctly or
+    // fall back gracefully -- throw under NativeOnly for a genuinely-deferred shape (the "went native"
+    // signal), return correct results under the default Native mode either way. This is the SAME
     // recurring post-terminal hazard as GroupBy/Distinct (see the Query area AGENTS.md
     // "HasTerminalOperator" invariant): every post-terminal entry point (NativeSlotPopulator's seven slot
     // operators, NativeCardinalityBinder's aggregates/reducers, TranslateGroupBy, and TranslateSelect's
     // hoisted-Include/projection guards) must gate on it, or a post-union operator would resolve against
-    // the base entity and silently emit a pre-$unionWith stage instead of falling back. None of the seams
-    // below are expected to go native -- if one unexpectedly does, that is a real gap in the
-    // HasTerminalOperator guard, not something to relax the assertion for. ─────────────────────────────
+    // the base entity and silently emit a pre-$unionWith stage instead of falling back. EF-347 slice B
+    // relaxed the NativeSlotPopulator gate for the seven slot operators specifically (Where/OrderBy/
+    // ThenBy/Skip/Take), so those now go native -- see the *_goes_native tests immediately below. The
+    // remaining seams (Count, chained Union, GroupBy, OfType) are still deferred and are NOT expected to
+    // go native -- if one unexpectedly does, that is a real gap in the HasTerminalOperator guard, not
+    // something to relax the assertion for. ─────────────────────────────────────────────────────────────
 
+    // EF-347 slice B: a trailing Where after Union now goes native. Union HAS a driver-LINQ baseline, so
+    // assert Native == DriverLinq parity.
     [Fact]
-    public void Where_after_union_falls_back()
+    public void Where_after_union_goes_native()
     {
-        var collection = SeedCollection(nameof(Where_after_union_falls_back));
+        var collection = SeedCollection(nameof(Where_after_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
 
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
-                    .Where(i => i.Value > 2)
-                    .ToList());
-        }
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .Where(i => i.Value >= 2)
+                .ToList().Select(i => i.Value).OrderBy(v => v).ToList();
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
-            .Where(i => i.Value > 2)
-            .ToList().Select(i => i.Value).OrderBy(v => v).ToList();
-
-        Assert.Equal([3, 4, 5], result);
+        var native = Run(nativeOnlyDb); // NativeOnly succeeding proves it went native
+        Assert.Equal([2, 3, 4, 5], native);
+        Assert.Equal(Run(driverDb), native);
     }
 
     [Fact]
-    public void OrderBy_after_union_falls_back()
+    public void OrderBy_after_union_goes_native()
     {
-        var collection = SeedCollection(nameof(OrderBy_after_union_falls_back));
+        var collection = SeedCollection(nameof(OrderBy_after_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
 
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
-                    .OrderByDescending(i => i.Value)
-                    .ToList());
-        }
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .OrderBy(i => i.Value)
+                .ToList().Select(i => i.Value).ToList();
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
-            .OrderByDescending(i => i.Value)
-            .ToList().Select(i => i.Value).ToList();
+        var native = Run(nativeOnlyDb);
+        Assert.Equal([1, 2, 3, 4, 5], native); // already sorted by the native $sort, no in-memory re-sort
+        Assert.Equal(Run(driverDb), native);
+    }
 
-        Assert.Equal([5, 4, 3, 2, 1], result);
+    // EF-347 slice B: rename from Skip_take_after_union_falls_back -> Paging_after_union_goes_native (this is
+    // the hazard-1 discriminator -- paging the combined ordered stream differs completely from paging source1).
+    [Fact]
+    public void Paging_after_union_goes_native()
+    {
+        var collection = SeedCollection(nameof(Paging_after_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        // Union = {1,2,3,4,5} ordered; Skip(1).Take(2) = {2,3}. Paging source1 ({1,2,3}) would give {2,3}
+        // too here — so ALSO assert the Count discriminator in Task 4. This case proves paging composes.
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .OrderBy(i => i.Value).Skip(1).Take(2)
+                .ToList().Select(i => i.Value).ToList();
+
+        var native = Run(nativeOnlyDb);
+        Assert.Equal([2, 3], native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    // EF-347 slice B, hazard-1 discriminator: Count over the COMBINED union (5) differs from source1's
+    // count (3), so a mis-placed pre-$unionWith $count would return the wrong number. Union has a baseline.
+    [Fact]
+    public void Count_after_union_goes_native()
+    {
+        var collection = SeedCollection(nameof(Count_after_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        int Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3)).Count();
+
+        var native = Run(nativeOnlyDb);
+        Assert.Equal(5, native); // {1,2,3} U {3,4,5} deduped
+        Assert.Equal(Run(driverDb), native);
     }
 
     [Fact]
-    public void Skip_take_after_union_falls_back()
+    public void Count_after_intersect_goes_native()
     {
-        var collection = SeedCollection(nameof(Skip_take_after_union_falls_back));
-
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
-                    .OrderBy(i => i.Value)
-                    .Skip(1)
-                    .Take(2)
-                    .ToList());
-        }
-
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
-            .OrderBy(i => i.Value)
-            .Skip(1)
-            .Take(2)
-            .ToList().Select(i => i.Value).ToList();
-
-        Assert.Equal([2, 3], result);
+        var collection = SeedCollection(nameof(Count_after_intersect_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        // {1,2,3} Intersect {3,4,5} = {3}; Count = 1 (source1 count would be 3).
+        var count = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3)).Count();
+        Assert.Equal(1, count);
     }
 
     [Fact]
-    public void Count_after_union_falls_back()
+    public void Count_with_predicate_after_union_goes_native()
     {
-        var collection = SeedCollection(nameof(Count_after_union_falls_back));
+        var collection = SeedCollection(nameof(Count_with_predicate_after_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
 
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
-                    .Count());
-        }
+        int Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3)).Count(i => i.Value >= 3);
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var count = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
-            .Count();
+        var native = Run(nativeOnlyDb);
+        Assert.Equal(3, native); // {1,2,3,4,5}, Value>=3 → {3,4,5}
+        Assert.Equal(Run(driverDb), native);
+    }
 
-        Assert.Equal(5, count); // {1,2,3} U {3,4,5} deduped -> 5
+    [Fact]
+    public void First_after_union_ordered_goes_native()
+    {
+        var collection = SeedCollection(nameof(First_after_union_ordered_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        int Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .OrderBy(i => i.Value).First().Value;
+
+        var native = Run(nativeOnlyDb);
+        Assert.Equal(1, native);
+        Assert.Equal(Run(driverDb), native);
     }
 
     [Fact]
@@ -725,6 +818,37 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         Assert.Equal(2, result.Count);
         Assert.All(result, e => Assert.IsType<SetOpDerived>(e));
+    }
+
+    // EF-347 slice B: a trailing Select (projection) is DEFERRED to slice C. Union falls back gracefully;
+    // Intersect hard-fails (no baseline). One test per fallback family.
+    [Fact]
+    public void Select_after_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(Select_after_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
+                    .Select(i => new { i.Name }).ToList());
+        }
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
+            .Select(i => new { i.Name }).ToList();
+        Assert.Equal(5, result.Count);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Select_after_intersect_hard_fails_in_every_mode(MongoQueryMode mode)
+    {
+        var collection = SeedCollection(nameof(Select_after_intersect_hard_fails_in_every_mode) + mode);
+        using var db = Make(collection, mode);
+        Assert.ThrowsAny<Exception>(() =>
+            db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
+                .Select(i => new { i.Name }).ToList());
     }
 
     // NOTE: a Concat().OfType<T>() variant was attempted here too, but it hits an UNRELATED pre-existing bug

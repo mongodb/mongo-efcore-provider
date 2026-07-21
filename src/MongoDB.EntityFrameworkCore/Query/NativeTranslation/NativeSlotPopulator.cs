@@ -63,7 +63,16 @@ internal static class NativeSlotPopulator
         // resolve against the entity type and emit a pre-$group $match/$sort). Only the Join-family decline
         // differs between GroupBy and Distinct (see MongoSelectDefinition.IsDistinct); this slot guard is shared.
         // (Centralized as HasTerminalOperator, EF-347 review follow-up — see MongoSelectDefinition.)
-        if (mongoQ.Select.HasTerminalOperator && IsPostGroupSlotOperator(methodDefinition))
+        //
+        // EF-347 slice B: a set-op-only terminal is EXEMPT — the seven slot operators composed after a set op
+        // fall through to their arms below and record into TrailingOps (MongoSelectDefinition.ActiveOps flips
+        // once SetOperation is attached), so they filter/sort/page the COMBINED result and emit after the
+        // set-op stage. Only a set-op-ONLY terminal is exempt: a GroupBy/Distinct/SelectMany terminal (or a
+        // mixed one) still trips this guard and falls back. The deferred own-override operators (Select/
+        // Distinct/GroupBy/SelectMany/OfType, chained set ops) each keep their own untouched HasTerminalOperator
+        // guard, so they stay terminal after a set op.
+        if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
+            && IsPostGroupSlotOperator(methodDefinition))
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;

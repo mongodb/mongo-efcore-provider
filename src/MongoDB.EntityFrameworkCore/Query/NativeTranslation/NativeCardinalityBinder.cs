@@ -49,11 +49,24 @@ internal static class NativeCardinalityBinder
         // ScalarAggregate and crashes; documented there.) IsDistinct rides the same guard: a projected Distinct
         // binds the same degenerate $group, so a post-Distinct reducer must fall back for the identical reason.
         // (Centralized as HasTerminalOperator, EF-347 review follow-up — see MongoSelectDefinition.)
-        if (select.HasTerminalOperator)
+        // EF-347 slice B: a set-op-only terminal is EXEMPT — an aggregate/reducer composed after a set op
+        // binds here and goes native. The reducer $limit / aggregate-injected predicate record into
+        // TrailingOps (ActiveOps flips once SetOperation is attached), landing AFTER the set-op stage, and the
+        // lowerer emits the $count/$group/$limit after the set-op stage (it keys off SetOperation, not Route,
+        // and no longer early-returns). A GroupBy/Distinct/SelectMany terminal still falls back.
+        if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
         // A user Take/Skip already populated the limit slot; composing a reducer limit on top is not
         // representable in canonical order. Fall back rather than reconcile two limits.
+        // EF-347 slice B note: HasLimit deliberately scans PipelineOps only, not TrailingOps (see
+        // MongoSelectDefinition). For a set-op terminal (e.g. Union(a,b).Take(n).First()), the preceding
+        // Take's limit is recorded in TrailingOps (post-set-op ops), so this guard does not see it and does
+        // not fire here — the reducer instead appends its OWN $limit onto TrailingOps too (ActiveOps still
+        // targets TrailingOps), producing two consecutive $limit stages after the set-op stage. That composes
+        // correctly (verified): the second $limit only ever narrows the first, so First/Single still see at
+        // most 1/2 rows. This is a deliberate divergence from the non-set-op Take(n).First() path, which
+        // falls back here — not a bug.
         if (select.HasLimit)
             return false;
 
@@ -88,7 +101,12 @@ internal static class NativeCardinalityBinder
         // IsDistinct rides the same guard: a projected Distinct binds the same degenerate $group, so a
         // post-Distinct scalar aggregate must fall back for the identical reason.
         // (Centralized as HasTerminalOperator, EF-347 review follow-up — see MongoSelectDefinition.)
-        if (select.HasTerminalOperator)
+        // EF-347 slice B: a set-op-only terminal is EXEMPT — an aggregate/reducer composed after a set op
+        // binds here and goes native. The reducer $limit / aggregate-injected predicate record into
+        // TrailingOps (ActiveOps flips once SetOperation is attached), landing AFTER the set-op stage, and the
+        // lowerer emits the $count/$group/$limit after the set-op stage (it keys off SetOperation, not Route,
+        // and no longer early-returns). A GroupBy/Distinct/SelectMany terminal still falls back.
+        if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
