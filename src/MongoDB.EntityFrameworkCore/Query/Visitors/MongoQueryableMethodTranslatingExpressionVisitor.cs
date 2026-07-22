@@ -250,7 +250,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // Native (throws under NativeOnly), matching the correct driver-LINQ result. Mirrors the
             // TranslateGroupBy guard. The legit GroupBy(key).Select(aggregate) reaches the grouped branch above
             // (via GroupByShaperExpression) and is unaffected.
-            if (mongoQueryExpression.Select.HasTerminalOperator)
+            // EF-347 slice C2: a set-op-ONLY terminal is EXEMPT — a trailing anonymous/DTO member-access Select
+            // after a whole-entity set op pushes down a $project (emitted after the set-op stage by the lowerer's
+            // Projection block, via the slice-B fall-through). IsSetOpTerminalOnly requires Projection.Count == 0,
+            // so once this projection is populated a SECOND projection (or any post-projection operator) is no
+            // longer set-op-terminal-only and correctly falls back here. A GroupBy/Distinct/SelectMany terminal
+            // (IsSetOpTerminalOnly false) still marks non-native, exactly as before.
+            if (mongoQueryExpression.Select.HasTerminalOperator && !mongoQueryExpression.Select.IsSetOpTerminalOnly)
             {
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }

@@ -78,6 +78,20 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         return collection;
     }
 
+    // Two DISTINCT entities (different _id/Value) sharing the same Name — used to prove Union dedups by
+    // WHOLE ENTITY, not by a projected member, so both survive a trailing member-access Select.
+    private IMongoCollection<Item> SeedCollectionWithDuplicateNames(string name)
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<Item>(collectionName);
+        collection.InsertMany(
+        [
+            new Item { Id = ObjectId.GenerateNewId(), Name = "Dup", Value = 1 },
+            new Item { Id = ObjectId.GenerateNewId(), Name = "Dup", Value = 2 },
+        ]);
+        return collection;
+    }
+
     private static SingleEntityDbContext<Item> Make(IMongoCollection<Item> collection, MongoQueryMode mode)
         => SingleEntityDbContext.Create(
             collection,
@@ -820,35 +834,223 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.All(result, e => Assert.IsType<SetOpDerived>(e));
     }
 
-    // EF-347 slice B: a trailing Select (projection) is DEFERRED to slice C. Union falls back gracefully;
-    // Intersect hard-fails (no baseline). One test per fallback family.
+    // EF-347 slice C2: a trailing projection after Union now goes native (was a graceful fallback in slice B).
     [Fact]
-    public void Select_after_union_falls_back_gracefully()
+    public void Select_after_union_goes_native_parity()
     {
-        var collection = SeedCollection(nameof(Select_after_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
-                    .Select(i => new { i.Name }).ToList());
-        }
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
-            .Select(i => new { i.Name }).ToList();
-        Assert.Equal(5, result.Count);
+        var collection = SeedCollection(nameof(Select_after_union_goes_native_parity));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<string> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .Select(i => new { i.Name })
+                .ToList().Select(x => x.Name).OrderBy(n => n).ToList();
+
+        var native = Run(nativeOnlyDb);
+        Assert.Equal(5, native.Count); // 5 distinct entities → 5 projected rows
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    // EF-347 slice C2: a trailing projection after Intersect now goes native (was a hard-fail in slice B).
+    [Fact]
+    public void Select_after_intersect_goes_native_result_set()
+    {
+        var collection = SeedCollection(nameof(Select_after_intersect_goes_native_result_set));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        // {1,2,3} Intersect {3,4,5} = {3}; projected to Name.
+        var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
+            .Select(i => new { i.Name })
+            .ToList();
+        var single = Assert.Single(result);
+        Assert.Equal("Three", single.Name);
+    }
+
+    // EF-347 slice C2: a trailing anonymous/DTO member-access Select after a whole-entity set op now goes
+    // native (a $project after the set-op stage). Union has a driver-LINQ baseline → assert Native==DriverLinq
+    // parity; NativeOnly succeeding proves the native path was taken.
+    [Fact]
+    public void Select_after_union_goes_native()
+    {
+        var collection = SeedCollection(nameof(Select_after_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .Select(i => new { N = i.Value })
+                .ToList().Select(x => x.N).OrderBy(v => v).ToList();
+
+        var native = Run(nativeOnlyDb); // NativeOnly succeeding proves native
+        Assert.Equal([1, 2, 3, 4, 5], native); // {1,2,3} U {3,4,5} deduped, projected to Value
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    // No driver-LINQ oracle for Intersect/Except → assert the literal expected set under NativeOnly.
+    [Fact]
+    public void Select_after_intersect_goes_native()
+    {
+        var collection = SeedCollection(nameof(Select_after_intersect_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        // {1,2,3} Intersect {3,4,5} = {3}; projected to Value.
+        var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
+            .Select(i => new { N = i.Value })
+            .ToList();
+        Assert.Equal([3], result.Select(x => x.N).OrderBy(v => v));
+    }
+
+    // Slice-B trailing Where composes with a slice-C2 trailing projection: filter the combined result, then
+    // project. $match (trailing) lands before $project (both after the set-op stage).
+    [Fact]
+    public void Where_then_Select_after_union_goes_native()
+    {
+        var collection = SeedCollection(nameof(Where_then_Select_after_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .Where(i => i.Value >= 2).Select(i => new { N = i.Value })
+                .ToList().Select(x => x.N).OrderBy(v => v).ToList();
+
+        var native = Run(nativeOnlyDb);
+        Assert.Equal([2, 3, 4, 5], native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    // Union dedups WHOLE ENTITIES before the projection, so two DISTINCT entities that happen to project to
+    // the same value both survive (a duplicate projected value) — matching BCL Union(...).Select(...))
+    // (Select never dedups). A constant projection (Select(i => new { K = 1 })) cannot be used to demonstrate
+    // this: a constant leaf is not natively representable at all — SP3's projection binder accepts only
+    // top-level member accesses (see Computed_leaf_projection_after_union_falls_back_gracefully below) — so it
+    // falls back under Native and throws under NativeOnly for a reason unrelated to set-op dedup semantics.
+    // Two items sharing the same Name (but distinct Value, hence distinct whole documents) give a real,
+    // natively-representable (plain member-access) collision instead.
+    [Fact]
+    public void Union_dedups_entities_then_projects_keeping_duplicate_projected_values()
+    {
+        var collection = SeedCollectionWithDuplicateNames(nameof(Union_dedups_entities_then_projects_keeping_duplicate_projected_values));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<string> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value == 1).Union(db.Entities.Where(i => i.Value == 2))
+                .Select(i => new { i.Name })
+                .ToList().Select(x => x.Name).ToList();
+
+        var native = Run(nativeOnlyDb); // NativeOnly succeeding proves native
+        Assert.Equal(2, native.Count); // both distinct entities survive Union's whole-document dedup
+        Assert.All(native, n => Assert.Equal("Dup", n)); // and both project to the SAME Name (no accidental dedup)
+        Assert.Equal(Run(driverDb).Count, native.Count);
+    }
+
+    // EF-347 slice C2 seam finding (empirically verified via captured MQL, not assumed): a Where whose
+    // predicate is a pure pass-through of the trailing projection's member (x.N -> i.Value), and a SECOND
+    // trailing Select that is itself a pure member-remapping, do NOT reach the composition-after-projection
+    // seam at all for Union/Concat/Intersect/Except — EF Core's own query compiler (the NavigationExpanding
+    // pending-selector mechanism) either pushes the predicate BEFORE the Select (fusing "Select(...).Where(...)"
+    // into the equivalent "Where(...).Select(...)") or fuses two consecutive member-access Selects into ONE,
+    // before this provider's translator ever sees two separate operators composed after the projection. This
+    // happens for ANY operator whose predicate/selector is invertible through the projection (confirmed with
+    // Where AND with Sum(x => x.N) too) — it is a general EF Core LINQ-compilation behavior, not something this
+    // provider controls, and it is NOT specific to set operations (the SAME fusion is why
+    // Where_then_Select_after_union_goes_native above already goes fully native). So — contrary to the original
+    // design assumption — these two shapes are NOT reachable examples of "post-projection composition falls
+    // back"; they are ordinary, already-in-scope compositions and go fully native with correct results in
+    // every mode Union/Concat support. Captured MQL confirms it: for
+    // `.Union(...).Select(i => new { N = i.Value }).Where(x => x.N >= 2)`, EF Core emits the pipeline
+    // [$match(Value<=3), $unionWith(...), $group{_id:$$ROOT}, $replaceRoot, $match(Value>=2), $project(N:$Value)]
+    // — the $match for the post-projection predicate lands BEFORE the $project and references the raw Value
+    // field (not the projected alias N), proving EF's NavigationExpanding pending-selector mechanism pushed the
+    // predicate back through the projection before the provider's translator ever saw it.
+    [Fact]
+    public void Where_after_trailing_projection_on_union_goes_native_via_ef_predicate_pushdown()
+    {
+        var collection = SeedCollection(nameof(Where_after_trailing_projection_on_union_goes_native_via_ef_predicate_pushdown));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .Select(i => new { N = i.Value }).Where(x => x.N >= 2)
+                .ToList().Select(x => x.N).OrderBy(v => v).ToList();
+
+        var native = Run(nativeOnlyDb); // NativeOnly succeeding proves native
+        Assert.Equal([2, 3, 4, 5], native);
+        Assert.Equal(Run(driverDb), native);
     }
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
     [InlineData(MongoQueryMode.NativeOnly)]
-    public void Select_after_intersect_hard_fails_in_every_mode(MongoQueryMode mode)
+    public void Where_after_trailing_projection_on_intersect_goes_native_via_ef_predicate_pushdown(MongoQueryMode mode)
     {
-        var collection = SeedCollection(nameof(Select_after_intersect_hard_fails_in_every_mode) + mode);
+        var collection = SeedCollection(nameof(Where_after_trailing_projection_on_intersect_goes_native_via_ef_predicate_pushdown) + mode);
         using var db = Make(collection, mode);
+        // {1,2,3} Intersect {3,4,5} = {3}; the pushed-down predicate (Value >= 2) keeps it.
+        var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
+            .Select(i => new { N = i.Value }).Where(x => x.N >= 2).ToList();
+        var single = Assert.Single(result);
+        Assert.Equal(3, single.N);
+    }
+
+    // Unrelated to the seam: Intersect/Except have NO driver-LINQ baseline at all (the C# driver's own LINQ v3
+    // provider cannot translate a cross-view Intersect/Except — see the set-ops slice A AGENTS.md note), so
+    // explicit DriverLinq mode still hard-fails regardless of what is composed after the set op.
+    [Fact]
+    public void Where_after_trailing_projection_on_intersect_still_hard_fails_under_explicit_DriverLinq()
+    {
+        var collection = SeedCollection(nameof(Where_after_trailing_projection_on_intersect_still_hard_fails_under_explicit_DriverLinq));
+        using var db = Make(collection, MongoQueryMode.DriverLinq);
         Assert.ThrowsAny<Exception>(() =>
             db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
-                .Select(i => new { i.Name }).ToList());
+                .Select(i => new { N = i.Value }).Where(x => x.N >= 2).ToList());
+    }
+
+    [Fact]
+    public void Second_projection_after_union_goes_native_because_ef_fuses_the_two_selects()
+    {
+        var collection = SeedCollection(nameof(Second_projection_after_union_goes_native_because_ef_fuses_the_two_selects));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        var result = nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
+            .Select(i => new { N = i.Value }).Select(x => new { M = x.N }).ToList();
+        Assert.Equal(5, result.Count); // NativeOnly succeeding proves native — a single fused $project, no seam
+        Assert.Equal([1, 2, 3, 4, 5], result.Select(r => r.M).OrderBy(v => v));
+    }
+
+    // Deferred (unchanged): a BARE-SCALAR trailing projection is never pushed down (SP3 does not push a bare
+    // scalar), so it falls back gracefully after Union.
+    [Fact]
+    public void Bare_scalar_projection_after_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(Bare_scalar_projection_after_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
+                    .Select(i => i.Value).ToList());
+        }
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
+            .Select(i => i.Value).OrderBy(v => v).ToList();
+        Assert.Equal([1, 2, 3, 4, 5], result);
+    }
+
+    // Deferred (unchanged): a COMPUTED-leaf trailing projection is not SP3-representable → graceful fallback.
+    [Fact]
+    public void Computed_leaf_projection_after_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(Computed_leaf_projection_after_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
+                    .Select(i => new { Doubled = i.Value * 2 }).ToList());
+        }
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
+            .Select(i => new { Doubled = i.Value * 2 }).ToList();
+        Assert.Equal(5, result.Count);
     }
 
     // NOTE: a Concat().OfType<T>() variant was attempted here too, but it hits an UNRELATED pre-existing bug

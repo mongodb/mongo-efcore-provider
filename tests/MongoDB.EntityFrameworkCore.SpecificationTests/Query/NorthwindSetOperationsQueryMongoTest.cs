@@ -212,7 +212,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_id" : "$_id" } }
+            Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """);
     }
 

@@ -88,10 +88,11 @@ internal sealed class MongoSelectLowerer
             }
 
             // EF-347 slice B: post-set-op composition. Trailing $match/$sort/$skip/$limit emit AFTER the
-            // set-op stage (they operate on the COMBINED result), then fall through to the Cardinality block
-            // for a post-set-op aggregate/reducer. A set op only attaches to a plain whole-entity select, so
-            // UnwindSource/Grouping/Projection are all empty here and their blocks below are skipped; a future
-            // slice composing one of those after a set op MUST revisit this precedence.
+            // set-op stage (they operate on the COMBINED result), then fall through to the Projection block
+            // (EF-347 slice C2: a trailing anonymous/DTO Select after a set op populates Select.Projection,
+            // emitted here as a $project after the set-op stage and TrailingOps) and the Cardinality block
+            // (post-set-op aggregate/reducer). UnwindSource/Grouping stay empty for a set-op query and their
+            // blocks are skipped.
             AppendSelectOpStages(select.TrailingOps, stages);
             // NB: no early return — control continues to the Cardinality block.
         }

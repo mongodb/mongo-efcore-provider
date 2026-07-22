@@ -258,9 +258,14 @@ internal sealed class MongoSelectDefinition
     /// terminal. Used to relax the two catch-all post-terminal guards (NativeSlotPopulator,
     /// NativeCardinalityBinder) for the operators composed after a set op, while every deferred operator's own
     /// HasTerminalOperator guard stays tripped.
+    /// The <c>Projection.Count == 0</c> conjunct (EF-347 slice C2) makes this read as "a set op is the ONLY
+    /// thing done so far": it stays true while a trailing projection is being pushed down (Projection is still
+    /// empty at that moment, so TranslateSelect admits the projection), then flips to false once the projection
+    /// is populated — so any operator composed AFTER the trailing projection falls back rather than resolving
+    /// against the entity type (the composition-after-projection seam).
     /// </summary>
     internal bool IsSetOpTerminalOnly
-        => IsSetOp && !IsGroupBy && !IsDistinct && Grouping == null && UnwindSource == null;
+        => IsSetOp && !IsGroupBy && !IsDistinct && Grouping == null && UnwindSource == null && Projection.Count == 0;
 
     /// <summary>The terminal set operation (Union/Concat), when this select is a set-op query (EF-347 slice 2).</summary>
     internal MongoSetOperation? SetOperation { get; set; }
