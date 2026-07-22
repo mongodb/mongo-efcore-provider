@@ -243,6 +243,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     // ── Guard decline: out-of-scope Intersect/Except must hard-fail in EVERY mode (no graceful fallback --
     // there is no driver-LINQ oracle for Intersect/Except at all) ──────────────────────────────────────
 
+    // EF-347 slice C1 note: this is the BARE-SCALAR-operand case (Select(i => i.Value), never populates
+    // Projection, so IsPlainProjectedSelect rejects it) -- still correctly deferred/hard-fails in every mode.
+    // The anonymous-projection operand case goes native instead (see Projected_operand_intersect_goes_native_result_set).
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -454,23 +457,16 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     // rather than the never-attempted TranslateIntersect/TranslateExcept of before.
 
     [Fact]
-    public void Projected_union_falls_back()
+    public void Projected_operand_union_bare_goes_native()
     {
-        var collection = SeedCollection(nameof(Projected_union_falls_back));
-
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
-                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
-                    .ToList());
-        }
-
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
-            .Union(nativeDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+        // Formerly Projected_union_falls_back — a bare projected-operand Union (no trailing op) now goes NATIVE
+        // (EF-347 slice C1). NativeOnly succeeds instead of throwing.
+        var collection = SeedCollection(nameof(Projected_operand_union_bare_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        var result = nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+            .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
             .ToList();
-        Assert.Equal(5, result.Count);
+        Assert.Equal(5, result.Count); // {One,Two,Three} ∪ {Three,Four,Five} = 5 distinct Names
     }
 
     // NOTE: a "different entity type" fallback test (two operands with mismatched CollectionExpression
@@ -482,6 +478,144 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     // CollectionExpression.EntityType equality check is defensive-in-depth against a shape EF Core itself
     // already blocks upstream via ordinary LINQ usage -- not a reachable graceful-fallback scenario like
     // the ones below. Kept as a defensive guard (matching the brief) but not exercised by a functional test.
+
+    // EF-347 Task 3 (supersedes the pre-Task-2 characterization test that used to document the projected
+    // path hard-failing on the driver-LINQ fallback bridge's cross-DbSet guard): the projected-operand gate
+    // (Task 2) dropped the EntityType-equality check, so a DIFFERENT-collection projected Union now goes
+    // NATIVE -- it never reaches that fallback bridge at all (a native $unionWith pipeline bypasses
+    // MongoEFToLinqTranslatingExpressionVisitor entirely). There is NO driver-LINQ oracle for a
+    // different-collection operand pair (the fallback bridge's cross-DbSet guard would throw
+    // "Unsupported cross-DbSet query" if this were ever forced through it), so prove nativeness via
+    // NativeOnly + an exact expected-result-set assertion rather than Native == DriverLinq parity. The set
+    // op stays TERMINAL -- .ToList() immediately after Union, then client-side (LINQ-to-Objects) extraction.
+    [Fact]
+    public void Different_collection_projected_operand_union_goes_native()
+    {
+        using var db = MakeTwoEntity(MongoQueryMode.NativeOnly); // NativeOnly => proves native (no driver oracle for cross-collection)
+        // Two DIFFERENT entity types / collections projecting to the SAME anonymous shape {string Label}.
+        var result = db.Lefts.Select(l => new { Label = l.Name })
+            .Union(db.Rights.Select(r => new { Label = r.Title }))
+            .ToList()                                        // set op terminal; materialize
+            .Select(x => x.Label).OrderBy(s => s).ToList();  // client-side extract + sort
+        Assert.Equal(new[] { "a", "b", "c" }, result); // Lefts {a,b} U Rights {b,c} = {a,b,c}
+    }
+
+    [Fact]
+    public void Different_collection_projected_operand_intersect_goes_native_result_set()
+    {
+        using var db = MakeTwoEntity(MongoQueryMode.NativeOnly);
+        var result = db.Lefts.Select(l => new { Label = l.Name })
+            .Intersect(db.Rights.Select(r => new { Label = r.Title }))
+            .ToList()                          // set op terminal; materialize
+            .Select(x => x.Label).ToList();    // client-side extract
+        Assert.Equal(new[] { "b" }, result); // Lefts {a,b} ∩ Rights {b,c} = {b}
+    }
+
+    [Fact]
+    public void Different_collection_projected_operand_except_goes_native_result_set()
+    {
+        using var db = MakeTwoEntity(MongoQueryMode.NativeOnly);
+        var result = db.Lefts.Select(l => new { Label = l.Name })
+            .Except(db.Rights.Select(r => new { Label = r.Title }))
+            .ToList()                          // set op terminal; materialize
+            .Select(x => x.Label).ToList();    // client-side extract
+        Assert.Equal(new[] { "a" }, result); // Lefts {a,b} \ Rights {b,c} = {a}
+    }
+
+    // Two DISTINCT entities (different Id/Value) sharing Name "Dup". A PROJECTED-OPERAND Union over {Name}
+    // dedups the PROJECTED value -> ONE row, unlike C2's whole-entity trailing-projection dedup where both
+    // entities survive (see Union_dedups_entities_then_projects_keeping_duplicate_projected_values) because
+    // they dedup as distinct whole entities BEFORE the projection is applied.
+    [Fact]
+    public void Projected_operand_union_dedups_over_projected_values_not_whole_entities()
+    {
+        var collection = SeedCollectionWithDuplicateNames(
+            nameof(Projected_operand_union_dedups_over_projected_values_not_whole_entities));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        var result = db.Entities.Select(i => new { i.Name })
+            .Union(db.Entities.Select(i => new { i.Name }))
+            .ToList(); // already terminal -- no trailing operator needed
+        Assert.Single(result);
+        Assert.Equal("Dup", result[0].Name);
+    }
+
+    // Proves each operand's own Where lowers ahead of its $project, and a captured local parameter in an
+    // operand substitutes correctly. Same collection => a valid driver-LINQ oracle exists, so parity (not
+    // just a NativeOnly result-set check) is asserted here.
+    [Fact]
+    public void Projected_operand_union_with_per_operand_filter_and_parameter_goes_native()
+    {
+        var collection = SeedCollection(nameof(Projected_operand_union_with_per_operand_filter_and_parameter_goes_native));
+        var lo = 2;
+        var hi = 4;
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<string> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= lo).Select(i => new { i.Name })
+                .Union(db.Entities.Where(i => i.Value >= hi).Select(i => new { i.Name }))
+                .ToList()                                          // set op terminal; materialize
+                .Select(x => x.Name).OrderBy(n => n).ToList();     // client-side extract + sort
+
+        var native = Run(nativeOnlyDb); // NativeOnly succeeding proves it went native
+        Assert.Equal(4, native.Count); // Value<=2 (One,Two) U Value>=4 (Four,Five) = 4 distinct
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    public class Left { public ObjectId Id { get; set; } public string Name { get; set; } = ""; }
+    public class Right { public ObjectId Id { get; set; } public string Title { get; set; } = ""; }
+
+    private class TwoEntityDbContext : DbContext
+    {
+        private readonly string _lefts;
+        private readonly string _rights;
+        private readonly MongoQueryMode _mode;
+
+        public TwoEntityDbContext(TemporaryDatabaseFixture db, string lefts, string rights, MongoQueryMode mode)
+            : base(new DbContextOptionsBuilder<TwoEntityDbContext>()
+                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .ReplaceService<IModelCacheKeyFactory, IgnoreTwoEntityCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .Options)
+        {
+            _lefts = lefts;
+            _rights = rights;
+            _mode = mode;
+        }
+
+        public DbSet<Left> Lefts { get; set; } = null!;
+        public DbSet<Right> Rights { get; set; } = null!;
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Left>().ToCollection(_lefts);
+            modelBuilder.Entity<Right>().ToCollection(_rights);
+        }
+
+        private sealed class IgnoreTwoEntityCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
+        }
+    }
+
+    private TwoEntityDbContext MakeTwoEntity(MongoQueryMode mode)
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var leftsName = TemporaryDatabaseFixtureBase.CreateCollectionName("C1Lefts") + suffix;
+        var rightsName = TemporaryDatabaseFixtureBase.CreateCollectionName("C1Rights") + suffix;
+        database.MongoDatabase.GetCollection<Left>(leftsName).InsertMany(
+        [
+            new Left { Id = ObjectId.GenerateNewId(), Name = "a" },
+            new Left { Id = ObjectId.GenerateNewId(), Name = "b" },
+        ]);
+        database.MongoDatabase.GetCollection<Right>(rightsName).InsertMany(
+        [
+            new Right { Id = ObjectId.GenerateNewId(), Title = "b" },
+            new Right { Id = ObjectId.GenerateNewId(), Title = "c" },
+        ]);
+        return new TwoEntityDbContext(database, leftsName, rightsName, mode);
+    }
 
     // ── An operand carrying an Include (cross-collection $lookup) must fall back ────────────────────
 
@@ -852,6 +986,26 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(Run(driverDb), native);
     }
 
+    // EF-347 C1 Task 4b guard-narrowness check: a trailing Distinct after a WHOLE-ENTITY set op's trailing
+    // projection (OperandsProjected == false — the operands themselves are whole-entity, and Projection is
+    // populated AFTER the set-op stage as a genuine trailing projection) must STILL go native under
+    // NativeOnly — this is the pre-existing slice-C2 capability the Task 4b regression fix must not regress.
+    // Contrast Distinct_after_projected_operand_union_falls_back_gracefully above, where the OPERANDS
+    // themselves are projected (OperandsProjected == true) and Distinct now declines instead.
+    [Fact]
+    public void Trailing_distinct_after_whole_entity_union_still_goes_native()
+    {
+        var collection = SeedCollection(nameof(Trailing_distinct_after_whole_entity_union_still_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        var result = db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+            .Select(i => new { i.Name })
+            .Distinct()
+            .ToList().Select(x => x.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, result);
+    }
+
     // EF-347 slice C2: a trailing projection after Intersect now goes native (was a hard-fail in slice B).
     [Fact]
     public void Select_after_intersect_goes_native_result_set()
@@ -1091,5 +1245,477 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
             .ToList().Select(i => i.Value).OrderBy(v => v).ToList();
 
         Assert.Equal(driverResult, native);
+    }
+
+    // ── EF-347 slice C1: projected OPERANDS go native (same collection) ──────────────────────────────
+    //
+    // The set op MUST stay TERMINAL (as with the whole-entity Intersect/Except tests above — see the
+    // "composition after a projected-operand set op" gap noted below): a queryable .OrderBy/.Select applied
+    // directly to the Union/Concat/Intersect/Except result (rather than after materializing it) composes past
+    // the C1 terminal gate and falls back / throws under NativeOnly, since post-set-op composition for a
+    // PROJECTED-operand set op is not yet supported (deferred to a follow-up task, mirroring how slice B added
+    // composition after a WHOLE-ENTITY set op only once slice A had established the terminal foundation).
+    // .ToList() immediately after the set op keeps it terminal; any further ordering/projection is done
+    // client-side (LINQ-to-Objects) on the materialized list, exactly like Intersect_whole_entity_goes_native/
+    // Except_whole_entity_goes_native above.
+
+    [Fact]
+    public void Projected_operand_union_goes_native()
+    {
+        var collection = SeedCollection(nameof(Projected_operand_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly); // NativeOnly => proves native
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        static List<string> Q(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+                .ToList()                       // set op stays terminal; materialize
+                .Select(x => x.Name).OrderBy(s => s).ToList();  // client-side extract + sort
+
+        var native = Q(nativeOnlyDb);   // would throw NativeTranslationNotSupportedException on fallback
+        Assert.Equal(Q(driverDb), native);      // full content equality, order-normalized
+    }
+
+    [Fact]
+    public void Projected_operand_concat_goes_native()
+    {
+        var collection = SeedCollection(nameof(Projected_operand_concat_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        static List<string> Q(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+                .Concat(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+                .ToList()                       // set op stays terminal; materialize
+                .Select(x => x.Name).OrderBy(s => s).ToList();  // client-side extract + sort
+
+        var native = Q(nativeOnlyDb);
+        Assert.Equal(Q(driverDb), native);      // full content equality, order-normalized
+    }
+
+    [Fact]
+    public void Projected_operand_intersect_goes_native_result_set()
+    {
+        var collection = SeedCollection(nameof(Projected_operand_intersect_goes_native_result_set));
+        using var db = Make(collection, MongoQueryMode.NativeOnly); // Intersect has no driver oracle -> NativeOnly proves native
+        var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+            .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+            .ToList().Select(x => x.Name).ToList();
+        Assert.Equal(new[] { "Three" }, result); // only Value==3 (Name "Three") is in both operands
+    }
+
+    [Fact]
+    public void Projected_operand_except_goes_native_result_set()
+    {
+        var collection = SeedCollection(nameof(Projected_operand_except_goes_native_result_set));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+            .Except(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+            .ToList().Select(x => x.Name).OrderBy(s => s).ToList();
+        Assert.Equal(new[] { "One", "Two" }, result); // Value 1,2 (<=3) minus Value 3 (in second) = One, Two
+    }
+
+    // ── EF-347 C1 deferred shapes keep current behavior (fall back / hard-fail) ──────────────────────
+    //
+    // A bare-scalar operand (Select(i => i.Name)) or a computed-leaf operand (Select(i => new { i.Value * 2 }))
+    // never populates Projection (IsPlainProjectedSelect requires a top-level member-access-only shape), so
+    // neither operand qualifies as a "plain projected select" -- these fall back gracefully for Union, same as
+    // the whole-entity Bare_scalar_projection_after_union_falls_back_gracefully /
+    // Computed_leaf_projection_after_union_falls_back_gracefully tests above (which cover a trailing
+    // projection AFTER a whole-entity set op; these two cover the operand ITSELF being one of these shapes).
+    // NOTE: a "mixed operands" test (one whole-entity operand, one projected operand) is unreachable by
+    // construction -- Union requires both operand queryables to share a CLR result type, so a whole-entity
+    // Item and a projected anonymous-type operand do not compile together; no test is added for that case.
+
+    [Fact]
+    public void Bare_scalar_operand_union_falls_back_gracefully()
+    {
+        // Bare-scalar operand (Select(i => i.Name), no anonymous/DTO) never populates Projection -> not a plain
+        // projected select -> graceful fallback for Union (throws only under NativeOnly).
+        var collection = SeedCollection(nameof(Bare_scalar_operand_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Select(i => i.Name)
+                    .Union(nativeOnlyDb.Entities.Select(i => i.Name)).ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        Assert.Equal(5, nativeDb.Entities.Select(i => i.Name)
+            .Union(nativeDb.Entities.Select(i => i.Name)).ToList().Count);
+    }
+
+    [Fact]
+    public void Computed_leaf_operand_union_falls_back_gracefully()
+    {
+        // Computed projection leaf (i.Value * 2) is not the SP3 member-access surface -> operand not a plain
+        // projected select -> graceful fallback for Union.
+        var collection = SeedCollection(nameof(Computed_leaf_operand_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Select(i => new { Doubled = i.Value * 2 })
+                    .Union(nativeOnlyDb.Entities.Select(i => new { Doubled = i.Value * 2 })).ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        Assert.NotEmpty(nativeDb.Entities.Select(i => new { Doubled = i.Value * 2 })
+            .Union(nativeDb.Entities.Select(i => new { Doubled = i.Value * 2 })).ToList());
+    }
+
+    // ── EF-347 C1 post-composition WRONG-DATA probe: an operator composed directly AFTER a
+    // PROJECTED-operand set op (rather than after materializing it) is out of C1 scope -- a C1 set op is
+    // ALWAYS terminal because Projection.Count > 0 at attach, so IsSetOpTerminalOnly (which requires
+    // Projection.Count == 0) never holds for it, and every post-terminal entry point rejects it exactly as
+    // designed. This was empirically probed (NativeOnly vs default Native vs explicit DriverLinq, same
+    // collection so a driver-LINQ oracle exists for Union) for every operator named in the Task 4 brief:
+    // Where, OrderBy, Skip, Take, Count, Distinct, a second Select, GroupBy, and a chained Union. THE
+    // OUTCOME: unlike the whole-entity/C2 case, NONE of these get fused back to native by EF (no case (i));
+    // each is either (ii) a graceful fallback -- throws NativeTranslationNotSupportedException under
+    // NativeOnly, correct result under default Native/DriverLinq -- or (iii) a hard crash in every mode (an
+    // unsupported shape that never worked via driver-LINQ either). Critically: in every single probed case, the
+    // default Native mode either returns the CORRECT
+    // (in-memory-LINQ-equivalent) result or THROWS -- never silently wrong data. Full matrix (also see
+    // task-4-report.md):
+    //
+    //   Where        (ii) graceful fallback  -- NativeOnly throws NativeTranslationNotSupportedException;
+    //                                            Native/DriverLinq return the correct filtered set.
+    //   OrderBy      (ii) graceful fallback  -- same pattern; Native/DriverLinq return the correct sorted set.
+    //   Skip         (ii) graceful fallback  -- same pattern (probed via OrderBy().Skip(1)).
+    //   Take         (ii) graceful fallback  -- same pattern (probed via OrderBy().Take(2)).
+    //   Count()      (ii) graceful fallback  -- same pattern; Native/DriverLinq return the correct count (5).
+    //   GroupBy      (ii) graceful fallback  -- same pattern; Native/DriverLinq return the correct 5 groups.
+    //   Chained Union (ii) graceful fallback -- same pattern; Native/DriverLinq return the correct union-of-3.
+    //   Distinct     (ii) graceful fallback (FIXED in Task 4b) -- NativeOnly throws
+    //                NativeTranslationNotSupportedException; Native/DriverLinq return the correct 5 distinct
+    //                names. BEFORE the Task-4b fix this shape CRASHED under Native/NativeOnly (a raw
+    //                InvalidOperationException, "Document element 'Name' is missing...", from BSON
+    //                deserialization) while explicit DriverLinq succeeded -- a correct-to-crash regression
+    //                introduced by making the projected-operand set op native. The fix (declining in
+    //                NativeGroupByBinder.TryBindDistinctFromProjection when
+    //                select.SetOperation is { OperandsProjected: true }) routes it to a clean driver-LINQ
+    //                fallback. See Distinct_after_projected_operand_union_falls_back_gracefully.
+    //   Second Select (iii) hard crash, EVERY mode -- InvalidOperationException ("The LINQ expression
+    //                'ProjectionBindingExpression: Value' could not be translated"), matching the brief's
+    //                documented hazard (a ProjectionBindingExpression leaf the fallback bridge can't read).
+    //                Also verified NOT native-only: explicit DriverLinq hits the identical exception.
+    //   Intersect + Where (iii) hard crash, EVERY mode -- Intersect has no driver-LINQ oracle at all, so a
+    //                post-composition operator after a projected-operand Intersect throws in every mode
+    //                (NativeOnly: NativeTranslationNotSupportedException; Native/DriverLinq: a raw
+    //                ExpressionNotSupportedException from the driver's own LINQ provider attempting the
+    //                Aggregate(...).As(...) bridge). No wrong data in any mode.
+    //
+    // Per the versioning rubric, the exact exception TYPE for an unsupported shape is not part of the
+    // contract -- what is asserted below is only "correct result OR throws", never a specific exception type
+    // for the hard-crash cases (Assert.ThrowsAny<Exception>), and the specific
+    // NativeTranslationNotSupportedException signal only for the genuinely-graceful-fallback cases.
+
+    [Fact]
+    public void Where_after_projected_operand_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(Where_after_projected_operand_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                    .Where(x => x.Value > 2).ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .Where(x => x.Value > 2)
+                .ToList().Select(x => x.Value).OrderBy(v => v).ToList();
+
+        var native = Run(nativeDb);
+        Assert.Equal([3, 4, 5], native); // {1,2,3} U {3,4,5} deduped = {1,2,3,4,5}; Value>2 = {3,4,5}
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void OrderBy_after_projected_operand_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(OrderBy_after_projected_operand_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                    .OrderBy(x => x.Value).ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .OrderBy(x => x.Value)
+                .ToList().Select(x => x.Value).ToList();
+
+        var native = Run(nativeDb);
+        Assert.Equal([1, 2, 3, 4, 5], native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void Paging_after_projected_operand_union_falls_back_gracefully()
+    {
+        // Covers both .Skip(1) and .Take(2) (probed individually; same graceful-fallback bucket).
+        var collection = SeedCollection(nameof(Paging_after_projected_operand_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                    .OrderBy(x => x.Value).Skip(1).ToList());
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                    .OrderBy(x => x.Value).Take(2).ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<int> RunSkip(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .OrderBy(x => x.Value).Skip(1)
+                .ToList().Select(x => x.Value).ToList();
+
+        List<int> RunTake(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .OrderBy(x => x.Value).Take(2)
+                .ToList().Select(x => x.Value).ToList();
+
+        var nativeSkip = RunSkip(nativeDb);
+        Assert.Equal([2, 3, 4, 5], nativeSkip);
+        Assert.Equal(RunSkip(driverDb), nativeSkip);
+
+        var nativeTake = RunTake(nativeDb);
+        Assert.Equal([1, 2], nativeTake);
+        Assert.Equal(RunTake(driverDb), nativeTake);
+    }
+
+    [Fact]
+    public void Count_after_projected_operand_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(Count_after_projected_operand_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                    .Count());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        int Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .Count();
+
+        var native = Run(nativeDb);
+        Assert.Equal(5, native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void GroupBy_after_projected_operand_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(GroupBy_after_projected_operand_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                    .GroupBy(x => x.Value).Select(g => new { g.Key, Count = g.Count() }).ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<(int Key, int Count)> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .GroupBy(x => x.Value).Select(g => new { g.Key, Count = g.Count() })
+                .ToList().Select(g => (g.Key, g.Count)).OrderBy(g => g.Key).ToList();
+
+        var native = Run(nativeDb);
+        Assert.Equal(5, native.Count);
+        Assert.All(native, g => Assert.Equal(1, g.Count)); // 5 distinct Values, one row each
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void Chained_set_op_after_projected_operand_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(Chained_set_op_after_projected_operand_union_falls_back_gracefully));
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value == 1).Select(i => new { i.Name, i.Value }))
+                    .ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .Union(db.Entities.Where(i => i.Value == 1).Select(i => new { i.Name, i.Value }))
+                .ToList().Select(x => x.Value).OrderBy(v => v).ToList();
+
+        var native = Run(nativeDb);
+        Assert.Equal([1, 2, 3, 4, 5], native); // third operand ({1}) already present, no change
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    // EF-347 C1 Task 4b: Distinct atop a PROJECTED-OPERAND Union now falls back gracefully instead of
+    // crashing. Root cause of the former crash: for a projected-operand set op, select.Projection holds
+    // operand-1's OWN projection (needed by the lowerer to emit operand-1's $project BEFORE the $unionWith
+    // stage) -- NOT a trailing post-set-op projection. TryBindDistinctFromProjection had no set-operation
+    // guard, so it overwrote that Projection with $group flatten-refs and set Grouping; the lowerer's
+    // OperandsProjected branch then emitted the corrupted Projection as operand-1's $project, producing a
+    // malformed pipeline that crashed at BSON deserialization. The fix (a guard on
+    // select.SetOperation is { OperandsProjected: true } in TryBindDistinctFromProjection) declines this
+    // shape so TranslateDistinct falls back to driver-LINQ -- throwing only under NativeOnly, and returning
+    // the CORRECT result under the default Native mode and under explicit DriverLinq, matching the
+    // pre-C1 behavior (before this slice, the whole query wasn't native at all, so it always fell back).
+    [Fact]
+    public void Distinct_after_projected_operand_union_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(Distinct_after_projected_operand_union_falls_back_gracefully));
+
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                    .Distinct().ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        int Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .Distinct().ToList().Count;
+
+        var native = Run(nativeDb);
+        Assert.Equal(5, native); // 5 distinct entities -> 5 distinct projected rows, none collide
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    // EF-347 C1 Task 5 coverage gap: the Distinct-after-projected-operand-set-op guard
+    // (`select.SetOperation is { OperandsProjected: true }` in TryBindDistinctFromProjection) is
+    // kind-agnostic -- it declines for Concat exactly as it does for Union above (see
+    // Distinct_after_projected_operand_union_falls_back_gracefully). Concat does NOT dedup, so before the
+    // trailing Distinct the concat of Where(<=3) {One,Two,Three} and Where(>=3) {Three,Four,Five} has 6 rows
+    // including the duplicate "Three"; the trailing .Distinct() over {Name} then yields 5 distinct names.
+    // Concat has a driver-LINQ oracle (same collection), so assert Native == DriverLinq parity; NativeOnly
+    // throwing proves the guard declined (fell back) rather than corrupting the operand pipeline.
+    [Fact]
+    public void Distinct_after_projected_operand_concat_falls_back_gracefully()
+    {
+        var collection = SeedCollection(nameof(Distinct_after_projected_operand_concat_falls_back_gracefully));
+
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+                    .Concat(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+                    .Distinct().ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<string> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+                .Concat(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+                .Distinct().ToList().Select(x => x.Name).OrderBy(n => n).ToList();
+
+        var native = Run(nativeDb);
+        // Concat's 6 rows (One,Two,Three,Three,Four,Five) deduped by the trailing Distinct -> 5 distinct names.
+        Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    // EF-347 C1 Task 5 coverage gap: Intersect has NO driver-LINQ oracle at all (see the set-ops slice A
+    // note in the Query area AGENTS.md), so once the same kind-agnostic Distinct guard declines, the whole
+    // query hard-fails in EVERY mode -- same pattern as
+    // Op_after_projected_operand_intersect_hard_fails_in_every_mode above, just with a trailing Distinct
+    // instead of a trailing Where.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Distinct_after_projected_operand_intersect_hard_fails_in_every_mode(MongoQueryMode mode)
+    {
+        var collection = SeedCollection(nameof(Distinct_after_projected_operand_intersect_hard_fails_in_every_mode) + mode);
+        using var db = Make(collection, mode);
+        Assert.ThrowsAny<Exception>(() =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+                .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+                .Distinct().ToList());
+    }
+
+    // Except variant of the above, for completeness -- same no-oracle hard-fail pattern as Intersect.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Distinct_after_projected_operand_except_hard_fails_in_every_mode(MongoQueryMode mode)
+    {
+        var collection = SeedCollection(nameof(Distinct_after_projected_operand_except_hard_fails_in_every_mode) + mode);
+        using var db = Make(collection, mode);
+        Assert.ThrowsAny<Exception>(() =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
+                .Except(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+                .Distinct().ToList());
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Second_select_after_projected_operand_union_hard_fails_in_every_mode(MongoQueryMode mode)
+    {
+        var collection = SeedCollection(nameof(Second_select_after_projected_operand_union_hard_fails_in_every_mode) + mode);
+        using var db = Make(collection, mode);
+        Assert.ThrowsAny<Exception>(() =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .Select(x => new { x.Value }).ToList());
+    }
+
+    // Intersect has no driver-LINQ oracle at all, so post-composition after a projected-operand Intersect
+    // hard-fails in EVERY mode (same pattern as the whole-entity Intersect_then_op_hard_fails_under_native
+    // tests above -- see also Projected_intersect_hard_fails_in_every_mode's bare-scalar-operand variant).
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Op_after_projected_operand_intersect_hard_fails_in_every_mode(MongoQueryMode mode)
+    {
+        var collection = SeedCollection(nameof(Op_after_projected_operand_intersect_hard_fails_in_every_mode) + mode);
+        using var db = Make(collection, mode);
+        Assert.ThrowsAny<Exception>(() =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
+                .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+                .Where(x => x.Value > 2).ToList());
     }
 }

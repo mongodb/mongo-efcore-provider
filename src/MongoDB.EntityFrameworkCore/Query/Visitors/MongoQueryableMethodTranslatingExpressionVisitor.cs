@@ -1451,6 +1451,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return source1;
         }
 
+        // EF-347 slice C1: projected operands. Both operands are plain projected selects (a Select-projection is
+        // the SOLE terminal on each). The EntityType-equality gate above does NOT apply — projected operands may
+        // be different collections that project to the same shape; ProjectionShapesMatch guards the shape compatibility
+        // instead (a correctness guard, not just an optimization: the dedup / source-tagging compare whole projected
+        // documents by value, so mismatched alias sets would mis-compare). EF Core rejects incompatible operand
+        // shapes upstream, so a mismatch is defense-in-depth.
+        if (IsPlainProjectedSelect(mongo1) && IsPlainProjectedSelect(mongo2)
+            && ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection))
+        {
+            mongo1.Select.SetOperation = new MongoSetOperation(
+                kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, operandsProjected: true);
+            mongo1.Select.IsSetOp = true;
+            return source1;
+        }
+
         // Out of scope. Union/Concat have a working driver-LINQ fallback, so mark non-native and return
         // source1 -> graceful fallback (throws only under NativeOnly). Intersect/Except have NO driver-LINQ
         // fallback (Task 1 probe confirmed the driver's LINQ v3 provider does not translate a cross-view
@@ -1478,6 +1493,56 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && !mongo.IsJoinQuery
            && mongo.Lookups.Count == 0
            && !ContainsVectorSearch(mongo.CapturedExpression);
+
+    // A plain projected select: a terminal anonymous/DTO member-access Select is the SOLE thing done (SP3
+    // Projection populated, Route == Projection) — no grouping, scalar cardinality, its own set op, SelectMany
+    // ($unwind), cross-collection lookups (Include), join, or a lifted-out VectorSearch. The projected analogue
+    // of IsPlainWholeEntitySelect (EF-347 slice C1). Note this checks UnwindSource == null, which the
+    // whole-entity sibling currently omits (a documented latent gap) — the new predicate is deliberately stricter.
+    private static bool IsPlainProjectedSelect(MongoQueryExpression mongo)
+        => mongo.Select.Route == NativeRoute.Projection
+           && mongo.Select.Projection.Count > 0
+           && mongo.Select.SetOperation == null
+           && !mongo.Select.IsSetOp
+           && mongo.Select.Grouping == null
+           && mongo.Select.Cardinality == null
+           && mongo.Select.UnwindSource == null
+           && !mongo.IsJoinQuery
+           && mongo.Lookups.Count == 0
+           && !ContainsVectorSearch(mongo.CapturedExpression);
+
+    // The two operands' projected shapes must have identical top-level alias SETS (same count, same alias names).
+    // The output documents' fields are exactly these aliases, and Union dedup / Intersect-Except source-tagging
+    // compare whole projected documents by value — mismatched alias sets would compare structurally-different
+    // documents and silently mis-dedup / mis-tag. Compares alias sets only, NOT the underlying field-refs, so
+    // e.g. new {N = a.Name} and new {N = b.Title} correctly match (both produce {N: ...}); each operand's own
+    // $project maps its own source field to the shared alias. EF Core rejects incompatible operand shapes
+    // upstream (a shared common anonymous type is required for the set op to compile), so a mismatch here is
+    // defense-in-depth against that guarantee ever weakening.
+    private static bool ProjectionShapesMatch(
+        IReadOnlyList<MongoProjection> p1, IReadOnlyList<MongoProjection> p2)
+    {
+        if (p1.Count != p2.Count)
+        {
+            return false;
+        }
+
+        var aliases = new HashSet<string>(p1.Count);
+        foreach (var projection in p1)
+        {
+            aliases.Add(projection.Alias);
+        }
+
+        foreach (var projection in p2)
+        {
+            if (!aliases.Contains(projection.Alias))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     // Local, minimal duplicate of MongoShapedQueryCompilingExpressionVisitor.ContainsVectorSearch (that
     // gate method is private and deliberately not made public — see the Query area AGENTS.md for the

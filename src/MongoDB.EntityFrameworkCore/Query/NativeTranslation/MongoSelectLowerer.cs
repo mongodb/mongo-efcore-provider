@@ -75,8 +75,25 @@ internal sealed class MongoSelectLowerer
         // grouping/projection/cardinality/lookups), so the operand lowers to its own filter/sort/page ops only.
         if (select.SetOperation is { } setOp)
         {
+            // EF-347 slice C1: projected operands. Each operand's own $project is part of ITS pipeline and
+            // must be emitted BEFORE the combine — source1's ahead of the set-op stage (appended to `stages`
+            // right after source1's PipelineOps above), the operand's inside the nested `operandStages`. The
+            // dedup ($group{_id:$$ROOT}) and Intersect/Except source-tagging then operate over the PROJECTED
+            // documents (correct: BCL dedups/compares the projected values). Contrast slice C2 (a trailing
+            // projection over the COMBINED result), where OperandsProjected is false and select.Projection is
+            // emitted AFTER the set-op stage by the fall-through Projection block below.
+            if (setOp.OperandsProjected)
+            {
+                stages.Add(new MongoProjectStage(select.Projection));
+            }
+
             var operandStages = new List<MongoPipelineStage>();
             AppendSelectOpStages(setOp.OperandSelect.PipelineOps, operandStages);
+            if (setOp.OperandsProjected)
+            {
+                operandStages.Add(new MongoProjectStage(setOp.OperandSelect.Projection));
+            }
+
             if (setOp.Kind is MongoSetOperationKind.Intersect or MongoSetOperationKind.Except)
             {
                 stages.Add(new MongoSetDifferenceStage(setOp.Kind, operandStages, setOp.OperandCollectionName));
@@ -133,7 +150,10 @@ internal sealed class MongoSelectLowerer
         // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Emitted
         // last here: the projection is the final logical operation for the SP3 terminal slice, after
         // the filter/sort/page ops and any $lookup.
-        if (select.Projection.Count > 0)
+        // A projected-operand set op (slice C1) already emitted source1's $project above, ahead of the
+        // set-op stage — don't re-emit it here. A trailing projection after a set op (slice C2, OperandsProjected
+        // false) and a plain projected Select (no set op) both still emit here.
+        if (select.Projection.Count > 0 && !(select.SetOperation?.OperandsProjected ?? false))
         {
             stages.Add(new MongoProjectStage(select.Projection));
         }

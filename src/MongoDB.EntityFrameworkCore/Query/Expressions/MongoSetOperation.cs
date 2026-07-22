@@ -35,18 +35,32 @@ internal enum MongoSetOperationKind
 /// A terminal set operation (<c>Union</c>/<c>Concat</c>) attached to the outer
 /// <see cref="MongoSelectDefinition"/>. The second operand is captured as its own plain whole-entity
 /// <see cref="MongoSelectDefinition"/> (rendered as the nested <c>$unionWith</c> pipeline against
-/// <see cref="OperandCollectionName"/>). Whole-entity, terminal-only (EF-347 slice 2).
+/// <see cref="OperandCollectionName"/>). Whole-entity, terminal-only (EF-347 slice 2) — now ALSO supports
+/// projected operands, same-collection (EF-347 slice C1, see <see cref="OperandsProjected"/>).
 /// </summary>
 internal sealed class MongoSetOperation
 {
-    public MongoSetOperation(MongoSetOperationKind kind, MongoSelectDefinition operandSelect, string operandCollectionName)
+    public MongoSetOperation(
+        MongoSetOperationKind kind, MongoSelectDefinition operandSelect, string operandCollectionName,
+        bool operandsProjected = false)
     {
         Kind = kind;
         OperandSelect = operandSelect;
         OperandCollectionName = operandCollectionName;
+        OperandsProjected = operandsProjected;
     }
 
     public MongoSetOperationKind Kind { get; }
     public MongoSelectDefinition OperandSelect { get; }
     public string OperandCollectionName { get; }
+
+    /// <summary>
+    /// EF-347 slice C1: <c>true</c> when both operands were plain projected selects
+    /// (<see cref="MongoSelectDefinition.Projection"/> populated) at the time the set op was attached, so each
+    /// operand's own <c>$project</c> is part of ITS pipeline and must be emitted BEFORE the combine — source1's
+    /// ahead of the set-op stage, the operand's inside the nested pipeline (see <c>MongoSelectLowerer.Lower</c>).
+    /// <c>false</c> for a whole-entity set op (slices A/B) or a trailing projection after a set op (slice C2),
+    /// where any <c>$project</c> is emitted AFTER the combine.
+    /// </summary>
+    public bool OperandsProjected { get; }
 }

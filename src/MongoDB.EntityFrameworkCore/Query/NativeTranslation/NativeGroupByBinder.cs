@@ -345,8 +345,20 @@ internal static class NativeGroupByBinder
         // into existence (EF-347 slice 5 fix: silent-null Distinct-after-SelectMany). Decline so this falls
         // back to driver-LINQ (or hard-fails, for the reference form, which has no driver-LINQ baseline)
         // instead of building a pipeline that silently returns nulls.
+        //
+        // EF-347 C1 Task 4b: for a PROJECTED-OPERAND set op (SetOperation.OperandsProjected == true),
+        // select.Projection is operand-1's OWN projection — emitted BEFORE the set-op stage by the lowerer,
+        // not a trailing post-set-op projection — so converting it into a degenerate $group here corrupts
+        // operand-1's pipeline (the lowerer's OperandsProjected branch then emits the corrupted Projection
+        // as operand-1's $project, producing a malformed pipeline that crashes at BSON deserialization).
+        // Declining makes TranslateDistinct fall back gracefully instead (correct results, matching pre-C1
+        // behavior). This must stay narrowed to OperandsProjected: true, NOT a blanket SetOperation != null:
+        // a WHOLE-ENTITY set op with a TRAILING projection (slice C2, OperandsProjected == false — e.g.
+        // Union(A,B).Select(p).Distinct()) has its Projection applied AFTER the set-op stage as a genuine
+        // trailing projection, which this method converts to a $group safely and correctly — a documented
+        // native capability that must be preserved.
         if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null || select.HasPaging
-            || select.UnwindSource != null)
+            || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true })
             return false;
 
         var keyParts = new List<MongoGroupingKeyPart>();
