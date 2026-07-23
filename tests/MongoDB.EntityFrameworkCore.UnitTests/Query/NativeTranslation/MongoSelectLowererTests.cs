@@ -323,6 +323,31 @@ public class MongoSelectLowererTests
             });
     }
 
+    // ── Owned whole-element SelectMany lowers to $unwind then $replaceRoot (EF-347 bare-owned) ──
+    // The naive $replaceRoot alone is insufficient (owned keys are shadow properties not in the
+    // document), so WholeElement drives the $unwind to also carry the array ordinal via
+    // includeArrayIndex (MongoReplaceRootStage.OrdinalField) for the following $replaceRoot to merge in.
+
+    [Fact]
+    public void WholeElement_UnwindSource_lowers_to_unwind_then_replaceRoot_stage_in_order()
+    {
+        var query = TestSelect();
+        var unwind = MongoUnwindSource.Owned("Items", innerEntityType: null!);
+        unwind.WholeElement = true;
+        query.Select.UnwindSource = unwind;
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s =>
+            {
+                var unwindField = Assert.IsType<MongoUnwindFieldStage>(s);
+                Assert.Equal("Items", unwindField.ElementPath);
+                Assert.Equal(MongoReplaceRootStage.OrdinalField, unwindField.IncludeArrayIndex);
+            },
+            s => Assert.Equal("Items", Assert.IsType<MongoReplaceRootStage>(s).NewRoot));
+    }
+
     // ── Test 16: Reference-collection SelectMany unwind lowers to $lookup → $unwind → $project
     // (EF-347 slice 5, Task 3). Distinct from Test 15 (Owned): AppendLookupStages (stage 5) already
     // appends the $lookup+$unwind for a Reference UnwindSource BEFORE the UnwindSource block runs,

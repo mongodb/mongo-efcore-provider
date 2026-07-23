@@ -78,4 +78,13 @@ internal sealed class MongoUnwindSource
     /// <see langword="null"/> for <see cref="MongoUnwindSourceKind.Owned"/> (no cross-collection join needed —
     /// the array is already on the root document).</summary>
     public LookupExpression? Lookup { get; }
+
+    /// <summary>
+    /// <see langword="true"/> when the trailing SelectMany selector returns the WHOLE inner element
+    /// entity (e.g. <c>from o in q from i in o.Items select i</c>) rather than a member projection. Set by
+    /// <c>TranslateSelect</c> once it recognizes the whole-inner-entity selector; drives the lowerer to
+    /// append a <c>$replaceRoot</c> that promotes the unwound element to the root document. Owned-only in
+    /// this slice (reference is deferred).
+    /// </summary>
+    public bool WholeElement { get; set; }
 }

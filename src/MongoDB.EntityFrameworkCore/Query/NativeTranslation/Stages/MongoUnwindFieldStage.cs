@@ -22,6 +22,19 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// </summary>
 internal sealed class MongoUnwindFieldStage : MongoPipelineStage
 {
-    public MongoUnwindFieldStage(string elementPath) => ElementPath = elementPath;
+    public MongoUnwindFieldStage(string elementPath, string? includeArrayIndex = null)
+    {
+        ElementPath = elementPath;
+        IncludeArrayIndex = includeArrayIndex;
+    }
+
     public string ElementPath { get; }
+
+    /// <summary>
+    /// The output field to write the zero-based array index to (<c>includeArrayIndex</c>), or
+    /// <see langword="null"/> to omit it. Set for a bare whole-inner-element owned SelectMany (EF-347) so a
+    /// following <see cref="MongoReplaceRootStage"/> can carry the ordinal into the re-rooted element as the
+    /// owned collection's synthesized ordinal key.
+    /// </summary>
+    public string? IncludeArrayIndex { get; }
 }

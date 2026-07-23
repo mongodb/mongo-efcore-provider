@@ -28,6 +28,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -269,51 +270,78 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             }
         }
 
-        // EF-347 slice 4 (review fix, refined): a bare-nav owned SelectMany (UnwindSource set by
+        // EF-347 Task 3: a bare-nav owned SelectMany (UnwindSource set by
         // NativeSelectManyBinder.TryBindBareNavUnwind) whose trailing selector did NOT populate a projection —
-        // e.g. `from o in q from i in o.Items select i` / `SelectMany(o => o.Items, (o, i) => i)`, a whole-
-        // inner-entity `ti => ti.Inner` selector — bypasses BOTH the pending-SelectMany projection branch above
-        // (TryBindTransparentIdentifierProjection rejects a bare MemberExpression, not an anonymous/DTO
-        // construction) AND the post-terminal else-if guard (IsTransparentIdentifierMemberAccessSelector is
-        // true for it, so that branch is skipped too). Left alone, Select.Projection stays empty, Route falls
-        // through to WholeEntity, and the gate goes native — but a bare owned entity is never materialized
-        // natively (there is no whole-entity unwind shaper), so the lowerer emits a $unwind with no $project
-        // and the DOM shaper crashes with an internal KeyNotFoundException instead of cleanly declining.
+        // e.g. `from o in q from i in o.Items select i` / `SelectMany(o => o.Items, (o, i) => i)` / the bare
+        // 1-arg `SelectMany(o => o.Items)`, all a whole-inner-entity `ti => ti.Inner` selector — bypasses BOTH
+        // the pending-SelectMany projection branch above (TryBindTransparentIdentifierProjection rejects a bare
+        // MemberExpression, not an anonymous/DTO construction) AND the post-terminal else-if guard
+        // (IsTransparentIdentifierMemberAccessSelector is true for it, so that branch is skipped too). Left
+        // alone, Select.Projection stays empty, Route falls through to WholeEntity, and the gate goes native —
+        // but a bare owned entity was never materialized natively (there was no whole-entity unwind shaper), so
+        // the lowerer emitted a $unwind with no $project and the DOM shaper crashed with an internal
+        // KeyNotFoundException instead of cleanly declining.
         //
-        // Originally this called MarkNotNativelyRepresentable() (a graceful fallback), on the assumption the
-        // driver-LINQ path would pick it up under Native/DriverLinq. Empirically it does not: the shaper built
-        // by TranslateSelectMany's BuildSelectManyWrappedShaper is a StructuralTypeShaperExpression for the
-        // bare Item entity with no owning-entity bsonDoc context, and MongoProjectionBindingRemovingExpression
-        // Visitor cannot materialize it either — so the "graceful" fallback ALSO crashes
-        // (KeyNotFoundException("The given key 'bsonDoc' was not present in the dictionary")), just one layer
-        // further down, under BOTH Native and DriverLinq. There is no working path for this shape at all, so
-        // decline it cleanly and unconditionally here instead of routing to a fallback that is itself broken.
-        // IsTransparentIdentifierMemberAccessSelector(selector) is exactly what distinguishes this whole-
-        // inner-entity shape from the computed-leaf case (e.g. `ti => new { X = ti.Inner.Price * 2 }`), whose
-        // selector body is a NewExpression, not a bare member access — that shape must keep falling back
+        // As of this Task, the OWNED whole-inner-entity case (TryGetWholeEntityMemberAccess returning a
+        // "ti => ti.Inner" member, representable per IsWholeElementRepresentable) instead routes NATIVE when
+        // the unwind is owned: it sets UnwindSource.WholeElement, which drives the lowerer to emit
+        // $unwind(includeArrayIndex) + $replaceRoot($mergeObjects) so the owned element becomes the root
+        // document, carrying its owner key + array ordinal along with it (see MongoReplaceRootStage / the
+        // spike note .superpowers/sdd/EF-347-bare-owned-selectmany-spike.md).
+        // Control then falls through to the generic shaper fold below (same as every other Select), which
+        // resolves TransparentIdentifier(outer, item).Inner to the element shaper BuildBareNavWrappedShaper
+        // already built over UnwindSource.InnerEntityType — materialized by
+        // MongoShapedQueryCompilingExpressionVisitor's dedicated WholeElement branch, which roots the standard
+        // DOM shaper at the owned element type instead of the collection root. A REFERENCE-kind whole-inner
+        // result (no re-rooted shaper exists for it) and the whole-OUTER (`select o`) case remain declined
+        // below.
+        //
+        // TryGetWholeEntityMemberAccess(selector) still distinguishes ALL whole-entity shapes (inner or outer)
+        // from the computed-leaf case (e.g. `ti => new { X = ti.Inner.Price * 2 }`), whose selector body is a
+        // NewExpression, not a (possibly Include-wrapped) bare member access — that shape must keep falling back
         // gracefully (MarkNotNativelyRepresentable(), the else branch below), because ITS driver-LINQ fallback
         // genuinely succeeds with correct results (see
         // NativeSelectManyTests.Explicit_result_selector_form_computed_leaf_falls_back_gracefully_except_under_NativeOnly).
-        // Thrown here at TRANSLATION time (not compile-time-gated), this propagates in EVERY MongoQueryMode
-        // alike — Native, DriverLinq, and NativeOnly — since MongoQueryMode is only consulted later, by the
-        // compile-time gate in MongoShapedQueryCompilingExpressionVisitor, which this code runs well before.
-        // Deliberately NOT NativeTranslationNotSupportedException: that type's own contract (see its XML doc)
-        // is "the compile-time gate catches this under Native and falls back" — a promise this call site
-        // cannot keep, since it runs before the gate and nothing downstream catches it in any mode. A plain
+        // The whole-OUTER (`select o`) / whole-inner-REFERENCE decline is thrown here at TRANSLATION time (not
+        // compile-time-gated), so it propagates in EVERY MongoQueryMode alike — Native, DriverLinq, and
+        // NativeOnly — since MongoQueryMode is only consulted later, by the compile-time gate in
+        // MongoShapedQueryCompilingExpressionVisitor, which this code runs well before. Deliberately NOT
+        // NativeTranslationNotSupportedException: that type's own contract (see its XML doc) is "the
+        // compile-time gate catches this under Native and falls back" — a promise this call site cannot keep,
+        // since it runs before the gate and nothing downstream catches it in any mode. A plain
         // NotSupportedException keeps that documented contract honest and is itself a clear, descriptive
         // signal that this specific shape has no supported translation, in any mode.
-        if (mongoQueryExpression.Select.UnwindSource != null && mongoQueryExpression.Select.Projection.Count == 0)
+        if (mongoQueryExpression.Select.UnwindSource is { } wholeElementCandidateUnwind
+            && mongoQueryExpression.Select.Projection.Count == 0)
         {
-            if (IsTransparentIdentifierMemberAccessSelector(selector))
+            var wholeEntityMember = TryGetWholeEntityMemberAccess(selector);
+
+            if (wholeEntityMember is { Member.Name: "Inner" }
+                && wholeElementCandidateUnwind.Kind == MongoUnwindSourceKind.Owned
+                && IsWholeElementRepresentable(wholeElementCandidateUnwind.InnerEntityType))
+            {
+                // Bare whole-inner-element owned SelectMany (e.g. `from o in q from i in o.Items select i`).
+                // Emit $unwind → $replaceRoot (lowerer) and materialize the owned element from the re-rooted
+                // document; fall through to the generic shaper fold below, which resolves
+                // TransparentIdentifier(outer, item).Inner to the element shaper BuildBareNavWrappedShaper
+                // already built.
+                wholeElementCandidateUnwind.WholeElement = true;
+            }
+            else if (wholeEntityMember != null)
             {
                 throw new NotSupportedException(
-                    "Projecting a whole entity (the owned collection element or the outer entity) from a "
-                    + "SelectMany (e.g. 'from o in q from i in o.Items select i' or '… select o', or "
-                    + "'SelectMany(o => o.Items, (o, i) => i)') is not supported. Project members instead, e.g. "
-                    + "'from o in q from i in o.Items select new { o.Name, i.SomeProperty }'.");
+                    "Projecting a whole entity other than an owned collection element from a SelectMany (e.g. "
+                    + "'from o in q from i in o.Items select o', 'SelectMany(o => o.Items, (o, i) => o)', or a "
+                    + "whole-inner-entity result from a REFERENCE (non-owned) collection navigation, or an "
+                    + "owned collection element with a nested navigation or a real element name that collides "
+                    + "with the provider's internal owned-key sentinel fields) is not supported. Project "
+                    + "members instead, e.g. 'from o in q from i in o.Items select new { o.Name, "
+                    + "i.SomeProperty }', or project the owned element itself with 'select i'.");
             }
-
-            mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            else
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
         }
 
         var newSelectorBody =
@@ -427,6 +455,125 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
            && selector.Body is MemberExpression { Member.Name: "Outer" or "Inner" } member
            && member.Expression == selector.Parameters[0];
+
+    /// <summary>
+    /// Returns the underlying <c>ti.Outer</c>/<c>ti.Inner</c> <see cref="MemberExpression"/> of a bare-nav
+    /// SelectMany's whole-entity trailing selector — the shape produced by all three equivalent user
+    /// spellings <c>SelectMany(o =&gt; o.Items, (o, i) =&gt; i)</c>, <c>from o in q from i in o.Items select i</c>,
+    /// and the bare 1-arg <c>SelectMany(o =&gt; o.Items)</c> (all whole-INNER, <c>Member.Name == "Inner"</c>), or
+    /// <c>select o</c>/<c>(o, i) =&gt; o</c> (whole-OUTER, <c>Member.Name == "Outer"</c>) — or <see langword="null"/>
+    /// if <paramref name="selector"/> is not this shape. EF auto-Includes any owned navigation reachable from
+    /// the projected result: when the referenced side (owner or owned element) itself owns further
+    /// navigations, the selector body is Include-wrapped (<c>IncludeExpression(ti.Inner, nav)</c> — possibly
+    /// chained for multiple navs) rather than a bare member access, so this unwraps through any
+    /// <see cref="IncludeExpression"/> layers first (empirically confirmed necessary — a nested owned member
+    /// under the element reaches exactly this shape; see <see cref="IsWholeElementRepresentable"/>'s
+    /// nested-navigation guard note). A narrower, single-purpose predicate than
+    /// <see cref="IsTransparentIdentifierMemberAccessSelector"/> — it does not check the parameter's own type
+    /// name, since the caller already knows (from <c>UnwindSource != null</c>) that this Select is a SelectMany
+    /// trailing selector.
+    /// </summary>
+    private static MemberExpression? TryGetWholeEntityMemberAccess(LambdaExpression selector)
+    {
+        if (selector.Parameters.Count != 1)
+        {
+            return null;
+        }
+
+        var body = selector.Body;
+        while (body is IncludeExpression include)
+        {
+            body = include.EntityExpression;
+        }
+
+        return body is MemberExpression { Member.Name: "Outer" or "Inner" } member
+               && member.Expression == selector.Parameters[0]
+            ? member
+            : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="innerEntityType"/> (the owned collection's element type) is within the shape the
+    /// whole-element re-rooting mechanism (EF-347 Task 3: <c>$unwind</c> + <c>$replaceRoot</c>, see
+    /// <see cref="Expressions.MongoUnwindSource.WholeElement"/>) actually supports — two narrow, empirically
+    /// found guards, each a clean decline rather than a silent wrong-data or confusing-crash risk:
+    /// <list type="bullet">
+    /// <item>No navigations of its own. A nested owned reference/collection under the element does not
+    /// materialize correctly via this mechanism: <c>BuildBareNavWrappedShaper</c>'s element shaper still binds
+    /// through the query's ROOT <see cref="Microsoft.EntityFrameworkCore.Query.ProjectionMember"/> (the same
+    /// structural shape a whole-entity root query uses — see the spike note
+    /// .superpowers/sdd/EF-347-bare-owned-selectmany-spike.md), which resolves to the OUTER (owner) entity's
+    /// own <c>EntityProjectionExpression</c>, not the re-rooted element's. A nested navigation reaches EF's own
+    /// auto-<c>IncludeExpression</c> machinery, which tries to bind against that (wrong) projection and throws
+    /// <see cref="InvalidOperationException"/> ("Unable to bind 'navigation' ... to an entity projection of
+    /// ..."). Confirmed empirically, not assumed — this guard converts that confusing runtime crash into the
+    /// SAME clean, translation-time <see cref="NotSupportedException"/> every other unsupported whole-entity
+    /// shape gets. (Scalar/value-typed members read fine regardless, via
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.CreateGetValueExpression</c>'s direct element-name
+    /// read — only NAVIGATED members are affected.)</item>
+    /// <item>No property whose configured element name collides with either $replaceRoot sentinel field
+    /// (<see cref="MongoReplaceRootStage.OwnerKeyField"/>/<see cref="MongoReplaceRootStage.OrdinalField"/>).
+    /// The lowerer's <c>$mergeObjects</c> merges the sentinel object AFTER the unwound element, so a same-named
+    /// real stored field would be SILENTLY OVERWRITTEN by the synthesized owner key/ordinal — confirmed
+    /// empirically (unlike the Intersect/Except source-tagging precedent, whose <c>_a</c>/<c>_b</c> tags live
+    /// as siblings of a wrapping <c>_doc</c> field and never collide with real element names, this mechanism
+    /// merges the sentinel fields directly into the element's own top-level namespace). Declining cleanly here
+    /// avoids that silent corruption; see
+    /// NativeSelectManyTests.Bare_owned_whole_inner_element_with_sentinel_collision_declines_cleanly.</item>
+    /// </list>
+    /// Both are narrow edge cases (a real element literally named <c>__ord</c>/<c>__ownerKey</c>, or a nested
+    /// owned member) that this Task's testing uncovered; declining cleanly rather than fixing the underlying
+    /// re-rooted-projection-mapping/merge-order limitation keeps this Task scoped to recognition +
+    /// materialization wiring — fixing either properly is future work.
+    /// <para>
+    /// Final-review hardening (two further narrow guards, same clean-decline posture as the two above):
+    /// </para>
+    /// <list type="bullet">
+    /// <item>No <em>complex-type</em> property whose configured element name collides with either sentinel
+    /// field. The scalar-property scan above (<see cref="IEntityType.GetProperties"/>) does not see a complex
+    /// property's own top-level document slot, so a <c>ComplexProperty</c> named/renamed <c>__ord</c>/
+    /// <c>__ownerKey</c> would slip past it and be SILENTLY OVERWRITTEN by <c>$mergeObjects</c> exactly like the
+    /// scalar case above (a complex property still occupies one top-level field in the unwound element
+    /// document; the properties nested INSIDE its <c>ComplexType</c> are sub-fields and can never collide with a
+    /// top-level sentinel). There is no dedicated Mongo builder API for a complex property's own element name
+    /// (unlike <c>PropertyBuilder.HasElementName</c> for scalar properties), so
+    /// <see cref="GetComplexPropertyElementName"/> reads the same <c>Mongo:ElementName</c> annotation
+    /// <see cref="MongoPropertyExtensions.GetElementName(IReadOnlyProperty)"/> reads for a plain property,
+    /// falling back to the CLR member name identically to that method's own default.</item>
+    /// <item>Every owned-key property (<see cref="MongoPropertyExtensions.IsOwnedTypeKey"/> — the owner-FK
+    /// shadow property and the array-ordinal shadow property) must have DEFAULT serialization
+    /// (<see cref="NativeGroupByBinder.HasDefaultKeySerialization"/>, reused as-is — the identical
+    /// generic-readback risk documented on that method). The <c>__ownerKey</c> sentinel is populated straight
+    /// from the owner document's raw <c>$_id</c> (see <c>MongoPipelineFactory</c>'s <c>$replaceRoot</c>
+    /// rendering) — i.e. through the DEFAULT type serializer, bypassing whatever value converter or
+    /// non-default <c>BsonRepresentation</c> the owned key property itself is configured with. If the owned key
+    /// (or, symmetrically, the ordinal key) carries either, the raw sentinel read diverges from what the
+    /// property's own serializer expects at materialization — the same class of divergence
+    /// <c>HasDefaultKeySerialization</c> already guards for a GroupBy key / OfType discriminator, just
+    /// reapplied to the owned key here instead of adding a parallel, duplicate predicate.</item>
+    /// </list>
+    /// </summary>
+    private static bool IsWholeElementRepresentable(IEntityType innerEntityType)
+        => !innerEntityType.GetNavigations().Any()
+           && innerEntityType.GetProperties().All(p =>
+               p.GetElementName() is not (MongoReplaceRootStage.OwnerKeyField or MongoReplaceRootStage.OrdinalField))
+           && innerEntityType.GetComplexProperties().All(c =>
+               GetComplexPropertyElementName(c) is not (MongoReplaceRootStage.OwnerKeyField or MongoReplaceRootStage.OrdinalField))
+           && innerEntityType.GetProperties().Where(p => p.IsOwnedTypeKey())
+               .All(NativeGroupByBinder.HasDefaultKeySerialization);
+
+    /// <summary>
+    /// The document element name a <see cref="IReadOnlyComplexProperty"/> occupies at its own declaring type's
+    /// top level — the same <c>Mongo:ElementName</c> annotation
+    /// <see cref="MongoPropertyExtensions.GetElementName(IReadOnlyProperty)"/> reads for a plain
+    /// <see cref="IReadOnlyProperty"/>, with the identical CLR-member-name fallback. There is no
+    /// <c>IReadOnlyComplexProperty</c> overload of <c>GetElementName</c> in this provider (no builder surfaces
+    /// a way to rename a complex property's own document slot), so this reads the shared annotation directly
+    /// rather than duplicating a second, divergent default-name algorithm.
+    /// </summary>
+    private static string GetComplexPropertyElementName(IReadOnlyComplexProperty complexProperty)
+        => (string?)complexProperty[MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.ElementName]
+           ?? complexProperty.Name;
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic

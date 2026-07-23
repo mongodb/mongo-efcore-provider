@@ -29,6 +29,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -434,6 +435,33 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         if (property.IsOwnedTypeKey())
         {
             var entityType = (IReadOnlyEntityType)property.DeclaringType;
+
+            // EF-347 Task 3 (bare-owned whole-element SelectMany): the shaper is re-rooted at THIS owned
+            // element (via $replaceRoot — see MongoShapedQueryCompilingExpressionVisitor's WholeElement branch),
+            // which merged the owner key + array ordinal into the re-rooted document under sentinel field
+            // names, specifically so the owned key materializes NON-NULL (EF Core's own no-tracking null-key
+            // guard rejects a partially-null owned key — see the spike note
+            // .superpowers/sdd/EF-347-bare-owned-selectmany-spike.md). Read those sentinel fields directly
+            // instead of falling through to the ordinary owner/ordinal-mapping lookup below, which has no entry
+            // for a re-rooted document (the query root — CollectionExpression.EntityType — is always a
+            // document-root type, so entityType == _rootEntityType is true here ONLY in this re-rooted
+            // whole-element case, making it a safe discriminator).
+            if (entityType == _rootEntityType)
+            {
+                var sentinel = property.IsOwnedTypeOrdinalKey()
+                    ? MongoReplaceRootStage.OrdinalField
+                    : MongoReplaceRootStage.OwnerKeyField;
+                // includeArrayIndex writes the ordinal as a BSON int64; read the owner key at its own CLR type.
+                var readClrType = property.IsOwnedTypeOrdinalKey() ? typeof(long) : property.ClrType;
+                Expression read = BsonBinding.CreateGetElementValue(DocParameter, sentinel, readClrType);
+                if (readClrType != property.ClrType)
+                {
+                    read = Expression.Convert(read, property.ClrType);
+                }
+
+                return Expression.Convert(read, type);
+            }
+
             if (!entityType.IsDocumentRoot())
             {
                 var ownership = entityType.FindOwnership();

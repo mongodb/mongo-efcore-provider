@@ -179,6 +179,36 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 ? shapedQueryExpression.Type.TryGetItemType()!
                 : shapedQueryExpression.Type);
 
+        // Whole-element owned SelectMany (EF-347 Task 3): the QMTEV's TranslateSelect sets
+        // UnwindSource.WholeElement for a bare-nav owned SelectMany whose trailing selector projects the whole
+        // inner element (`from o in q from i in o.Items select i`). The lowerer emits $unwind(includeArrayIndex)
+        // + $replaceRoot($mergeObjects) for this shape, so after that stage the unwound OWNED element IS the
+        // root document — root the shaper at the ELEMENT (owned) entity type, using the SAME standard
+        // MongoProjectionBindingRemovingExpressionVisitor (just constructed with rootEntityType = the owned
+        // type), and force the DOM shaper (allowStreaming: false): owned/collection elements are streaming-
+        // ineligible anyway, and StreamingEligibility.IsEligible(rootEntityType) would otherwise be evaluated
+        // against the OUTER root (Owner), which has no bearing on whether the re-rooted element document can be
+        // streamed, and would read the wrong root regardless.
+        //
+        // This check MUST run before the projectedEntityType == null fallback immediately below (EF-347 Task 3
+        // fix wave 1 / M1): projectedEntityType is looked up via QueryCompilationContext.Model.FindEntityType on
+        // the result CLR type, which returns null for a SHARED-TYPE entity type (the same owned CLR type reused
+        // by more than one owner/navigation) even when that type is otherwise perfectly representable via the
+        // WholeElement mechanism above. wholeElementUnwind.InnerEntityType came from the binder's
+        // navigation.TargetEntityType (the owner-scoped IEntityType the model actually built for this
+        // navigation), never from FindEntityType(clrType) — so it is correct regardless of whether the element
+        // CLR type happens to be shared. Running this check first means a shared-type owned element still
+        // routes through the correct re-rooted shaper instead of silently falling into VisitProjectedQuery,
+        // whose behavior for this shape was previously undetermined and untested.
+        if (mongoQueryExpression.Select.UnwindSource is { WholeElement: true } wholeElementUnwind)
+        {
+            var elementType = wholeElementUnwind.InnerEntityType;
+            return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, elementType,
+                (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
+                    elementType, mongoQueryExpression, bsonDoc, behavior),
+                allowStreaming: false);
+        }
+
         if (projectedEntityType == null)
         {
             return VisitProjectedQuery(shapedQueryExpression, rootEntityType, mongoQueryExpression);

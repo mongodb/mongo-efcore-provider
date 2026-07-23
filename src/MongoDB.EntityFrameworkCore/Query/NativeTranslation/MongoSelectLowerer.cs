@@ -122,7 +122,18 @@ internal sealed class MongoSelectLowerer
         if (select.UnwindSource is { } unwind)
         {
             if (unwind.Kind == MongoUnwindSourceKind.Owned)
-                stages.Add(new MongoUnwindFieldStage(unwind.InnerScopePath));
+                stages.Add(new MongoUnwindFieldStage(
+                    unwind.InnerScopePath,
+                    includeArrayIndex: unwind.WholeElement ? MongoReplaceRootStage.OrdinalField : null));
+
+            if (unwind.WholeElement)
+            {
+                // Bare whole-inner-element SelectMany: promote the unwound element to root, carrying the
+                // owner key + array ordinal in (EF-347 bare-owned spike — see MongoReplaceRootStage).
+                // (Reference whole-element is deferred; WholeElement is only ever set for Owned in this slice.)
+                stages.Add(new MongoReplaceRootStage(unwind.InnerScopePath));
+                return stages;
+            }
 
             if (select.Projection.Count > 0)
                 stages.Add(new MongoProjectStage(select.Projection));

@@ -520,6 +520,44 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
+    // MongoUnwindFieldStage.IncludeArrayIndex + MongoReplaceRootStage — bare whole-element owned
+    // SelectMany (EF-347 bare-owned spike): $unwind carries the array ordinal via includeArrayIndex,
+    // and $replaceRoot merges the owner key + ordinal into the re-rooted element.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void UnwindFieldStage_with_includeArrayIndex_renders_dollar_unwind_with_path_and_index()
+    {
+        var stages = new List<MongoPipelineStage>
+        {
+            new MongoUnwindFieldStage("Items", includeArrayIndex: MongoReplaceRootStage.OrdinalField)
+        };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        Assert.Equal(
+            BsonDocument.Parse("{ $unwind: { path: \"$Items\", includeArrayIndex: \"__ord\" } }"),
+            result[0]);
+    }
+
+    [Fact]
+    public void ReplaceRootStage_renders_dollar_replaceRoot_with_mergeObjects_owner_key_and_ordinal()
+    {
+        var stages = new List<MongoPipelineStage> { new MongoReplaceRootStage("Items") };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        Assert.Equal(
+            BsonDocument.Parse(
+                "{ $replaceRoot: { newRoot: { $mergeObjects: [ \"$Items\", { __ownerKey: \"$_id\", __ord: \"$__ord\" } ] } } }"),
+            result[0]);
+    }
+
+    // ------------------------------------------------------------------
     // MongoUnwindStage — preserveNullAndEmptyArrays (EF-347 slice 5, Task 3): the reference-Include
     // $unwind (LEFT-join, unchanged) must keep preserve:true; the NEW ForceUnwind-collection SelectMany
     // flatten (INNER-join) must render preserve:false.

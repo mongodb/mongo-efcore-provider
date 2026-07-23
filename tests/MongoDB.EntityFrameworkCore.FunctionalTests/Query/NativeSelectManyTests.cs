@@ -27,7 +27,9 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -47,27 +49,42 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// SelectMany whose trailing selector projects the WHOLE inner entity rather than a member-access projection
 /// (<c>SelectMany(o =&gt; o.Items, (o, i) =&gt; i)</c> / <c>from o in q from i in o.Items select i</c> / the
 /// bare 1-arg <c>SelectMany(o =&gt; o.Items)</c>, which normalizes to the identical tree) is a DIFFERENT,
-/// narrower case (see the <c>Whole_inner_entity_form_*</c> / <c>Bare_SelectMany_*</c> tests below):
+/// narrower case (see the <c>Bare_owned_whole_inner_element_*</c> / <c>Bare_SelectMany_*</c> tests below).
 /// <see cref="NativeSelectManyBinder.TryBindBareNavUnwind"/> accepts the bare nav structurally (it cannot see
 /// the trailing selector yet), so <c>UnwindSource</c> is set; the trailing <c>ti =&gt; ti.Inner</c> selector
 /// then bypasses both the pending-SelectMany projection branch (it is not an anonymous/DTO construction) and
 /// the post-terminal
 /// <see cref="MongoQueryableMethodTranslatingExpressionVisitor.IsTransparentIdentifierMemberAccessSelector"/>
-/// guard (it IS that shape). A dedicated guard in <c>TranslateSelect</c> — "<c>UnwindSource</c> set,
-/// <c>Projection</c> still empty, AND the selector is the whole-inner-entity
-/// <c>IsTransparentIdentifierMemberAccessSelector</c> shape" — hard-declines with a clean
-/// <see cref="NotSupportedException"/> for exactly this case, rather than the generic
-/// <c>MarkNotNativelyRepresentable()</c> graceful fallback every other unsupported SelectMany shape uses: that
-/// "graceful" fallback does not actually work for this shape (the driver-LINQ path cannot materialize a bare
-/// owned-collection element with no owner context either, so it used to crash with an internal
-/// <see cref="System.Collections.Generic.KeyNotFoundException"/> instead of declining cleanly). Thrown at
-/// TRANSLATION time — before <see cref="MongoQueryMode"/> is even consulted — so the SAME exception fires in
-/// all three modes, and regardless of tracking (EF Core's own "can't track an owned entity without an owner"
-/// safeguard never gets a chance to run for the tracking case, since this decline happens first). By contrast,
-/// the computed-leaf case (e.g. <c>SelectMany(o =&gt; o.Items, (o, i) =&gt; new { X = i.Price * 2 })</c>) is NOT
-/// this shape (its selector body is a <c>NewExpression</c>, not a bare member access) and still falls back
-/// gracefully via <c>MarkNotNativelyRepresentable()</c> — its driver-LINQ fallback genuinely works. Composing a
-/// FURTHER operator after an already-
+/// guard (it IS that shape). **EF-347 Task 3: for an OWNED collection, this shape now goes NATIVE** — a
+/// dedicated guard in <c>TranslateSelect</c> ("<c>UnwindSource</c> set, <c>Projection</c> still empty, AND the
+/// selector is the whole-inner-entity <c>IsWholeInnerEntitySelector</c> shape, AND the unwind's
+/// <c>Kind</c> is <c>Owned</c>") sets <c>UnwindSource.WholeElement</c>, driving the lowerer to emit
+/// <c>$unwind(includeArrayIndex)</c> + <c>$replaceRoot($mergeObjects)</c> so the owned element becomes the root
+/// document, carrying its owner key + array ordinal along under sentinel field names; the standard DOM shaper,
+/// rooted at the owned element type by <c>MongoShapedQueryCompilingExpressionVisitor</c>'s dedicated
+/// <c>WholeElement</c> branch, then materializes it, reading those sentinel fields back for the owned key (see
+/// <c>MongoProjectionBindingRemovingExpressionVisitor.CreateGetValueExpression</c>'s re-rooted branch). This
+/// SUPERSEDES the prior clean <see cref="NotSupportedException"/> decline for the OWNED case specifically — the
+/// pre-Task-3 "graceful" <c>MarkNotNativelyRepresentable()</c> fallback did not actually work for this shape
+/// (the driver-LINQ path could not materialize a bare owned-collection element with no owner context either, so
+/// it used to crash with an internal <see cref="System.Collections.Generic.KeyNotFoundException"/> instead of
+/// declining cleanly), so the clean decline that replaced it was itself later superseded by a genuine native
+/// translation once the re-rooting mechanism (<c>$replaceRoot</c> + sentinel key-carrying) was built. A tracking
+/// (non-<c>AsNoTracking</c>) query for this owned whole-inner shape still throws — but now it is EF Core's OWN
+/// "can't track an owned entity without its owner" <see cref="InvalidOperationException"/>, firing at shaper-
+/// materializer injection time, not this provider's translation-time guard (see
+/// <c>Bare_SelectMany_tracking_query_throws_InvalidOperationException_in_every_mode</c>). The whole-OUTER form
+/// (<c>select o</c> / <c>(o, i) =&gt; o</c>) and a whole-inner result from a REFERENCE (non-owned) navigation
+/// are NOT this case (<c>IsWholeInnerEntitySelector</c> requires <c>Member.Name == "Inner"</c>; the Kind ==
+/// Owned check excludes reference) — both remain declined with the original clean
+/// <see cref="NotSupportedException"/>, thrown at TRANSLATION time (before <see cref="MongoQueryMode"/> is even
+/// consulted) so the SAME exception fires in all three modes, regardless of tracking (see
+/// <c>Whole_outer_entity_form_still_declines_cleanly_in_every_mode</c> and
+/// <c>Reference_form_bare_entity_result_hard_fails_in_every_mode</c>). By contrast, the computed-leaf case (e.g.
+/// <c>SelectMany(o =&gt; o.Items, (o, i) =&gt; new { X = i.Price * 2 })</c>) is NOT this shape either (its
+/// selector body is a <c>NewExpression</c>, not a bare member access) and still falls back gracefully via
+/// <c>MarkNotNativelyRepresentable()</c> — its driver-LINQ fallback genuinely works. Composing a FURTHER
+/// operator after an already-
 /// native SelectMany is a separate, narrower story (see the
 /// <c>*_after_SelectMany_hard_fails_in_every_mode</c> / <c>Count_after_SelectMany_falls_back_gracefully...</c>
 /// tests below): most such operators still hard-fail in every mode too (their own guards reach
@@ -797,11 +814,14 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_bare_entity_result_hard_fails_in_every_mode()
     {
-        // A bare-nav owned SelectMany whose trailing selector projects the whole inner entity hard-declines
-        // cleanly via TranslateSelect's dedicated whole-inner-entity guard (see
-        // Whole_inner_entity_form_declines_cleanly_in_every_mode_AsNoTracking above) — that guard reads only
-        // UnwindSource != null && Projection.Count == 0 && the selector shape, all kind-agnostic, so the SAME
-        // clean NotSupportedException fires for the REFERENCE form too, in every mode.
+        // A bare-nav SelectMany whose trailing selector projects the whole inner entity hard-declines cleanly
+        // via TranslateSelect's dedicated whole-inner-entity guard (IsWholeInnerEntitySelector). As of EF-347
+        // Task 3 that guard is KIND-aware: it routes NATIVE only when the unwind is Owned (see
+        // Bare_owned_whole_inner_element_goes_native_all_three_spellings) — for a REFERENCE-kind unwind (this
+        // test) it falls through to the same IsTransparentIdentifierMemberAccessSelector else-if as the
+        // whole-OUTER form and keeps throwing the identical clean NotSupportedException, in every mode. There
+        // is no re-rooted shaper for a reference-navigation whole-inner result (re-rooting via $replaceRoot is
+        // owned-only in this slice), so this shape remains genuinely unsupported.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_bare_entity_result_hard_fails_in_every_mode) + mode, out _, out _);
@@ -1160,22 +1180,30 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Bare_SelectMany_hard_fails_in_every_mode()
+    public void Bare_SelectMany_tracking_query_throws_InvalidOperationException_in_every_mode()
     {
-        // EF-347 slice 4 (refined, this pass): a bare, tracking `db.Entities.SelectMany(o => o.Items)`
-        // normalizes (via EF's nav-expansion) to the SAME bare-nav + trivial TransparentIdentifier(Outer,Inner)
-        // tree as the explicit whole-inner-entity form covered by the Whole_inner_entity_form_* tests above —
-        // it is the identical shape, just user-authored as the 1-arg overload, and reaches the SAME
-        // TranslateSelect guard. TranslateSelect throws its NotSupportedException at TRANSLATION time — before
-        // EF Core's own runtime "can't track an owned entity without its owner" safeguard ever gets a chance to
-        // run, and before MongoQueryMode is even consulted — so all three modes now throw the identical, clean
-        // NotSupportedException, superseding the previous coincidental behavior (where Native/DriverLinq only
-        // hard-failed because of EF Core's own tracking guard firing at materialization time).
+        // EF-347 Task 3: a bare `db.Entities.SelectMany(o => o.Items)` normalizes (via EF's nav-expansion) to
+        // the bare-nav + trivial TransparentIdentifier(Outer,Inner) tree that TranslateSelect's
+        // IsWholeInnerEntitySelector guard now recognizes as the OWNED whole-inner-element shape — it sets
+        // UnwindSource.WholeElement and routes NATIVE (see
+        // Bare_owned_whole_inner_element_goes_native_all_three_spellings, which proves the AsNoTracking/native
+        // success side of this same shape). But THIS query is a TRACKING query (no .AsNoTracking()), and owned
+        // entities cannot be tracked without their owner: EF Core's OWN runtime guard —
+        // "A tracking query is attempting to project an owned entity without a corresponding owner in its
+        // result, but owned entities cannot be tracked without their owner. Either include the entity that owns
+        // this one, or make the query non-tracking using 'AsNoTracking'." — fires at shaper-materializer
+        // injection time (InjectStructuralTypeMaterializers/InjectEntityMaterializers), which runs BEFORE the
+        // native-vs-driver-LINQ split (TryBuildNativeFactory) has any bearing on the result, so all three modes
+        // throw the identical InvalidOperationException. This SUPERSEDES the pre-Task-3 behavior, where this
+        // same tracking query instead threw a provider-level NotSupportedException (the shape was unconditionally
+        // declined at translation time, so EF's own tracking guard never got a chance to run) — the tracking
+        // contract is intentionally EF Core's own, not something this provider enforces or should enforce.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
-            using var db = CreateContext(SeedOwners(), mode, nameof(Bare_SelectMany_hard_fails_in_every_mode) + mode);
+            using var db = CreateContext(SeedOwners(), mode,
+                nameof(Bare_SelectMany_tracking_query_throws_InvalidOperationException_in_every_mode) + mode);
 
-            Assert.Throws<NotSupportedException>(() => db.Entities.SelectMany(o => o.Items).ToList());
+            Assert.Throws<InvalidOperationException>(() => db.Entities.SelectMany(o => o.Items).ToList());
         }
     }
 
@@ -1432,43 +1460,500 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Whole_inner_entity_form_declines_cleanly_in_every_mode_AsNoTracking()
+    public void Bare_owned_whole_inner_element_goes_native_all_three_spellings()
     {
-        // EF-347 slice 4 (refined, this pass): a bare-nav owned SelectMany whose trailing selector projects the
-        // WHOLE inner entity (SelectMany(o => o.Items, (o, i) => i) — equivalently `from o in q from i in
-        // o.Items select i`) is neither the projected form Task 2 added (TryBindTransparentIdentifierProjection
-        // rejects a bare MemberExpression, only anonymous/DTO constructions) nor the mandatory ti => ti.Inner
-        // unwrap Task 1's shaper machinery expects to fold through — it IS exactly that shape structurally.
+        // EF-347 Task 3: the bare whole-inner-element owned SelectMany — `from o in q from i in o.Items
+        // select i` and its two equivalent spellings — now goes NATIVE (superseding the prior clean-decline
+        // behavior the OLD Whole_inner_entity_form_declines_cleanly_in_every_mode_AsNoTracking test locked in).
+        // TranslateSelect's IsWholeInnerEntitySelector guard sets UnwindSource.WholeElement, the lowerer emits
+        // $unwind(includeArrayIndex) + $replaceRoot($mergeObjects) so the owned element becomes the root
+        // document (carrying its owner key + array ordinal along under sentinel field names), and
+        // MongoShapedQueryCompilingExpressionVisitor's WholeElement branch roots the standard DOM shaper at the
+        // owned Item type. Must be .AsNoTracking() — see Bare_SelectMany_tracking_query_throws_
+        // InvalidOperationException_in_every_mode for the tracking contract. The trailing `.Select(i => i.Name)`
+        // is applied AFTER materialization (.AsEnumerable() first), NOT inside the query — a trailing scalar
+        // Select inside the query is POST-TERMINAL composition and throws under NativeOnly (spike-confirmed;
+        // see .superpowers/sdd/EF-347-bare-owned-selectmany-spike.md), so asserting over the query result
+        // itself (not a further in-query projection) is what actually exercises the native $unwind→$replaceRoot
+        // path.
+        var seed = SeedOwners();
+
+        using var oneArg = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Bare_owned_whole_inner_element_goes_native_all_three_spellings) + "OneArg");
+        var r1 = oneArg.Entities.AsNoTracking().SelectMany(o => o.Items)
+            .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
+
+        using var query = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Bare_owned_whole_inner_element_goes_native_all_three_spellings) + "Query");
+        var r2 = (from o in query.Entities.AsNoTracking() from i in o.Items select i)
+            .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
+
+        using var explicitSel = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Bare_owned_whole_inner_element_goes_native_all_three_spellings) + "Explicit");
+        var r3 = explicitSel.Entities.AsNoTracking().SelectMany(o => o.Items, (o, i) => i)
+            .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
+
+        var expected = seed.SelectMany(o => o.Items).Select(i => i.Name).OrderBy(n => n).ToList();
+        Assert.Equal(expected, r1);
+        Assert.Equal(expected, r2);
+        Assert.Equal(expected, r3);
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_owner_with_zero_items_contributes_no_rows()
+    {
+        // SeedOwners's Bob has an empty Items list — inner-flatten semantics mean he contributes zero rows,
+        // exactly like the projected forms' Empty_or_absent_owned_collection_contributes_no_rows.
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Bare_owned_whole_inner_element_owner_with_zero_items_contributes_no_rows));
+
+        var result = db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList();
+
+        Assert.Equal(3, result.Count); // 2 from Alice + 1 from Carol; Bob (empty) contributes 0
+        Assert.Equal(["Gadget", "Thing", "Widget"], result.Select(i => i.Name).OrderBy(n => n).ToList());
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_reads_root_relative_not_owner_scoped()
+    {
+        // Item deliberately shares its "Name" member name with Owner (see the Item class doc comment). If the
+        // re-rooted shaper somehow read owner-scoped fields instead of the re-rooted element's own fields, the
+        // returned elements' Name would be the OWNER's name (e.g. "Alice"), not the ITEM's own name (e.g.
+        // "Widget"/"Gadget"). Asserting the returned Name set matches the items' own names (never the owners')
+        // proves the shaper reads root-relative, off the re-rooted element document — not owner-scoped.
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Bare_owned_whole_inner_element_reads_root_relative_not_owner_scoped));
+
+        var names = db.Entities.AsNoTracking().SelectMany(o => o.Items)
+            .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(["Gadget", "Thing", "Widget"], names);
+        Assert.DoesNotContain(names, n => n is "Alice" or "Bob" or "Carol");
+    }
+
+    [Fact]
+    public void Whole_outer_entity_form_still_declines_cleanly_in_every_mode()
+    {
+        // The whole-OUTER form (`select o`, query syntax) is a DIFFERENT shape from the now-native whole-INNER
+        // form above — IsWholeInnerEntitySelector requires Member.Name == "Inner", so `ti => ti.Outer` still
+        // falls to the IsTransparentIdentifierMemberAccessSelector else-if and keeps throwing the same clean
+        // NotSupportedException as before this Task, in every mode, regardless of tracking (thrown at
+        // TRANSLATION time, before MongoQueryMode/tracking behavior are even consulted). There is no re-rooted
+        // shaper for a bare OUTER entity (re-rooting via $replaceRoot only ever points at the INNER/owned
+        // element), so this shape remains genuinely unsupported, not just untested.
         //
-        // A prior pass of this guard called MarkNotNativelyRepresentable() (a graceful fallback) for this
-        // shape, on the theory the driver-LINQ path would pick it up under Native/DriverLinq. Empirically it did
-        // NOT: the shaper built by TranslateSelectMany's BuildSelectManyWrappedShaper is a
-        // StructuralTypeShaperExpression for the bare Item entity with no owning-entity bsonDoc context, and
-        // MongoProjectionBindingRemovingExpressionVisitor cannot materialize it either — so the "graceful"
-        // fallback ALSO crashed, under BOTH Native and DriverLinq, with an internal
-        // KeyNotFoundException("The given key 'bsonDoc' was not present in the dictionary") — a confusing,
-        // internal, provider-implementation-detail exception, not a clean decline. There being no working path
-        // for this shape at all, TranslateSelect now hard-declines it directly (a plain NotSupportedException,
-        // not the gate-mediated NativeTranslationNotSupportedException — see the comment at the throw site for
-        // why) — thrown at TRANSLATION time, before MongoQueryMode is even consulted, so it is identical across
-        // all three modes: Native, DriverLinq, and NativeOnly alike. The KEY regression this test locks in: NONE
-        // of the three modes throws KeyNotFoundException any more.
+        // NOTE (EF-347 Task 3 finding, out of scope, not exercised here): the EXPLICIT method-call spelling
+        // `SelectMany(o => o.Items, (o, i) => o)` does NOT reach this guard at all — empirically, EF's
+        // nav-expansion optimizes away the intermediate TransparentIdentifier wrap/unwrap when the result
+        // selector is a trivial pass-through of the OUTER parameter alone (unlike `(o, i) => i`, which still
+        // needs the flatten machinery since TResult differs from TOuter), so BuildBareNavWrappedShaper's
+        // resultSelector.Body is literally `o` and the shaper ends up as the OUTER (Owner) entity's own shaper
+        // with UnwindSource still set — a pre-existing gap in TranslateSelectMany/BuildBareNavWrappedShaper
+        // (unaffected by this Task's TranslateSelect-only changes) that currently surfaces as a confusing
+        // runtime InvalidOperationException rather than a clean decline. Reported as a known, pre-existing,
+        // out-of-scope finding for a future ticket — NOT fixed here, since it is orthogonal to the whole-INNER
+        // owned-element recognition this Task adds.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             var seed = SeedOwners();
 
-            using var explicitDb = CreateContext(seed, mode,
-                nameof(Whole_inner_entity_form_declines_cleanly_in_every_mode_AsNoTracking) + mode + "Explicit");
-            var explicitEx = Assert.Throws<NotSupportedException>(() =>
-                explicitDb.Entities.AsNoTracking().SelectMany(o => o.Items, (o, i) => i).ToList());
-            Assert.IsNotType<KeyNotFoundException>(explicitEx);
-
             using var querySyntaxDb = CreateContext(seed, mode,
-                nameof(Whole_inner_entity_form_declines_cleanly_in_every_mode_AsNoTracking) + mode + "QuerySyntax");
-            var querySyntaxEx = Assert.Throws<NotSupportedException>(() =>
-                (from o in querySyntaxDb.Entities.AsNoTracking() from i in o.Items select i).ToList());
-            Assert.IsNotType<KeyNotFoundException>(querySyntaxEx);
+                nameof(Whole_outer_entity_form_still_declines_cleanly_in_every_mode) + mode + "QuerySyntax");
+            Assert.Throws<NotSupportedException>(() =>
+                (from o in querySyntaxDb.Entities.AsNoTracking() from i in o.Items select o).ToList());
         }
+    }
+
+    private class SentinelOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<SentinelItem> Items { get; set; } = [];
+    }
+
+    private class SentinelItem
+    {
+        public string Name { get; set; } = "";
+
+        // A real stored element literally named "__ord" — MongoReplaceRootStage.OrdinalField. The $mergeObjects
+        // in the $replaceRoot stage adds the sentinel AFTER the unwound element ("$Items" first, then the
+        // sentinel doc), so a real element of the same name would be SILENTLY OVERWRITTEN by the sentinel if
+        // the two ever collided in the wrong order. Mirrors NativeSetOpsTests'
+        // Intersect_with_real_element_named_underscore_a_is_not_corrupted_by_the_source_tag precedent.
+        [MongoDB.Bson.Serialization.Attributes.BsonElement("__ord")]
+        public int RealOrd { get; set; }
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_with_sentinel_collision_declines_cleanly()
+    {
+        // EF-347 Task 3 finding (spike residual risk #1): a real stored element literally named "__ord"
+        // (MongoReplaceRootStage.OrdinalField) WOULD be silently overwritten by the synthesized array-ordinal
+        // sentinel — confirmed empirically during this Task (the $mergeObjects in $replaceRoot merges the
+        // sentinel object AFTER the unwound element, so same-named real data loses) — UNLIKE the Intersect/
+        // Except source-tagging precedent (NativeSetOpsTests.Intersect_with_real_element_named_underscore_a_is_
+        // not_corrupted_by_the_source_tag), whose _a/_b tags live as siblings of a wrapping _doc field and never
+        // collide with real element names. Rather than ship that silent corruption,
+        // IsWholeElementRepresentable declines this shape at TRANSLATION time — falling through to the SAME
+        // clean NotSupportedException the whole-OUTER form gets — so a real "__ord"/"__ownerKey" element is a
+        // clean, understood decline (in every mode, regardless of tracking), never silently wrong data.
+        var seed = new[]
+        {
+            new SentinelOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items = [new SentinelItem { Name = "Widget", RealOrd = 42 }],
+            },
+        };
+
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_with_sentinel_collision_declines_cleanly)) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<SentinelOwner>(collectionName);
+        collection.InsertMany(seed);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<SentinelOwner>().OwnsMany(o => o.Items),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        var ex = Assert.Throws<NotSupportedException>(() =>
+            db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList());
+        Assert.IsNotType<KeyNotFoundException>(ex);
+    }
+
+    private class NestedMemberOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<NestedMemberItem> Items { get; set; } = [];
+    }
+
+    private class NestedMemberItem
+    {
+        public string Name { get; set; } = "";
+        public ItemDetail Detail { get; set; } = new();
+    }
+
+    private class ItemDetail
+    {
+        public string Note { get; set; } = "";
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_with_nested_owned_reference_member_declines_cleanly()
+    {
+        // EF-347 Task 3 finding: a nested owned REFERENCE under the re-rooted element does NOT materialize
+        // correctly via this mechanism — confirmed empirically during this Task, not assumed. Before the
+        // IsWholeElementRepresentable guard was added, this shape reached a confusing runtime
+        // InvalidOperationException ("Unable to bind 'navigation' 'Detail' to an entity projection of
+        // 'NestedMemberOwner'") from EF's own auto-Include machinery: BuildBareNavWrappedShaper's element
+        // shaper still binds through the query's ROOT ProjectionMember(), which resolves to the OUTER (owner)
+        // entity's own EntityProjectionExpression, not the re-rooted element's — so EF's auto-generated
+        // IncludeExpression for the nested Detail navigation tries (and fails) to bind against the WRONG
+        // entity projection. IsWholeElementRepresentable now declines this shape at TRANSLATION time instead,
+        // falling through to the SAME clean NotSupportedException the whole-OUTER form gets, in every mode,
+        // regardless of tracking. (A properly re-rooted nested-navigation projection mapping is future work —
+        // out of scope for this Task, which is recognition + materialization wiring for the scalar-only shape
+        // the spike verified.)
+        var seed = new[]
+        {
+            new NestedMemberOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items = [new NestedMemberItem { Name = "Widget", Detail = new ItemDetail { Note = "Fragile" } }],
+            },
+        };
+
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_with_nested_owned_reference_member_declines_cleanly)) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<NestedMemberOwner>(collectionName);
+        collection.InsertMany(seed);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<NestedMemberOwner>()
+                .OwnsMany(o => o.Items, ib => ib.OwnsOne(i => i.Detail)),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        var ex = Assert.Throws<NotSupportedException>(() =>
+            db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList());
+        Assert.IsNotType<InvalidOperationException>(ex);
+    }
+
+    private class ComplexSentinelOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<ComplexSentinelItem> Items { get; set; } = [];
+    }
+
+    private class ComplexSentinelItem
+    {
+        public string Name { get; set; } = "";
+        public ComplexSentinelSub Sub { get; set; } = new();
+    }
+
+    // [ComplexType] forces EF Core to treat every property of this CLR type as a COMPLEX property
+    // (Microsoft.EntityFrameworkCore.Metadata.Conventions.ComplexTypeAttributeConvention), regardless of which
+    // builder configured the containing type — load-bearing here because OwnedNavigationBuilder/
+    // OwnedNavigationBuilder<,> have NO .ComplexProperty(...) overload at all (only EntityTypeBuilder<T> does),
+    // so this is the only way to get a complex property onto an OWNED collection element's entity type.
+    [System.ComponentModel.DataAnnotations.Schema.ComplexType]
+    private class ComplexSentinelSub
+    {
+        public string Note { get; set; } = "";
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_with_complex_property_sentinel_collision_declines_cleanly()
+    {
+        // EF-347 final-review Minor 1 (fix wave 2): the original sentinel-collision guard
+        // (Bare_owned_whole_inner_element_with_sentinel_collision_declines_cleanly above) only scanned
+        // innerEntityType.GetProperties() — it never saw a COMPLEX property's own top-level document slot,
+        // since IReadOnlyComplexProperty is a distinct metadata type from IReadOnlyProperty. A complex property
+        // still occupies exactly one top-level field in the unwound element document (the properties nested
+        // INSIDE its ComplexType are sub-fields, e.g. "Sub.Note", and can never collide with a top-level
+        // sentinel) — so a complex property named/renamed "__ord"/"__ownerKey" would slip past the original
+        // guard and be SILENTLY OVERWRITTEN by the $mergeObjects sentinel merge exactly like the scalar-property
+        // case. There is no dedicated Mongo builder API to rename a complex property's own document slot
+        // (unlike PropertyBuilder.HasElementName for scalar properties), so this test sets the Mongo:ElementName
+        // annotation directly on the auto-discovered complex property's metadata (the same annotation
+        // GetComplexPropertyElementName reads) to construct the exact colliding shape. IsWholeElementRepresentable
+        // now declines this shape at TRANSLATION time, falling through to the SAME clean NotSupportedException
+        // every other unrepresentable whole-element shape gets — confirmed to require no live server connection
+        // (a purely translation-time decline) during this Task's spike verification.
+        var seed = new[]
+        {
+            new ComplexSentinelOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items = [new ComplexSentinelItem { Name = "Widget", Sub = new ComplexSentinelSub { Note = "Fragile" } }],
+            },
+        };
+
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_with_complex_property_sentinel_collision_declines_cleanly)) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<ComplexSentinelOwner>(collectionName);
+        collection.InsertMany(seed);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb =>
+            {
+                mb.Entity<ComplexSentinelOwner>().OwnsMany(o => o.Items);
+
+                // No OwnedNavigationBuilder.ComplexProperty(...) overload exists, so reach the auto-discovered
+                // ([ComplexType]-driven) complex property via the model directly and set its element-name
+                // annotation to collide with the ordinal sentinel.
+                var itemEntityType = mb.Model.FindEntityType(typeof(ComplexSentinelItem))!;
+                var complexProperty = itemEntityType.FindComplexProperty(nameof(ComplexSentinelItem.Sub))!;
+                complexProperty.SetAnnotation(MongoAnnotationNames.ElementName, MongoReplaceRootStage.OrdinalField);
+            },
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        var ex = Assert.Throws<NotSupportedException>(() =>
+            db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList());
+        Assert.IsNotType<KeyNotFoundException>(ex);
+    }
+
+    private class ConvertedKeyOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<ConvertedKeyItem> Items { get; set; } = [];
+    }
+
+    private class ConvertedKeyItem
+    {
+        public string Name { get; set; } = "";
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_with_value_converted_owner_key_declines_cleanly()
+    {
+        // EF-347 final-review Minor 2 (fix wave 2): the owner's Id (ObjectId) is configured with a value
+        // converter (ObjectId <-> string). EF Core automatically propagates that SAME converter instance onto
+        // the owned element's shadow owner-FK key property (confirmed empirically via model introspection
+        // during this Task: the OwnerId shadow property on ConvertedKeyItem reports the identical converter) —
+        // but the $replaceRoot __ownerKey sentinel is populated straight from the owner document's raw "$_id"
+        // (see MongoPipelineFactory's $replaceRoot rendering), bypassing that converter entirely. A property
+        // whose materialization expects the CONVERTED (string) representation but is fed the raw, unconverted
+        // ObjectId would diverge/crash at materialization. IsWholeElementRepresentable now declines this shape
+        // via NativeGroupByBinder.HasDefaultKeySerialization — reused UNCHANGED from the identical GroupBy-key /
+        // OfType-discriminator guard, not a parallel/duplicate predicate — applied to the owned element's
+        // owned-key properties (IsOwnedTypeKey(): the owner-FK and the array-ordinal shadow properties).
+        // Falls through to the SAME clean NotSupportedException every other unrepresentable whole-element shape
+        // gets; confirmed to require no live server connection (a purely translation-time decline).
+        var seed = new[]
+        {
+            new ConvertedKeyOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items = [new ConvertedKeyItem { Name = "Widget" }],
+            },
+        };
+
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_with_value_converted_owner_key_declines_cleanly)) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<ConvertedKeyOwner>(collectionName);
+        collection.InsertMany(seed);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb =>
+            {
+                mb.Entity<ConvertedKeyOwner>(b =>
+                {
+                    b.Property(o => o.Id).HasConversion(id => id.ToString(), s => ObjectId.Parse(s));
+                    b.OwnsMany(o => o.Items);
+                });
+            },
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        var ex = Assert.Throws<NotSupportedException>(() =>
+            db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList());
+        Assert.IsNotType<KeyNotFoundException>(ex);
+    }
+
+    private class ExplicitKeyOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<ExplicitKeyItem> Items { get; set; } = [];
+    }
+
+    private class ExplicitKeyItem
+    {
+        public Guid Key { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_with_explicit_owned_key()
+    {
+        // EF-347 spike residual risk #2 (USER DECISION: test + defer if broken): the fixture used everywhere
+        // else in this file relies on the DEFAULT synthesized owned key (shadow owner-FK + shadow array
+        // ordinal). An OwnsMany configured with an EXPLICIT user-defined key property has a different key
+        // shape the edit-8 sentinel-read branch was not spiked against. This test exercises that shape
+        // directly: if it materializes correctly under NativeOnly + AsNoTracking, this assertion passes; if the
+        // provider cannot yet support it, the test (and the production guard it exercises) must instead assert
+        // a CLEAN decline (fallback or a documented exception), never silent wrong data — see the report for
+        // which outcome was observed.
+        var key1 = Guid.NewGuid();
+        var key2 = Guid.NewGuid();
+        var seed = new[]
+        {
+            new ExplicitKeyOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items = [new ExplicitKeyItem { Key = key1, Name = "Widget" }, new ExplicitKeyItem { Key = key2, Name = "Gadget" }],
+            },
+        };
+
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_with_explicit_owned_key)) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<ExplicitKeyOwner>(collectionName);
+        collection.InsertMany(seed);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<ExplicitKeyOwner>()
+                .OwnsMany(o => o.Items, ib => ib.HasKey(i => i.Key)),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        var names = db.Entities.AsNoTracking().SelectMany(o => o.Items)
+            .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(["Gadget", "Widget"], names);
+    }
+
+    private class SharedElementOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<SharedElement> Primary { get; set; } = [];
+        public List<SharedElement> Secondary { get; set; } = [];
+    }
+
+    // Owned by TWO navigations (Primary/Secondary) on the SAME owner, with no per-nav CLR type or unique
+    // name given to either — the pattern SharedClrTypeProjectionTests.MultiSameTypeOwner also uses to force a
+    // SHARED-TYPE owned entity type (Model.FindEntityType(typeof(SharedElement)) resolves to null because the
+    // model cannot pick a single unambiguous entity type for that CLR type).
+    private class SharedElement
+    {
+        public string Name { get; set; } = "";
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_over_shared_clr_type_goes_native()
+    {
+        // EF-347 Task 3 review finding M1 (fix wave 1): MongoShapedQueryCompilingExpressionVisitor.
+        // VisitShapedQuery computed `projectedEntityType` via QueryCompilationContext.Model.FindEntityType on
+        // the result CLR type and, when that returned null, returned VisitProjectedQuery(...) BEFORE ever
+        // reaching the WholeElement branch immediately below it in the method — so a bare whole-inner-element
+        // SelectMany over a SHARED-TYPE owned collection (this fixture: SharedElement is owned by both
+        // Primary and Secondary on the same owner) bypassed the correct re-rooted shaper entirely, landing on
+        // an untested, undetermined path. The fix moves the WholeElement check to run FIRST: it roots the
+        // shaper at wholeElementUnwind.InnerEntityType — the owner-scoped IEntityType the binder captured
+        // from navigation.TargetEntityType — which is correct regardless of whether
+        // FindEntityType(elementClrType) can resolve a single entity type for that CLR type. This test proves
+        // both owned collections (Primary and Secondary, same shared CLR type) materialize correctly and
+        // independently under NativeOnly + AsNoTracking.
+        var seed = new[]
+        {
+            new SharedElementOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Primary = [new SharedElement { Name = "P1" }, new SharedElement { Name = "P2" }],
+                Secondary = [new SharedElement { Name = "S1" }],
+            },
+        };
+
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_over_shared_clr_type_goes_native)) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<SharedElementOwner>(collectionName);
+        collection.InsertMany(seed);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<SharedElementOwner>(b =>
+            {
+                b.OwnsMany(o => o.Primary);
+                b.OwnsMany(o => o.Secondary);
+            }),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        // Sanity check (per the task brief): confirm the fixture actually produces a shared-type entity type —
+        // otherwise this test would not exercise M1 at all.
+        Assert.Null(db.Model.FindEntityType(typeof(SharedElement)));
+
+        var primaryNames = db.Entities.AsNoTracking().SelectMany(o => o.Primary)
+            .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
+        Assert.Equal(["P1", "P2"], primaryNames);
+
+        var secondaryNames = db.Entities.AsNoTracking().SelectMany(o => o.Secondary)
+            .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
+        Assert.Equal(["S1"], secondaryNames);
     }
 
     [Fact]
@@ -1736,31 +2221,32 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Whole_inner_entity_form_declines_cleanly_regardless_of_tracking()
+    public void Whole_inner_entity_form_tracking_query_throws_InvalidOperationException_in_every_mode()
     {
-        // Companion to Whole_inner_entity_form_declines_cleanly_in_every_mode_AsNoTracking above, covering a
-        // TRACKING query (no .AsNoTracking()) for the same shape. Before this pass, a tracking query hit EF
-        // Core's OWN runtime "can't track an owned entity without its owner" safeguard first ("A tracking
-        // query is attempting to project an owned entity without a corresponding owner in its result...",
-        // InvalidOperationException) — reached at materialization time, downstream of this provider's
-        // (previously graceful, Route-only) MarkNotNativelyRepresentable() call. Now that TranslateSelect
-        // hard-declines this shape directly at TRANSLATION time — before EF Core's own tracking safeguard, and
-        // before the query ever executes — tracking no longer matters: the SAME clean NotSupportedException
-        // fires whether or not .AsNoTracking() is used, identically across Native and DriverLinq (NativeOnly is
-        // covered by the AsNoTracking-flavored test above; the decline is unconditional on tracking state, so
-        // testing it once more here for the tracking case is enough to confirm that).
+        // Companion to Bare_owned_whole_inner_element_goes_native_all_three_spellings above, covering a
+        // TRACKING query (no .AsNoTracking()) for the explicit-result-selector and query-syntax spellings —
+        // the bare 1-arg spelling's tracking behavior is covered by
+        // Bare_SelectMany_tracking_query_throws_InvalidOperationException_in_every_mode. As of EF-347 Task 3,
+        // this shape routes NATIVE at translation time (TranslateSelect sets UnwindSource.WholeElement), but a
+        // TRACKING query still hits EF Core's OWN runtime "can't track an owned entity without its owner"
+        // safeguard ("A tracking query is attempting to project an owned entity without a corresponding owner
+        // in its result...", InvalidOperationException) at shaper-materializer injection time — BEFORE the
+        // native-vs-driver-LINQ split has any bearing, so all three modes throw the identical
+        // InvalidOperationException. This SUPERSEDES the pre-Task-3 behavior (a translation-time
+        // NotSupportedException, unconditional on tracking) — the tracking contract is intentionally EF Core's
+        // own, not something this provider enforces.
         var seed = SeedOwners();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var explicitDb = CreateContext(seed, mode,
-                nameof(Whole_inner_entity_form_declines_cleanly_regardless_of_tracking) + mode + "Explicit");
-            Assert.Throws<NotSupportedException>(() =>
+                nameof(Whole_inner_entity_form_tracking_query_throws_InvalidOperationException_in_every_mode) + mode + "Explicit");
+            Assert.Throws<InvalidOperationException>(() =>
                 explicitDb.Entities.SelectMany(o => o.Items, (o, i) => i).ToList());
 
             using var querySyntaxDb = CreateContext(seed, mode,
-                nameof(Whole_inner_entity_form_declines_cleanly_regardless_of_tracking) + mode + "QuerySyntax");
-            Assert.Throws<NotSupportedException>(() =>
+                nameof(Whole_inner_entity_form_tracking_query_throws_InvalidOperationException_in_every_mode) + mode + "QuerySyntax");
+            Assert.Throws<InvalidOperationException>(() =>
                 (from o in querySyntaxDb.Entities from i in o.Items select i).ToList());
         }
     }

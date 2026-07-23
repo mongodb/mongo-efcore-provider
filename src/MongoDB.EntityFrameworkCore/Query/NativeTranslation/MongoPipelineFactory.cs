@@ -93,7 +93,23 @@ internal sealed class MongoPipelineFactory
             MongoLimitStage limit => RenderLimit(limit, placeholders),
             MongoLookupStage lookup => RenderLookup(lookup.Lookup),
             MongoUnwindStage unwind => RenderUnwind(unwind.Lookup, unwind.PreserveNullAndEmptyArrays),
-            MongoUnwindFieldStage unwindField => new BsonDocument("$unwind", "$" + unwindField.ElementPath),
+            MongoUnwindFieldStage unwindField => unwindField.IncludeArrayIndex is null
+                ? new BsonDocument("$unwind", "$" + unwindField.ElementPath)
+                : new BsonDocument("$unwind", new BsonDocument
+                {
+                    { "path", "$" + unwindField.ElementPath },
+                    { "includeArrayIndex", unwindField.IncludeArrayIndex }
+                }),
+            MongoReplaceRootStage replaceRoot => new BsonDocument("$replaceRoot",
+                new BsonDocument("newRoot", new BsonDocument("$mergeObjects", new BsonArray
+                {
+                    "$" + replaceRoot.NewRoot,
+                    new BsonDocument
+                    {
+                        { MongoReplaceRootStage.OwnerKeyField, "$_id" },
+                        { MongoReplaceRootStage.OrdinalField, "$" + MongoReplaceRootStage.OrdinalField }
+                    }
+                }))),
             MongoProjectStage project => RenderProject(project, placeholders),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
