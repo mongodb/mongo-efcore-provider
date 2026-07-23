@@ -990,14 +990,16 @@ Customers.
 
     public override async Task SelectMany_without_result_selector_naked_collection_navigation(bool async)
     {
-        // EF-347 slice 5: a bare cross-collection reference SelectMany now declines at translation
-        // time with NotSupportedException (whole-inner-entity guard) rather than EF's generic
-        // InvalidOperationException; the shape is still unsupported, only the exception type changed.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.SelectMany_without_result_selector_naked_collection_navigation(async),
-            typeof(NotSupportedException));
+        // EF-347 Task 4: a bare cross-collection reference SelectMany (Kind == Reference,
+        // IsWholeElementRepresentable's eager-loaded-nav check) now goes NATIVE — Order's own navigations
+        // (Customer, OrderDetails, etc.) are not eager-loaded in this fixture, so the shape is representable
+        // and materializes correctly via $lookup + inner-join $unwind + a plain $replaceRoot.
+        await base.SelectMany_without_result_selector_naked_collection_navigation(async);
 
-        AssertMql();
+        AssertMql(
+            """
+            Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$replaceRoot" : { "newRoot" : "$_lookup_Orders" } }
+            """);
     }
 
     public override async Task SelectMany_without_result_selector_collection_navigation_composed(bool async)

@@ -101,15 +101,17 @@ internal sealed class MongoPipelineFactory
                     { "includeArrayIndex", unwindField.IncludeArrayIndex }
                 }),
             MongoReplaceRootStage replaceRoot => new BsonDocument("$replaceRoot",
-                new BsonDocument("newRoot", new BsonDocument("$mergeObjects", new BsonArray
-                {
-                    "$" + replaceRoot.NewRoot,
-                    new BsonDocument
+                new BsonDocument("newRoot", replaceRoot.MergeOwnerKeySentinels
+                    ? new BsonDocument("$mergeObjects", new BsonArray
                     {
-                        { MongoReplaceRootStage.OwnerKeyField, "$_id" },
-                        { MongoReplaceRootStage.OrdinalField, "$" + MongoReplaceRootStage.OrdinalField }
-                    }
-                }))),
+                        "$" + replaceRoot.NewRoot,
+                        new BsonDocument
+                        {
+                            { MongoReplaceRootStage.OwnerKeyField, "$_id" },
+                            { MongoReplaceRootStage.OrdinalField, "$" + MongoReplaceRootStage.OrdinalField }
+                        }
+                    })
+                    : (BsonValue)("$" + replaceRoot.NewRoot))),
             MongoProjectStage project => RenderProject(project, placeholders),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),

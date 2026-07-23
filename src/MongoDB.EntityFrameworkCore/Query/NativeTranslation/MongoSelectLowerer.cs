@@ -128,10 +128,15 @@ internal sealed class MongoSelectLowerer
 
             if (unwind.WholeElement)
             {
-                // Bare whole-inner-element SelectMany: promote the unwound element to root, carrying the
-                // owner key + array ordinal in (EF-347 bare-owned spike — see MongoReplaceRootStage).
-                // (Reference whole-element is deferred; WholeElement is only ever set for Owned in this slice.)
-                stages.Add(new MongoReplaceRootStage(unwind.InnerScopePath));
+                // Bare whole-inner-element SelectMany: promote the unwound element to root.
+                // Owned (embedded, shadow key): $mergeObjects the owner key + array ordinal in under sentinel
+                // fields so the owned element's shadow key materializes non-null (EF-347 bare-owned spike).
+                // Reference (cross-collection): the $lookup + $unwind were already appended by AppendLookupStages
+                // above; a reference entity carries its own real stored key, so a PLAIN $replaceRoot suffices —
+                // no sentinel merge (EF-347 ref-bare-entity slice).
+                stages.Add(new MongoReplaceRootStage(
+                    unwind.InnerScopePath,
+                    mergeOwnerKeySentinels: unwind.Kind == MongoUnwindSourceKind.Owned));
                 return stages;
             }
 

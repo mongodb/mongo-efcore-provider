@@ -385,6 +385,39 @@ public class MongoSelectLowererTests
         Assert.DoesNotContain(stages, s => s is MongoUnwindFieldStage);
     }
 
+    // Test 17: bare whole reference-ENTITY SelectMany (EF-347 ref-bare-entity slice). Like Test 16,
+    // AppendLookupStages emits $lookup + $unwind(preserve:false) first; then WholeElement drives a PLAIN
+    // $replaceRoot (no $mergeObjects — a reference entity has a real stored key), and there is NO trailing
+    // $project (Projection is empty for a whole-entity result).
+    [Fact]
+    public void WholeElement_Reference_UnwindSource_lowers_to_lookup_then_unwind_then_plain_replaceRoot()
+    {
+        var (query, navigation) = TestReferenceSelect();
+        var lookup = new LookupExpression(navigation, forceUnwind: true);
+        query.AddLookup(lookup);
+        var unwind = MongoUnwindSource.Reference(
+            LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup);
+        unwind.WholeElement = true;
+        query.Select.UnwindSource = unwind;
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup),
+            s =>
+            {
+                var u = Assert.IsType<MongoUnwindStage>(s);
+                Assert.Same(lookup, u.Lookup);
+                Assert.False(u.PreserveNullAndEmptyArrays);
+            },
+            s =>
+            {
+                var rr = Assert.IsType<MongoReplaceRootStage>(s);
+                Assert.Equal(LookupExpression.GetLookupAlias(navigation), rr.NewRoot);
+                Assert.False(rr.MergeOwnerKeySentinels);
+            });
+    }
+
     // ── EF-347 slice B: trailing ops emit AFTER the set-op stage; cardinality falls through ──
 
     [Fact]

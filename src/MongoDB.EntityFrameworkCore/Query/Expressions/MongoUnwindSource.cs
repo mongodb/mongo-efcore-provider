@@ -83,8 +83,10 @@ internal sealed class MongoUnwindSource
     /// <see langword="true"/> when the trailing SelectMany selector returns the WHOLE inner element
     /// entity (e.g. <c>from o in q from i in o.Items select i</c>) rather than a member projection. Set by
     /// <c>TranslateSelect</c> once it recognizes the whole-inner-entity selector; drives the lowerer to
-    /// append a <c>$replaceRoot</c> that promotes the unwound element to the root document. Owned-only in
-    /// this slice (reference is deferred).
+    /// append a <c>$replaceRoot</c> that promotes the unwound element to the root document. Supported for
+    /// both <see cref="MongoUnwindSourceKind.Owned"/> (a <c>$mergeObjects</c> sentinel-carrying form) and
+    /// <see cref="MongoUnwindSourceKind.Reference"/> (a plain form — the looked-up element is already a
+    /// whole, independently-keyed document, so no owner-key/ordinal carrying is needed).
     /// </summary>
     public bool WholeElement { get; set; }
 }

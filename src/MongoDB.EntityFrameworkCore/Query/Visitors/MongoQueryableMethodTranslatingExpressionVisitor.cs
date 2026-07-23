@@ -282,19 +282,20 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // the lowerer emitted a $unwind with no $project and the DOM shaper crashed with an internal
         // KeyNotFoundException instead of cleanly declining.
         //
-        // As of this Task, the OWNED whole-inner-entity case (TryGetWholeEntityMemberAccess returning a
-        // "ti => ti.Inner" member, representable per IsWholeElementRepresentable) instead routes NATIVE when
-        // the unwind is owned: it sets UnwindSource.WholeElement, which drives the lowerer to emit
-        // $unwind(includeArrayIndex) + $replaceRoot($mergeObjects) so the owned element becomes the root
-        // document, carrying its owner key + array ordinal along with it (see MongoReplaceRootStage / the
-        // spike note .superpowers/sdd/EF-347-bare-owned-selectmany-spike.md).
-        // Control then falls through to the generic shaper fold below (same as every other Select), which
-        // resolves TransparentIdentifier(outer, item).Inner to the element shaper BuildBareNavWrappedShaper
-        // already built over UnwindSource.InnerEntityType — materialized by
+        // As of EF-347 Task 4, the whole-inner-entity case (TryGetWholeEntityMemberAccess returning a
+        // "ti => ti.Inner" member, representable per IsWholeElementRepresentable) routes NATIVE for BOTH an
+        // OWNED and a REFERENCE unwind: it sets UnwindSource.WholeElement, which drives the lowerer to emit
+        // $unwind(includeArrayIndex) + $replaceRoot — the $mergeObjects sentinel form for Owned (carrying the
+        // owner key + array ordinal along with it, see MongoReplaceRootStage / the spike note
+        // .superpowers/sdd/EF-347-bare-owned-selectmany-spike.md), a plain $replaceRoot for Reference (the
+        // $lookup's own unwound array element needs no owner-key/ordinal carrying — it is already a whole,
+        // independently-keyed document). Control then falls through to the generic shaper fold below (same as
+        // every other Select), which resolves TransparentIdentifier(outer, item).Inner to the element shaper
+        // BuildBareNavWrappedShaper already built over UnwindSource.InnerEntityType — materialized by
         // MongoShapedQueryCompilingExpressionVisitor's dedicated WholeElement branch, which roots the standard
-        // DOM shaper at the owned element type instead of the collection root. A REFERENCE-kind whole-inner
-        // result (no re-rooted shaper exists for it) and the whole-OUTER (`select o`) case remain declined
-        // below.
+        // DOM shaper at the element type instead of the collection root. Only the whole-OUTER (`select o`) case
+        // and an unrepresentable element (an eager-loaded navigation for Reference; a nav/sentinel-collision/
+        // shadow-key issue for Owned — see IsWholeElementRepresentable) remain declined below.
         //
         // TryGetWholeEntityMemberAccess(selector) still distinguishes ALL whole-entity shapes (inner or outer)
         // from the computed-leaf case (e.g. `ti => new { X = ti.Inner.Price * 2 }`), whose selector body is a
@@ -302,7 +303,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // gracefully (MarkNotNativelyRepresentable(), the else branch below), because ITS driver-LINQ fallback
         // genuinely succeeds with correct results (see
         // NativeSelectManyTests.Explicit_result_selector_form_computed_leaf_falls_back_gracefully_except_under_NativeOnly).
-        // The whole-OUTER (`select o`) / whole-inner-REFERENCE decline is thrown here at TRANSLATION time (not
+        // The whole-OUTER (`select o`) / unrepresentable-element decline is thrown here at TRANSLATION time (not
         // compile-time-gated), so it propagates in EVERY MongoQueryMode alike — Native, DriverLinq, and
         // NativeOnly — since MongoQueryMode is only consulted later, by the compile-time gate in
         // MongoShapedQueryCompilingExpressionVisitor, which this code runs well before. Deliberately NOT
@@ -317,22 +318,22 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var wholeEntityMember = TryGetWholeEntityMemberAccess(selector);
 
             if (wholeEntityMember is { Member.Name: "Inner" }
-                && wholeElementCandidateUnwind.Kind == MongoUnwindSourceKind.Owned
-                && IsWholeElementRepresentable(wholeElementCandidateUnwind.InnerEntityType))
+                && wholeElementCandidateUnwind.Kind is MongoUnwindSourceKind.Owned or MongoUnwindSourceKind.Reference
+                && IsWholeElementRepresentable(wholeElementCandidateUnwind.InnerEntityType, wholeElementCandidateUnwind.Kind))
             {
-                // Bare whole-inner-element owned SelectMany (e.g. `from o in q from i in o.Items select i`).
-                // Emit $unwind → $replaceRoot (lowerer) and materialize the owned element from the re-rooted
-                // document; fall through to the generic shaper fold below, which resolves
-                // TransparentIdentifier(outer, item).Inner to the element shaper BuildBareNavWrappedShaper
-                // already built.
+                // Bare whole-inner-element SelectMany — owned (embedded) OR reference (cross-collection). The
+                // lowerer emits $unwind → $replaceRoot (owned: $mergeObjects sentinel form; reference: plain,
+                // after the $lookup+$unwind) and materializes the element from the re-rooted document; fall
+                // through to the generic shaper fold below, which resolves TransparentIdentifier(outer, item).Inner
+                // to the element shaper BuildBareNavWrappedShaper already built.
                 wholeElementCandidateUnwind.WholeElement = true;
             }
             else if (wholeEntityMember != null)
             {
                 throw new NotSupportedException(
-                    "Projecting a whole entity other than an owned collection element from a SelectMany (e.g. "
-                    + "'from o in q from i in o.Items select o', 'SelectMany(o => o.Items, (o, i) => o)', or a "
-                    + "whole-inner-entity result from a REFERENCE (non-owned) collection navigation, or an "
+                    "Projecting a whole entity other than an owned or reference collection element from a "
+                    + "SelectMany (e.g. 'from o in q from i in o.Items select o', 'SelectMany(o => o.Items, "
+                    + "(o, i) => o)', a reference collection element with an eager-loaded navigation, or an "
                     + "owned collection element with a nested navigation or a real element name that collides "
                     + "with the provider's internal owned-key sentinel fields) is not supported. Project "
                     + "members instead, e.g. 'from o in q from i in o.Items select new { o.Name, "
@@ -493,10 +494,24 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <summary>
-    /// Whether <paramref name="innerEntityType"/> (the owned collection's element type) is within the shape the
-    /// whole-element re-rooting mechanism (EF-347 Task 3: <c>$unwind</c> + <c>$replaceRoot</c>, see
-    /// <see cref="Expressions.MongoUnwindSource.WholeElement"/>) actually supports — two narrow, empirically
-    /// found guards, each a clean decline rather than a silent wrong-data or confusing-crash risk:
+    /// Whether <paramref name="innerEntityType"/> (the collection's element type) is within the shape the
+    /// whole-element re-rooting mechanism (<c>$unwind</c> + <c>$replaceRoot</c>, see
+    /// <see cref="Expressions.MongoUnwindSource.WholeElement"/>) actually supports. Kind-aware as of EF-347
+    /// Task 4: for <see cref="MongoUnwindSourceKind.Reference"/> the check narrows to a single guard — reject
+    /// only an EAGER-LOADED navigation (<see cref="Microsoft.EntityFrameworkCore.Metadata.IReadOnlyNavigationBase.IsEagerLoaded"/>).
+    /// A plain LAZY inverse back-reference (e.g. a reference element's own FK-owner navigation) is never
+    /// auto-included and materializes fine as null, so it does not block this shape — only a navigation EF
+    /// would try to auto-include (reaching EF's <c>IncludeExpression</c> machinery, which binds against the
+    /// re-rooted shaper's wrong <see cref="Microsoft.EntityFrameworkCore.Query.ProjectionMember"/> — the same
+    /// failure mode the owned nav guard below documents) is rejected. For
+    /// <see cref="MongoUnwindSourceKind.Owned"/> the full set of guards below applies — every owned navigation
+    /// is eager-loaded by EF Core convention, so the blanket "no navigations" check is equivalent there, kept
+    /// as the minimal, lowest-risk form; the remaining sentinel-collision / complex-property / owned-key-
+    /// serialization guards exist ONLY to protect the owned <c>$mergeObjects</c> sentinel merge and the
+    /// synthesized owner-key/ordinal shadow keys — a reference element merges no sentinels and has no owned-
+    /// type shadow keys, so those checks apply for <see cref="MongoUnwindSourceKind.Owned"/> only. The two
+    /// narrow, empirically found owned-only guards, each a clean decline rather than a silent wrong-data or
+    /// confusing-crash risk:
     /// <list type="bullet">
     /// <item>No navigations of its own. A nested owned reference/collection under the element does not
     /// materialize correctly via this mechanism: <c>BuildBareNavWrappedShaper</c>'s element shaper still binds
@@ -553,14 +568,26 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// reapplied to the owned key here instead of adding a parallel, duplicate predicate.</item>
     /// </list>
     /// </summary>
-    private static bool IsWholeElementRepresentable(IEntityType innerEntityType)
-        => !innerEntityType.GetNavigations().Any()
-           && innerEntityType.GetProperties().All(p =>
-               p.GetElementName() is not (MongoReplaceRootStage.OwnerKeyField or MongoReplaceRootStage.OrdinalField))
-           && innerEntityType.GetComplexProperties().All(c =>
-               GetComplexPropertyElementName(c) is not (MongoReplaceRootStage.OwnerKeyField or MongoReplaceRootStage.OrdinalField))
-           && innerEntityType.GetProperties().Where(p => p.IsOwnedTypeKey())
-               .All(NativeGroupByBinder.HasDefaultKeySerialization);
+    private static bool IsWholeElementRepresentable(IEntityType innerEntityType, MongoUnwindSourceKind kind)
+    {
+        // Reference: a plain lazy inverse back-reference (e.g. RefItem.Owner) is never auto-included and
+        // shapes fine as null — reject only an EAGER-LOADED navigation (which reaches EF's IncludeExpression
+        // machinery and binds against the re-rooted shaper's wrong ProjectionMember, the owned-slice crash).
+        // Owned: every owned nav is eager-loaded, so the blanket check is equivalent — keep it as the minimal,
+        // lowest-risk form. The sentinel-collision / shadow-key-serialization checks below exist ONLY to protect
+        // the owned $mergeObjects sentinel merge + synthesized owner/ordinal shadow keys; reference merges no
+        // sentinels and has no owned-type shadow keys, so they apply for Owned only.
+        if (kind == MongoUnwindSourceKind.Reference)
+            return !innerEntityType.GetNavigations().Any(n => n.IsEagerLoaded);
+
+        return !innerEntityType.GetNavigations().Any()
+               && innerEntityType.GetProperties().All(p =>
+                   p.GetElementName() is not (MongoReplaceRootStage.OwnerKeyField or MongoReplaceRootStage.OrdinalField))
+               && innerEntityType.GetComplexProperties().All(c =>
+                   GetComplexPropertyElementName(c) is not (MongoReplaceRootStage.OwnerKeyField or MongoReplaceRootStage.OrdinalField))
+               && innerEntityType.GetProperties().Where(p => p.IsOwnedTypeKey())
+                   .All(NativeGroupByBinder.HasDefaultKeySerialization);
+    }
 
     /// <summary>
     /// The document element name a <see cref="IReadOnlyComplexProperty"/> occupies at its own declaring type's

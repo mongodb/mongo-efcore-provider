@@ -557,6 +557,23 @@ public class MongoPipelineFactoryTests
             result[0]);
     }
 
+    [Fact]
+    public void ReplaceRootStage_plain_renders_dollar_replaceRoot_with_bare_newRoot()
+    {
+        var stages = new List<MongoPipelineStage>
+        {
+            new MongoReplaceRootStage("_lookup_Refs", mergeOwnerKeySentinels: false)
+        };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        Assert.Equal(
+            BsonDocument.Parse("{ $replaceRoot: { newRoot: \"$_lookup_Refs\" } }"),
+            result[0]);
+    }
+
     // ------------------------------------------------------------------
     // MongoUnwindStage — preserveNullAndEmptyArrays (EF-347 slice 5, Task 3): the reference-Include
     // $unwind (LEFT-join, unchanged) must keep preserve:true; the NEW ForceUnwind-collection SelectMany

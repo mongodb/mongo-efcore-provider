@@ -74,13 +74,21 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// "can't track an owned entity without its owner" <see cref="InvalidOperationException"/>, firing at shaper-
 /// materializer injection time, not this provider's translation-time guard (see
 /// <c>Bare_SelectMany_tracking_query_throws_InvalidOperationException_in_every_mode</c>). The whole-OUTER form
-/// (<c>select o</c> / <c>(o, i) =&gt; o</c>) and a whole-inner result from a REFERENCE (non-owned) navigation
-/// are NOT this case (<c>IsWholeInnerEntitySelector</c> requires <c>Member.Name == "Inner"</c>; the Kind ==
-/// Owned check excludes reference) — both remain declined with the original clean
+/// (<c>select o</c> / <c>(o, i) =&gt; o</c>) is NOT this case (<c>IsWholeInnerEntitySelector</c> requires
+/// <c>Member.Name == "Inner"</c>) — it remains declined with the original clean
 /// <see cref="NotSupportedException"/>, thrown at TRANSLATION time (before <see cref="MongoQueryMode"/> is even
 /// consulted) so the SAME exception fires in all three modes, regardless of tracking (see
-/// <c>Whole_outer_entity_form_still_declines_cleanly_in_every_mode</c> and
-/// <c>Reference_form_bare_entity_result_hard_fails_in_every_mode</c>). By contrast, the computed-leaf case (e.g.
+/// <c>Whole_outer_entity_form_still_declines_cleanly_in_every_mode</c> and, for the REFERENCE form,
+/// <c>Reference_form_whole_outer_result_still_declines_cleanly_in_every_mode</c>). A whole-inner result from a
+/// REFERENCE (non-owned) navigation was ALSO originally excluded here (the Kind == Owned check above), but this
+/// is superseded by EF-347 Task 4/5 below — see
+/// <c>Reference_form_bare_entity_result_goes_native_all_three_spellings</c>, which now goes NATIVE for the
+/// non-eager-loaded case, and <c>Reference_form_bare_entity_with_cross_collection_autoinclude_declines_cleanly_in_every_mode</c>,
+/// which still declines cleanly for a reference element that itself eager-loads a further navigation (via a
+/// genuine cross-collection AutoInclude, which does NOT reach <c>IsWholeElementRepresentable</c>'s reference
+/// eager-nav guard at all — see that test's own comment; <c>Reference_form_bare_entity_with_owned_embedded_navigation_declines_cleanly_via_representability_guard</c>
+/// is the test that DOES prove the guard is reachable, via an eager-loaded OWNED sub-navigation instead). By
+/// contrast, the computed-leaf case (e.g.
 /// <c>SelectMany(o =&gt; o.Items, (o, i) =&gt; new { X = i.Price * 2 })</c>) is NOT this shape either (its
 /// selector body is a <c>NewExpression</c>, not a bare member access) and still falls back gracefully via
 /// <c>MarkNotNativelyRepresentable()</c> — its driver-LINQ fallback genuinely works. Composing a FURTHER
@@ -631,6 +639,222 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         return new RefOwnerItemDbContext(database, ownersCollection, refsCollection, mode, loggerFactory);
     }
 
+    private class EagerParent
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public List<EagerChild> EagerChildren { get; set; } = [];
+    }
+
+    private class EagerChild
+    {
+        public ObjectId Id { get; set; }
+        public string Tag { get; set; } = "";
+        public ObjectId? ParentId { get; set; }
+        public EagerParent? Parent { get; set; }
+        public ObjectId? DetailId { get; set; }
+
+        // The eager-loaded navigation: EF auto-includes this on every query that returns an EagerChild. NOTE:
+        // this is a genuine CROSS-COLLECTION AutoInclude, which (per the empirical finding on
+        // Reference_form_bare_entity_with_cross_collection_autoinclude_declines_cleanly_in_every_mode below)
+        // does NOT actually reach IsWholeElementRepresentable's narrowed reference-nav guard — it declines via
+        // a different mechanism (a doubly-nested TransparentIdentifier). See
+        // Reference_form_bare_entity_with_owned_embedded_navigation_declines_cleanly_via_representability_guard
+        // for the shape that DOES reach the guard (an eager-loaded OWNED sub-navigation).
+        public EagerDetail? Detail { get; set; }
+    }
+
+    private class EagerDetail
+    {
+        public ObjectId Id { get; set; }
+        public string Note { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Mirrors <see cref="RefOwnerItemDbContext"/>'s structure/helpers, with a third collection for the
+    /// eager-loaded <see cref="EagerChild.Detail"/> navigation.
+    /// </summary>
+    private sealed class EagerRefDbContext : DbContext
+    {
+        private readonly string _parentsCollection;
+        private readonly string _childrenCollection;
+        private readonly string _detailsCollection;
+
+        public DbSet<EagerParent> Parents { get; set; } = null!;
+        public DbSet<EagerChild> Children { get; set; } = null!;
+        public DbSet<EagerDetail> Details { get; set; } = null!;
+
+        public EagerRefDbContext(
+            TemporaryDatabaseFixture database, string parentsCollection, string childrenCollection,
+            string detailsCollection, MongoQueryMode mode)
+            : base(BuildOptions(database, mode))
+        {
+            _parentsCollection = parentsCollection;
+            _childrenCollection = childrenCollection;
+            _detailsCollection = detailsCollection;
+        }
+
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        {
+            var optionsBuilder = new DbContextOptionsBuilder<EagerRefDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            return optionsBuilder.Options;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<EagerParent>(b =>
+            {
+                b.ToCollection(_parentsCollection);
+                b.HasMany(p => p.EagerChildren).WithOne(c => c.Parent).HasForeignKey(c => c.ParentId);
+            });
+            modelBuilder.Entity<EagerChild>(b =>
+            {
+                b.ToCollection(_childrenCollection);
+                b.HasOne(c => c.Detail).WithMany().HasForeignKey(c => c.DetailId);
+                b.Navigation(c => c.Detail).AutoInclude();
+            });
+            modelBuilder.Entity<EagerDetail>(b => b.ToCollection(_detailsCollection));
+        }
+
+        private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
+        }
+    }
+
+    private EagerRefDbContext CreateEagerRefContext(MongoQueryMode mode, string name)
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var parentsCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Parents") + suffix;
+        var childrenCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Children") + suffix;
+        var detailsCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Details") + suffix;
+
+        using (var seedDb = new EagerRefDbContext(
+                   database, parentsCollection, childrenCollection, detailsCollection, MongoQueryMode.Native))
+        {
+            var detail = new EagerDetail { Id = ObjectId.GenerateNewId(), Note = "Detail" };
+            var parent = new EagerParent { Id = ObjectId.GenerateNewId(), Name = "Parent" };
+            var child = new EagerChild
+            {
+                Id = ObjectId.GenerateNewId(), Tag = "Child", ParentId = parent.Id, DetailId = detail.Id,
+            };
+            seedDb.Details.Add(detail);
+            seedDb.Parents.Add(parent);
+            seedDb.Children.Add(child);
+            seedDb.SaveChanges();
+        }
+
+        return new EagerRefDbContext(database, parentsCollection, childrenCollection, detailsCollection, mode);
+    }
+
+    private class OwnedSubNavParent
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public List<OwnedSubNavChild> Children { get; set; } = [];
+    }
+
+    private class OwnedSubNavChild
+    {
+        public ObjectId Id { get; set; }
+        public string Tag { get; set; } = "";
+        public ObjectId? ParentId { get; set; }
+        public OwnedSubNavParent? Parent { get; set; }
+
+        // The eager-loaded OWNED (embedded) sub-navigation: every owned nav is eager-loaded by EF Core
+        // convention, and — unlike EagerChild.Detail above (a genuine cross-collection nav) — this is
+        // structurally a SINGLE-hop IncludeExpression(ti.Inner, ownedNav), which
+        // TryGetWholeEntityMemberAccess's unwrap-through-Include loop reduces back to the bare `ti.Inner`
+        // member access. See
+        // Reference_form_bare_entity_with_owned_embedded_navigation_declines_cleanly_via_representability_guard.
+        public OwnedSubNavEmbedded Embedded { get; set; } = new();
+    }
+
+    private class OwnedSubNavEmbedded
+    {
+        public string Note { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Mirrors <see cref="RefOwnerItemDbContext"/>'s structure/helpers — a reference (cross-collection)
+    /// parent/child relationship — but the CHILD entity additionally owns an embedded sub-navigation
+    /// (<see cref="OwnedSubNavChild.Embedded"/>), so a bare-entity <c>SelectMany</c> over the reference
+    /// collection projects a whole child entity that itself eager-loads an owned member.
+    /// </summary>
+    private sealed class OwnedSubNavDbContext : DbContext
+    {
+        private readonly string _parentsCollection;
+        private readonly string _childrenCollection;
+
+        public DbSet<OwnedSubNavParent> Parents { get; set; } = null!;
+        public DbSet<OwnedSubNavChild> Children { get; set; } = null!;
+
+        public OwnedSubNavDbContext(
+            TemporaryDatabaseFixture database, string parentsCollection, string childrenCollection, MongoQueryMode mode)
+            : base(BuildOptions(database, mode))
+        {
+            _parentsCollection = parentsCollection;
+            _childrenCollection = childrenCollection;
+        }
+
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        {
+            var optionsBuilder = new DbContextOptionsBuilder<OwnedSubNavDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            return optionsBuilder.Options;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<OwnedSubNavParent>(b =>
+            {
+                b.ToCollection(_parentsCollection);
+                b.HasMany(p => p.Children).WithOne(c => c.Parent).HasForeignKey(c => c.ParentId);
+            });
+            modelBuilder.Entity<OwnedSubNavChild>(b =>
+            {
+                b.ToCollection(_childrenCollection);
+                b.OwnsOne(c => c.Embedded);
+            });
+        }
+
+        private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
+        }
+    }
+
+    private OwnedSubNavDbContext CreateOwnedSubNavContext(MongoQueryMode mode, string name)
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var parentsCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Parents") + suffix;
+        var childrenCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Children") + suffix;
+
+        using (var seedDb = new OwnedSubNavDbContext(database, parentsCollection, childrenCollection, MongoQueryMode.Native))
+        {
+            var parent = new OwnedSubNavParent { Id = ObjectId.GenerateNewId(), Name = "Parent" };
+            var child = new OwnedSubNavChild
+            {
+                Id = ObjectId.GenerateNewId(), Tag = "Child", ParentId = parent.Id,
+                Embedded = new OwnedSubNavEmbedded { Note = "EmbeddedNote" },
+            };
+            seedDb.Parents.Add(parent);
+            seedDb.Children.Add(child);
+            seedDb.SaveChanges();
+        }
+
+        return new OwnedSubNavDbContext(database, parentsCollection, childrenCollection, mode);
+    }
+
     // EF-347 slice 5 PROBE (Task 4, Step 2): the spike that informed the design only ran EF10. This is the ONE
     // core success test run first on EF10 and then, unmodified, on EF8/EF9 to determine whether cross-collection
     // reference SelectMany translates identically across all three EF versions BEFORE the full suite below was
@@ -812,35 +1036,78 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Reference_form_bare_entity_result_hard_fails_in_every_mode()
+    public void Reference_form_bare_entity_result_goes_native_all_three_spellings()
     {
-        // A bare-nav SelectMany whose trailing selector projects the whole inner entity hard-declines cleanly
-        // via TranslateSelect's dedicated whole-inner-entity guard (IsWholeInnerEntitySelector). As of EF-347
-        // Task 3 that guard is KIND-aware: it routes NATIVE only when the unwind is Owned (see
-        // Bare_owned_whole_inner_element_goes_native_all_three_spellings) — for a REFERENCE-kind unwind (this
-        // test) it falls through to the same IsTransparentIdentifierMemberAccessSelector else-if as the
-        // whole-OUTER form and keeps throwing the identical clean NotSupportedException, in every mode. There
-        // is no re-rooted shaper for a reference-navigation whole-inner result (re-rooting via $replaceRoot is
-        // owned-only in this slice), so this shape remains genuinely unsupported.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
-        {
-            using var db = CreateRefContext(mode, nameof(Reference_form_bare_entity_result_hard_fails_in_every_mode) + mode, out _, out _);
+        // EF-347 Task 4: a bare-nav SelectMany whose trailing selector projects the WHOLE inner entity now goes
+        // NATIVE for a REFERENCE-kind unwind too (not just Owned, as of Task 3) — TranslateSelect's
+        // whole-inner-entity gate admits Kind is Owned or Reference, and IsWholeElementRepresentable is
+        // kind-aware: for Reference it rejects only an EAGER-LOADED navigation. RefItem.Owner is a plain lazy
+        // inverse back-reference (never auto-included), so it materializes fine as null and does not block this
+        // shape. All three equivalent user spellings normalize to the identical tree and all go native.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_bare_entity_result_goes_native_all_three_spellings), out _, out var items);
 
-            Assert.Throws<NotSupportedException>(() => db.Owners.SelectMany(o => o.Refs, (o, r) => r).ToList());
-        }
+        var expectedTags = items.Select(i => i.Tag).OrderBy(t => t).ToList(); // Alice(2)+Carol(1)=3; Bob(0) none
+
+        // 1-arg
+        var oneArg = db.Owners.SelectMany(o => o.Refs).AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
+        // query syntax
+        var querySyntax = (from o in db.Owners from r in o.Refs select r)
+            .AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
+        // explicit result selector
+        var explicitRs = db.Owners.SelectMany(o => o.Refs, (o, r) => r)
+            .AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
+
+        // Succeeding under NativeOnly is itself the "went native" signal.
+        Assert.Equal(expectedTags, oneArg);
+        Assert.Equal(expectedTags, querySyntax);
+        Assert.Equal(expectedTags, explicitRs);
     }
 
     [Fact]
-    public void Reference_form_bare_SelectMany_hard_fails_in_every_mode()
+    public void Reference_form_bare_entity_owner_with_zero_children_contributes_no_rows()
     {
-        // The 1-arg overload (SelectMany(o => o.Refs)) normalizes to the identical whole-inner-entity tree as
-        // the explicit (o, r) => r form above — same clean decline, in every mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
-        {
-            using var db = CreateRefContext(mode, nameof(Reference_form_bare_SelectMany_hard_fails_in_every_mode) + mode, out _, out _);
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_bare_entity_owner_with_zero_children_contributes_no_rows), out _, out var items);
 
-            Assert.Throws<NotSupportedException>(() => db.Owners.SelectMany(o => o.Refs).ToList());
-        }
+        var result = db.Owners.SelectMany(o => o.Refs).AsEnumerable().Select(r => r.Id).OrderBy(x => x).ToList();
+        var expected = items.Select(i => i.Id).OrderBy(x => x).ToList(); // Bob contributes nothing (inner join)
+
+        Assert.Equal(expected, result);
+        Assert.Equal(3, result.Count);
+    }
+
+    [Fact]
+    public void Reference_form_bare_entity_reads_root_relative_not_owner_scoped()
+    {
+        // RefItem.Name deliberately shares its member name with RefOwner.Name. A bare-entity result is the
+        // RefItem, so r.Name must be the ITEM's Name ("WidgetName"/…), read from the re-rooted document — NOT
+        // the owner's Name leaking through.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_bare_entity_reads_root_relative_not_owner_scoped), out _, out var items);
+
+        var names = db.Owners.SelectMany(o => o.Refs).AsEnumerable().Select(r => r.Name).OrderBy(n => n).ToList();
+        var expected = items.Select(i => i.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(expected, names);
+        Assert.DoesNotContain("Alice", names); // no owner-Name leak
+    }
+
+    [Fact]
+    public void Reference_form_bare_entity_emits_lookup_unwind_plain_replaceRoot()
+    {
+        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_bare_entity_emits_lookup_unwind_plain_replaceRoot),
+            out _, out _, out var spyLogger);
+
+        _ = db.Owners.SelectMany(o => o.Refs).ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$lookup", message);
+        Assert.Contains("$unwind", message);
+        Assert.Contains("$replaceRoot", message);
+        Assert.Contains("\"newRoot\" : \"$_lookup_Refs\"", message);
+        Assert.DoesNotContain("$mergeObjects", message); // plain replaceRoot, not the owned sentinel form
     }
 
     [Fact]
@@ -2249,5 +2516,142 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Assert.Throws<InvalidOperationException>(() =>
                 (from o in querySyntaxDb.Entities from i in o.Items select i).ToList());
         }
+    }
+
+    [Fact]
+    public void Reference_form_bare_entity_tracking_query_returns_tracked_entities()
+    {
+        // Unlike an owned collection element (EF refuses to track it without its owner — see
+        // Bare_SelectMany_tracking_query_throws_InvalidOperationException_in_every_mode), a reference entity is
+        // an ordinary trackable entity with its own real key. A tracking query returns tracked instances.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_bare_entity_tracking_query_returns_tracked_entities), out _, out var items);
+
+        var tracked = db.Owners.SelectMany(o => o.Refs).ToList(); // default tracking (no AsNoTracking)
+
+        Assert.Equal(3, tracked.Count);
+        Assert.Equal(3, db.ChangeTracker.Entries<RefItem>().Count());
+        Assert.All(tracked, r => Assert.Equal(EntityState.Unchanged, db.Entry(r).State));
+
+        // A mutation + SaveChanges round-trips (proves these are real tracked entities).
+        var first = tracked[0];
+        first.Tag = "MutatedTag";
+        db.SaveChanges();
+
+        // Re-verify persistence within the SAME context (a second context on the same collections needs no
+        // helper): clear the tracker, then re-query — this re-reads from the database rather than trusting the
+        // in-memory tracked instance.
+        db.ChangeTracker.Clear();
+        var tags = db.Refs.AsEnumerable().Select(r => r.Tag).ToList();
+        Assert.Contains("MutatedTag", tags);
+    }
+
+    [Fact]
+    public void Reference_form_bare_entity_with_cross_collection_autoinclude_declines_cleanly_in_every_mode()
+    {
+        // A reference element that EAGER-LOADS a further navigation (EagerChild.Detail, a genuine cross-
+        // collection nav, unlike an owned member) declines cleanly in every mode — confirmed empirically, not
+        // assumed, and via a DIFFERENT mechanism than originally predicted for this Task. The sanity anchor for
+        // this test is Reference_form_bare_entity_result_goes_native_all_three_spellings: RefItem's own back-
+        // reference (Owner) is a plain LAZY inverse nav, never auto-included, so it does NOT block that shape —
+        // only an EAGER-LOADED nav (EagerChild.Detail here) does.
+        //
+        // EMPIRICAL FINDING (diagnosed by instrumenting TranslateSelect during this Task, not assumed): this
+        // does NOT reach IsWholeElementRepresentable's narrowed reference eager-nav guard at all. Materializing
+        // a genuine CROSS-COLLECTION eager Include (unlike an owned/embedded member, which is structurally a
+        // single-hop IncludeExpression(ti.Inner, ownedNav)) requires EF's nav-expansion to inject an ADDITIONAL
+        // join step, producing a DOUBLY-NESTED TransparentIdentifier — the trailing selector body becomes
+        // `Include(ti.Outer.Inner, ...)`, a TWO-hop member access, not the single-hop `ti.Inner` that
+        // TryGetWholeEntityMemberAccess's unwrap-through-Include loop recognizes. So `wholeEntityMember` comes
+        // back null, and the shape falls into the SAME "unrecognized whole-entity projection" bucket as a
+        // computed leaf (see Reference_form_computed_leaf_hard_fails_in_every_mode) — TranslateSelect's ordinary
+        // `else { MarkNotNativelyRepresentable(); }` branch, NOT the dedicated translation-time
+        // NotSupportedException throw. The "graceful" fallback attempt this triggers then fails for the SAME
+        // reason every other reference-SelectMany fallback does — no driver-LINQ baseline exists for a cross-
+        // collection SelectMany — so Native/DriverLinq both throw the identical "Unsupported cross-DbSet query"
+        // InvalidOperationException, and NativeOnly (which forbids the fallback attempt) throws its own,
+        // different NativeTranslationNotSupportedException first. The end-to-end safety invariant this Task set
+        // out to prove — an eager-loaded reference nav declines cleanly in every mode, never silently wrong data
+        // — DOES hold; it just holds via the ordinary computed-leaf-style decline, not the dedicated
+        // IsWholeElementRepresentable guard. This is a real, valid decline case in its own right — kept as-is —
+        // but it does NOT prove the guard itself is reachable. See
+        // Reference_form_bare_entity_with_owned_embedded_navigation_declines_cleanly_via_representability_guard
+        // below for the shape that DOES reach IsWholeElementRepresentable's reference eager-nav guard (an
+        // eager-loaded OWNED sub-navigation on the reference element, which is a single-hop IncludeExpression
+        // rather than a doubly-nested join, so it doesn't hit this same detour).
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateEagerRefContext(mode,
+                nameof(Reference_form_bare_entity_with_cross_collection_autoinclude_declines_cleanly_in_every_mode) + mode);
+            Assert.Throws<InvalidOperationException>(() => db.Parents.SelectMany(p => p.EagerChildren).ToList());
+        }
+
+        using var nativeOnlyDb = CreateEagerRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_bare_entity_with_cross_collection_autoinclude_declines_cleanly_in_every_mode) + "NativeOnly");
+        Assert.ThrowsAny<Exception>(() => nativeOnlyDb.Parents.SelectMany(p => p.EagerChildren).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_bare_entity_with_owned_embedded_navigation_declines_cleanly_via_representability_guard()
+    {
+        // HYPOTHESIS (review follow-up on the cross-collection AutoInclude test above): that test's shape does
+        // NOT reach IsWholeElementRepresentable's reference eager-nav guard — EF's nav-expansion injects an
+        // extra join for a genuine cross-collection eager Include, producing a doubly-nested TransparentIdentifier
+        // (`ti.Outer.Inner`) that TryGetWholeEntityMemberAccess's unwrap-through-Include loop does not recognize,
+        // so it declines via the ordinary MarkNotNativelyRepresentable() path instead. A reference element that
+        // eager-loads an OWNED (embedded) sub-navigation, by contrast, is structurally a SINGLE-hop
+        // IncludeExpression(ti.Inner, ownedNav) — TryGetWholeEntityMemberAccess's unwrap-through-Include loop
+        // reduces it to the bare `ti.Inner` member access, so it DOES reach the whole-entity gate; owned
+        // navigations are eager-loaded by EF Core convention, so IsWholeElementRepresentable's
+        // `!innerEntityType.GetNavigations().Any(n => n.IsEagerLoaded)` check then declines it via the dedicated
+        // translation-time NotSupportedException, BEFORE MongoQueryMode is even consulted — so the SAME exception
+        // type fires in every mode, unlike the cross-collection test above (which throws InvalidOperationException
+        // under Native/DriverLinq but a different NativeTranslationNotSupportedException-or-similar under
+        // NativeOnly).
+        //
+        // OBSERVED (not assumed): running this test confirms the hypothesis — NotSupportedException fires in
+        // Native, DriverLinq, and NativeOnly alike. See NativeSelectManyBinder.TryGetWholeEntityMemberAccess /
+        // IsWholeElementRepresentable (Visitors/MongoQueryableMethodTranslatingExpressionVisitor.cs) for the
+        // production mechanism this proves live (test-only change — no production code was modified to make
+        // this pass).
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateOwnedSubNavContext(mode,
+                nameof(Reference_form_bare_entity_with_owned_embedded_navigation_declines_cleanly_via_representability_guard) + mode);
+            Assert.Throws<NotSupportedException>(() => db.Parents.SelectMany(p => p.Children).ToList());
+        }
+    }
+
+    [Fact]
+    public void Reference_form_whole_outer_result_still_declines_cleanly_in_every_mode()
+    {
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode,
+                nameof(Reference_form_whole_outer_result_still_declines_cleanly_in_every_mode) + mode, out _, out _);
+            Assert.Throws<NotSupportedException>(() => db.Owners.SelectMany(o => o.Refs, (o, r) => o).ToList());
+        }
+    }
+
+    [Fact]
+    public void Reference_form_bare_entity_followed_by_Where_hard_fails_in_every_mode()
+    {
+        // Same per-mode split as Reference_form_bare_entity_with_cross_collection_autoinclude_declines_cleanly_in_every_mode
+        // above (verified empirically, not assumed): the trailing Where composes onto an already-native
+        // reference SelectMany's ForceUnwind $lookup, and the "graceful" MarkNotNativelyRepresentable()
+        // fallback it triggers has no driver-LINQ baseline to fall back to (the driver's own LINQ v3 provider
+        // rejects any cross-collection SelectMany outright) — so Native/DriverLinq both surface the identical
+        // "Unsupported cross-DbSet query" InvalidOperationException, while NativeOnly (which forbids the
+        // fallback attempt in the first place) throws its own NativeTranslationNotSupportedException instead.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateRefContext(mode,
+                nameof(Reference_form_bare_entity_followed_by_Where_hard_fails_in_every_mode) + mode, out _, out _);
+            Assert.Throws<InvalidOperationException>(() => db.Owners.SelectMany(o => o.Refs).Where(r => r.Tag != "").ToList());
+        }
+
+        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_bare_entity_followed_by_Where_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
+        Assert.ThrowsAny<Exception>(() => nativeOnlyDb.Owners.SelectMany(o => o.Refs).Where(r => r.Tag != "").ToList());
     }
 }

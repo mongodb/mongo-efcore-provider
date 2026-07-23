@@ -16,17 +16,36 @@
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// A <c>$replaceRoot</c> that promotes a field (an already-<c>$unwind</c>'d element) to the root
-/// document, merging in the owner key and array ordinal under sentinel field names so the re-rooted
-/// owned element's shadow key properties materialize non-null:
+/// A <c>$replaceRoot</c> stage that promotes a field to the root document.
+/// <para>
+/// When <see cref="MergeOwnerKeySentinels"/> is <see langword="true"/> (owned bare-element SelectMany, EF-347):
+/// merges in the owner key and array ordinal under sentinel field names so the re-rooted owned element's
+/// shadow key properties materialize non-null:
 /// <c>{ $replaceRoot: { newRoot: { $mergeObjects: [ "$&lt;NewRoot&gt;", { __ownerKey: "$_id", __ord: "$__ord" } ] } } }</c>.
-/// Used by a bare whole-inner-element owned SelectMany (EF-347) so the unwound owned element becomes
-/// the query's root result document.
+/// </para>
+/// <para>
+/// When <see cref="MergeOwnerKeySentinels"/> is <see langword="false"/> (reference bare-entity SelectMany, EF-347):
+/// a plain <c>{ $replaceRoot: { newRoot: "$&lt;NewRoot&gt;" } }</c> — a reference entity carries its own real
+/// stored key, so no sentinel merge is needed.
+/// </para>
 /// </summary>
 internal sealed class MongoReplaceRootStage : MongoPipelineStage
 {
-    public MongoReplaceRootStage(string newRoot) => NewRoot = newRoot;
+    public MongoReplaceRootStage(string newRoot, bool mergeOwnerKeySentinels = true)
+    {
+        NewRoot = newRoot;
+        MergeOwnerKeySentinels = mergeOwnerKeySentinels;
+    }
+
     public string NewRoot { get; }
+
+    /// <summary>
+    /// Selects which of the two forms described in the class-level <see cref="MongoReplaceRootStage"/> summary
+    /// to render: <see langword="true"/> for the owned sentinel-merge form, <see langword="false"/> for the
+    /// plain <c>$replaceRoot</c> form.
+    /// </summary>
+    public bool MergeOwnerKeySentinels { get; }
+
     public const string OwnerKeyField = "__ownerKey";
     public const string OrdinalField = "__ord";
 }
