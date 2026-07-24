@@ -15,9 +15,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -162,7 +164,26 @@ internal static class NativeSelectManyBinder
     /// </summary>
     internal static bool TryBindReferenceNavUnwind(MongoQueryExpression mongoQ, LambdaExpression collectionSelector)
     {
+        var outerParam = collectionSelector.Parameters[0];
+
+        // Peel user-predicate Where layers. A filtered inner c.Refs.Where(p1).Where(p2) nav-expands to
+        // Where(Where(Where(root, fkPred), p1), p2): the innermost Where over the query root carries the FK
+        // correlation EF injects; every OUTER Where is an inner-element-only user filter. (A single Where whose
+        // predicate is fkPred && userPred — the "folded" shape — is split below by TrySplitCorrelation.)
         var body = UnwrapAsQueryable(collectionSelector.Body);
+        var userPredicates = new List<LambdaExpression>();
+        while (body is MethodCallExpression
+               {
+                   Method: { Name: nameof(System.Linq.Queryable.Where), DeclaringType: var outerDecl },
+                   Arguments: [var outerSource, var outerPredArg]
+               }
+               && outerDecl == typeof(System.Linq.Queryable)
+               && UnwrapAsQueryable(outerSource) is not EntityQueryRootExpression)
+        {
+            userPredicates.Add(outerPredArg.UnwrapLambdaFromQuote());
+            body = UnwrapAsQueryable(outerSource);
+        }
+
         if (body is not MethodCallExpression
             {
                 Method: { Name: nameof(System.Linq.Queryable.Where), DeclaringType: var whereDecl },
@@ -176,10 +197,45 @@ internal static class NativeSelectManyBinder
             return false;
 
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
-        if (!NativeCorrelationMatcher.TryMatchCorrelatedCollection(
-                predicate.Body, outerEntityType, collectionSelector.Parameters[0], root.EntityType,
-                requireEmbedded: false, out var navigation))
+
+        // Isolate the FK correlation (→ the reference navigation) from any user conjunct FOLDED into the
+        // innermost predicate; the shared matcher's own reject-extra-conjunct contract is untouched.
+        if (!TrySplitCorrelation(predicate.Body, outerEntityType, outerParam, root.EntityType,
+                out var navigation, out var foldedUserBody))
             return false;
+
+        // Translate each user filter (peeled Where layers + any folded conjunct) against the inner target
+        // entity type, then prefix its field refs with the $lookup scope, ANDing them into one predicate. Any
+        // filter the translator can't handle — including one referencing outer members beyond the FK
+        // (correlated-beyond-FK, which roots a member access on a non-inner parameter) — declines cleanly.
+        var scope = LookupExpression.GetLookupAlias(navigation);
+        var innerTranslator = new MongoExpressionTranslator(navigation.TargetEntityType);
+        MongoExpression? filter = null;
+
+        if (foldedUserBody != null)
+        {
+            // A folded conjunct that itself still references the OUTER parameter (correlated beyond the FK
+            // equality TrySplitCorrelation already isolated) is rejected here: MongoExpressionTranslator
+            // resolves a member access by NAME against the inner entity type only, with no parameter-identity
+            // check, so an outer member access that happens to share a property name with the inner entity
+            // (e.g. both having "Id") would otherwise silently mistranslate as an inner-scoped reference.
+            if (ReferencesParameter(foldedUserBody, outerParam) || !innerTranslator.TryTranslate(foldedUserBody, out var foldedExpr))
+                return false;
+            filter = MongoFieldPrefixRewriter.Rewrite(foldedExpr!, scope);
+        }
+
+        foreach (var userPredicate in userPredicates)
+        {
+            // Same outer-parameter guard as above, for each peeled user Where layer.
+            if (userPredicate.Parameters.Count != 1
+                || ReferencesParameter(userPredicate.Body, outerParam)
+                || !innerTranslator.TryTranslate(userPredicate.Body, out var userExpr))
+                return false;
+            var prefixed = MongoFieldPrefixRewriter.Rewrite(userExpr!, scope);
+            filter = filter == null
+                ? prefixed
+                : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filter, prefixed);
+        }
 
         var lookup = new LookupExpression(navigation, forceUnwind: true);
         // AddLookup dedupes on the alias (As) — if a same-nav Include-registered lookup were already pending,
@@ -192,9 +248,107 @@ internal static class NativeSelectManyBinder
         // same-nav Include to have registered a colliding lookup in the first place. This always registers our
         // own instance.
         mongoQ.AddLookup(lookup);
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Reference(
-            LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup);
+        var unwind = MongoUnwindSource.Reference(scope, navigation.TargetEntityType, lookup);
+        unwind.Filter = filter;
+        mongoQ.Select.UnwindSource = unwind;
         return true;
+    }
+
+    /// <summary>
+    /// Resolves the FK-correlated reference navigation from the innermost <c>Where</c> predicate, isolating it
+    /// from any inner-element user filter FOLDED into the same predicate (<c>fkPred &amp;&amp; userPred</c>).
+    /// The shared <see cref="NativeCorrelationMatcher"/> is only ever fed the isolated FK-correlation
+    /// expression, so its reject-extra-conjunct contract (which keeps a filtered <c>Count</c> on fallback) is
+    /// unchanged.
+    /// </summary>
+    /// <remarks>
+    /// The folded branch is DEFENSIVE-ONLY: EF's nav-expansion emits the NESTED shape
+    /// (<c>Where(Where(root, fkPred), userPred)</c>, spike-confirmed on EF8/EF9/EF10), whose user predicates the
+    /// caller peels off as separate <c>Where</c> layers BEFORE this method ever sees a folded predicate — so no
+    /// real query reaches the folded branch today. It is best-effort, with a KNOWN LIMITATION (EF-355): a user
+    /// conjunct shaped <c>x != null</c> folded with the FK equality is swallowed by the matcher's null-guard
+    /// handling (<see cref="NativeCorrelationMatcher"/>'s null-guard check does not verify the guarded key
+    /// matches the FK key), so the whole-predicate match returns <c>userBody == null</c> and that user filter is
+    /// SILENTLY DROPPED. Harmless while the branch is unreachable; a correct fix — distinguishing an outer-key
+    /// null-guard from an inner-element user <c>!= null</c> without touching the shared matcher or regressing a
+    /// legitimately null-guarded nested FK correlation — is tracked by EF-355.
+    /// </remarks>
+    private static bool TrySplitCorrelation(
+        Expression predicateBody, IEntityType outerEntityType, ParameterExpression outerParam,
+        IEntityType targetEntityType, out INavigation navigation, out Expression? userBody)
+    {
+        userBody = null;
+
+        // Nested / pure FK correlation: the whole innermost predicate IS the FK correlation.
+        if (NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                predicateBody, outerEntityType, outerParam, targetEntityType, requireEmbedded: false, out navigation))
+            return true;
+
+        // Folded: fkPred && userPred. Flatten top-level AndAlso conjuncts, find the ONE that is the FK
+        // correlation, recombine the rest as the user filter.
+        var conjuncts = new List<Expression>();
+        FlattenAndAlso(predicateBody, conjuncts);
+        if (conjuncts.Count < 2)
+            return false;
+
+        Expression? fkConjunct = null;
+        var rest = new List<Expression>();
+        foreach (var conjunct in conjuncts)
+        {
+            if (fkConjunct == null
+                && NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                    conjunct, outerEntityType, outerParam, targetEntityType, requireEmbedded: false, out navigation))
+                fkConjunct = conjunct;
+            else
+                rest.Add(conjunct);
+        }
+
+        if (fkConjunct == null || rest.Count == 0)
+            return false;
+
+        userBody = rest.Aggregate(Expression.AndAlso);
+        return true;
+    }
+
+    private static void FlattenAndAlso(Expression expression, List<Expression> conjuncts)
+    {
+        if (expression is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
+        {
+            FlattenAndAlso(andAlso.Left, conjuncts);
+            FlattenAndAlso(andAlso.Right, conjuncts);
+        }
+        else
+        {
+            conjuncts.Add(expression);
+        }
+    }
+
+    /// <summary>
+    /// Scans <paramref name="expression"/> for any reference to <paramref name="parameter"/> — used to reject a
+    /// user filter that is correlated beyond the FK equality already isolated by <see cref="TrySplitCorrelation"/>.
+    /// <see cref="MongoExpressionTranslator"/> resolves a member access by NAME against whichever entity type it
+    /// was constructed for, with no parameter-identity check (it never needs one for its other callers, which
+    /// only ever translate a single-parameter lambda body). Without this guard, an outer-scoped member access
+    /// that happens to share a property name with the inner target entity (e.g. both having an "Id" property)
+    /// would silently mistranslate as an inner-scoped reference instead of being declined.
+    /// </summary>
+    private static bool ReferencesParameter(Expression expression, ParameterExpression parameter)
+    {
+        var visitor = new ParameterReferenceVisitor(parameter);
+        visitor.Visit(expression);
+        return visitor.Found;
+    }
+
+    private sealed class ParameterReferenceVisitor(ParameterExpression parameter) : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (ReferenceEquals(node, parameter))
+                Found = true;
+            return base.VisitParameter(node);
+        }
     }
 
     /// <summary>

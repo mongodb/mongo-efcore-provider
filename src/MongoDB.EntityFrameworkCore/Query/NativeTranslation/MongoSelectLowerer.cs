@@ -126,6 +126,13 @@ internal sealed class MongoSelectLowerer
                     unwind.InnerScopePath,
                     includeArrayIndex: unwind.WholeElement ? MongoReplaceRootStage.OrdinalField : null));
 
+            // Inner-element-only user filter (o.Refs.Where(pred)): a $match on the unwound element, emitted
+            // after the $unwind (owned: just above; reference: already emitted by AppendLookupStages) and
+            // before the $replaceRoot (WholeElement) / $project (projected). Already scope-prefixed by the
+            // binder (e.g. "_lookup_Refs.Total"). EF-347 filtered-inner slice — reference only for now.
+            if (unwind.Filter is { } filter)
+                stages.Add(new MongoMatchStage(filter));
+
             if (unwind.WholeElement)
             {
                 // Bare whole-inner-element SelectMany: promote the unwound element to root.

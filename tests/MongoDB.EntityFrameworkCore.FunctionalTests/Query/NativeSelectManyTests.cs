@@ -1111,22 +1111,170 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Reference_form_filtered_inner_hard_fails_in_every_mode()
+    public void Reference_form_filtered_inner_projected_goes_native()
     {
-        // A user-supplied filter on the inner collection (c.Refs.Where(userPred)) is an EXTRA predicate
-        // conjunct beyond the FK correlation EF's nav-expansion itself injects — NativeCorrelationMatcher's
-        // exactly-one-correlation guard rejects it (TryBindReferenceNavUnwind returns false), and — same as
-        // every other native-SelectMany-binder rejection (see the class doc comment) — TranslateSelectMany
-        // then falls through the remaining binders, fails all of them, and returns null with NO
-        // MarkNotNativelyRepresentable() attempt at all, so EF's own translation-failure path is reached
-        // directly: this hard-fails in every mode, not just NativeOnly.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_filtered_inner_projected_goes_native), out var owners, out var items);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag != "Widget"), (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable()
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id && r.Tag != "Widget"), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        // Succeeding under NativeOnly is itself the "went native" signal; the "Widget" row is excluded.
+        Assert.Equal(expected, result);
+        Assert.DoesNotContain(result, x => x.Tag == "Widget");
+    }
+
+    [Fact]
+    public void Reference_form_filtered_inner_bare_entity_goes_native()
+    {
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_filtered_inner_bare_entity_goes_native), out _, out var items);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag != "Widget"))
+            .AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
+
+        var expected = items.Where(r => r.Tag != "Widget").Select(r => r.Tag).OrderBy(t => t).ToList();
+
+        Assert.Equal(expected, result);
+        Assert.DoesNotContain("Widget", result);
+    }
+
+    [Fact]
+    public void Reference_form_filtered_inner_stacked_where_ands_together_goes_native()
+    {
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_filtered_inner_stacked_where_ands_together_goes_native), out var owners, out var items);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag != "Widget").Where(r => r.Tag != "Gadget"), (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id && r.Tag != "Widget" && r.Tag != "Gadget"), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Reference_form_filtered_inner_excluding_all_children_contributes_no_rows()
+    {
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_filtered_inner_excluding_all_children_contributes_no_rows), out _, out _);
+
+        // No RefItem has Tag "nonexistent" → every principal contributes zero rows.
+        var result = db.Owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag == "nonexistent"), (o, r) => new { o.Name, r.Tag })
+            .ToList();
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Reference_form_filtered_inner_emits_match_after_unwind_before_project()
+    {
+        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_filtered_inner_emits_match_after_unwind_before_project),
+            out _, out _, out var spyLogger);
+
+        _ = db.Owners.SelectMany(o => o.Refs.Where(r => r.Tag != "Widget"), (o, r) => new { o.Name, r.Tag }).ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$lookup", message);
+        Assert.Contains("$unwind", message);
+        Assert.Contains("$match", message);
+        Assert.Contains("_lookup_Refs.Tag", message); // filter is scope-prefixed
+    }
+
+    [Fact]
+    public void Reference_form_filtered_inner_composes_with_parametrized_outer_predicate()
+    {
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_filtered_inner_composes_with_parametrized_outer_predicate), out var owners, out var items);
+
+        var ownerName = "Alice";
+        var result = db.Owners
+            .Where(o => o.Name == ownerName)
+            .SelectMany(o => o.Refs.Where(r => r.Tag != "Widget"), (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable().OrderBy(x => x.Tag).ToList();
+
+        var expected = owners.Where(o => o.Name == ownerName)
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id && r.Tag != "Widget"), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Tag).ToList();
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Reference_form_correlated_beyond_fk_inner_hard_fails_in_every_mode()
+    {
+        // A filter referencing the OUTER entity beyond the FK correlation (r.Tag != o.Name) is
+        // correlated-beyond-FK — out of scope. TryBindReferenceNavUnwind's ReferencesParameter guard declines
+        // any user filter that structurally references the outer SelectMany parameter, BEFORE translation is
+        // even attempted: the inner-scope translator resolves member accesses by NAME ONLY against the inner
+        // entity type, with no parameter-identity check, so without this guard an outer member access that
+        // happens to share a property name with the inner entity (RefItem also has a "Name", just like
+        // RefOwner) would silently mis-scope o.Name as the item's own Name instead of being rejected. The guard
+        // firing makes TryBindReferenceNavUnwind return false, TranslateSelectMany then falls through the
+        // remaining binders, fails all of them, and returns null with NO MarkNotNativelyRepresentable() attempt
+        // at all, so EF's own translation-failure path is reached directly: this hard-fails in every mode, not
+        // just NativeOnly.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
-            using var db = CreateRefContext(mode, nameof(Reference_form_filtered_inner_hard_fails_in_every_mode) + mode, out _, out _);
+            using var db = CreateRefContext(mode,
+                nameof(Reference_form_correlated_beyond_fk_inner_hard_fails_in_every_mode) + mode, out _, out _);
 
-            Assert.Throws<InvalidOperationException>(() =>
-                db.Owners.SelectMany(o => o.Refs.Where(r => r.Tag != "Widget"), (o, r) => new { o.Name, r.Tag }).ToList());
+            Assert.ThrowsAny<Exception>(() =>
+                db.Owners.SelectMany(o => o.Refs.Where(r => r.Tag != o.Name), (o, r) => new { o.Name, r.Tag }).ToList());
         }
+    }
+
+    [Fact]
+    public void Reference_form_computed_filter_operator_hard_fails_in_every_mode()
+    {
+        // A filter using an operator the native translator does not support (string.ToUpper) declines: the
+        // inner-scope translator rejects it → bind returns false → hard-fails in every mode.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode,
+                nameof(Reference_form_computed_filter_operator_hard_fails_in_every_mode) + mode, out _, out _);
+
+            Assert.ThrowsAny<Exception>(() =>
+                db.Owners.SelectMany(o => o.Refs.Where(r => r.Tag.ToUpper() == "WIDGET"), (o, r) => new { o.Name, r.Tag }).ToList());
+        }
+    }
+
+    [Fact]
+    public void Filtered_reference_collection_count_still_falls_back()
+    {
+        // NOT a SelectMany — a projected filtered Count (c.Refs.Count(pred)). NativeCorrelationMatcher /
+        // NativeProjectionBinder's Count binder requires a bare, no-predicate Count over the FK-equality Where
+        // and rejects the extra conjunct exactly as before this slice — that part of the "still falls back"
+        // contract is unchanged. VERIFIED (not assumed, per the brief's flag): empirically, the shared
+        // fallback path this then defers to (MongoProjectionBindingExpressionVisitor.
+        // TryBindProjectedCollectionNavigationCount) ALSO requires a bare, no-predicate Count and rejects the
+        // same shape — a PRE-EXISTING gap independent of this slice (see the identical, already-committed
+        // precedent QueryModeGateIncludeTests.Projected_collection_Count_with_predicate_still_falls_back),
+        // not a regression it introduces. So the query fails identically in every mode with
+        // InvalidOperationException rather than silently landing on a wrong-shape native $size — the point
+        // this test preserves is that the native SelectMany filter mechanism added in this slice does NOT
+        // leak into the Count binder and does NOT change its (pre-existing) behavior either way.
+        using var db = CreateRefContext(MongoQueryMode.Native,
+            nameof(Filtered_reference_collection_count_still_falls_back), out _, out _);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Owners
+                .Select(o => new { o.Name, N = o.Refs.Count(r => r.Tag != "Widget") })
+                .AsEnumerable().OrderBy(x => x.Name).ToList());
     }
 
     [Fact]

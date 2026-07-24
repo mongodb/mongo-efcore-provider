@@ -418,6 +418,34 @@ public class MongoSelectLowererTests
             });
     }
 
+    // Task 4: filtered-inner reference SelectMany (o.Refs.Where(r => r.Total > 100)). Mirrors the
+    // WholeElement_Reference_UnwindSource test immediately above, plus a Filter set on the unwind — the
+    // lowerer must emit a $match for it after the reference $unwind (already appended by AppendLookupStages)
+    // and before the $replaceRoot.
+    [Fact]
+    public void Reference_unwind_with_filter_emits_match_after_unwind_before_terminal()
+    {
+        var (query, navigation) = TestReferenceSelect();
+        var lookup = new LookupExpression(navigation, forceUnwind: true);
+        query.AddLookup(lookup);
+        var unwind = MongoUnwindSource.Reference(
+            LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup);
+        unwind.WholeElement = true;
+        unwind.Filter = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(property: null!, elementName: "_lookup_Children.Total"),
+            new MongoConstantExpression(100, forSerialization: null));
+        query.Select.UnwindSource = unwind;
+
+        var stages = new MongoSelectLowerer().Lower(query).ToList();
+
+        var unwindIndex = stages.FindIndex(s => s is MongoUnwindStage);
+        var matchIndex = stages.FindIndex(s => s is MongoMatchStage);
+        var replaceRootIndex = stages.FindIndex(s => s is MongoReplaceRootStage);
+        Assert.True(unwindIndex >= 0 && matchIndex > unwindIndex, "filter $match must follow the reference $unwind");
+        Assert.True(replaceRootIndex > matchIndex, "filter $match must precede the $replaceRoot");
+    }
+
     // ── EF-347 slice B: trailing ops emit AFTER the set-op stage; cardinality falls through ──
 
     [Fact]

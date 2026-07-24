@@ -403,6 +403,22 @@ public class NativeSelectManyBinderTests
         return ReferenceCollectionSelector(tagEntityType, outerParam, predicate);
     }
 
+    // Queryable.Where(Queryable.Where(EntityQueryRootExpression<Tag>, fkPred), userPred) — a filtered inner
+    // (c.Tags.Where(userPred)) nested form.
+    private static LambdaExpression ReferenceCollectionSelectorFiltered(
+        IEntityType targetEntityType, ParameterExpression outerParam, LambdaExpression fkPredicate,
+        params LambdaExpression[] userPredicates)
+    {
+        Expression source = Expression.Call(
+            typeof(Queryable), nameof(Queryable.Where), [fkPredicate.Parameters[0].Type],
+            new EntityQueryRootExpression(targetEntityType), Expression.Quote(fkPredicate));
+        foreach (var userPredicate in userPredicates)
+            source = Expression.Call(
+                typeof(Queryable), nameof(Queryable.Where), [userPredicate.Parameters[0].Type],
+                source, Expression.Quote(userPredicate));
+        return Expression.Lambda(source, outerParam);
+    }
+
     [Fact]
     public void TryBindReferenceNavUnwind_binds_reference_collection_to_lookup_and_unwind_source()
     {
@@ -421,6 +437,7 @@ public class NativeSelectManyBinderTests
         Assert.NotNull(unwind.Lookup);
         Assert.True(unwind.Lookup!.ForceUnwind);
         Assert.Contains(unwind.Lookup, mongoQ.Lookups);
+        Assert.Null(unwind.Filter);
     }
 
     [Fact]
@@ -441,8 +458,54 @@ public class NativeSelectManyBinderTests
     }
 
     [Fact]
-    public void TryBindReferenceNavUnwind_filtered_inner_returns_false()
+    public void TryBindReferenceNavUnwind_nested_filtered_inner_binds_with_filter()
     {
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var fk = Expression.Lambda(
+            Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId))),
+            tParam);
+        var user = Expression.Lambda(
+            Expression.NotEqual(Expression.Property(tParam, nameof(Tag.Label)), Expression.Constant("x")),
+            tParam);
+        var collectionSelector = ReferenceCollectionSelectorFiltered(tagNav.TargetEntityType, outerParam, fk, user);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+
+        var unwind = mongoQ.Select.UnwindSource!;
+        Assert.Equal(MongoUnwindSourceKind.Reference, unwind.Kind);
+        Assert.NotNull(unwind.Filter);
+        // The user filter's field ref is prefixed with the lookup scope.
+        var binary = Assert.IsType<MongoBinaryExpression>(unwind.Filter);
+        var field = Assert.IsType<MongoFieldExpression>(binary.Left);
+        Assert.Equal("_lookup_Tags.Label", field.ElementName);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_stacked_filters_bind_and_and_together()
+    {
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var fk = Expression.Lambda(
+            Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId))),
+            tParam);
+        var user1 = Expression.Lambda(Expression.NotEqual(Expression.Property(tParam, nameof(Tag.Label)), Expression.Constant("x")), tParam);
+        var user2 = Expression.Lambda(Expression.NotEqual(Expression.Property(tParam, nameof(Tag.Label)), Expression.Constant("y")), tParam);
+        var collectionSelector = ReferenceCollectionSelectorFiltered(tagNav.TargetEntityType, outerParam, fk, user1, user2);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.AndAlso, ((MongoBinaryExpression)mongoQ.Select.UnwindSource!.Filter!).Operator);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_folded_filtered_inner_binds_with_filter()
+    {
+        // The synthetic folded shape Where(root, fkPred && userPred). Handled by TrySplitCorrelation.
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var outerParam = Expression.Parameter(typeof(Owner), "o");
@@ -452,9 +515,33 @@ public class NativeSelectManyBinderTests
         var predicate = Expression.Lambda(Expression.AndAlso(correlation, extra), tParam);
         var collectionSelector = ReferenceCollectionSelector(tagNav.TargetEntityType, outerParam, predicate);
 
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.NotNull(mongoQ.Select.UnwindSource!.Filter);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_correlated_beyond_fk_filter_returns_false()
+    {
+        // A user filter referencing the OUTER param (o.Id) beyond the FK correlation: the inner-scope
+        // translator resolves member accesses by NAME ONLY (no parameter-identity check) and would NOT reject
+        // this on its own — it's the ReferencesParameter guard in TryBindReferenceNavUnwind that detects the
+        // outer-parameter reference and declines the bind cleanly before translation is even attempted.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var fk = Expression.Lambda(
+            Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId))),
+            tParam);
+        // r.OwnerId != o.Id — references o (outer) beyond the FK correlation.
+        var user = Expression.Lambda(
+            Expression.NotEqual(Expression.Property(tParam, nameof(Tag.OwnerId)), Expression.Property(outerParam, nameof(Owner.Id))),
+            tParam);
+        var collectionSelector = ReferenceCollectionSelectorFiltered(tagNav.TargetEntityType, outerParam, fk, user);
+
         Assert.False(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
         Assert.Null(mongoQ.Select.UnwindSource);
-        Assert.Empty(mongoQ.Lookups); // no partial mutation: the lookup is registered only AFTER a confirmed match
+        Assert.Empty(mongoQ.Lookups); // no partial mutation
     }
 
     [Fact]
