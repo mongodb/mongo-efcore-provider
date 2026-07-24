@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
@@ -218,37 +219,33 @@ internal static class NativeSelectManyBinder
                 out var navigation, out var foldedUserBody))
             return false;
 
-        // Translate each user filter (peeled Where layers + any folded conjunct) against the inner target
-        // entity type, then prefix its field refs with the $lookup scope, ANDing them into one predicate. Any
-        // filter the translator can't handle — including one referencing outer members beyond the FK
-        // (correlated-beyond-FK, which roots a member access on a non-inner parameter) — declines cleanly.
+        // Translate each user filter (peeled Where layers + any folded conjunct) via TryTranslateReferenceFilterLayer,
+        // ANDing the results into one predicate. A layer referencing only the inner element translates against the
+        // inner target entity type and gets its field refs prefixed with the $lookup scope; a layer that also
+        // references outer members beyond the FK (correlated-beyond-FK) is routed to the two-scope translator
+        // instead, which resolves outer members at document root and inner members under the $lookup scope. Any
+        // filter neither translator can handle declines cleanly, with no partial mutation of mongoQ.
         var scope = LookupExpression.GetLookupAlias(navigation);
         var innerTranslator = new MongoExpressionTranslator(navigation.TargetEntityType);
         MongoExpression? filter = null;
 
         if (foldedUserBody != null)
         {
-            // A folded conjunct that itself still references the OUTER parameter (correlated beyond the FK
-            // equality TrySplitCorrelation already isolated) is rejected here: MongoExpressionTranslator
-            // resolves a member access by NAME against the inner entity type only, with no parameter-identity
-            // check, so an outer member access that happens to share a property name with the inner entity
-            // (e.g. both having "Id") would otherwise silently mistranslate as an inner-scoped reference.
-            if (ReferencesParameter(foldedUserBody, outerParam) || !innerTranslator.TryTranslate(foldedUserBody, out var foldedExpr))
+            if (!TryTranslateReferenceFilterLayer(
+                    foldedUserBody, innerTranslator, navigation.TargetEntityType, scope, outerParam, outerEntityType, out var foldedExpr))
                 return false;
-            filter = MongoFieldPrefixRewriter.Rewrite(foldedExpr!, scope);
+            filter = foldedExpr;
         }
 
         foreach (var userPredicate in userPredicates)
         {
-            // Same outer-parameter guard as above, for each peeled user Where layer.
             if (userPredicate.Parameters.Count != 1
-                || ReferencesParameter(userPredicate.Body, outerParam)
-                || !innerTranslator.TryTranslate(userPredicate.Body, out var userExpr))
+                || !TryTranslateReferenceFilterLayer(
+                    userPredicate.Body, innerTranslator, navigation.TargetEntityType, scope, outerParam, outerEntityType, out var userExpr))
                 return false;
-            var prefixed = MongoFieldPrefixRewriter.Rewrite(userExpr!, scope);
             filter = filter == null
-                ? prefixed
-                : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filter, prefixed);
+                ? userExpr
+                : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filter, userExpr);
         }
 
         var lookup = new LookupExpression(navigation, forceUnwind: true);
@@ -338,19 +335,51 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Scans <paramref name="expression"/> for any reference to <paramref name="parameter"/> — used to reject a
-    /// user filter that is correlated beyond the FK equality already isolated by <see cref="TrySplitCorrelation"/>.
-    /// <see cref="MongoExpressionTranslator"/> resolves a member access by NAME against whichever entity type it
-    /// was constructed for, with no parameter-identity check (it never needs one for its other callers, which
-    /// only ever translate a single-parameter lambda body). Without this guard, an outer-scoped member access
-    /// that happens to share a property name with the inner target entity (e.g. both having an "Id" property)
-    /// would silently mistranslate as an inner-scoped reference instead of being declined.
+    /// Scans <paramref name="expression"/> for any reference to <paramref name="parameter"/> — used by
+    /// <see cref="TryTranslateReferenceFilterLayer"/> to detect a user filter that is correlated beyond the FK
+    /// equality already isolated by <see cref="TrySplitCorrelation"/>, and route it to the two-scope translator
+    /// instead of the single-scope one. The single-scope <see cref="MongoExpressionTranslator"/> resolves a
+    /// member access by NAME against whichever entity type it was constructed for, with no parameter-identity
+    /// check (it never needs one for its other callers, which only ever translate a single-parameter lambda
+    /// body). Without this check, an outer-scoped member access that happens to share a property name with the
+    /// inner target entity (e.g. both having an "Id" property) would silently mistranslate as an inner-scoped
+    /// reference instead of being routed to the correctly-scoped translator.
     /// </summary>
     private static bool ReferencesParameter(Expression expression, ParameterExpression parameter)
     {
         var visitor = new ParameterReferenceVisitor(parameter);
         visitor.Visit(expression);
         return visitor.Found;
+    }
+
+    /// <summary>
+    /// Translates one peeled reference-<c>SelectMany</c> inner-filter <c>Where</c> layer into a filter conjunct.
+    /// A layer that references the outer <c>SelectMany</c> parameter (correlated beyond the FK) is translated with
+    /// the two-scope translator — inner field refs prefixed with <paramref name="scope"/>, outer field refs at
+    /// document root, routed by parameter identity so a shared member name never conflates the scopes — and its
+    /// field-to-field comparison is later rendered as <c>$expr</c>. A layer that references only the inner element
+    /// keeps the single-scope translate + blanket-prefix path unchanged. Returns <see langword="false"/> (with no
+    /// mutation of the caller's query) when the layer cannot be translated.
+    /// </summary>
+    private static bool TryTranslateReferenceFilterLayer(
+        Expression body, MongoExpressionTranslator innerTranslator, IEntityType innerEntityType, string scope,
+        ParameterExpression outerParam, IEntityType outerEntityType, [NotNullWhen(true)] out MongoExpression? conjunct)
+    {
+        conjunct = null;
+
+        if (ReferencesParameter(body, outerParam))
+        {
+            var twoScope = new MongoExpressionTranslator(innerEntityType, outerParam, outerEntityType, scope);
+            if (!twoScope.TryTranslate(body, out var correlated))
+                return false;
+            conjunct = correlated; // already correctly scoped — do NOT blanket-prefix
+            return true;
+        }
+
+        if (!innerTranslator.TryTranslate(body, out var innerExpr))
+            return false;
+        conjunct = MongoFieldPrefixRewriter.Rewrite(innerExpr, scope);
+        return true;
     }
 
     private sealed class ParameterReferenceVisitor(ParameterExpression parameter) : ExpressionVisitor

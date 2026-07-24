@@ -697,6 +697,10 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         public ObjectId Id { get; set; }
         public string Name { get; set; } = "";
+
+        // EF-347 correlated-beyond-FK: paired with RefItem.Score for a numeric-comparison correlated
+        // predicate (r.Score >= o.Threshold) that exercises $expr $gte, not just field-to-field equality.
+        public int Threshold { get; set; }
         public List<RefItem> Refs { get; set; } = [];
     }
 
@@ -709,6 +713,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // in the owned-collection fixture above), to prove the two-scope binder never conflates the outer
         // ("$Name") and inner ("$_lookup_Refs.Name") field refs for the REFERENCE form either.
         public string Name { get; set; } = "";
+
+        // See RefOwner.Threshold.
+        public int Score { get; set; }
         public ObjectId? OwnerId { get; set; }
         public RefOwner? Owner { get; set; }
     }
@@ -767,24 +774,44 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     /// <summary>
-    /// Seeds three principals — Alice (2 children), Bob (0 children — proves inner-join semantics), Carol (1
-    /// child) — mirroring <see cref="SeedOwners"/>'s owned-collection shape, but as a REFERENCE (cross-
-    /// collection) relationship: <see cref="RefItem.OwnerId"/> is a real FK, not an embedded array.
+    /// Seeds four principals — Alice (2 children), Bob (0 children — proves inner-join semantics), Carol (1
+    /// child), and Dave (2 children) — mirroring <see cref="SeedOwners"/>'s owned-collection shape, but as a
+    /// REFERENCE (cross-collection) relationship: <see cref="RefItem.OwnerId"/> is a real FK, not an embedded
+    /// array.
+    ///
+    /// EF-347 correlated-beyond-FK (Task 3): Dave and his two children exist ONLY to make the
+    /// correlated-beyond-FK predicates (r.Tag == o.Name, r.Name == o.Name, r.Score >= o.Threshold)
+    /// DISCRIMINATING — i.e. each has both a satisfying row and a non-satisfying row, so a correlated test
+    /// comparing empty==empty never passes vacuously:
+    ///  - Dave.Refs[0] (Tag="Dave", Name="DaveItem1"): Tag == Dave's own Name ("Dave") → the ONE row satisfying
+    ///    r.Tag == o.Name anywhere in the seed. Its own Name ("DaveItem1") does NOT equal "Dave", so it does
+    ///    NOT also satisfy the shadow r.Name == o.Name predicate — the two correlated predicates are kept
+    ///    genuinely distinct by this row.
+    ///  - Dave.Refs[1] (Tag="DaveItem2Tag", Name="Dave"): Name == Dave's own Name ("Dave") → the ONE row
+    ///    satisfying the shadow r.Name == o.Name predicate. Its Tag ("DaveItem2Tag") differs from its own Name
+    ///    ("Dave"), so the shadow test genuinely reads RefItem.Name, not RefItem.Tag.
+    /// Threshold/Score (below) are set on every owner/item so r.Score >= o.Threshold has both included and
+    /// excluded rows too: Alice.Threshold=10 (Widget:Score=5 excluded, Gadget:Score=20 included); Carol.
+    /// Threshold=8 (Thing:Score=8 included — exact boundary, proves >= not >); Dave.Threshold=100 (Refs[0]:
+    /// Score=50 excluded, Refs[1]:Score=150 included).
     /// </summary>
     private static (RefOwner[] Owners, RefItem[] Items) SeedRefData()
     {
-        var alice = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Alice" };
+        var alice = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Alice", Threshold = 10 };
         var bob = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Bob" }; // no children
-        var carol = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Carol" };
+        var carol = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Carol", Threshold = 8 };
+        var dave = new RefOwner { Id = ObjectId.GenerateNewId(), Name = "Dave", Threshold = 100 };
 
         var items = new[]
         {
-            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Widget", Name = "WidgetName", OwnerId = alice.Id },
-            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Gadget", Name = "GadgetName", OwnerId = alice.Id },
-            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Thing", Name = "ThingName", OwnerId = carol.Id },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Widget", Name = "WidgetName", OwnerId = alice.Id, Score = 5 },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Gadget", Name = "GadgetName", OwnerId = alice.Id, Score = 20 },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Thing", Name = "ThingName", OwnerId = carol.Id, Score = 8 },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Dave", Name = "DaveItem1", OwnerId = dave.Id, Score = 50 },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "DaveItem2Tag", Name = "Dave", OwnerId = dave.Id, Score = 150 },
         };
 
-        return ([alice, bob, carol], items);
+        return ([alice, bob, carol, dave], items);
     }
 
     private (string Owners, string Refs) NewRefCollectionNames(string name)
@@ -1174,7 +1201,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         var result = db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).ToList();
 
-        Assert.Equal(3, result.Count); // 2 from Alice + 1 from Carol; Bob (0 children) contributes 0
+        Assert.Equal(5, result.Count); // 2 from Alice + 1 from Carol + 2 from Dave; Bob (0 children) contributes 0
         Assert.DoesNotContain(result, x => x.Name == "Bob");
     }
 
@@ -1196,8 +1223,15 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .ToList();
 
         Assert.Equal(expected, result);
-        // Sanity: outer/inner never conflated (an owner's own name never leaks into InnerName and vice versa).
-        Assert.All(result, r => Assert.NotEqual(r.OuterName, r.InnerName));
+        // Sanity: outer/inner never conflated (an owner's own name never leaks into InnerName and vice versa) —
+        // EXCEPT Dave's second child, which the EF-347 correlated-beyond-FK seed (see SeedRefData) DELIBERATELY
+        // gives Name == "Dave" (its owner's own Name) so the correlated shadow-member test elsewhere
+        // (Reference_form_correlated_shadowed_member_name_resolves_by_scope) has a genuinely matching row. That
+        // is a real, seeded data coincidence, not a scoping bug, so it is explicitly excluded here rather than
+        // silently weakening this sanity check for every other row.
+        Assert.All(result.Where(r => !(r.OuterName == "Dave" && r.InnerName == "Dave")),
+            r => Assert.NotEqual(r.OuterName, r.InnerName));
+        Assert.Contains(result, r => r.OuterName == "Dave" && r.InnerName == "Dave");
     }
 
     [Fact]
@@ -1231,7 +1265,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         using var db = CreateRefContext(MongoQueryMode.NativeOnly,
             nameof(Reference_form_bare_entity_result_goes_native_all_three_spellings), out _, out var items);
 
-        var expectedTags = items.Select(i => i.Tag).OrderBy(t => t).ToList(); // Alice(2)+Carol(1)=3; Bob(0) none
+        var expectedTags = items.Select(i => i.Tag).OrderBy(t => t).ToList(); // Alice(2)+Carol(1)+Dave(2)=5; Bob(0) none
 
         // 1-arg
         var oneArg = db.Owners.SelectMany(o => o.Refs).AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
@@ -1258,7 +1292,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = items.Select(i => i.Id).OrderBy(x => x).ToList(); // Bob contributes nothing (inner join)
 
         Assert.Equal(expected, result);
-        Assert.Equal(3, result.Count);
+        Assert.Equal(5, result.Count); // 2 from Alice + 1 from Carol + 2 from Dave; Bob (0 children) contributes 0
     }
 
     [Fact]
@@ -1399,27 +1433,215 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Reference_form_correlated_beyond_fk_inner_hard_fails_in_every_mode()
+    public void Reference_form_correlated_beyond_fk_inner_goes_native()
     {
-        // A filter referencing the OUTER entity beyond the FK correlation (r.Tag != o.Name) is
-        // correlated-beyond-FK — out of scope. TryBindReferenceNavUnwind's ReferencesParameter guard declines
-        // any user filter that structurally references the outer SelectMany parameter, BEFORE translation is
-        // even attempted: the inner-scope translator resolves member accesses by NAME ONLY against the inner
-        // entity type, with no parameter-identity check, so without this guard an outer member access that
-        // happens to share a property name with the inner entity (RefItem also has a "Name", just like
-        // RefOwner) would silently mis-scope o.Name as the item's own Name instead of being rejected. The guard
-        // firing makes TryBindReferenceNavUnwind return false, TranslateSelectMany then falls through the
-        // remaining binders, fails all of them, and returns null with NO MarkNotNativelyRepresentable() attempt
-        // at all, so EF's own translation-failure path is reached directly: this hard-fails in every mode, not
-        // just NativeOnly.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        // r.Tag == o.Name references the outer entity beyond the FK. Now native: a $expr field-to-field
+        // comparison in the post-$unwind $match. No driver-LINQ oracle for cross-collection SelectMany at all
+        // (Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode — this is
+        // true of EVERY reference-form SelectMany shape, not just correlated ones), so this is proven under
+        // Native + NativeOnly only, NOT DriverLinq (which still throws, exactly as it always did for this form).
+        // Only Dave.Refs[0] (Tag="Dave", OwnerId=Dave whose Name is "Dave") satisfies this — see SeedRefData's
+        // discriminating-seed comment — so the expected set is neither empty nor "everything".
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
         {
             using var db = CreateRefContext(mode,
-                nameof(Reference_form_correlated_beyond_fk_inner_hard_fails_in_every_mode) + mode, out _, out _);
+                nameof(Reference_form_correlated_beyond_fk_inner_goes_native) + mode, out var owners, out _);
 
-            Assert.ThrowsAny<Exception>(() =>
-                db.Owners.SelectMany(o => o.Refs.Where(r => r.Tag != o.Name), (o, r) => new { o.Name, r.Tag }).ToList());
+            var result = db.Owners
+                .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name), (o, r) => new { o.Name, r.Tag })
+                .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+
+            var expected = owners
+                .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name), (o, r) => new { o.Name, r.Tag })
+                .OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+            Assert.Equal(expected, result);
+            Assert.NotEmpty(result); // Dave/Dave matches
+            Assert.DoesNotContain(result, x => x.Name == "Alice" || x.Name == "Carol"); // theirs never match
         }
+    }
+
+    [Fact]
+    public void Reference_form_correlated_shadowed_member_name_resolves_by_scope()
+    {
+        // r.Name == o.Name — RefItem.Name deliberately shadows RefOwner.Name. Native routing by parameter
+        // identity must compare the inner element's Name to the outer owner's Name, not the item to itself.
+        // Only Dave.Refs[1] (Name="Dave") satisfies this.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode,
+                nameof(Reference_form_correlated_shadowed_member_name_resolves_by_scope) + mode, out var owners, out _);
+
+            var result = db.Owners
+                .SelectMany(o => o.Refs.Where(r => r.Name == o.Name), (o, r) => new { OuterName = o.Name, InnerName = r.Name })
+                .AsEnumerable().OrderBy(x => x.OuterName).ThenBy(x => x.InnerName).ToList();
+
+            var expected = owners
+                .SelectMany(o => o.Refs.Where(r => r.Name == o.Name), (o, r) => new { OuterName = o.Name, InnerName = r.Name })
+                .OrderBy(x => x.OuterName).ThenBy(x => x.InnerName).ToList();
+            Assert.Equal(expected, result);
+            Assert.NotEmpty(result);
+            Assert.All(result, r => Assert.Equal("Dave", r.OuterName));
+        }
+    }
+
+    [Fact]
+    public void Reference_form_correlated_mixed_conjunct_goes_native()
+    {
+        // Inner-only conjunct ANDed with a correlated one in one .Where. Dave.Refs[0] (Tag="Dave") satisfies
+        // both conjuncts; every other row fails at least one.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode,
+                nameof(Reference_form_correlated_mixed_conjunct_goes_native) + mode, out var owners, out _);
+
+            var result = db.Owners
+                .SelectMany(o => o.Refs.Where(r => r.Tag != "Widget" && r.Tag == o.Name), (o, r) => new { o.Name, r.Tag })
+                .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+
+            var expected = owners
+                .SelectMany(o => o.Refs.Where(r => r.Tag != "Widget" && r.Tag == o.Name), (o, r) => new { o.Name, r.Tag })
+                .OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+            Assert.Equal(expected, result);
+            Assert.NotEmpty(result);
+        }
+    }
+
+    [Fact]
+    public void Reference_form_correlated_numeric_comparison_goes_native()
+    {
+        // r.Score >= o.Threshold — proves comparison-operator breadth end-to-end via $expr $gte. Included:
+        // Alice/Gadget (20>=10), Carol/Thing (8>=8, exact boundary), Dave/Refs[1] (150>=100). Excluded:
+        // Alice/Widget (5<10), Dave/Refs[0] (50<100).
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode,
+                nameof(Reference_form_correlated_numeric_comparison_goes_native) + mode, out var owners, out _);
+
+            var result = db.Owners
+                .SelectMany(o => o.Refs.Where(r => r.Score >= o.Threshold), (o, r) => new { o.Name, r.Tag })
+                .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+
+            var expected = owners
+                .SelectMany(o => o.Refs.Where(r => r.Score >= o.Threshold), (o, r) => new { o.Name, r.Tag })
+                .OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+            Assert.Equal(expected, result);
+            Assert.Contains(result, x => x.Tag == "Gadget");
+            Assert.Contains(result, x => x.Tag == "Thing");
+            Assert.Contains(result, x => x.Tag == "DaveItem2Tag");
+            Assert.DoesNotContain(result, x => x.Tag == "Widget");
+            Assert.DoesNotContain(result, x => x.Tag == "Dave");
+        }
+    }
+
+    [Fact]
+    public void Reference_form_correlated_bare_entity_result_goes_native()
+    {
+        // Bare-entity trailing selector composes with the correlated $match (which runs before $replaceRoot).
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_correlated_bare_entity_result_goes_native), out var owners, out _);
+
+        var result = (from o in db.Owners from r in o.Refs.Where(r => r.Tag == o.Name) select r)
+            .AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
+
+        var expected = owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name), (o, r) => r)
+            .Select(r => r.Tag).OrderBy(t => t).ToList();
+        Assert.Equal(expected, result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void Reference_form_correlated_stacked_where_goes_native()
+    {
+        // Stacked .Where(...).Where(...): the first conjunct (r.Tag == o.Name) is correlated-beyond-FK and only
+        // Dave.Refs[0] satisfies it; the second (r.Name == o.Name) further narrows using the SAME correlation
+        // but a DIFFERENT member, and Dave.Refs[0]'s own Name ("DaveItem1") does NOT equal "Dave" — so stacking
+        // the two conjuncts together excludes even Dave.Refs[0], yielding an empty (but correctly-computed,
+        // non-vacuous-by-construction) result. This proves both Wheres genuinely AND together rather than one
+        // being silently dropped (which would instead have produced Dave.Refs[0] as a false-positive row).
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_correlated_stacked_where_goes_native), out var owners, out _);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name).Where(r => r.Name == o.Name), (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+
+        var expected = owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name).Where(r => r.Name == o.Name), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+        Assert.Equal(expected, result);
+        Assert.Empty(result); // no single row satisfies BOTH r.Tag == o.Name AND r.Name == o.Name
+    }
+
+    [Fact]
+    public void Reference_form_correlated_excluding_all_children_contributes_no_rows()
+    {
+        // A correlated predicate ANDed with an inner-only conjunct that matches nothing (r.Score < 0 — Score is
+        // never negative in the seed) yields no rows (inner-join semantics preserved), even though the
+        // correlated conjunct alone (r.Tag == o.Name) DOES match Dave.Refs[0] — proving the second conjunct
+        // genuinely narrows the result rather than being ignored. (A string-concatenation correlated predicate,
+        // e.g. r.Tag == o.Name + "literal", is a MethodCallExpression (String.Concat), which the translator's
+        // computed-long-tail exclusion structurally declines — that shape hard-fails translation rather than
+        // going native, so it is not used here.)
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_correlated_excluding_all_children_contributes_no_rows), out _, out _);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name).Where(r => r.Score < 0), (o, r) => new { o.Name, r.Tag })
+            .ToList();
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Reference_form_correlated_composes_with_parametrized_outer_predicate()
+    {
+        // An outer Where parameter still substitutes correctly alongside the correlated inner $match. Excluding
+        // Dave (the cutoff) removes the only owner whose children satisfy r.Tag == o.Name, so the result is
+        // empty — still a meaningful, non-vacuous assertion, since it proves the outer filter and the
+        // correlated inner filter compose (rather than one being silently ignored, which would instead surface
+        // Dave/Dave's row here).
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_correlated_composes_with_parametrized_outer_predicate), out var owners, out _);
+
+        var cutoff = "Dave";
+        var result = db.Owners.Where(o => o.Name != cutoff)
+            .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name), (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+
+        var expected = owners.Where(o => o.Name != cutoff)
+            .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag).ToList();
+        Assert.Equal(expected, result);
+        Assert.Empty(result); // confirms the outer filter really did exclude Dave's would-be matching row
+
+        // Sanity: WITHOUT excluding Dave, the same correlated filter does produce a row — proves the empty
+        // result above is because of the outer predicate, not because the correlated filter is broken.
+        var withoutCutoff = owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name), (o, r) => new { o.Name, r.Tag })
+            .ToList();
+        Assert.NotEmpty(withoutCutoff);
+    }
+
+    [Fact]
+    public void Reference_form_correlated_emits_expr_match_after_unwind()
+    {
+        // MQL assertion: the correlated conjunct renders as $expr in the post-$unwind $match, comparing the
+        // scope-prefixed inner field to the root-relative outer field.
+        using var db = CreateRefContextWithLogging(MongoQueryMode.Native,
+            nameof(Reference_form_correlated_emits_expr_match_after_unwind), out _, out _, out var spyLogger);
+
+        _ = db.Owners
+            .SelectMany(o => o.Refs.Where(r => r.Tag == o.Name), (o, r) => new { o.Name, r.Tag })
+            .ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$lookup", message);
+        Assert.Contains("$unwind", message);
+        Assert.Contains("$match", message);
+        Assert.Contains("$expr", message);
+        Assert.Contains("_lookup_Refs.Tag", message); // inner field, scope-prefixed
+        Assert.Contains("$Name", message); // outer field, root-relative
     }
 
     [Fact]
@@ -2861,8 +3083,8 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         var tracked = db.Owners.SelectMany(o => o.Refs).ToList(); // default tracking (no AsNoTracking)
 
-        Assert.Equal(3, tracked.Count);
-        Assert.Equal(3, db.ChangeTracker.Entries<RefItem>().Count());
+        Assert.Equal(5, tracked.Count); // 2 from Alice + 1 from Carol + 2 from Dave; Bob (0 children) contributes 0
+        Assert.Equal(5, db.ChangeTracker.Entries<RefItem>().Count());
         Assert.All(tracked, r => Assert.Equal(EntityState.Unchanged, db.Entry(r).State));
 
         // A mutation + SaveChanges round-trips (proves these are real tracked entities).

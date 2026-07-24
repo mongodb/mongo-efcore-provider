@@ -44,14 +44,34 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal sealed class MongoExpressionTranslator
 {
     private readonly IEntityType _entityType;
+    private readonly ParameterExpression? _outerParam;
+    private readonly IEntityType? _outerEntityType;
+    private readonly string? _innerPrefix;
 
     /// <summary>
-    /// Creates a <see cref="MongoExpressionTranslator"/> for the given entity type.
+    /// Creates a single-scope <see cref="MongoExpressionTranslator"/> for the given entity type.
     /// </summary>
     /// <param name="entityType">The entity type whose properties and element names are used during translation.</param>
     public MongoExpressionTranslator(IEntityType entityType)
     {
         _entityType = entityType;
+    }
+
+    /// <summary>
+    /// Creates a two-scope translator for a CORRELATED reference-<c>SelectMany</c> inner filter: a member access
+    /// rooted on <paramref name="outerParam"/> resolves against <paramref name="outerEntityType"/> at document
+    /// root (no prefix); any other member resolves against <paramref name="innerEntityType"/> and is prefixed
+    /// with <paramref name="innerPrefix"/> (the <c>_lookup_&lt;Nav&gt;</c> unwind scope). Outer members are
+    /// identified by reference identity, never by name, so a member name shared between the two scopes never
+    /// conflates them.
+    /// </summary>
+    public MongoExpressionTranslator(
+        IEntityType innerEntityType, ParameterExpression outerParam, IEntityType outerEntityType, string innerPrefix)
+    {
+        _entityType = innerEntityType;
+        _outerParam = outerParam;
+        _outerEntityType = outerEntityType;
+        _innerPrefix = innerPrefix;
     }
 
     /// <summary>
@@ -395,21 +415,34 @@ internal sealed class MongoExpressionTranslator
         property = null;
         fieldPath = null;
 
-        if (node is not MemberExpression { Expression: ParameterExpression } me)
+        if (node is not MemberExpression { Expression: ParameterExpression param } me)
             return false;
 
-        property = _entityType.FindProperty(me.Member.Name);
-        if (property is null)
+        // Two-scope mode: a member rooted on the outer param resolves against the outer entity type at document
+        // root; every other member is inner-scoped. Identity (ReferenceEquals), never name — so a member name
+        // shared between the two scopes cannot be mis-routed.
+        var isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
+        var scopeType = isOuter ? _outerEntityType! : _entityType;
+
+        var resolved = scopeType.FindProperty(me.Member.Name);
+        if (resolved is null)
             return false;
 
         // A component of a composite primary key is stored nested under "_id" (e.g. { _id: { Key1, Key2 } }),
-        // so its top-level element name does not address the stored field. The driver-LINQ path resolves the
-        // dotted "_id.<name>" path; the native translator does not, so refuse it here and let the query fall
-        // back rather than emit a $match against a non-existent top-level field (which silently returns nothing).
-        if (property.IsPrimaryKey() && property.FindContainingPrimaryKey()!.Properties.Count > 1)
+        // so its top-level element name does not address the stored field. The native translator does not resolve
+        // the dotted "_id.<name>" path, so refuse it here and let the query fall back rather than emit a $match
+        // against a non-existent top-level field (which silently returns nothing).
+        if (resolved.IsPrimaryKey() && resolved.FindContainingPrimaryKey()!.Properties.Count > 1)
             return false;
 
-        fieldPath = property.GetElementName();
+        property = resolved;
+        fieldPath = resolved.GetElementName();
+
+        // Inner-scope fields are prefixed with the unwind scope in two-scope mode; outer-scope fields (and every
+        // field in single-scope mode, where _innerPrefix is null) stay at their resolved element name.
+        if (!isOuter && _innerPrefix is not null)
+            fieldPath = _innerPrefix + "." + fieldPath;
+
         return true;
     }
 

@@ -45,6 +45,23 @@ public class MongoExpressionTranslatorTests
         public bool? NullableFlag { get; set; }
     }
 
+    // Two-scope (correlated reference SelectMany) fixtures — InnerRef and OuterRef deliberately share a
+    // "Name" member to prove identity-based routing never conflates the two scopes by name.
+    private class InnerRef
+    {
+        public ObjectId Id { get; set; }
+        public string Tag { get; set; } = "";
+        public string Name { get; set; } = "";
+        public int Score { get; set; }
+    }
+
+    private class OuterRef
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Threshold { get; set; }
+    }
+
     /// <summary>
     /// Returns the entity type for <typeparamref name="T"/> from a minimal in-memory model.
     /// </summary>
@@ -786,5 +803,87 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Age", field.ElementName);
         var constant = Assert.IsType<MongoConstantExpression>(bin.Right);
         Assert.Equal(21, constant.Value);
+    }
+
+    // ------------------------------------------------------------------
+    // Two-scope (correlated) resolution
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Two_scope_correlated_comparison_routes_inner_prefixed_and_outer_root()
+    {
+        var innerType = GetEntityType<InnerRef>();
+        var outerType = GetEntityType<OuterRef>();
+        var outerParam = Expression.Parameter(typeof(OuterRef), "o");
+        var innerParam = Expression.Parameter(typeof(InnerRef), "r");
+        // r.Tag == o.Name
+        var body = Expression.Equal(
+            Expression.Property(innerParam, nameof(InnerRef.Tag)),
+            Expression.Property(outerParam, nameof(OuterRef.Name)));
+        var translator = new MongoExpressionTranslator(innerType, outerParam, outerType, "_lookup_Refs");
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        Assert.Equal("_lookup_Refs.Tag", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+    }
+
+    [Fact]
+    public void Two_scope_shadowed_member_name_resolves_by_parameter_identity_not_name()
+    {
+        var innerType = GetEntityType<InnerRef>();
+        var outerType = GetEntityType<OuterRef>();
+        var outerParam = Expression.Parameter(typeof(OuterRef), "o");
+        var innerParam = Expression.Parameter(typeof(InnerRef), "r");
+        // r.Name == o.Name — same member name on both scopes; must resolve to DISTINCT field refs.
+        var body = Expression.Equal(
+            Expression.Property(innerParam, nameof(InnerRef.Name)),
+            Expression.Property(outerParam, nameof(OuterRef.Name)));
+        var translator = new MongoExpressionTranslator(innerType, outerParam, outerType, "_lookup_Refs");
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal("_lookup_Refs.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+    }
+
+    [Fact]
+    public void Two_scope_inner_only_conjunct_still_gets_the_inner_prefix()
+    {
+        var innerType = GetEntityType<InnerRef>();
+        var outerType = GetEntityType<OuterRef>();
+        var outerParam = Expression.Parameter(typeof(OuterRef), "o");
+        var innerParam = Expression.Parameter(typeof(InnerRef), "r");
+        // r.Tag == "x" — no outer reference; in two-scope mode the inner field is still prefixed.
+        var body = Expression.Equal(
+            Expression.Property(innerParam, nameof(InnerRef.Tag)),
+            Expression.Constant("x"));
+        var translator = new MongoExpressionTranslator(innerType, outerParam, outerType, "_lookup_Refs");
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal("_lookup_Refs.Tag", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+        Assert.IsType<MongoConstantExpression>(bin.Right);
+    }
+
+    [Fact]
+    public void Two_scope_numeric_correlated_comparison_translates()
+    {
+        var innerType = GetEntityType<InnerRef>();
+        var outerType = GetEntityType<OuterRef>();
+        var outerParam = Expression.Parameter(typeof(OuterRef), "o");
+        var innerParam = Expression.Parameter(typeof(InnerRef), "r");
+        // r.Score >= o.Threshold — proves the full comparison breadth flows through field-to-field.
+        var body = Expression.GreaterThanOrEqual(
+            Expression.Property(innerParam, nameof(InnerRef.Score)),
+            Expression.Property(outerParam, nameof(OuterRef.Threshold)));
+        var translator = new MongoExpressionTranslator(innerType, outerParam, outerType, "_lookup_Refs");
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.GreaterThanOrEqual, bin.Operator);
+        Assert.Equal("_lookup_Refs.Score", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+        Assert.Equal("Threshold", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
     }
 }

@@ -588,12 +588,11 @@ public class NativeSelectManyBinderTests
     }
 
     [Fact]
-    public void TryBindReferenceNavUnwind_correlated_beyond_fk_filter_returns_false()
+    public void TryBindReferenceNavUnwind_correlated_beyond_fk_filter_binds_with_expr_filter()
     {
-        // A user filter referencing the OUTER param (o.Id) beyond the FK correlation: the inner-scope
-        // translator resolves member accesses by NAME ONLY (no parameter-identity check) and would NOT reject
-        // this on its own — it's the ReferencesParameter guard in TryBindReferenceNavUnwind that detects the
-        // outer-parameter reference and declines the bind cleanly before translation is even attempted.
+        // A user filter referencing the OUTER entity beyond the FK (t.Label == o.Name) now goes native: the
+        // correlated conjunct is two-scope-translated (inner field prefixed, outer field at root) and stored on
+        // the Filter as a field-to-field comparison the renderer emits as $expr.
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var outerParam = Expression.Parameter(typeof(Owner), "o");
@@ -601,9 +600,65 @@ public class NativeSelectManyBinderTests
         var fk = Expression.Lambda(
             Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId))),
             tParam);
-        // r.OwnerId != o.Id — references o (outer) beyond the FK correlation.
+        // t.Label == o.Name — correlated beyond the FK.
         var user = Expression.Lambda(
-            Expression.NotEqual(Expression.Property(tParam, nameof(Tag.OwnerId)), Expression.Property(outerParam, nameof(Owner.Id))),
+            Expression.Equal(Expression.Property(tParam, nameof(Tag.Label)), Expression.Property(outerParam, nameof(Owner.Name))),
+            tParam);
+        var collectionSelector = ReferenceCollectionSelectorFiltered(tagNav.TargetEntityType, outerParam, fk, user);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+
+        var unwind = mongoQ.Select.UnwindSource!;
+        Assert.Equal(MongoUnwindSourceKind.Reference, unwind.Kind);
+        var bin = Assert.IsType<MongoBinaryExpression>(unwind.Filter);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        // Inner field prefixed with the lookup scope; outer field at document root — resolved by parameter
+        // identity, so the shared-nothing scopes never conflate.
+        Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_mixed_inner_and_correlated_conjunct_binds()
+    {
+        // One .Where layer whose body ANDs an inner-only conjunct with a correlated one:
+        // t.Label != "x" && t.Label == o.Name. The whole layer routes through the two-scope translator.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var fk = Expression.Lambda(
+            Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId))),
+            tParam);
+        var innerOnly = Expression.NotEqual(Expression.Property(tParam, nameof(Tag.Label)), Expression.Constant("x"));
+        var correlated = Expression.Equal(Expression.Property(tParam, nameof(Tag.Label)), Expression.Property(outerParam, nameof(Owner.Name)));
+        var user = Expression.Lambda(Expression.AndAlso(innerOnly, correlated), tParam);
+        var collectionSelector = ReferenceCollectionSelectorFiltered(tagNav.TargetEntityType, outerParam, fk, user);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+        var and = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.AndAlso, and.Operator);
+        // Both conjuncts' inner fields are prefixed; the correlated conjunct's outer field is at root.
+        var left = Assert.IsType<MongoBinaryExpression>(and.Left);
+        Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(left.Left).ElementName);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_unsupported_correlated_operator_returns_false_without_mutation()
+    {
+        // t.Label.ToUpper() == o.Name — the correlated conjunct uses an operator the translator rejects, so the
+        // two-scope translation fails and the bind declines cleanly with no partial mutation.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var fk = Expression.Lambda(
+            Expression.Equal(Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId))),
+            tParam);
+        var user = Expression.Lambda(
+            Expression.Equal(
+                Expression.Call(Expression.Property(tParam, nameof(Tag.Label)), typeof(string).GetMethod(nameof(string.ToUpper), System.Type.EmptyTypes)!),
+                Expression.Property(outerParam, nameof(Owner.Name))),
             tParam);
         var collectionSelector = ReferenceCollectionSelectorFiltered(tagNav.TargetEntityType, outerParam, fk, user);
 
