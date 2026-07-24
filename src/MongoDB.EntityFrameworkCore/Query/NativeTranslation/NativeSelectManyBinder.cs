@@ -110,7 +110,7 @@ internal static class NativeSelectManyBinder
             projections.Add(new MongoProjection(alias, field));
         }
 
-        if (!TryBuildOwnedInnerFilter(userPredicates, navigation.TargetEntityType, unwindPath, outerParam, out var filter))
+        if (!TryBuildOwnedInnerFilter(userPredicates, navigation.TargetEntityType, unwindPath, outerParam, outerEntityType, out var filter))
             return false;
 
         var unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
@@ -148,7 +148,7 @@ internal static class NativeSelectManyBinder
         if (navigation.TargetEntityType.GetContainingElementName() is not { } unwindPath)
             return false;
 
-        if (!TryBuildOwnedInnerFilter(userPredicates, navigation.TargetEntityType, unwindPath, outerParam, out var filter))
+        if (!TryBuildOwnedInnerFilter(userPredicates, navigation.TargetEntityType, unwindPath, outerParam, outerEntityType, out var filter))
             return false;
 
         var unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
@@ -520,19 +520,26 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Translates each peeled owned inner-element predicate against <paramref name="innerEntityType"/>, prefixes
-    /// its field refs with <paramref name="unwindPath"/> (e.g. <c>Items</c>, so <c>Price</c> becomes
-    /// <c>Items.Price</c> — the unwound owned element sits at that path before <c>$replaceRoot</c>/<c>$project</c>),
-    /// and ANDs them into one <paramref name="filter"/>. Returns <see langword="true"/> with
-    /// <paramref name="filter"/> <see langword="null"/> when there are no predicates (the unfiltered case), so
-    /// callers can invoke it unconditionally. Declines (<see langword="false"/>, no mutation) if any predicate
-    /// references the outer parameter (correlated-beyond-outer — <see cref="ReferencesParameter"/>, load-bearing
-    /// for the same by-name-mis-scope reason documented on that guard) or the translator rejects it
-    /// (computed / unsupported operator).
+    /// Translates each peeled owned inner-element predicate and ANDs them into one <paramref name="filter"/>.
+    /// An inner-only layer is translated against <paramref name="innerEntityType"/> and its field refs are
+    /// prefixed with <paramref name="unwindPath"/> (e.g. <c>Items</c>, so <c>Price</c> becomes
+    /// <c>Items.Price</c> — the unwound owned element sits at that path before
+    /// <c>$replaceRoot</c>/<c>$project</c>). A layer that references the outer parameter
+    /// (correlated-beyond-outer, e.g. <c>i.Name == o.Name</c>) is instead ROUTED to the two-scope
+    /// <see cref="MongoExpressionTranslator"/> — <see cref="ReferencesParameter"/> decides routing by PARAMETER
+    /// IDENTITY, never by member name, so a name shared between the outer and inner entity types (e.g. both
+    /// having a <c>Name</c>) never mis-scopes: the inner side still resolves against
+    /// <paramref name="innerEntityType"/> prefixed with <paramref name="unwindPath"/>, the outer side against
+    /// <paramref name="outerEntityType"/> at document root, and the result renders as <c>$expr</c>. Returns
+    /// <see langword="true"/> with <paramref name="filter"/> <see langword="null"/> when there are no
+    /// predicates (the unfiltered case), so callers can invoke it unconditionally. Declines
+    /// (<see langword="false"/>, no mutation) only if a translator rejects the layer (computed / unsupported
+    /// operator) — a correlated owned <c>SelectMany</c> has no driver-LINQ oracle, so a decline hard-fails
+    /// translation in every mode.
     /// </summary>
     private static bool TryBuildOwnedInnerFilter(
         IReadOnlyList<LambdaExpression> userPredicates, IEntityType innerEntityType, string unwindPath,
-        ParameterExpression outerParam, out MongoExpression? filter)
+        ParameterExpression outerParam, IEntityType outerEntityType, out MongoExpression? filter)
     {
         filter = null;
         if (userPredicates.Count == 0)
@@ -541,14 +548,33 @@ internal static class NativeSelectManyBinder
         var innerTranslator = new MongoExpressionTranslator(innerEntityType);
         foreach (var userPredicate in userPredicates)
         {
-            if (userPredicate.Parameters.Count != 1
-                || ReferencesParameter(userPredicate.Body, outerParam)
-                || !innerTranslator.TryTranslate(userPredicate.Body, out var expr))
+            if (userPredicate.Parameters.Count != 1)
                 return false;
-            var prefixed = MongoFieldPrefixRewriter.Rewrite(expr!, unwindPath);
+
+            MongoExpression conjunct;
+            if (ReferencesParameter(userPredicate.Body, outerParam))
+            {
+                // Correlated-beyond-outer: translate with the two-scope translator — inner fields prefixed with
+                // the unwind path (Items.Name), outer fields at document root (Name), routed by PARAMETER
+                // IDENTITY (never by name, so Item.Name and Owner.Name never conflate). Used directly — NOT
+                // blanket-prefixed. Renders as $expr. Declines cleanly (no mutation) if the operator is
+                // unsupported; a correlated owned SelectMany has no driver-LINQ oracle, so a decline hard-fails
+                // every mode.
+                var twoScope = new MongoExpressionTranslator(innerEntityType, outerParam, outerEntityType, unwindPath);
+                if (!twoScope.TryTranslate(userPredicate.Body, out var correlated))
+                    return false;
+                conjunct = correlated;
+            }
+            else
+            {
+                if (!innerTranslator.TryTranslate(userPredicate.Body, out var expr))
+                    return false;
+                conjunct = MongoFieldPrefixRewriter.Rewrite(expr!, unwindPath);
+            }
+
             filter = filter == null
-                ? prefixed
-                : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filter, prefixed);
+                ? conjunct
+                : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filter, conjunct);
         }
         return true;
     }

@@ -204,17 +204,55 @@ public class NativeSelectManyBinderTests
     }
 
     [Fact]
-    public void Inner_where_correlated_beyond_outer_returns_false()
+    public void Inner_where_correlated_beyond_outer_binds_with_expr_filter()
     {
-        // A user filter referencing the OUTER parameter (o.Name) is correlated-beyond-outer — the
-        // ReferencesParameter guard rejects it BEFORE translation, so the whole bind declines with no mutation.
+        // A user filter referencing the OUTER owner (i.Name == o.Name) now goes native: the correlated
+        // conjunct is two-scope-translated (inner field prefixed with the unwind path, outer field at document
+        // root) and stored on Filter as a field-to-field comparison the renderer emits as $expr. Item.Name
+        // shadows Owner.Name, so routing MUST be by parameter identity, not name.
         var mongoQ = TestQuery();
         var collectionSelector = Build((Owner o) =>
-            o.Items.AsQueryable().Where(i => i.Name != o.Name).Select(i => new { o.Name, i.Price }));
+            o.Items.AsQueryable().Where(i => i.Name == o.Name).Select(i => new { o.Name, i.Price }));
+
+        Assert.True(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
+
+        var bin = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);   // inner, prefixed
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);          // outer, root
+    }
+
+    [Fact]
+    public void Inner_where_mixed_inner_and_correlated_conjunct_binds()
+    {
+        // One .Where whose body ANDs an inner-only conjunct with a correlated one.
+        var mongoQ = TestQuery();
+        var collectionSelector = Build((Owner o) =>
+            o.Items.AsQueryable().Where(i => i.Name != "x" && i.Name == o.Name).Select(i => new { o.Name, i.Price }));
+
+        Assert.True(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
+        var and = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.AndAlso, and.Operator);
+        // inner-only conjunct: inner field prefixed
+        var left = Assert.IsType<MongoBinaryExpression>(and.Left);
+        Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(left.Left).ElementName);
+        // correlated conjunct: inner prefixed vs outer root
+        var right = Assert.IsType<MongoBinaryExpression>(and.Right);
+        Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(right.Left).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(right.Right).ElementName);
+    }
+
+    [Fact]
+    public void Inner_where_unsupported_correlated_operator_returns_false_without_mutation()
+    {
+        // i.Name.ToUpper() == o.Name — the two-scope translation rejects the operator, so the bind declines
+        // cleanly with no partial mutation.
+        var mongoQ = TestQuery();
+        var collectionSelector = Build((Owner o) =>
+            o.Items.AsQueryable().Where(i => i.Name.ToUpper() == o.Name).Select(i => new { o.Name, i.Price }));
 
         Assert.False(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
         Assert.Null(mongoQ.Select.UnwindSource);
-        Assert.Empty(mongoQ.Select.Projection);
     }
 
     [Fact]
@@ -242,13 +280,16 @@ public class NativeSelectManyBinderTests
     }
 
     [Fact]
-    public void Bare_nav_with_correlated_beyond_outer_where_returns_false()
+    public void Bare_nav_with_correlated_beyond_outer_where_binds_with_expr_filter()
     {
         var mongoQ = TestQuery();
-        var collectionSelector = Build((Owner o) => o.Items.AsQueryable().Where(i => i.Name != o.Name));
+        var collectionSelector = Build((Owner o) => o.Items.AsQueryable().Where(i => i.Name == o.Name));
 
-        Assert.False(NativeSelectManyBinder.TryBindBareNavUnwind(mongoQ, collectionSelector));
-        Assert.Null(mongoQ.Select.UnwindSource);
+        Assert.True(NativeSelectManyBinder.TryBindBareNavUnwind(mongoQ, collectionSelector));
+        var bin = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
     }
 
     // ── TryBindTransparentIdentifierProjection: explicit-result-selector / query-syntax form ───────

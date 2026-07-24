@@ -148,6 +148,19 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Id = ObjectId.GenerateNewId(), Name = "Carol",
             Items = [new Item { Name = "Thing", Price = 5m }],
         },
+        // EF-347 correlated-beyond-outer: discriminating owner so a correlated predicate like
+        // i.Name == o.Name has both a satisfying row (Match/Match) and a non-satisfying one (Match/NoMatch) —
+        // none of Alice/Bob/Carol's items ever equal their own owner's Name, so without this owner every
+        // correlated-equality test below would pass vacuously (empty == empty).
+        new()
+        {
+            Id = ObjectId.GenerateNewId(), Name = "Match",
+            Items =
+            [
+                new Item { Name = "Match", Price = 3m }, // i.Name == o.Name → included
+                new Item { Name = "NoMatch", Price = 4m }, // i.Name != o.Name → excluded
+            ],
+        },
     ];
 
     private SingleEntityDbContext<Owner> CreateContext(Owner[] seed, MongoQueryMode mode, string name)
@@ -298,7 +311,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         var result = db.Entities.SelectMany(o => o.Items.Select(i => new { o.Name, i.Price })).ToList();
 
-        Assert.Equal(3, result.Count); // 2 from Alice + 1 from Carol; Bob (empty) contributes 0
+        Assert.Equal(5, result.Count); // 2 from Alice + 1 from Carol + 2 from Match; Bob (empty) contributes 0
         Assert.DoesNotContain(result, r => r.Name == "Bob");
     }
 
@@ -321,8 +334,14 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .ToList();
 
         Assert.Equal(expected, result);
-        // Sanity: outer/inner never conflated (an owner's own name never leaks into InnerName and vice versa).
-        Assert.All(result, r => Assert.NotEqual(r.OuterName, r.InnerName));
+        // Sanity: outer/inner never conflated (an owner's own name never leaks into InnerName and vice versa) —
+        // EXCEPT the "Match" owner's "Match" item, which the EF-347 correlated-beyond-outer seed (see
+        // SeedOwners) DELIBERATELY names identically to its owner so the correlated-equality tests elsewhere
+        // have a genuinely matching row. That is a real, seeded data coincidence, not a scoping bug, so it is
+        // explicitly excluded here rather than silently weakening this sanity check for every other row.
+        Assert.All(result.Where(r => !(r.OuterName == "Match" && r.InnerName == "Match")),
+            r => Assert.NotEqual(r.OuterName, r.InnerName));
+        Assert.Contains(result, r => r.OuterName == "Match" && r.InnerName == "Match");
     }
 
     [Fact]
@@ -424,7 +443,11 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .ToList();
 
         Assert.Equal(expected, result);
-        Assert.All(result, r => Assert.NotEqual(r.OuterName, r.InnerName));
+        // See Shared_outer_inner_member_name_resolves_to_distinct_values's comment re: the "Match"/"Match" row —
+        // a deliberate seeded coincidence for the correlated-equality tests, not a scoping bug.
+        Assert.All(result.Where(r => !(r.OuterName == "Match" && r.InnerName == "Match")),
+            r => Assert.NotEqual(r.OuterName, r.InnerName));
+        Assert.Contains(result, r => r.OuterName == "Match" && r.InnerName == "Match");
     }
 
     [Fact]
@@ -436,7 +459,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { o.Name, i.Price }).ToList();
 
-        Assert.Equal(3, result.Count); // 2 from Alice + 1 from Carol; Bob (empty) contributes 0
+        Assert.Equal(5, result.Count); // 2 from Alice + 1 from Carol + 2 from Match; Bob (empty) contributes 0
         Assert.DoesNotContain(result, r => r.Name == "Bob");
     }
 
@@ -629,19 +652,140 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Filtered_owned_correlated_beyond_outer_hard_fails_in_every_mode()
+    public void Owned_correlated_beyond_outer_inner_select_form_goes_native()
     {
-        // A filter referencing the OUTER entity (i.Name != o.Name) is correlated-beyond-outer — declined by the
-        // ReferencesParameter guard. TryBind/TryBindBareNavUnwind return false, TranslateSelectMany returns null,
-        // and (no driver-LINQ oracle for a filtered owned SelectMany) it hard-fails in every mode.
+        // o.Items.Where(i => i.Name == o.Name) — correlated beyond the owner/element pair. Now native: the
+        // ReferencesParameter guard routes the conjunct to a two-scope translator that renders it as $expr in
+        // the post-$unwind $match (see Owned_correlated_beyond_outer_emits_expr_match_after_unwind below). No
+        // driver-LINQ oracle exists for ANY correlated owned SelectMany shape (spike-confirmed), so this is
+        // proven NativeOnly + an in-memory oracle, not Native/DriverLinq parity. Only the "Match" owner's
+        // "Match" item (see SeedOwners) satisfies the predicate — its "NoMatch" sibling, and every item of
+        // Alice/Bob/Carol, does not — so the expected set is neither empty nor "everything".
         var seed = SeedOwners();
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
-        {
-            using var db = CreateContext(seed, mode,
-                nameof(Filtered_owned_correlated_beyond_outer_hard_fails_in_every_mode) + mode);
-            Assert.ThrowsAny<Exception>(() =>
-                db.Entities.SelectMany(o => o.Items.Where(i => i.Name != o.Name), (o, i) => new { o.Name, i.Price }).ToList());
-        }
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_inner_select_form_goes_native));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name).Select(i => new { o.Name, i.Price }))
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name).Select(i => new { o.Name, i.Price }))
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+        Assert.Equal(expected, result);
+        Assert.NotEmpty(result); // non-vacuous
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_explicit_form_goes_native()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_explicit_form_goes_native));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name), (o, i) => new { o.Name, i.Price })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+        Assert.Equal(expected, result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_bare_whole_element_goes_native()
+    {
+        // Bare-whole-element result requires AsNoTracking() (owned element without owner) — same tracking
+        // contract as Bare_owned_whole_inner_element_goes_native_all_three_spellings above.
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_bare_whole_element_goes_native));
+
+        var result = db.Entities.AsNoTracking()
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name))
+            .AsEnumerable().Select(i => i.Price).OrderBy(p => p).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name))
+            .Select(i => i.Price).OrderBy(p => p).ToList();
+        Assert.Equal(expected, result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_stacked_where_goes_native()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_stacked_where_goes_native));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name).Where(i => i.Price > 0m), (o, i) => new { o.Name, i.Price })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name).Where(i => i.Price > 0m), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+        Assert.Equal(expected, result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_excluding_all_children_contributes_no_rows()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_excluding_all_children_contributes_no_rows));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name && i.Price < 0m), (o, i) => new { o.Name, i.Price })
+            .ToList();
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_composes_with_parametrized_outer_predicate()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_composes_with_parametrized_outer_predicate));
+
+        var cutoff = "Bob";
+        var result = db.Entities.Where(o => o.Name != cutoff)
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name), (o, i) => new { o.Name, i.Price })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed.Where(o => o.Name != cutoff)
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+        Assert.Equal(expected, result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_emits_expr_match_after_unwind()
+    {
+        // MQL assertion: the correlated conjunct renders as $expr in the post-$unwind $match, comparing the
+        // unwind-path-prefixed inner field ("$Items.Name") to the root-relative outer field ("$Name") — no
+        // $lookup alias exists for owned data (unlike the reference form's "_lookup_Refs.Tag"), so the inner
+        // field is prefixed with the unwind path itself.
+        var seed = SeedOwners();
+        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_emits_expr_match_after_unwind), out var spyLogger);
+
+        _ = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Name == o.Name), (o, i) => new { o.Name, i.Price })
+            .ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$unwind", message);
+        Assert.Contains("$match", message);
+        Assert.Contains("$expr", message);
+        Assert.Contains("Items.Name", message); // inner field, unwind-path-prefixed
+        Assert.Contains("$Name", message); // outer field, root-relative
     }
 
     [Fact]
@@ -2331,8 +2475,8 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         var result = db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList();
 
-        Assert.Equal(3, result.Count); // 2 from Alice + 1 from Carol; Bob (empty) contributes 0
-        Assert.Equal(["Gadget", "Thing", "Widget"], result.Select(i => i.Name).OrderBy(n => n).ToList());
+        Assert.Equal(5, result.Count); // 2 from Alice + 1 from Carol + 2 from Match; Bob (empty) contributes 0
+        Assert.Equal(["Gadget", "Match", "NoMatch", "Thing", "Widget"], result.Select(i => i.Name).OrderBy(n => n).ToList());
     }
 
     [Fact]
@@ -2350,7 +2494,10 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var names = db.Entities.AsNoTracking().SelectMany(o => o.Items)
             .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
 
-        Assert.Equal(["Gadget", "Thing", "Widget"], names);
+        Assert.Equal(["Gadget", "Match", "NoMatch", "Thing", "Widget"], names);
+        // "Match" legitimately appears here as the "Match" owner's OWN item Name (see SeedOwners) — a
+        // deliberate seeded coincidence for the correlated-equality tests elsewhere, not an owner-Name leak, so
+        // it is not added to this forbidden list.
         Assert.DoesNotContain(names, n => n is "Alice" or "Bob" or "Carol");
     }
 
@@ -2922,9 +3069,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // names=[null,null,null] — empirically confirmed by direct reproduction (the UnwindSource branch in
         // MongoSelectLowerer.Lower returns early with a flatten $project reading "_id.Name", which was never
         // populated because the $group the flatten depends on was never emitted). Only DriverLinq mode
-        // returned the correct count=2 names=[Alice,Carol] (Bob's empty Items collection contributes no rows;
-        // Alice's two items collapse to one distinct Name; Carol contributes one) — that DriverLinq run is the
-        // baseline this test locks in.
+        // returned the correct count=3 names=[Alice,Carol,Match] (Bob's empty Items collection contributes no
+        // rows; Alice's two items collapse to one distinct Name; Carol and Match each contribute one) — that
+        // DriverLinq run is the baseline this test locks in.
         // AFTER the fix, the Distinct declines to bind natively (same as the bare-scalar/whole-entity Distinct
         // cases in NativeDistinctTests), so this collapses into the SAME "operator after (owned) SelectMany"
         // graceful-fallback family as Where/OrderBy/Skip/Take/Count above: the captured chain
@@ -2938,7 +3085,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .Distinct()
             .OrderBy(r => r.Name)
             .ToList();
-        Assert.Equal(new[] { "Alice", "Carol" }, expected.Select(r => r.Name).ToArray()); // Bob (0 items) contributes no rows
+        Assert.Equal(new[] { "Alice", "Carol", "Match" }, expected.Select(r => r.Name).ToArray()); // Bob (0 items) contributes no rows
 
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
