@@ -128,8 +128,10 @@ internal sealed class MongoSelectLowerer
 
             // Inner-element-only user filter (o.Refs.Where(pred)): a $match on the unwound element, emitted
             // after the $unwind (owned: just above; reference: already emitted by AppendLookupStages) and
-            // before the $replaceRoot (WholeElement) / $project (projected). Already scope-prefixed by the
-            // binder (e.g. "_lookup_Refs.Total"). EF-347 filtered-inner slice — reference only for now.
+            // before the $replaceRoot (WholeElement) / $project (projected).
+            // Already scope-prefixed by the binder (reference: "_lookup_Refs.Total"; owned: "Items.Total").
+            // EF-347 filtered-inner slice — populated for BOTH reference (TryBindReferenceNavUnwind) and owned
+            // (TryBind / TryBindBareNavUnwind); the emission here is kind-agnostic.
             if (unwind.Filter is { } filter)
                 stages.Add(new MongoMatchStage(filter));
 

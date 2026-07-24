@@ -65,7 +65,10 @@ internal static class NativeSelectManyBinder
         // <source> must resolve to the outer parameter's owned-collection navigation. EF's nav-expansion
         // rewrites navigation access to EF.Property(o, "Nav") (shadow-nav-safe) rather than leaving a plain
         // MemberExpression, so both forms must be accepted here.
-        var navExpr = UnwrapAsQueryable(selectSource);
+        // Peel any user Where(...) layers off the owned nav (o.Items.Where(pred).Select(...)); owned collections
+        // are a bare member access, so every Where is an inner-element user filter (no FK correlation).
+        var userPredicates = new List<LambdaExpression>();
+        var navExpr = PeelOwnedInnerWhere(selectSource, userPredicates);
         if (!TryGetMemberAccess(navExpr, out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
             return false;
 
@@ -106,7 +109,12 @@ internal static class NativeSelectManyBinder
             projections.Add(new MongoProjection(alias, field));
         }
 
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
+        if (!TryBuildOwnedInnerFilter(userPredicates, navigation.TargetEntityType, unwindPath, outerParam, out var filter))
+            return false;
+
+        var unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
+        unwind.Filter = filter;
+        mongoQ.Select.UnwindSource = unwind;
         foreach (var p in projections)
             mongoQ.Select.AddProjection(p);
         return true;
@@ -127,7 +135,8 @@ internal static class NativeSelectManyBinder
     {
         var outerParam = collectionSelector.Parameters[0];
 
-        var navExpr = UnwrapAsQueryable(collectionSelector.Body);
+        var userPredicates = new List<LambdaExpression>();
+        var navExpr = PeelOwnedInnerWhere(collectionSelector.Body, userPredicates);
         if (!TryGetMemberAccess(navExpr, out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
             return false;
 
@@ -138,7 +147,12 @@ internal static class NativeSelectManyBinder
         if (navigation.TargetEntityType.GetContainingElementName() is not { } unwindPath)
             return false;
 
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
+        if (!TryBuildOwnedInnerFilter(userPredicates, navigation.TargetEntityType, unwindPath, outerParam, out var filter))
+            return false;
+
+        var unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
+        unwind.Filter = filter;
+        mongoQ.Select.UnwindSource = unwind;
         return true;
     }
 
@@ -449,6 +463,64 @@ internal static class NativeSelectManyBinder
         }
 
         field = new MongoFieldExpression(innerField.Property, unwindPath + "." + innerField.ElementName);
+        return true;
+    }
+
+    /// <summary>
+    /// Peels user-authored <c>Where(...)</c> layers off an owned collection selector's source down to the bare
+    /// owned-nav member access, collecting each layer's predicate lambda into <paramref name="userPredicates"/>.
+    /// Owned collections nav-expand to a bare member access (<c>o.Items</c>), NOT an FK-correlated subquery, so
+    /// EVERY <c>Where</c> here is an inner-element user filter — there is no FK-correlation <c>Where</c> to stop
+    /// at (unlike <see cref="TryBindReferenceNavUnwind"/>). Returns the source with all <c>Where</c> layers
+    /// removed (the bare owned nav for an accepted shape); the caller validates it via <see cref="TryGetMemberAccess"/>.
+    /// </summary>
+    private static Expression PeelOwnedInnerWhere(Expression source, List<LambdaExpression> userPredicates)
+    {
+        var current = UnwrapAsQueryable(source);
+        while (current is MethodCallExpression
+               {
+                   Method: { Name: nameof(System.Linq.Queryable.Where), DeclaringType: var decl },
+                   Arguments: [var whereSource, var predArg]
+               }
+               && decl == typeof(System.Linq.Queryable))
+        {
+            userPredicates.Add(predArg.UnwrapLambdaFromQuote());
+            current = UnwrapAsQueryable(whereSource);
+        }
+        return current;
+    }
+
+    /// <summary>
+    /// Translates each peeled owned inner-element predicate against <paramref name="innerEntityType"/>, prefixes
+    /// its field refs with <paramref name="unwindPath"/> (e.g. <c>Items</c>, so <c>Price</c> becomes
+    /// <c>Items.Price</c> — the unwound owned element sits at that path before <c>$replaceRoot</c>/<c>$project</c>),
+    /// and ANDs them into one <paramref name="filter"/>. Returns <see langword="true"/> with
+    /// <paramref name="filter"/> <see langword="null"/> when there are no predicates (the unfiltered case), so
+    /// callers can invoke it unconditionally. Declines (<see langword="false"/>, no mutation) if any predicate
+    /// references the outer parameter (correlated-beyond-outer — <see cref="ReferencesParameter"/>, load-bearing
+    /// for the same by-name-mis-scope reason documented on that guard) or the translator rejects it
+    /// (computed / unsupported operator).
+    /// </summary>
+    private static bool TryBuildOwnedInnerFilter(
+        IReadOnlyList<LambdaExpression> userPredicates, IEntityType innerEntityType, string unwindPath,
+        ParameterExpression outerParam, out MongoExpression? filter)
+    {
+        filter = null;
+        if (userPredicates.Count == 0)
+            return true;
+
+        var innerTranslator = new MongoExpressionTranslator(innerEntityType);
+        foreach (var userPredicate in userPredicates)
+        {
+            if (userPredicate.Parameters.Count != 1
+                || ReferencesParameter(userPredicate.Body, outerParam)
+                || !innerTranslator.TryTranslate(userPredicate.Body, out var expr))
+                return false;
+            var prefixed = MongoFieldPrefixRewriter.Rewrite(expr!, unwindPath);
+            filter = filter == null
+                ? prefixed
+                : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filter, prefixed);
+        }
         return true;
     }
 

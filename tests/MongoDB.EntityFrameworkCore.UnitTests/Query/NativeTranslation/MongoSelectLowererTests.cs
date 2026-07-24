@@ -446,6 +446,46 @@ public class MongoSelectLowererTests
         Assert.True(replaceRootIndex > matchIndex, "filter $match must precede the $replaceRoot");
     }
 
+    // EF-347 filtered-inner OWNED SelectMany. Mirrors the reference filter test above but for an owned
+    // $unwind: the lowerer's Filter $match block is kind-agnostic, so it must emit the $match after the
+    // owned $unwind and before the $project (projected form) / $replaceRoot (whole-element form) with NO
+    // production change — proving the owned reuse claim.
+    [Fact]
+    public void Owned_UnwindSource_with_filter_lowers_match_after_unwind_before_project()
+    {
+        var query = TestSelect();
+        var unwind = MongoUnwindSource.Owned("Items", innerEntityType: null!);
+        unwind.Filter = new MongoConstantExpression(true, null);
+        query.Select.UnwindSource = unwind;
+        query.Select.AddProjection(new MongoProjection("X", new MongoConstantExpression(1, null)));
+
+        var stages = new MongoSelectLowerer().Lower(query).ToList();
+
+        var unwindIndex = stages.FindIndex(s => s is MongoUnwindFieldStage);
+        var matchIndex = stages.FindIndex(s => s is MongoMatchStage);
+        var projectIndex = stages.FindIndex(s => s is MongoProjectStage);
+        Assert.True(unwindIndex >= 0 && matchIndex > unwindIndex, "filter $match must follow the owned $unwind");
+        Assert.True(projectIndex > matchIndex, "filter $match must precede the $project");
+    }
+
+    [Fact]
+    public void Owned_WholeElement_UnwindSource_with_filter_lowers_match_after_unwind_before_replaceRoot()
+    {
+        var query = TestSelect();
+        var unwind = MongoUnwindSource.Owned("Items", innerEntityType: null!);
+        unwind.WholeElement = true;
+        unwind.Filter = new MongoConstantExpression(true, null);
+        query.Select.UnwindSource = unwind;
+
+        var stages = new MongoSelectLowerer().Lower(query).ToList();
+
+        var unwindIndex = stages.FindIndex(s => s is MongoUnwindFieldStage);
+        var matchIndex = stages.FindIndex(s => s is MongoMatchStage);
+        var replaceRootIndex = stages.FindIndex(s => s is MongoReplaceRootStage);
+        Assert.True(unwindIndex >= 0 && matchIndex > unwindIndex, "filter $match must follow the owned $unwind");
+        Assert.True(replaceRootIndex > matchIndex, "filter $match must precede the $replaceRoot");
+    }
+
     // ── EF-347 slice B: trailing ops emit AFTER the set-op stage; cardinality falls through ──
 
     [Fact]

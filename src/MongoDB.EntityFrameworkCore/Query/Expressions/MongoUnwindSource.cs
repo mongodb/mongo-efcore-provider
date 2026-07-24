@@ -91,11 +91,13 @@ internal sealed class MongoUnwindSource
     public bool WholeElement { get; set; }
 
     /// <summary>
-    /// An inner-element-only user filter (<c>o.Refs.Where(r =&gt; r.Total &gt; 100)</c>) to apply to the
-    /// unwound element, already scope-prefixed with <see cref="InnerScopePath"/> (e.g. field refs read as
-    /// <c>_lookup_Refs.Total</c>). Set by <c>NativeSelectManyBinder.TryBindReferenceNavUnwind</c>; the lowerer
-    /// emits it as a <c>$match</c> immediately after the reference <c>$unwind</c> and before the
-    /// <c>$replaceRoot</c>/<c>$project</c>. <see langword="null"/> when the inner collection is unfiltered.
+    /// An inner-element-only user filter (<c>o.Refs.Where(r =&gt; r.Total &gt; 100)</c> /
+    /// <c>o.Items.Where(i =&gt; i.Price &gt; 100)</c>) to apply to the unwound element, already scope-prefixed with
+    /// <see cref="InnerScopePath"/> (reference: field refs read as <c>_lookup_Refs.Total</c>; owned:
+    /// <c>Items.Price</c>). Set by <c>NativeSelectManyBinder.TryBindReferenceNavUnwind</c> (reference) or
+    /// <c>TryBind</c>/<c>TryBindBareNavUnwind</c> (owned); the lowerer emits it as a <c>$match</c> immediately
+    /// after the <c>$unwind</c> and before the <c>$replaceRoot</c>/<c>$project</c> — the emission is
+    /// kind-agnostic. <see langword="null"/> when the inner collection is unfiltered.
     /// </summary>
     public MongoExpression? Filter { get; set; }
 }

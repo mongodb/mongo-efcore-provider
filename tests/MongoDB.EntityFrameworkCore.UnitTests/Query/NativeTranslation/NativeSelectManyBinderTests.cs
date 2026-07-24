@@ -84,6 +84,7 @@ public class NativeSelectManyBinderTests
         Assert.True(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
 
         Assert.Equal("Items", mongoQ.Select.UnwindSource!.InnerScopePath);
+        Assert.Null(mongoQ.Select.UnwindSource!.Filter);
         Assert.Collection(mongoQ.Select.Projection,
             p =>
             {
@@ -173,13 +174,80 @@ public class NativeSelectManyBinderTests
     }
 
     [Fact]
-    public void Inner_where_before_select_returns_false()
+    public void Inner_where_before_select_binds_with_filter()
     {
         var mongoQ = TestQuery();
         var collectionSelector = Build((Owner o) =>
             o.Items.AsQueryable().Where(i => i.Price > 0).Select(i => new { o.Name, i.Price }));
 
+        Assert.True(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
+
+        Assert.Equal("Items", mongoQ.Select.UnwindSource!.InnerScopePath);
+        // Filter field ref is prefixed with the owned unwind path.
+        var binary = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal("Items.Price", Assert.IsType<MongoFieldExpression>(binary.Left).ElementName);
+        // The projection still binds.
+        Assert.Equal(2, mongoQ.Select.Projection.Count);
+    }
+
+    [Fact]
+    public void Inner_stacked_where_ands_together_binds_with_filter()
+    {
+        var mongoQ = TestQuery();
+        var collectionSelector = Build((Owner o) =>
+            o.Items.AsQueryable().Where(i => i.Price > 0).Where(i => i.Name != "x").Select(i => new { o.Name, i.Price }));
+
+        Assert.True(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
+
+        var filter = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.AndAlso, filter.Operator);
+    }
+
+    [Fact]
+    public void Inner_where_correlated_beyond_outer_returns_false()
+    {
+        // A user filter referencing the OUTER parameter (o.Name) is correlated-beyond-outer — the
+        // ReferencesParameter guard rejects it BEFORE translation, so the whole bind declines with no mutation.
+        var mongoQ = TestQuery();
+        var collectionSelector = Build((Owner o) =>
+            o.Items.AsQueryable().Where(i => i.Name != o.Name).Select(i => new { o.Name, i.Price }));
+
         Assert.False(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
+        Assert.Null(mongoQ.Select.UnwindSource);
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void Bare_nav_with_inner_where_binds_with_filter()
+    {
+        var mongoQ = TestQuery();
+        var collectionSelector = Build((Owner o) => o.Items.AsQueryable().Where(i => i.Price > 0));
+
+        Assert.True(NativeSelectManyBinder.TryBindBareNavUnwind(mongoQ, collectionSelector));
+
+        Assert.Equal("Items", mongoQ.Select.UnwindSource!.InnerScopePath);
+        var binary = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal("Items.Price", Assert.IsType<MongoFieldExpression>(binary.Left).ElementName);
+    }
+
+    [Fact]
+    public void Bare_nav_without_where_binds_with_null_filter()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Owner, IQueryable<Item>>> collectionSelector = o => o.Items.AsQueryable();
+
+        Assert.True(NativeSelectManyBinder.TryBindBareNavUnwind(mongoQ, collectionSelector));
+        Assert.Equal("Items", mongoQ.Select.UnwindSource!.InnerScopePath);
+        Assert.Null(mongoQ.Select.UnwindSource!.Filter);
+    }
+
+    [Fact]
+    public void Bare_nav_with_correlated_beyond_outer_where_returns_false()
+    {
+        var mongoQ = TestQuery();
+        var collectionSelector = Build((Owner o) => o.Items.AsQueryable().Where(i => i.Name != o.Name));
+
+        Assert.False(NativeSelectManyBinder.TryBindBareNavUnwind(mongoQ, collectionSelector));
         Assert.Null(mongoQ.Select.UnwindSource);
     }
 

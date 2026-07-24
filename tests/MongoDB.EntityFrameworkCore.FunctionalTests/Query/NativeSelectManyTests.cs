@@ -509,6 +509,190 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             nativeOnlyDb.Entities.SelectMany(o => o.Items, (o, i) => new { X = i.Price * 2 }).ToList());
     }
 
+    [Fact]
+    public void Inner_select_form_filtered_goes_native()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Inner_select_form_filtered_goes_native));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m).Select(i => new { o.Name, i.Price }))
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m).Select(i => new { o.Name, i.Price }))
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        Assert.Equal(expected, result);
+        Assert.DoesNotContain(result, x => x.Price <= 6m); // "Thing" (5) excluded
+    }
+
+    [Fact]
+    public void Explicit_result_selector_form_filtered_goes_native()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Explicit_result_selector_form_filtered_goes_native));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { o.Name, i.Price })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Filtered_owned_selectmany_emits_match_after_unwind_before_project()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+            nameof(Filtered_owned_selectmany_emits_match_after_unwind_before_project), out var spyLogger);
+
+        _ = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { o.Name, i.Price })
+            .ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$unwind", message);
+        Assert.Contains("$match", message);
+        Assert.Contains("Items.Price", message); // filter is scope-prefixed with the owned unwind path
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_filtered_goes_native()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Bare_owned_whole_inner_element_filtered_goes_native));
+
+        var result = db.Entities.AsNoTracking()
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m))
+            .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
+
+        var expected = seed.SelectMany(o => o.Items.Where(i => i.Price > 6m))
+            .Select(i => i.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(expected, result);
+        Assert.DoesNotContain("Thing", result); // Price 5 excluded
+    }
+
+    [Fact]
+    public void Filtered_owned_stacked_where_ands_together_goes_native()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Filtered_owned_stacked_where_ands_together_goes_native));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m).Where(i => i.Name != "Gadget"), (o, i) => new { o.Name, i.Price })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m && i.Name != "Gadget"), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Filtered_owned_excluding_all_children_contributes_no_rows()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Filtered_owned_excluding_all_children_contributes_no_rows));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => i.Name == "nonexistent"), (o, i) => new { o.Name, i.Price })
+            .ToList();
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Filtered_owned_composes_with_parametrized_outer_predicate()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Filtered_owned_composes_with_parametrized_outer_predicate));
+
+        var ownerName = "Alice";
+        var result = db.Entities
+            .Where(o => o.Name == ownerName)
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { o.Name, i.Price })
+            .AsEnumerable().OrderBy(x => x.Price).ToList();
+
+        var expected = seed.Where(o => o.Name == ownerName)
+            .SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Price).ToList();
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Filtered_owned_correlated_beyond_outer_hard_fails_in_every_mode()
+    {
+        // A filter referencing the OUTER entity (i.Name != o.Name) is correlated-beyond-outer — declined by the
+        // ReferencesParameter guard. TryBind/TryBindBareNavUnwind return false, TranslateSelectMany returns null,
+        // and (no driver-LINQ oracle for a filtered owned SelectMany) it hard-fails in every mode.
+        var seed = SeedOwners();
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Filtered_owned_correlated_beyond_outer_hard_fails_in_every_mode) + mode);
+            Assert.ThrowsAny<Exception>(() =>
+                db.Entities.SelectMany(o => o.Items.Where(i => i.Name != o.Name), (o, i) => new { o.Name, i.Price }).ToList());
+        }
+    }
+
+    [Fact]
+    public void Filtered_owned_computed_operator_hard_fails_in_every_mode()
+    {
+        // A filter using an operator the native translator does not support (string.ToUpper) declines the
+        // ordinary way (inner translator returns false). Same no-oracle hard-fail in every mode.
+        var seed = SeedOwners();
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Filtered_owned_computed_operator_hard_fails_in_every_mode) + mode);
+            Assert.ThrowsAny<Exception>(() =>
+                db.Entities.SelectMany(o => o.Items.Where(i => i.Name.ToUpper() == "WIDGET"), (o, i) => new { o.Name, i.Price }).ToList());
+        }
+    }
+
+    [Fact]
+    public void Filtered_owned_computed_projection_leaf_falls_back_gracefully_except_under_NativeOnly()
+    {
+        // A FILTERED owned SelectMany whose trailing projection has a COMPUTED, INNER-ONLY leaf (i.Price * 2):
+        // the bare-nav bind succeeds and sets UnwindSource+Filter, but the separate trailing
+        // TryBindTransparentIdentifierProjection rejects the computed leaf -> MarkNotNativelyRepresentable() ->
+        // driver-LINQ fallback. Unlike the SUPPORTED filtered shapes (whose projection references the OUTER
+        // entity, e.g. new { o.Name, i.Price } — a cross-scope owner flatten the driver's LINQ v3 cannot
+        // translate, hence NativeOnly-only verification there), this projection reads ONLY the inner element, so
+        // the driver CAN translate the flattened Items.Where(...).Select(i => i.Price * 2): Native/DriverLinq fall
+        // back and return the CORRECT computed values, and only NativeOnly (which forbids the fallback) throws.
+        // The determinant of a driver oracle for a filtered owned SelectMany is the PROJECTION (outer-referencing
+        // vs inner-only), not the presence of the inner Where.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2 })
+            .OrderBy(r => r.X).ToList();
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Filtered_owned_computed_projection_leaf_falls_back_gracefully_except_under_NativeOnly) + mode);
+
+            var result = db.Entities.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2 })
+                .AsEnumerable().OrderBy(r => r.X).ToList();
+            Assert.Equal(expected, result);
+        }
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Filtered_owned_computed_projection_leaf_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
+
+        Assert.ThrowsAny<Exception>(() =>
+            nativeOnlyDb.Entities.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2 }).ToList());
+    }
+
     private class RefOwner
     {
         public ObjectId Id { get; set; }
