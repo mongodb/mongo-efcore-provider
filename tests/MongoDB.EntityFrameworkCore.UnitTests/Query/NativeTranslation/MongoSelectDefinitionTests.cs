@@ -182,4 +182,72 @@ public class MongoSelectDefinitionTests
 
         Assert.Equal(NativeRoute.Fallback, select.Route);
     }
+
+    // ── UnwindSources chain (EF-347 nested-reference slice) ─────────────────────────
+
+    [Fact]
+    public void New_select_has_no_unwind_sources_and_null_UnwindSource_shim()
+    {
+        var select = new MongoSelectDefinition();
+
+        Assert.Empty(select.UnwindSources);
+        Assert.Null(select.UnwindSource);
+        Assert.False(select.HasTerminalOperator);
+    }
+
+    [Fact]
+    public void AddUnwindSource_appends_and_UnwindSource_shim_reads_the_last_one()
+    {
+        var select = new MongoSelectDefinition();
+        var first = MongoUnwindSource.Owned("Items", innerEntityType: null!);
+        var second = MongoUnwindSource.Reference("_lookup_Leaves", innerEntityType: null!, lookup: null!);
+
+        select.AddUnwindSource(first);
+        Assert.Same(first, select.UnwindSource); // single source: shim == that source
+        Assert.True(select.HasTerminalOperator);
+
+        select.AddUnwindSource(second);
+        Assert.Equal(2, select.UnwindSources.Count);
+        Assert.Same(first, select.UnwindSources[0]);
+        Assert.Same(second, select.UnwindSources[1]);
+        Assert.Same(second, select.UnwindSource); // shim now reads the LAST source
+    }
+
+    [Fact]
+    public void IsSingleReferenceUnwindTerminalOnly_true_for_exactly_one_reference_source()
+    {
+        var select = new MongoSelectDefinition();
+        select.AddUnwindSource(MongoUnwindSource.Reference("_lookup_Mids", innerEntityType: null!, lookup: null!));
+
+        Assert.True(select.IsSingleReferenceUnwindTerminalOnly);
+    }
+
+    [Fact]
+    public void IsSingleReferenceUnwindTerminalOnly_false_for_owned_source()
+    {
+        var select = new MongoSelectDefinition();
+        select.AddUnwindSource(MongoUnwindSource.Owned("Items", innerEntityType: null!));
+
+        Assert.False(select.IsSingleReferenceUnwindTerminalOnly);
+    }
+
+    [Fact]
+    public void IsSingleReferenceUnwindTerminalOnly_false_once_two_sources_are_chained()
+    {
+        var select = new MongoSelectDefinition();
+        select.AddUnwindSource(MongoUnwindSource.Reference("_lookup_Mids", innerEntityType: null!, lookup: null!));
+        select.AddUnwindSource(MongoUnwindSource.Reference("_lookup_Leaves", innerEntityType: null!, lookup: null!));
+
+        Assert.False(select.IsSingleReferenceUnwindTerminalOnly);
+    }
+
+    [Fact]
+    public void IsSingleReferenceUnwindTerminalOnly_false_when_a_group_is_also_set()
+    {
+        var select = new MongoSelectDefinition();
+        select.AddUnwindSource(MongoUnwindSource.Reference("_lookup_Mids", innerEntityType: null!, lookup: null!));
+        select.IsGroupBy = true;
+
+        Assert.False(select.IsSingleReferenceUnwindTerminalOnly);
+    }
 }

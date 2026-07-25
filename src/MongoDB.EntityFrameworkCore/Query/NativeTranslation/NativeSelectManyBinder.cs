@@ -115,7 +115,7 @@ internal static class NativeSelectManyBinder
 
         var unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
         unwind.Filter = filter;
-        mongoQ.Select.UnwindSource = unwind;
+        mongoQ.Select.AddUnwindSource(unwind);
         foreach (var p in projections)
             mongoQ.Select.AddProjection(p);
         return true;
@@ -153,7 +153,7 @@ internal static class NativeSelectManyBinder
 
         var unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
         unwind.Filter = filter;
-        mongoQ.Select.UnwindSource = unwind;
+        mongoQ.Select.AddUnwindSource(unwind);
         return true;
     }
 
@@ -261,8 +261,98 @@ internal static class NativeSelectManyBinder
         mongoQ.AddLookup(lookup);
         var unwind = MongoUnwindSource.Reference(scope, navigation.TargetEntityType, lookup);
         unwind.Filter = filter;
-        mongoQ.Select.UnwindSource = unwind;
+        mongoQ.Select.AddUnwindSource(unwind);
         return true;
+    }
+
+    /// <summary>
+    /// Binds the SECOND level of a nested (2-level) cross-collection reference <c>SelectMany</c> (EF-347) —
+    /// <c>from o in q from m in o.Mids from l in m.Leaves select ...</c>. Spike-confirmed
+    /// (<c>.superpowers/sdd/EF-347-nested-ref-spike.md</c>): EF's nav-expansion produces this as a SECOND,
+    /// sequentially-chained <c>Queryable.Where(EntityQueryRootExpression&lt;Leaf&gt;, l => ti.Inner.Id ==
+    /// l.MidId)</c> correlated subquery — structurally identical to the single-level reference-SelectMany
+    /// shape <see cref="TryBindReferenceNavUnwind"/> already parses, except the correlation's outer-key side
+    /// is a TRANSPARENT-IDENTIFIER-ROOTED member access <c>ti.Inner.&lt;pk&gt;</c> (<c>ti</c> is this
+    /// SelectMany's own outer parameter, bound by nav-expansion to level 1's <c>TransparentIdentifier(Outer,
+    /// Inner)</c> result; <c>.Inner</c> is the level-1 unwound element) rather than a bare parameter. Rather
+    /// than teach <see cref="NativeCorrelationMatcher"/> a new shape, this rewrites every <c>ti.Inner</c>
+    /// occurrence in the predicate onto a synthetic parameter of the level-1 target entity type first, then
+    /// reuses <see cref="NativeCorrelationMatcher.TryMatchCorrelatedCollection"/> completely UNCHANGED —
+    /// identical to how the single-level binder resolves its own FK correlation, just fed a pre-rewritten
+    /// predicate.
+    /// <para>
+    /// Requires the caller to have already confirmed exactly one prior REFERENCE unwind source
+    /// (<see cref="MongoSelectDefinition.IsSingleReferenceUnwindTerminalOnly"/> — see the QMTEV carve-out).
+    /// Resolves the navigation OFF that source's <see cref="MongoUnwindSource.InnerEntityType"/> (the level-1
+    /// target, e.g. Mid), registers a SECOND <c>ForceUnwind</c> <see cref="LookupExpression"/> whose
+    /// <see cref="LookupExpression.LocalField"/> is overridden to be scoped under the level-1 source's own
+    /// <see cref="MongoUnwindSource.InnerScopePath"/> (e.g. <c>_lookup_Mids._id</c> — the existing
+    /// lookup-dependency sort in <see cref="MongoQueryExpression.GetPendingLookups"/> already orders such a
+    /// transitive lookup after the one it depends on, so no lowering change is needed), and appends a second
+    /// <see cref="MongoUnwindSource"/>. No partial mutation on decline.
+    /// </para>
+    /// <para>
+    /// Unfiltered only, matching this slice's scope: unlike <see cref="TryBindReferenceNavUnwind"/> this does
+    /// NOT peel outer <c>Where</c> layers — an inner filter at level 2 nav-expands to an outer <c>Where</c>
+    /// wrapping the FK-correlation <c>Where</c>, which does not match the single-<c>Where</c> shape checked
+    /// here, so a filtered level 2 declines structurally (out of scope, hard-fails, exactly as intended).
+    /// </para>
+    /// </summary>
+    internal static bool TryBindNestedReferenceNavUnwind(MongoQueryExpression mongoQ, LambdaExpression collectionSelector)
+    {
+        var sources = mongoQ.Select.UnwindSources;
+        if (sources.Count != 1 || sources[0].Kind != MongoUnwindSourceKind.Reference)
+            return false;
+        var level1Source = sources[0];
+
+        var ti = collectionSelector.Parameters[0];
+        var body = UnwrapAsQueryable(collectionSelector.Body);
+
+        if (body is not MethodCallExpression
+            {
+                Method: { Name: nameof(System.Linq.Queryable.Where), DeclaringType: var whereDecl },
+                Arguments: [EntityQueryRootExpression root, var predicateArg]
+            }
+            || whereDecl != typeof(System.Linq.Queryable))
+            return false;
+
+        var predicate = predicateArg.UnwrapLambdaFromQuote();
+        if (predicate.Parameters.Count != 1)
+            return false;
+
+        // Rewrite every `ti.Inner` occurrence onto a synthetic parameter of the level-1 target entity type
+        // (e.g. Mid), so the existing single-level matcher (which expects a bare-parameter-rooted outer side)
+        // recognizes the correlation unchanged.
+        var level1Param = Expression.Parameter(level1Source.InnerEntityType.ClrType, "l1");
+        var rewritten = new TransparentIdentifierInnerRewriter(ti, level1Param).Visit(predicate.Body);
+
+        if (!NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                rewritten, level1Source.InnerEntityType, level1Param, root.EntityType, requireEmbedded: false, out var navigation))
+            return false;
+
+        var scope2 = LookupExpression.GetLookupAlias(navigation);
+        var lookup2 = new LookupExpression(navigation, forceUnwind: true);
+        lookup2.LocalField = level1Source.InnerScopePath + "." + lookup2.LocalField;
+        mongoQ.AddLookup(lookup2);
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Reference(scope2, navigation.TargetEntityType, lookup2));
+        return true;
+    }
+
+    /// <summary>
+    /// Rewrites every <c>tiParam.Inner</c> occurrence (a <see cref="MemberExpression"/> whose <c>Expression</c>
+    /// is exactly <paramref name="tiParam"/> and whose member name is <c>"Inner"</c>) onto
+    /// <paramref name="replacement"/>. Used by <see cref="TryBindNestedReferenceNavUnwind"/> to translate the
+    /// level-2 correlation's transparent-identifier-rooted outer side (<c>ti.Inner.&lt;pk&gt;</c>) into a plain
+    /// bare-parameter-rooted member access the existing <see cref="NativeCorrelationMatcher"/> already
+    /// recognizes.
+    /// </summary>
+    private sealed class TransparentIdentifierInnerRewriter(ParameterExpression tiParam, ParameterExpression replacement)
+        : ExpressionVisitor
+    {
+        protected override Expression VisitMember(MemberExpression node)
+            => node.Expression == tiParam && node.Member.Name == "Inner"
+                ? replacement
+                : base.VisitMember(node);
     }
 
     /// <summary>
@@ -417,7 +507,8 @@ internal static class NativeSelectManyBinder
     /// </remarks>
     internal static bool TryBindTransparentIdentifierProjection(MongoQueryExpression mongoQ, LambdaExpression selector)
     {
-        if (mongoQ.Select.UnwindSource is not { } unwind || mongoQ.Select.Projection.Count > 0)
+        var sources = mongoQ.Select.UnwindSources;
+        if (sources.Count == 0 || mongoQ.Select.Projection.Count > 0)
             return false;
         if (selector.Parameters.Count != 1)
             return false;
@@ -427,28 +518,33 @@ internal static class NativeSelectManyBinder
             return false;
 
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
-        var outerTranslator = new MongoExpressionTranslator(outerEntityType);
-        var innerTranslator = new MongoExpressionTranslator(unwind.InnerEntityType);
-        var outerParam = Expression.Parameter(outerEntityType.ClrType, "o");
-        var innerParam = Expression.Parameter(unwind.InnerEntityType.ClrType, "i");
+        // One translator (+ synthetic re-rooting parameter) per scope: index 0 = the query root/owner, index
+        // k (1..sources.Count) = UnwindSources[k-1] (the k-th SelectMany level's own unwound element).
+        var translators = new MongoExpressionTranslator[sources.Count + 1];
+        var scopeParams = new ParameterExpression[sources.Count + 1];
+        translators[0] = new MongoExpressionTranslator(outerEntityType);
+        scopeParams[0] = Expression.Parameter(outerEntityType.ClrType, "s0");
+        for (var i = 0; i < sources.Count; i++)
+        {
+            translators[i + 1] = new MongoExpressionTranslator(sources[i].InnerEntityType);
+            scopeParams[i + 1] = Expression.Parameter(sources[i].InnerEntityType.ClrType, "s" + (i + 1));
+        }
+
         var projections = new List<MongoProjection>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var (alias, argExpr) in members)
         {
-            // Leaf must be ti.<scope>.<member> — a member access whose target is ti.Outer or ti.Inner.
-            if (argExpr is not MemberExpression { Expression: MemberExpression scopeAccess } member
-                || scopeAccess.Expression != ti
-                || scopeAccess.Member.Name is not ("Outer" or "Inner"))
+            if (argExpr is not MemberExpression member
+                || !TryResolveScopeDepth(member.Expression, ti, sources.Count, out var scopeIndex))
                 return false;
 
-            // Re-root the leaf's member onto a synthetic parameter of the scope's entity CLR type: the
-            // translator only accepts a MemberExpression whose Expression is a bare ParameterExpression.
-            var isInner = scopeAccess.Member.Name == "Inner";
-            var rerooted = Expression.MakeMemberAccess(isInner ? innerParam : outerParam, member.Member);
-
-            if (!TryTranslateScopedField(outerTranslator, innerTranslator, unwind.InnerScopePath, rerooted, isInner, out var field))
+            var rerooted = Expression.MakeMemberAccess(scopeParams[scopeIndex], member.Member);
+            if (!translators[scopeIndex].TryTranslateField(rerooted, out var field))
                 return false;
+
+            if (scopeIndex > 0)
+                field = new MongoFieldExpression(field.Property, sources[scopeIndex - 1].InnerScopePath + "." + field.ElementName);
 
             if (!seen.Add(alias)) return false;
             projections.Add(new MongoProjection(alias, field));
@@ -457,6 +553,51 @@ internal static class NativeSelectManyBinder
         foreach (var p in projections)
             mongoQ.Select.AddProjection(p);
         return true;
+    }
+
+    /// <summary>
+    /// Peels a chain of <c>ti.Outer</c>/<c>ti.Outer.Outer</c>/…/<c>ti.Inner</c> member accesses down to the
+    /// bare <paramref name="ti"/> parameter, and resolves which scope it refers to (EF-347 nested-reference
+    /// slice — generalizes the 2-scope <c>ti.Outer</c>/<c>ti.Inner</c> shape to N scopes). Given
+    /// <paramref name="sourceCount"/> chained unwind sources, the doubly(-or-more)-nested transparent
+    /// identifier's <c>k</c>-th level's own element is reached via <c>(sourceCount - k)</c> leading
+    /// <c>"Outer"</c> hops followed by exactly one trailing <c>"Inner"</c> hop; the query root (owner) is
+    /// reached via exactly <paramref name="sourceCount"/> <c>"Outer"</c> hops and no <c>"Inner"</c> at all.
+    /// <paramref name="scopeIndex"/> is <c>0</c> for the root, or <c>k</c> (1-based) for
+    /// <c>UnwindSources[k-1]</c>. Returns <see langword="false"/> — declining cleanly — for any chain that
+    /// does not terminate exactly at <paramref name="ti"/>, is empty, exceeds <paramref name="sourceCount"/>
+    /// hops, or does not match either of the two valid shapes above (e.g. a would-be 3rd-level leaf under a
+    /// 2-source chain, or a bare scope-object selection with no trailing member).
+    /// </summary>
+    private static bool TryResolveScopeDepth(Expression? scopeAccess, ParameterExpression ti, int sourceCount, out int scopeIndex)
+    {
+        scopeIndex = -1;
+        var path = new List<string>();
+        var current = scopeAccess;
+        while (current is MemberExpression { Member.Name: "Outer" or "Inner" } hop)
+        {
+            path.Add(hop.Member.Name);
+            current = hop.Expression;
+        }
+
+        if (current != ti || path.Count == 0 || path.Count > sourceCount)
+            return false;
+
+        path.Reverse(); // now ordered outward-from-ti: path[0] is the first hop off ti.
+
+        if (path[^1] == "Inner" && path.Take(path.Count - 1).All(h => h == "Outer"))
+        {
+            scopeIndex = sourceCount - path.Count + 1;
+            return true;
+        }
+
+        if (path.Count == sourceCount && path.All(h => h == "Outer"))
+        {
+            scopeIndex = 0;
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

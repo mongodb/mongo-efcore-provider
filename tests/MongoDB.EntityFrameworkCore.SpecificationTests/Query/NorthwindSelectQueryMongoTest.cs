@@ -982,8 +982,17 @@ Customers.
 
     public override async Task Multiple_select_many_with_predicate(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Multiple_select_many_with_predicate(async));
+        // Fails: Subquery selection EF-X001 — a two-level nested reference SelectMany
+        // (from c ... from o in c.Orders from od in o.OrderDetails) carrying an inner predicate AND a
+        // whole-outer `select c` result: out of scope for the EF-347 nested-reference slice (which covers
+        // only UNFILTERED two-level nesting with a projected / leaf result). It still declines cleanly, but
+        // now that the nested-reference carve-out binds BOTH levels before the whole-outer filtered shape
+        // falls back, the decline surfaces as the driver-LINQ bridge's cross-DbSet guard
+        // (InvalidOperationException, "Unsupported cross-DbSet query …") rather than EF's generic
+        // TranslationFailed message. The exact decline message of an unsupported shape is not part of the
+        // contract, so assert via the lenient translation-failure helper — which still turns red on any
+        // wrong-data (xUnit assertion) failure, so a future silent-wrong-data regression is not masked.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Multiple_select_many_with_predicate(async));
 
         AssertMql();
     }

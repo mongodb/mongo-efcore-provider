@@ -306,7 +306,7 @@ public class MongoSelectLowererTests
     public void UnwindSource_lowers_to_unwind_then_project_stage_in_order()
     {
         var query = TestSelect();
-        query.Select.UnwindSource = MongoUnwindSource.Owned("Items", innerEntityType: null!);
+        query.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", innerEntityType: null!));
         query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
         query.Select.AddProjection(new MongoProjection("Price", new MongoFieldExpression(property: null!, elementName: "Items.Price")));
 
@@ -334,7 +334,7 @@ public class MongoSelectLowererTests
         var query = TestSelect();
         var unwind = MongoUnwindSource.Owned("Items", innerEntityType: null!);
         unwind.WholeElement = true;
-        query.Select.UnwindSource = unwind;
+        query.Select.AddUnwindSource(unwind);
 
         var stages = new MongoSelectLowerer().Lower(query);
 
@@ -359,8 +359,8 @@ public class MongoSelectLowererTests
         var (query, navigation) = TestReferenceSelect();
         var lookup = new LookupExpression(navigation, forceUnwind: true);
         query.AddLookup(lookup);
-        query.Select.UnwindSource = MongoUnwindSource.Reference(
-            LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup);
+        query.Select.AddUnwindSource(MongoUnwindSource.Reference(
+            LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup));
         query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
         query.Select.AddProjection(new MongoProjection("Total", new MongoFieldExpression(property: null!, elementName: "_lookup_Children.Total")));
 
@@ -398,7 +398,7 @@ public class MongoSelectLowererTests
         var unwind = MongoUnwindSource.Reference(
             LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup);
         unwind.WholeElement = true;
-        query.Select.UnwindSource = unwind;
+        query.Select.AddUnwindSource(unwind);
 
         var stages = new MongoSelectLowerer().Lower(query);
 
@@ -435,7 +435,7 @@ public class MongoSelectLowererTests
             MongoBinaryOperator.GreaterThan,
             new MongoFieldExpression(property: null!, elementName: "_lookup_Children.Total"),
             new MongoConstantExpression(100, forSerialization: null));
-        query.Select.UnwindSource = unwind;
+        query.Select.AddUnwindSource(unwind);
 
         var stages = new MongoSelectLowerer().Lower(query).ToList();
 
@@ -456,7 +456,7 @@ public class MongoSelectLowererTests
         var query = TestSelect();
         var unwind = MongoUnwindSource.Owned("Items", innerEntityType: null!);
         unwind.Filter = new MongoConstantExpression(true, null);
-        query.Select.UnwindSource = unwind;
+        query.Select.AddUnwindSource(unwind);
         query.Select.AddProjection(new MongoProjection("X", new MongoConstantExpression(1, null)));
 
         var stages = new MongoSelectLowerer().Lower(query).ToList();
@@ -475,7 +475,7 @@ public class MongoSelectLowererTests
         var unwind = MongoUnwindSource.Owned("Items", innerEntityType: null!);
         unwind.WholeElement = true;
         unwind.Filter = new MongoConstantExpression(true, null);
-        query.Select.UnwindSource = unwind;
+        query.Select.AddUnwindSource(unwind);
 
         var stages = new MongoSelectLowerer().Lower(query).ToList();
 

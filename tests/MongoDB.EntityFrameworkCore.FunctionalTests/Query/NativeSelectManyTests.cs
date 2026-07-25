@@ -994,6 +994,349 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         return new RefOwnerItemDbContext(database, ownersCollection, refsCollection, mode, loggerFactory);
     }
 
+    // ── Nested (2-level) cross-collection reference SelectMany fixture (EF-347 nested-reference) ──────────
+    // NestOwner --(Mids, FK OwnerId)--> NestMid --(Leaves, FK MidId)--> NestLeaf. All cross-collection
+    // (ToCollection) references, mirroring RefOwnerItemDbContext's pattern one level deeper.
+
+    private class NestOwner
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public List<NestMid> Mids { get; set; } = [];
+    }
+
+    private class NestMid
+    {
+        public ObjectId Id { get; set; }
+        public string Tag { get; set; } = "";
+        public ObjectId? OwnerId { get; set; }
+        public NestOwner? Owner { get; set; }
+        public List<NestLeaf> Leaves { get; set; } = [];
+    }
+
+    private class NestLeaf
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public ObjectId? MidId { get; set; }
+        public NestMid? Mid { get; set; }
+        public List<NestGrandLeaf> GrandLeaves { get; set; } = [];
+    }
+
+    private class NestGrandLeaf
+    {
+        public ObjectId Id { get; set; }
+        public string Detail { get; set; } = "";
+        public ObjectId? LeafId { get; set; }
+        public NestLeaf? Leaf { get; set; }
+    }
+
+    private sealed class NestDbContext : DbContext
+    {
+        private readonly string _ownersCollection;
+        private readonly string _midsCollection;
+        private readonly string _leavesCollection;
+        private readonly string _grandLeavesCollection;
+
+        public DbSet<NestOwner> Owners { get; set; } = null!;
+        public DbSet<NestMid> Mids { get; set; } = null!;
+        public DbSet<NestLeaf> Leaves { get; set; } = null!;
+        public DbSet<NestGrandLeaf> GrandLeaves { get; set; } = null!;
+
+        public NestDbContext(
+            TemporaryDatabaseFixture database, string ownersCollection, string midsCollection, string leavesCollection,
+            string grandLeavesCollection, MongoQueryMode mode)
+            : base(BuildOptions(database, mode, null))
+        {
+            _ownersCollection = ownersCollection;
+            _midsCollection = midsCollection;
+            _leavesCollection = leavesCollection;
+            _grandLeavesCollection = grandLeavesCollection;
+        }
+
+        public NestDbContext(
+            TemporaryDatabaseFixture database, string ownersCollection, string midsCollection, string leavesCollection,
+            string grandLeavesCollection, MongoQueryMode mode, ILoggerFactory loggerFactory)
+            : base(BuildOptions(database, mode, loggerFactory))
+        {
+            _ownersCollection = ownersCollection;
+            _midsCollection = midsCollection;
+            _leavesCollection = leavesCollection;
+            _grandLeavesCollection = grandLeavesCollection;
+        }
+
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+        {
+            var optionsBuilder = new DbContextOptionsBuilder<NestDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+            if (loggerFactory != null)
+                optionsBuilder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            return optionsBuilder.Options;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<NestOwner>(b =>
+            {
+                b.ToCollection(_ownersCollection);
+                b.HasMany(o => o.Mids).WithOne(m => m.Owner).HasForeignKey(m => m.OwnerId);
+            });
+            modelBuilder.Entity<NestMid>(b =>
+            {
+                b.ToCollection(_midsCollection);
+                b.HasMany(m => m.Leaves).WithOne(l => l.Mid).HasForeignKey(l => l.MidId);
+            });
+            modelBuilder.Entity<NestLeaf>(b =>
+            {
+                b.ToCollection(_leavesCollection);
+                b.HasMany(l => l.GrandLeaves).WithOne(g => g.Leaf).HasForeignKey(g => g.LeafId);
+            });
+            modelBuilder.Entity<NestGrandLeaf>(b => b.ToCollection(_grandLeavesCollection));
+        }
+
+        private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
+        }
+    }
+
+    /// <summary>
+    /// Seeds a discriminating 3-level dataset: OwnerA (2 Mids, each with Leaves — a genuine multi-row join),
+    /// OwnerB (0 Mids — proves an owner with no children contributes no rows), OwnerC (1 Mid with 0 Leaves —
+    /// proves a MID with no leaves contributes no rows even though its owner has a mid). Expected joined
+    /// (Owner,Mid,Leaf) triples: (OwnerA,A1,Red), (OwnerA,A1,Blue), (OwnerA,A2,Green) — exactly 3 rows.
+    /// </summary>
+    private static (NestOwner[] Owners, NestMid[] Mids, NestLeaf[] Leaves) SeedNestData()
+    {
+        var ownerA = new NestOwner { Id = ObjectId.GenerateNewId(), Name = "OwnerA" };
+        var ownerB = new NestOwner { Id = ObjectId.GenerateNewId(), Name = "OwnerB" }; // no mids
+        var ownerC = new NestOwner { Id = ObjectId.GenerateNewId(), Name = "OwnerC" };
+
+        var midA1 = new NestMid { Id = ObjectId.GenerateNewId(), Tag = "A1", OwnerId = ownerA.Id };
+        var midA2 = new NestMid { Id = ObjectId.GenerateNewId(), Tag = "A2", OwnerId = ownerA.Id };
+        var midC1 = new NestMid { Id = ObjectId.GenerateNewId(), Tag = "C1", OwnerId = ownerC.Id }; // no leaves
+
+        var leafA1a = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Red", MidId = midA1.Id };
+        var leafA1b = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Blue", MidId = midA1.Id };
+        var leafA2a = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Green", MidId = midA2.Id };
+
+        return (
+            [ownerA, ownerB, ownerC],
+            [midA1, midA2, midC1],
+            [leafA1a, leafA1b, leafA2a]);
+    }
+
+    private (string Owners, string Mids, string Leaves, string GrandLeaves) NewNestCollectionNames(string name)
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        return (
+            TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Owners") + suffix,
+            TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Mids") + suffix,
+            TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Leaves") + suffix,
+            TemporaryDatabaseFixtureBase.CreateCollectionName(name + "GrandLeaves") + suffix);
+    }
+
+    private void SeedNestContext(
+        string ownersCollection, string midsCollection, string leavesCollection, string grandLeavesCollection,
+        NestOwner[] owners, NestMid[] mids, NestLeaf[] leaves)
+    {
+        using var seedDb = new NestDbContext(
+            database, ownersCollection, midsCollection, leavesCollection, grandLeavesCollection, MongoQueryMode.Native);
+        seedDb.Owners.AddRange(owners);
+        seedDb.Mids.AddRange(mids);
+        seedDb.Leaves.AddRange(leaves);
+        // No NestGrandLeaf rows: the 3-level decline test below fails at translation time, before any data is
+        // read, so the collection can stay empty.
+        seedDb.SaveChanges();
+    }
+
+    private NestDbContext CreateNestContext(
+        MongoQueryMode mode, string name, out NestOwner[] owners, out NestMid[] mids, out NestLeaf[] leaves,
+        (NestOwner[] Owners, NestMid[] Mids, NestLeaf[] Leaves)? seed = null)
+    {
+        var (ownersCollection, midsCollection, leavesCollection, grandLeavesCollection) = NewNestCollectionNames(name);
+        (owners, mids, leaves) = seed ?? SeedNestData();
+        SeedNestContext(ownersCollection, midsCollection, leavesCollection, grandLeavesCollection, owners, mids, leaves);
+        return new NestDbContext(database, ownersCollection, midsCollection, leavesCollection, grandLeavesCollection, mode);
+    }
+
+    private NestDbContext CreateNestContextWithLogging(
+        MongoQueryMode mode, string name, out NestOwner[] owners, out NestMid[] mids, out NestLeaf[] leaves,
+        out SpyLoggerProvider spyLogger)
+    {
+        var (ownersCollection, midsCollection, leavesCollection, grandLeavesCollection) = NewNestCollectionNames(name);
+        (owners, mids, leaves) = SeedNestData();
+        SeedNestContext(ownersCollection, midsCollection, leavesCollection, grandLeavesCollection, owners, mids, leaves);
+
+        var (loggerFactory, provider) = SpyLoggerProvider.Create();
+        spyLogger = provider;
+        return new NestDbContext(database, ownersCollection, midsCollection, leavesCollection, grandLeavesCollection, mode, loggerFactory);
+    }
+
+    [Fact]
+    public void Nested_reference_selectmany_projected_goes_native()
+    {
+        // No driver-LINQ oracle (cross-collection SelectMany), so proven via Native + NativeOnly succeeding
+        // plus an expected in-memory-computed result set — no DriverLinq iteration, no parity assertion.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateNestContext(mode,
+                nameof(Nested_reference_selectmany_projected_goes_native) + mode, out var owners, out var mids, out var leaves);
+
+            var result = (
+                from o in db.Owners
+                from m in o.Mids
+                from l in m.Leaves
+                select new { o.Name, m.Tag, l.Label })
+                .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Tag).ThenBy(x => x.Label).ToList();
+
+            var expected = (
+                from o in owners
+                from m in mids.Where(m => m.OwnerId == o.Id)
+                from l in leaves.Where(l => l.MidId == m.Id)
+                select new { o.Name, m.Tag, l.Label })
+                .OrderBy(x => x.Name).ThenBy(x => x.Tag).ThenBy(x => x.Label).ToList();
+
+            Assert.Equal(expected, result);
+            Assert.Equal(3, result.Count); // OwnerA/A1/Red, OwnerA/A1/Blue, OwnerA/A2/Green
+            Assert.DoesNotContain(result, x => x.Name == "OwnerB" || x.Name == "OwnerC");
+        }
+    }
+
+    [Fact]
+    public void Nested_reference_selectmany_bare_entity_goes_native()
+    {
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateNestContext(mode,
+                nameof(Nested_reference_selectmany_bare_entity_goes_native) + mode, out _, out _, out var leaves);
+
+            var result = (from o in db.Owners from m in o.Mids from l in m.Leaves select l)
+                .AsEnumerable().OrderBy(x => x.Label).ToList();
+
+            var expected = leaves.OrderBy(x => x.Label).Select(x => x.Label).ToList();
+
+            Assert.Equal(3, result.Count);
+            Assert.Equal(expected, result.Select(x => x.Label).ToList());
+            Assert.Equal(leaves.OrderBy(x => x.Label).Select(x => x.Id).ToList(), result.Select(x => x.Id).ToList());
+        }
+    }
+
+    [Fact]
+    public void Nested_reference_selectmany_emits_two_lookups_and_unwinds()
+    {
+        using var db = CreateNestContextWithLogging(MongoQueryMode.NativeOnly,
+            nameof(Nested_reference_selectmany_emits_two_lookups_and_unwinds), out _, out _, out _, out var spyLogger);
+
+        _ = (from o in db.Owners from m in o.Mids from l in m.Leaves select new { o.Name, m.Tag, l.Label })
+            .ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(message, "\\$lookup").Count);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(message, "\\$unwind").Count);
+        Assert.Contains("_lookup_Mids", message);
+        Assert.Contains("_lookup_Leaves", message);
+        Assert.Contains("_lookup_Mids._id", message); // level-2 localField, scoped under level 1's alias
+        Assert.Contains("$project", message);
+    }
+
+    [Fact]
+    public void Nested_reference_selectmany_composes_with_parametrized_outer_predicate()
+    {
+        // Bespoke seed (NOT the shared SeedNestData): TWO owners each contribute joined rows, so filtering
+        // on the outer predicate is genuinely discriminating — if the outer Where were dropped or
+        // mis-composed, the result would include Owner2's row too.
+        var owner1 = new NestOwner { Id = ObjectId.GenerateNewId(), Name = "Owner1" };
+        var owner2 = new NestOwner { Id = ObjectId.GenerateNewId(), Name = "Owner2" };
+        var mid1 = new NestMid { Id = ObjectId.GenerateNewId(), Tag = "Mid1", OwnerId = owner1.Id };
+        var mid2 = new NestMid { Id = ObjectId.GenerateNewId(), Tag = "Mid2", OwnerId = owner2.Id };
+        var leaf1 = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Leaf1", MidId = mid1.Id };
+        var leaf2 = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Leaf2", MidId = mid2.Id };
+        var seed = (Owners: new[] { owner1, owner2 }, Mids: new[] { mid1, mid2 }, Leaves: new[] { leaf1, leaf2 });
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateNestContext(mode,
+                nameof(Nested_reference_selectmany_composes_with_parametrized_outer_predicate) + mode,
+                out _, out _, out _, seed);
+            var excludedName = owner2.Name;
+
+            var result = (
+                from o in db.Owners
+                where o.Name != excludedName
+                from m in o.Mids
+                from l in m.Leaves
+                select new { o.Name, m.Tag, l.Label })
+                .AsEnumerable().OrderBy(x => x.Tag).ThenBy(x => x.Label).ToList();
+
+            var expected = (
+                from o in seed.Owners
+                where o.Name != excludedName
+                from m in seed.Mids.Where(m => m.OwnerId == o.Id)
+                from l in seed.Leaves.Where(l => l.MidId == m.Id)
+                select new { o.Name, m.Tag, l.Label })
+                .OrderBy(x => x.Tag).ThenBy(x => x.Label).ToList();
+
+            // Non-vacuous, strict subset: Owner1's row is present, Owner2's row (which the unfiltered query
+            // would include) is excluded.
+            Assert.Equal(expected, result);
+            Assert.NotEmpty(result);
+            Assert.Single(result);
+            Assert.DoesNotContain(result, x => x.Name == excludedName);
+            Assert.Contains(result, x => x.Name == owner1.Name && x.Tag == mid1.Tag && x.Label == leaf1.Label);
+        }
+    }
+
+    [Fact]
+    public void Nested_reference_selectmany_whole_outer_owner_result_still_declines_cleanly_in_every_mode()
+    {
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateNestContext(mode,
+                nameof(Nested_reference_selectmany_whole_outer_owner_result_still_declines_cleanly_in_every_mode) + mode,
+                out _, out _, out _);
+
+            Assert.ThrowsAny<Exception>(() =>
+                (from o in db.Owners from m in o.Mids from l in m.Leaves select o).ToList());
+        }
+    }
+
+    [Fact]
+    public void Nested_reference_selectmany_whole_outer_mid_result_still_declines_cleanly_in_every_mode()
+    {
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateNestContext(mode,
+                nameof(Nested_reference_selectmany_whole_outer_mid_result_still_declines_cleanly_in_every_mode) + mode,
+                out _, out _, out _);
+
+            Assert.ThrowsAny<Exception>(() =>
+                (from o in db.Owners from m in o.Mids from l in m.Leaves select m).ToList());
+        }
+    }
+
+    [Fact]
+    public void Nested_reference_selectmany_third_level_still_hard_fails_in_every_mode()
+    {
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateNestContext(mode,
+                nameof(Nested_reference_selectmany_third_level_still_hard_fails_in_every_mode) + mode,
+                out _, out _, out _);
+
+            Assert.ThrowsAny<Exception>(() =>
+                (from o in db.Owners
+                 from m in o.Mids
+                 from l in m.Leaves
+                 from g in l.GrandLeaves
+                 select new { o.Name, m.Tag, l.Label, g.Detail }).ToList());
+        }
+    }
+
     private class EagerParent
     {
         public ObjectId Id { get; set; }

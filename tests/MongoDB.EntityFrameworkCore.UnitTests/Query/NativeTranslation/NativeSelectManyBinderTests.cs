@@ -363,7 +363,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_binds_two_scope_projection()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
         Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, NameAndPriceSelector()));
 
@@ -386,7 +386,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_shared_member_name_resolves_by_scope_not_name()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
         var (ti, outer, inner) = TiScopes();
         var body = Expression.MemberInit(Expression.New(typeof(NamedProjected)),
@@ -404,6 +404,90 @@ public class NativeSelectManyBinderTests
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(innerP.Expression).ElementName);
     }
 
+    private class DoublyNestedTi
+    {
+        public TransparentIdentifier Outer { get; set; } = null!; // TI(Outer=Owner, Inner=Item) — level 1
+        public Tag Inner { get; set; } = null!;                   // level 2's own unwound element
+    }
+
+    private class TripleProjected
+    {
+        public string OwnerName { get; set; } = "";
+        public string ItemName { get; set; } = "";
+        public string TagLabel { get; set; } = "";
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_binds_three_scope_projection()
+    {
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+        var tagsNav = mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(Owner.Tags))!;
+        var tagLookup = new LookupExpression(tagsNav, forceUnwind: true);
+        mongoQ.Select.AddUnwindSource(
+            MongoUnwindSource.Reference(LookupExpression.GetLookupAlias(tagsNav), tagsNav.TargetEntityType, tagLookup));
+
+        var ti = Expression.Parameter(typeof(DoublyNestedTi), "ti");
+        var outerOuter = Expression.Property(Expression.Property(ti, nameof(DoublyNestedTi.Outer)), nameof(TransparentIdentifier.Outer));
+        var outerInner = Expression.Property(Expression.Property(ti, nameof(DoublyNestedTi.Outer)), nameof(TransparentIdentifier.Inner));
+        var inner = Expression.Property(ti, nameof(DoublyNestedTi.Inner));
+
+        var body = Expression.MemberInit(Expression.New(typeof(TripleProjected)),
+            Expression.Bind(typeof(TripleProjected).GetProperty(nameof(TripleProjected.OwnerName))!,
+                Expression.Property(outerOuter, nameof(Owner.Name))),
+            Expression.Bind(typeof(TripleProjected).GetProperty(nameof(TripleProjected.ItemName))!,
+                Expression.Property(outerInner, nameof(Item.Name))),
+            Expression.Bind(typeof(TripleProjected).GetProperty(nameof(TripleProjected.TagLabel))!,
+                Expression.Property(inner, nameof(Tag.Label))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+
+        var ownerP = mongoQ.Select.Projection.Single(p => p.Alias == "OwnerName");
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(ownerP.Expression).ElementName);
+        var itemP = mongoQ.Select.Projection.Single(p => p.Alias == "ItemName");
+        Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(itemP.Expression).ElementName);
+        var tagP = mongoQ.Select.Projection.Single(p => p.Alias == "TagLabel");
+        Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(tagP.Expression).ElementName);
+    }
+
+    // Wraps DoublyNestedTi one level further, so a chain 1 hop deeper than any valid 2-source shape can be
+    // constructed with real static types (ti3.Outer.Outer.Outer.Name — 3 "Outer" hops under a 2-source chain).
+    private class TripleNestedTi
+    {
+        public DoublyNestedTi Outer { get; set; } = null!;
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_chain_deeper_than_source_count_returns_false()
+    {
+        // ti3.Outer.Outer.Outer.Name — 3 "Outer" hops under a 2-source chain (a would-be 3rd-nesting-level
+        // leaf). TryResolveScopeDepth must reject path.Count > sourceCount before even checking the hop
+        // pattern. This is the unit-level proof of the same boundary Task 5's functional 3-level decline test
+        // exercises end-to-end (there, the shape never even reaches this binder — the QMTEV carve-out's own
+        // IsSingleReferenceUnwindTerminalOnly check already declines a 3rd chained SelectMany; this test
+        // isolates the projection-binder half of that boundary in case the two are ever exercised separately).
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+        var tagsNav = mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(Owner.Tags))!;
+        var tagLookup = new LookupExpression(tagsNav, forceUnwind: true);
+        mongoQ.Select.AddUnwindSource(
+            MongoUnwindSource.Reference(LookupExpression.GetLookupAlias(tagsNav), tagsNav.TargetEntityType, tagLookup));
+
+        var ti3 = Expression.Parameter(typeof(TripleNestedTi), "ti3");
+        var threeHops = Expression.Property(
+            Expression.Property(
+                Expression.Property(Expression.Property(ti3, nameof(TripleNestedTi.Outer)), nameof(DoublyNestedTi.Outer)),
+                nameof(TransparentIdentifier.Outer)),
+            nameof(Owner.Name));
+        var body = Expression.MemberInit(Expression.New(typeof(OtherScopeProjected)),
+            Expression.Bind(typeof(OtherScopeProjected).GetProperty(nameof(OtherScopeProjected.X))!, threeHops));
+        var selector = Expression.Lambda(body, ti3);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
     [Fact]
     public void TryBindTransparentIdentifierProjection_no_unwind_source_returns_false()
     {
@@ -417,7 +501,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_bare_scope_leaf_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
         var (ti, outer, _) = TiScopes();
         var body = Expression.MemberInit(Expression.New(typeof(EntityLeafProjected)),
@@ -432,7 +516,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_computed_leaf_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
         var (ti, _, inner) = TiScopes();
         var body = Expression.MemberInit(Expression.New(typeof(ComputedLeafProjected)),
@@ -448,7 +532,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_member_off_neither_scope_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
         var (ti, _, _) = TiScopes();
         var other = Expression.Property(ti, nameof(TransparentIdentifier.Other));
@@ -465,7 +549,7 @@ public class NativeSelectManyBinderTests
     public void TryBindTransparentIdentifierProjection_entity_valued_leaf_returns_false()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.UnwindSource = MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ));
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
         var (ti, outer, _) = TiScopes();
         var body = Expression.MemberInit(Expression.New(typeof(EntityValuedProjected)),
@@ -743,8 +827,8 @@ public class NativeSelectManyBinderTests
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var lookup = new LookupExpression(tagNav, forceUnwind: true);
-        mongoQ.Select.UnwindSource =
-            MongoUnwindSource.Reference(LookupExpression.GetLookupAlias(tagNav), tagNav.TargetEntityType, lookup);
+        mongoQ.Select.AddUnwindSource(
+            MongoUnwindSource.Reference(LookupExpression.GetLookupAlias(tagNav), tagNav.TargetEntityType, lookup));
 
         var ti = Expression.Parameter(typeof(TagTransparentIdentifier), "ti");
         var outer = Expression.Property(ti, nameof(TagTransparentIdentifier.Outer));
@@ -762,5 +846,170 @@ public class NativeSelectManyBinderTests
         Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(nameP.Expression).ElementName);
         var labelP = mongoQ.Select.Projection.Single(p => p.Alias == "Label");
         Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(labelP.Expression).ElementName);
+    }
+
+    // ── TryBindNestedReferenceNavUnwind: 2-level chained reference SelectMany (EF-347 nested-reference) ──
+    // Spike-confirmed (.superpowers/sdd/EF-347-nested-ref-spike.md): the SECOND SelectMany's collectionSelector
+    // is Queryable.Where(EntityQueryRootExpression<Leaf>, l => ti.Inner.Id == l.MidId) — the SAME correlated-
+    // subquery shape TryBindReferenceNavUnwind already parses, except the correlation's outer-key side is
+    // ti.Inner.<pk> (a transparent-identifier-rooted member chain), not a bare parameter.
+
+    private class NestedOwner
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public List<NestedMid> Mids { get; set; } = [];
+    }
+
+    private class NestedMid
+    {
+        public int Id { get; set; }
+        public string Tag { get; set; } = "";
+        public int OwnerId { get; set; }
+        public List<NestedLeaf> Leaves { get; set; } = [];
+    }
+
+    private class NestedLeaf
+    {
+        public int Id { get; set; }
+        public string Label { get; set; } = "";
+        public int MidId { get; set; }
+    }
+
+    private class OwnerMidTi
+    {
+        public NestedOwner Outer { get; set; } = null!;
+        public NestedMid Inner { get; set; } = null!;
+    }
+
+    private static MongoQueryExpression NestedTestQuery()
+    {
+        using var db = SingleEntityDbContext.Create<NestedOwner>(mb =>
+        {
+            mb.Entity<NestedMid>();
+            mb.Entity<NestedOwner>().HasMany(o => o.Mids).WithOne().HasForeignKey(m => m.OwnerId);
+            mb.Entity<NestedLeaf>();
+            mb.Entity<NestedMid>().HasMany(m => m.Leaves).WithOne().HasForeignKey(l => l.MidId);
+        });
+        var entityType = db.Model.FindEntityType(typeof(NestedOwner))!;
+        return new MongoQueryExpression(entityType);
+    }
+
+    // Simulates level 1 already having bound (TryBindReferenceNavUnwind, unmodified, run against o.Mids).
+    private static void BindLevel1(MongoQueryExpression mongoQ)
+    {
+        var midsNav = mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(NestedOwner.Mids))!;
+        var lookup = new LookupExpression(midsNav, forceUnwind: true);
+        mongoQ.AddLookup(lookup);
+        mongoQ.Select.AddUnwindSource(
+            MongoUnwindSource.Reference(LookupExpression.GetLookupAlias(midsNav), midsNav.TargetEntityType, lookup));
+    }
+
+    private static IEntityType LeafEntityType(MongoQueryExpression mongoQ)
+        => mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(NestedOwner.Mids))!.TargetEntityType
+            .FindNavigation(nameof(NestedMid.Leaves))!.TargetEntityType;
+
+    // Queryable.Where(EntityQueryRootExpression<Leaf>, l => ti.Inner.<pk> == l.<fk>) — the level-2 spike shape.
+    private static LambdaExpression NestedLeavesCorrelatedSelector(IEntityType leafEntityType, ParameterExpression ti)
+    {
+        var lParam = Expression.Parameter(typeof(NestedLeaf), "l");
+        var predicate = Expression.Lambda(
+            Expression.Equal(
+                Expression.Property(Expression.Property(ti, nameof(OwnerMidTi.Inner)), nameof(NestedMid.Id)),
+                Expression.Property(lParam, nameof(NestedLeaf.MidId))),
+            lParam);
+        var whereCall = Expression.Call(
+            typeof(Queryable), nameof(Queryable.Where), [typeof(NestedLeaf)],
+            new EntityQueryRootExpression(leafEntityType), Expression.Quote(predicate));
+        return Expression.Lambda(whereCall, ti);
+    }
+
+    [Fact]
+    public void TryBindNestedReferenceNavUnwind_binds_second_lookup_scoped_under_first()
+    {
+        var mongoQ = NestedTestQuery();
+        BindLevel1(mongoQ);
+        var leafEntityType = LeafEntityType(mongoQ);
+        var ti = Expression.Parameter(typeof(OwnerMidTi), "ti");
+        var collectionSelector = NestedLeavesCorrelatedSelector(leafEntityType, ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindNestedReferenceNavUnwind(mongoQ, collectionSelector));
+
+        Assert.Equal(2, mongoQ.Select.UnwindSources.Count);
+        var level2 = mongoQ.Select.UnwindSources[1];
+        Assert.Equal(MongoUnwindSourceKind.Reference, level2.Kind);
+        Assert.Equal("_lookup_Leaves", level2.InnerScopePath);
+        Assert.Same(leafEntityType, level2.InnerEntityType);
+        Assert.NotNull(level2.Lookup);
+        Assert.True(level2.Lookup!.ForceUnwind);
+        Assert.Equal("_lookup_Mids._id", level2.Lookup.LocalField);
+        Assert.Null(level2.Filter); // unfiltered — this slice's scope
+
+        // The lookup-dependency sort (MongoQueryExpression.GetPendingLookups, unmodified) must already order
+        // the level-1 lookup before level-2's — no lowering change needed for this.
+        var lookups = mongoQ.Lookups;
+        Assert.Equal(2, lookups.Count);
+        Assert.Equal("_lookup_Mids", lookups[0].As);
+        Assert.Equal("_lookup_Leaves", lookups[1].As);
+    }
+
+    [Fact]
+    public void TryBindNestedReferenceNavUnwind_returns_false_without_a_prior_reference_source()
+    {
+        var mongoQ = NestedTestQuery(); // no level-1 bind at all
+        var ti = Expression.Parameter(typeof(OwnerMidTi), "ti");
+        var collectionSelector = NestedLeavesCorrelatedSelector(LeafEntityType(mongoQ), ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindNestedReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.Empty(mongoQ.Select.UnwindSources);
+        Assert.Empty(mongoQ.Lookups);
+    }
+
+    [Fact]
+    public void TryBindNestedReferenceNavUnwind_returns_false_when_prior_source_is_owned()
+    {
+        var mongoQ = NestedTestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Mids", LeafEntityType(mongoQ))); // wrong Kind
+        var ti = Expression.Parameter(typeof(OwnerMidTi), "ti");
+        var collectionSelector = NestedLeavesCorrelatedSelector(LeafEntityType(mongoQ), ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindNestedReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.Single(mongoQ.Select.UnwindSources); // untouched — no partial mutation
+        Assert.Empty(mongoQ.Lookups);
+    }
+
+    [Fact]
+    public void TryBindNestedReferenceNavUnwind_returns_false_for_non_where_body()
+    {
+        var mongoQ = NestedTestQuery();
+        BindLevel1(mongoQ);
+        var ti = Expression.Parameter(typeof(OwnerMidTi), "ti");
+        var collectionSelector = Expression.Lambda(new EntityQueryRootExpression(LeafEntityType(mongoQ)), ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindNestedReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.Single(mongoQ.Select.UnwindSources); // untouched
+        Assert.Single(mongoQ.Lookups); // only BindLevel1's own lookup — no second one added on decline
+    }
+
+    [Fact]
+    public void TryBindNestedReferenceNavUnwind_returns_false_when_correlation_is_not_ti_inner_rooted()
+    {
+        // l.MidId == l.MidId (a self-comparison on the inner param, not ti.Inner.<pk>) never resolves a
+        // navigation off the level-1 target — must decline, not crash or mis-bind.
+        var mongoQ = NestedTestQuery();
+        BindLevel1(mongoQ);
+        var ti = Expression.Parameter(typeof(OwnerMidTi), "ti");
+        var lParam = Expression.Parameter(typeof(NestedLeaf), "l");
+        var predicate = Expression.Lambda(
+            Expression.Equal(Expression.Property(lParam, nameof(NestedLeaf.MidId)), Expression.Property(lParam, nameof(NestedLeaf.MidId))),
+            lParam);
+        var whereCall = Expression.Call(
+            typeof(Queryable), nameof(Queryable.Where), [typeof(NestedLeaf)],
+            new EntityQueryRootExpression(LeafEntityType(mongoQ)), Expression.Quote(predicate));
+        var collectionSelector = Expression.Lambda(whereCall, ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindNestedReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.Single(mongoQ.Select.UnwindSources);
+        Assert.Single(mongoQ.Lookups); // only BindLevel1's own lookup — no second one added on decline
     }
 }

@@ -1419,6 +1419,22 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // resolves ti.Inner directly back to our projected shaper with no bespoke unwrap logic needed here.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
 
+        // EF-347 nested-reference slice: a narrow carve-out BEFORE the terminal guard below. Fires only when
+        // the sole terminal so far is a single REFERENCE unwind source (IsSingleReferenceUnwindTerminalOnly)
+        // — i.e. this IS the second, chained SelectMany of a nested reference shape, not some unrelated
+        // post-terminal operator (a 2nd SelectMany after GroupBy/Distinct/a set-op/an owned unwind, or a
+        // query already 2+ levels deep, still falls through unchanged to the guard below). On a structural
+        // match (TryBindNestedReferenceNavUnwind), reuse the SAME wrapped-shaper builder the single-level
+        // bare-nav bind uses — BuildBareNavWrappedShaper already reads Select.UnwindSource, which (via the
+        // Task 1 last-source shim) now resolves to this SECOND source, so no new shaper code is needed: the
+        // result is the doubly-nested TransparentIdentifier(Outer=<level-1 result>, Inner=<level-2 element>)
+        // shape EF's nav-expansion expects.
+        if (mongoQueryExpression.Select.IsSingleReferenceUnwindTerminalOnly
+            && NativeSelectManyBinder.TryBindNestedReferenceNavUnwind(mongoQueryExpression, collectionSelector))
+        {
+            return BuildBareNavWrappedShaper(source, mongoQueryExpression, resultSelector);
+        }
+
         // Post-terminal guard (composition-seam audit): a SelectMany composed AFTER a native terminal — a
         // Union/Concat (IsSetOp), GroupBy (IsGroupBy), projected Distinct (IsDistinct), or a prior SelectMany
         // (UnwindSource) — must NOT let its own UnwindSource coexist with the earlier terminal on the same

@@ -248,7 +248,7 @@ internal sealed class MongoSelectDefinition
     /// in practice, not an additional case). <see cref="UnwindSource"/> joins the same gate (EF-347 slice 3):
     /// a native owned-collection SelectMany is terminal-only, exactly like Distinct/GroupBy/Union/Concat.
     /// </summary>
-    internal bool HasTerminalOperator => IsGroupBy || IsDistinct || IsSetOp || Grouping != null || UnwindSource != null;
+    internal bool HasTerminalOperator => IsGroupBy || IsDistinct || IsSetOp || Grouping != null || UnwindSources.Count > 0;
 
     /// <summary>
     /// <see langword="true"/> when the ONLY terminal on this select is a set operation — i.e. a set op is
@@ -265,7 +265,7 @@ internal sealed class MongoSelectDefinition
     /// against the entity type (the composition-after-projection seam).
     /// </summary>
     internal bool IsSetOpTerminalOnly
-        => IsSetOp && !IsGroupBy && !IsDistinct && Grouping == null && UnwindSource == null && Projection.Count == 0;
+        => IsSetOp && !IsGroupBy && !IsDistinct && Grouping == null && UnwindSources.Count == 0 && Projection.Count == 0;
 
     /// <summary>The terminal set operation (Union/Concat), when this select is a set-op query (EF-347 slice 2).</summary>
     internal MongoSetOperation? SetOperation { get; set; }
@@ -277,9 +277,46 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool IsSetOp { get; set; }
 
-    /// <summary>Set when this select is a terminal owned-collection SelectMany (EF-347 slice 3): the element
-    /// path to $unwind before the result-selector $project. Route stays Projection (the result is a projection).</summary>
-    internal MongoUnwindSource? UnwindSource { get; set; }
+    private readonly List<MongoUnwindSource> _unwindSources = [];
+
+    /// <summary>
+    /// The ordered chain of terminal SelectMany unwind sources (EF-347 nested-reference slice). Index 0 is
+    /// the first (outermost) SelectMany's unwind; index 1, when present, is a SECOND, chained SelectMany's
+    /// own unwind — correlated off the first's unwound element (see
+    /// <see cref="NativeTranslation.NativeSelectManyBinder.TryBindNestedReferenceNavUnwind"/>). Every
+    /// existing single-level SelectMany populates exactly one entry (byte-identical behavior, preserved via
+    /// the <see cref="UnwindSource"/> shim below); a 2-level nested reference SelectMany populates two.
+    /// Write only via <see cref="AddUnwindSource"/> — there is no direct setter, so every write site is
+    /// grep-visible.
+    /// </summary>
+    public IReadOnlyList<MongoUnwindSource> UnwindSources => _unwindSources;
+
+    /// <summary>Appends a new terminal SelectMany unwind source to the chain (EF-347 nested-reference slice).</summary>
+    internal void AddUnwindSource(MongoUnwindSource source) => _unwindSources.Add(source);
+
+    /// <summary>
+    /// The LAST (most-recently-appended) terminal SelectMany unwind source, or <see langword="null"/> when
+    /// none is set — a read-only "last source" shim over <see cref="UnwindSources"/> (EF-347 nested-reference
+    /// slice) that keeps every existing single-source read site (the lowerer, the whole-element gate in
+    /// <c>TranslateSelect</c>, both projection binders) working unchanged: every current consumer cares about
+    /// the TERMINAL unwind source, which for a single-level SelectMany is its only source and for the 2-level
+    /// nested case is the SECOND (innermost) source. There is no setter — write via
+    /// <see cref="AddUnwindSource"/>.
+    /// </summary>
+    internal MongoUnwindSource? UnwindSource => _unwindSources.Count > 0 ? _unwindSources[^1] : null;
+
+    /// <summary>
+    /// <see langword="true"/> when the terminal seen so far on this select is EXACTLY a single REFERENCE
+    /// unwind source, with no grouping/distinct/set-op mixed in (EF-347 nested-reference slice). This is the
+    /// narrow carve-out condition <c>TranslateSelectMany</c> checks BEFORE its ordinary
+    /// <see cref="HasTerminalOperator"/> guard: only when this holds does a SECOND, chained SelectMany get a
+    /// chance at nested-reference recognition (<see cref="NativeTranslation.NativeSelectManyBinder.TryBindNestedReferenceNavUnwind"/>);
+    /// every other post-terminal shape (a 2nd SelectMany after GroupBy/Distinct/a set-op/an OWNED unwind, or a
+    /// query already 2+ levels deep) still hits the unmodified guard exactly as before this slice.
+    /// </summary>
+    internal bool IsSingleReferenceUnwindTerminalOnly
+        => UnwindSources.Count == 1 && UnwindSources[0].Kind == MongoUnwindSourceKind.Reference
+           && !IsGroupBy && !IsDistinct && !IsSetOp && Grouping == null;
 
     private bool _isGroupByFallbackUnsafe;
 
