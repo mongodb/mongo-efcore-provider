@@ -111,6 +111,95 @@ internal sealed class MongoExpressionTranslator
         return true;
     }
 
+    /// <summary>
+    /// Attempts to translate a numeric VALUE expression (a projection/computed leaf) to a
+    /// <see cref="MongoExpression"/> — a member field-ref, constant/parameter, or arithmetic
+    /// (<c>+ - * / %</c>) over numeric operands — reusing the same operand-resolution shapes a
+    /// comparison's operands use (member / constant / parameter / nested arithmetic). Unlike
+    /// <see cref="TryTranslate"/> (predicate/boolean shapes), this accepts a bare value. Returns
+    /// <see langword="false"/> for a non-numeric/non-value shape, an integer-result division (MongoDB
+    /// <c>$divide</c> is non-truncating, diverging from C#), or an operand whose property is not
+    /// default-serialized (a computed value over a converted/represented stored form would diverge
+    /// from CLR arithmetic).
+    /// </summary>
+    public bool TryTranslateValue(Expression valueBody, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        // Do NOT Unwrap the top-level node here: the shared Unwrap strips ANY Convert/ConvertChecked
+        // unconditionally (no widening/narrowing check), so unwrapping first would silently drop a top-level
+        // narrowing/value-changing cast — e.g. (int)o.Weight, or (int)(o.A + o.B) — and return the raw wider
+        // value (a silent wrong-data bug). Pass the RAW body so TranslateOperand's narrowing-aware Convert
+        // branch (below, under allowNumericWidening) sees the top-level cast and rejects it. Guards A and B
+        // both recurse through Unary/Binary nodes, so they operate correctly on the raw body too.
+        // Guard A: reject any integer-result division in the subtree (spike-confirmed divergence).
+        if (ContainsIntegerDivision(valueBody))
+            return false;
+
+        var translated = TranslateOperand(valueBody, allowNumericWidening: true);
+        if (translated is null)
+            return false;
+
+        // Guard B: reject a value-converted / non-default-BsonRepresentation operand.
+        if (!AllFieldsDefaultSerialized(translated))
+            return false;
+
+        result = translated;
+        return true;
+    }
+
+    // The C# compiler's own implicit numeric conversion table (C# language spec §10.2.1) — exactly the set
+    // of numeric widenings the compiler inserts automatically for mixed-numeric-type arithmetic (and that a
+    // user could equally write explicitly). MongoDB's arithmetic operators need no explicit cast to reproduce
+    // this promotion (they operate on the raw numeric BSON value), so these are safe to unwrap.
+    private static readonly HashSet<(Type From, Type To)> WideningNumericConversions =
+    [
+        (typeof(sbyte), typeof(short)), (typeof(sbyte), typeof(int)), (typeof(sbyte), typeof(long)),
+        (typeof(sbyte), typeof(float)), (typeof(sbyte), typeof(double)), (typeof(sbyte), typeof(decimal)),
+        (typeof(byte), typeof(short)), (typeof(byte), typeof(ushort)), (typeof(byte), typeof(int)),
+        (typeof(byte), typeof(uint)), (typeof(byte), typeof(long)), (typeof(byte), typeof(ulong)),
+        (typeof(byte), typeof(float)), (typeof(byte), typeof(double)), (typeof(byte), typeof(decimal)),
+        (typeof(short), typeof(int)), (typeof(short), typeof(long)), (typeof(short), typeof(float)),
+        (typeof(short), typeof(double)), (typeof(short), typeof(decimal)),
+        (typeof(ushort), typeof(int)), (typeof(ushort), typeof(uint)), (typeof(ushort), typeof(long)),
+        (typeof(ushort), typeof(ulong)), (typeof(ushort), typeof(float)), (typeof(ushort), typeof(double)),
+        (typeof(ushort), typeof(decimal)),
+        (typeof(int), typeof(long)), (typeof(int), typeof(float)), (typeof(int), typeof(double)), (typeof(int), typeof(decimal)),
+        (typeof(uint), typeof(long)), (typeof(uint), typeof(ulong)), (typeof(uint), typeof(float)),
+        (typeof(uint), typeof(double)), (typeof(uint), typeof(decimal)),
+        (typeof(long), typeof(float)), (typeof(long), typeof(double)), (typeof(long), typeof(decimal)),
+        (typeof(ulong), typeof(float)), (typeof(ulong), typeof(double)), (typeof(ulong), typeof(decimal)),
+        (typeof(float), typeof(double))
+    ];
+
+    private static bool IsWideningNumericConvert(Type from, Type to)
+        => WideningNumericConversions.Contains((from, to));
+
+    private static bool ContainsIntegerDivision(Expression node)
+        => node switch
+        {
+            BinaryExpression { NodeType: ExpressionType.Divide } d
+                => IsIntegerType(d.Type) || ContainsIntegerDivision(d.Left) || ContainsIntegerDivision(d.Right),
+            BinaryExpression b => ContainsIntegerDivision(b.Left) || ContainsIntegerDivision(b.Right),
+            UnaryExpression u => ContainsIntegerDivision(u.Operand),
+            _ => false
+        };
+
+    private static bool IsIntegerType(Type type)
+    {
+        var t = Nullable.GetUnderlyingType(type) ?? type;
+        return t == typeof(int) || t == typeof(long) || t == typeof(short) || t == typeof(byte)
+            || t == typeof(sbyte) || t == typeof(uint) || t == typeof(ulong) || t == typeof(ushort);
+    }
+
+    private static bool AllFieldsDefaultSerialized(MongoExpression expr)
+        => expr switch
+        {
+            MongoFieldExpression f => NativeGroupByBinder.HasDefaultKeySerialization(f.Property),
+            MongoBinaryExpression b => AllFieldsDefaultSerialized(b.Left) && AllFieldsDefaultSerialized(b.Right),
+            _ => true
+        };
+
     // Strip redundant Convert/ConvertChecked wrappers (EF sometimes adds a nullable-widening convert).
     private static Expression Unwrap(Expression e)
         => e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u
@@ -331,24 +420,37 @@ internal sealed class MongoExpressionTranslator
     /// (<c>+ - * / %</c>) becomes a <see cref="MongoBinaryExpression"/> with operands translated recursively.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A numeric-widening <see cref="UnaryExpression"/> (e.g. <c>(double)c.Age</c>) is rejected here rather than
-    /// silently stripped: empirically, the driver's own LINQ translator renders a numeric cast on a bare
-    /// field-to-field comparison operand as an explicit <c>$toDouble</c> conversion, but renders the very same
-    /// cast on an arithmetic operand (e.g. <c>(double)c.Age + c.Score</c>) by simply dropping it — an
-    /// inconsistent, shape-dependent rule. Reproducing it exactly would require re-deriving the driver's
+    /// silently stripped <b>on the comparison-operand path</b> (<paramref name="allowNumericWidening"/> is
+    /// <see langword="false"/>, the default): empirically, the driver's own LINQ translator renders a numeric
+    /// cast on a bare field-to-field comparison operand as an explicit <c>$toDouble</c> conversion, but renders
+    /// the very same cast on an arithmetic operand (e.g. <c>(double)c.Age + c.Score</c>) by simply dropping it —
+    /// an inconsistent, shape-dependent rule. Reproducing it exactly would require re-deriving the driver's
     /// numeric-promotion logic; falling back to driver-LINQ for any numeric cast inside this operand position
     /// avoids silently diverging from it. A benign (non-numeric, e.g. nullable-widening) convert is still
     /// unwrapped, matching <see cref="Unwrap"/> elsewhere in this class.
+    /// </para>
+    /// <para>
+    /// The two <see cref="TranslateComparison"/> call sites keep the default (<paramref name="allowNumericWidening"/>
+    /// = <see langword="false"/>), so the EF-329 comparison path is byte-identical. <see cref="TryTranslateValue"/>
+    /// (a computed VALUE leaf) passes <see langword="true"/>: a value leaf has none of the driver-rendering
+    /// inconsistency above to avoid, and MongoDB's <c>$add</c>/<c>$subtract</c>/<c>$multiply</c>/<c>$divide</c>/<c>$mod</c>
+    /// operate on the raw BSON numeric value regardless of declared CLR width, so unwrapping a WIDENING conversion
+    /// (never a narrowing one — a narrowing/truncating cast like <c>(int)o.Weight</c> is still rejected) reproduces
+    /// C#'s own implicit-numeric-promotion semantics exactly (e.g. the compiler-inserted <c>int -&gt; double</c> in
+    /// <c>o.Weight / o.Count</c>).
+    /// </para>
     /// </remarks>
-    private MongoExpression? TranslateOperand(Expression node)
+    private MongoExpression? TranslateOperand(Expression node, bool allowNumericWidening = false)
     {
         if (node is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
         {
             var fromType = Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type;
             var toType = Nullable.GetUnderlyingType(unary.Type) ?? unary.Type;
-            if (fromType != toType)
-                return null; // numeric (or other type-changing) cast — ambiguous $expr semantics, fall back
-            return TranslateOperand(unary.Operand); // benign nullable-widening convert — unwrap and recurse
+            if (fromType != toType && !(allowNumericWidening && IsWideningNumericConvert(fromType, toType)))
+                return null; // type-changing cast (narrowing, or any cast on the comparison path) — fall back
+            return TranslateOperand(unary.Operand, allowNumericWidening); // benign or widening convert — unwrap and recurse
         }
 
         if (TryResolveMember(node, out var property, out var fieldPath))
@@ -359,11 +461,11 @@ internal sealed class MongoExpressionTranslator
         // the driver server rejects "$add" on strings with "$add only supports numeric or date types").
         if (node is BinaryExpression arith && MapArithmeticOperator(arith.NodeType) is { } arithOp && IsNumericType(arith.Type))
         {
-            var left = TranslateOperand(arith.Left);
+            var left = TranslateOperand(arith.Left, allowNumericWidening);
             if (left is null)
                 return null;
 
-            var right = TranslateOperand(arith.Right);
+            var right = TranslateOperand(arith.Right, allowNumericWidening);
             if (right is null)
                 return null;
 

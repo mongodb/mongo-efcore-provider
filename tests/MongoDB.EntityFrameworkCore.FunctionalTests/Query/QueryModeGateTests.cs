@@ -179,15 +179,32 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     // ── 5. NativeOnly throws at compile time on a non-representable query ──────────────────────────
 
     [Fact]
+    public void NativeOnly_mode_allows_arithmetic_computed_projection()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_mode_allows_arithmetic_computed_projection));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // An arithmetic computed projection leaf (EF-347) IS natively representable: it renders as a
+        // computed $project operator document, so NativeOnly succeeds rather than throwing.
+        var results = db.Entities.Where(c => c.Score > 15).OrderBy(c => c.Score)
+            .Select(c => new { c.Name, Doubled = c.Score * 2 }).ToList();
+
+        Assert.Equal(
+            [("Bob", 40), ("Carol", 60), ("Dave", 80)],
+            results.Select(r => (r.Name, r.Doubled)).ToArray());
+        Assert.Contains("$project", Mql(logs));
+    }
+
+    [Fact]
     public void NativeOnly_mode_throws_on_unrepresentable_query()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_mode_throws_on_unrepresentable_query));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // A computed projection is not natively representable (native $project pushdown only handles member
-        // access, not arithmetic); NativeOnly forbids the driver fallback, so the query must throw at
-        // compile time.
-        var query = db.Entities.Where(c => c.Score > 15).Select(c => new { Doubled = c.Score * 2 });
+        // A string-concatenation computed projection is not natively representable (only numeric
+        // arithmetic leaves go native — see NativeOnly_mode_allows_arithmetic_computed_projection above);
+        // NativeOnly forbids the driver fallback, so the query must throw at compile time.
+        var query = db.Entities.Where(c => c.Score > 15).Select(c => new { Greeting = c.Name + "!" });
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
     }

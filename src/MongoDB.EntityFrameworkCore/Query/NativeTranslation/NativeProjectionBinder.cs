@@ -116,6 +116,19 @@ internal static class NativeProjectionBinder
             return true;
         }
 
+        // Arithmetic computed leaf (EF-347): a numeric (+ - * / %) projection leaf renders as an aggregation
+        // operator document (e.g. { $multiply: [...] }) via MongoAggregationExpressionRenderer, and the DOM shaper
+        // reads it back raw by alias. Gate to a BINARY arithmetic top node only — a bare constant/parameter leaf
+        // would render as a bare value that $project misreads as an inclusion flag; TryTranslateValue's numeric-type
+        // and divergence guards handle string-concat / integer-division / converted operands.
+        if (leafExpression is BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
+                or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo }
+            && translator.TryTranslateValue(leafExpression, out var computed))
+        {
+            result = computed;
+            return true;
+        }
+
         result = null!;
         return false;
     }

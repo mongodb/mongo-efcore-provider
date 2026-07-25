@@ -457,13 +457,34 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void D_computed_projection_throws_under_NativeOnly()
+    public void D_arithmetic_computed_projection_runs_native_under_NativeOnly()
     {
-        var collection = SeedCustomer(nameof(D_computed_projection_throws_under_NativeOnly));
+        // Locked routing (EF-347): a numeric arithmetic computed leaf (c.Age * 2) now renders as a computed
+        // $project operator document, so NativeOnly succeeds rather than throwing. Parity + value assertions
+        // prove the shared binder wiring materializes the correct doubled values, not just "did not throw".
+        var collection = SeedCustomer(nameof(D_arithmetic_computed_projection_runs_native_under_NativeOnly));
+
+        Assert.True(WentNative(collection, q => q.Select(c => new { c.Name, Doubled = c.Age * 2 })));
+
+        AssertParity(collection, q => q.OrderBy(c => c.Name).Select(c => new { c.Name, Doubled = c.Age * 2 }));
+
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var results = db.Entities.OrderBy(c => c.Name).Select(c => new { c.Name, Doubled = c.Age * 2 }).ToList();
+        Assert.Equal(
+            [("Alice", 60), ("Bob", 34), ("Carol", 90)],
+            results.Select(r => (r.Name, r.Doubled)).ToArray());
+    }
+
+    [Fact]
+    public void D_string_computed_projection_throws_under_NativeOnly()
+    {
+        // Only numeric arithmetic computed leaves go native (EF-347); a string-concatenation leaf is still
+        // outside the arithmetic-binary gate, so NativeOnly still forbids the driver-LINQ fallback and throws.
+        var collection = SeedCustomer(nameof(D_string_computed_projection_throws_under_NativeOnly));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.Select(c => new { Doubled = c.Age * 2 }).ToList());
+            () => db.Entities.Select(c => new { Greeting = c.Name + "!" }).ToList());
     }
 
     [Fact]

@@ -231,10 +231,76 @@ public class SlotPopulationTests
         Assert.IsType<MongoFieldExpression>(mongoQuery.Select.Projection[0].Expression);
     }
 
+    // ── EF-347 Task 3: arithmetic computed leaves are natively representable ─────
+    // Before this, ANY computed member projection (arithmetic included) fell back to driver-LINQ. Now a
+    // top-level arithmetic (+ - * / %) binary leaf populates Select.Projection as a MongoBinaryExpression,
+    // provided every operand is a numeric type with no integer-division divergence and no value-converted
+    // field (see MongoExpressionTranslator.TryTranslateValue). This supersedes the old
+    // Computed_member_projection_is_not_native test, which asserted `c.Age * 2` fell back — that assertion
+    // is now the opposite of correct behavior.
+
     [Fact]
-    public void Computed_member_projection_is_not_native()
+    public void Arithmetic_member_projection_is_native()
     {
-        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Doubled = c.Age * 2 }));
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Doubled = c.Age * c.Age }));
+
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        var p = Assert.Single(mongoQuery.Select.Projection);
+        Assert.Equal("Doubled", p.Alias);
+        Assert.IsType<MongoBinaryExpression>(p.Expression);
+    }
+
+    [Fact]
+    public void String_concat_leaf_does_not_populate_projection()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { X = c.Name + "!" }));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    [Fact]
+    public void Integer_division_leaf_does_not_populate_projection()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { X = c.Age / c.Age }));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    [Fact]
+    public void Bare_constant_leaf_does_not_populate_projection() // projection-safety: $project would misread {X:5}
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { X = 5 }));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    [Fact]
+    public void Mixed_field_and_arithmetic_leaves_both_populate()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { c.Name, Total = c.Age * c.Age }));
+
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        Assert.Equal(2, mongoQuery.Select.Projection.Count);
+        Assert.Equal("Name", mongoQuery.Select.Projection[0].Alias);
+        Assert.IsType<MongoFieldExpression>(mongoQuery.Select.Projection[0].Expression);
+        Assert.Equal("Total", mongoQuery.Select.Projection[1].Alias);
+        Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
+    }
+
+    [Fact]
+    public void Mixed_whole_entity_and_arithmetic_leaves_do_not_populate_projection()
+    {
+        // A whole-entity leaf (`c`) alongside an arithmetic leaf: the whole-entity leaf is not natively
+        // representable, so the binder rejects the WHOLE projection → Route stays Fallback and Projection
+        // stays empty. This is the precondition the Route == NativeRoute.Projection guard on the new
+        // BinaryExpression case in MongoProjectionBindingExpressionVisitor relies on: because Route is
+        // Fallback here, that case does NOT fire and the arithmetic leaf is never registered as a native
+        // projection leaf that the mixed shaper cannot read. (The end-to-end value-correctness of this mixed
+        // shape is out of scope for this slice and carried as a follow-up; Task 4 functional covers it.)
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { c, Total = c.Age * c.Age }));
 
         Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.Empty(mongoQuery.Select.Projection);

@@ -62,6 +62,21 @@ public class MongoExpressionTranslatorTests
         public int Threshold { get; set; }
     }
 
+    // Fixture for TryTranslateValue (computed numeric leaf) tests — a value-converted EncStatus property
+    // covers guard B (a property lacking default serialization).
+    private class Order
+    {
+        public ObjectId Id { get; set; }
+        public int Price { get; set; }
+        public int Qty { get; set; }
+        public int Gross { get; set; }
+        public int Tax { get; set; }
+        public int Count { get; set; }
+        public double Weight { get; set; }
+        public string Tag { get; set; } = "";
+        public int EncStatus { get; set; }
+    }
+
     /// <summary>
     /// Returns the entity type for <typeparamref name="T"/> from a minimal in-memory model.
     /// </summary>
@@ -83,6 +98,29 @@ public class MongoExpressionTranslatorTests
     /// </summary>
     private static Expression PredicateBody<T>(Expression<Func<T, bool>> predicate)
         => predicate.Body;
+
+    /// <summary>
+    /// Builds a <see cref="MongoExpressionTranslator"/> over a fresh <see cref="Order"/> model (with
+    /// <see cref="Order.EncStatus"/> configured with a value converter, for guard-B coverage) and extracts
+    /// the body of a numeric value-selector lambda, for <see cref="MongoExpressionTranslator.TryTranslateValue"/>
+    /// tests.
+    /// </summary>
+    private static (MongoExpressionTranslator Translator, Expression Body) BuildValueBody<T>(
+        Expression<Func<T, object>> valueSelector) where T : class
+    {
+        using var db = SingleEntityDbContext.Create<T>(mb =>
+        {
+            if (typeof(T) == typeof(Order))
+                mb.Entity<Order>().Property(o => o.EncStatus).HasConversion(v => v * 2, v => v / 2);
+        });
+        var entityType = db.Model.FindEntityType(typeof(T))!;
+        // Value-selector lambdas returning a numeric type get an implicit Convert-to-object wrapper —
+        // unwrap it so the body matches what EF's own translation pipeline would hand the translator.
+        var body = valueSelector.Body is UnaryExpression { NodeType: ExpressionType.Convert } unary
+            ? unary.Operand
+            : valueSelector.Body;
+        return (new MongoExpressionTranslator(entityType), body);
+    }
 
     // ------------------------------------------------------------------
     // Test 1: simple comparison → MongoBinaryExpression(GreaterThan, ...)
@@ -885,5 +923,75 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(MongoBinaryOperator.GreaterThanOrEqual, bin.Operator);
         Assert.Equal("_lookup_Refs.Score", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
         Assert.Equal("Threshold", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+    }
+
+    // ------------------------------------------------------------------
+    // TryTranslateValue: numeric computed-leaf VALUE expressions (EF-347 Task 2)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void TryTranslateValue_multiply_of_two_int_fields_translates_to_binary_multiply()
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Price * o.Qty); // int * int
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var binary = Assert.IsType<MongoBinaryExpression>(expr);
+        Assert.Equal(MongoBinaryOperator.Multiply, binary.Operator);
+    }
+
+    [Fact]
+    public void TryTranslateValue_subtract_translates()
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Gross - o.Tax);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        Assert.Equal(MongoBinaryOperator.Subtract, Assert.IsType<MongoBinaryExpression>(expr).Operator);
+    }
+
+    [Fact]
+    public void TryTranslateValue_integer_division_is_rejected() // guard A
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Price / o.Qty); // int / int
+        Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TryTranslateValue_floating_division_is_accepted()
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Weight / o.Count); // double / int -> double
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        Assert.Equal(MongoBinaryOperator.Divide, Assert.IsType<MongoBinaryExpression>(expr).Operator);
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_concat_is_rejected() // Add on strings is not numeric
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + "!");
+        Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TryTranslateValue_value_converted_operand_is_rejected() // guard B
+    {
+        // Order.EncStatus is configured with a value converter in BuildValueBody's model builder.
+        var (translator, body) = BuildValueBody<Order>(o => o.EncStatus + o.Qty);
+        Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TryTranslateValue_top_level_narrowing_cast_is_rejected()
+    {
+        // (int)o.Weight is a double->int TRUNCATING cast at the very top of the value body. MongoDB has no
+        // truncating-cast equivalent, so silently stripping it would return the raw double — a wrong-data bug.
+        // TryTranslateValue must NOT Unwrap the top-level node, so the narrowing-aware Convert branch rejects it.
+        var (translator, body) = BuildValueBody<Order>(o => (int)o.Weight);
+        Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TryTranslateValue_narrowing_cast_around_arithmetic_is_rejected()
+    {
+        // (short)(o.Price + o.Qty) is an int->short narrowing cast wrapping a whole $add subtree — same class
+        // of silent-truncation bug as the bare narrowing cast above; must be rejected, not silently dropped.
+        var (translator, body) = BuildValueBody<Order>(o => (short)(o.Price + o.Qty));
+        Assert.False(translator.TryTranslateValue(body, out _));
     }
 }

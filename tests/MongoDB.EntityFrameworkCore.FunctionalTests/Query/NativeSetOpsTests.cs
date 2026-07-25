@@ -1053,6 +1053,22 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([3], result.Select(x => x.N).OrderBy(v => v));
     }
 
+    // EF-347 (arithmetic computed projections): the Intersect analog of Computed_leaf_projection_after_union_
+    // goes_native above — a numeric arithmetic computed leaf trailing an Intersect also goes native, via the
+    // same shared NativeProjectionBinder.TryPopulateNativeProjection reuse the member-access case above relies
+    // on. No driver-LINQ oracle for Intersect → assert the literal expected set under NativeOnly.
+    [Fact]
+    public void Computed_leaf_projection_after_intersect_goes_native_result_set()
+    {
+        var collection = SeedCollection(nameof(Computed_leaf_projection_after_intersect_goes_native_result_set));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        // {1,2,3} Intersect {3,4,5} = {3}; doubled = {6}.
+        var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
+            .Select(i => new { Doubled = i.Value * 2 })
+            .ToList();
+        Assert.Equal([6], result.Select(x => x.Doubled).OrderBy(v => v));
+    }
+
     // Slice-B trailing Where composes with a slice-C2 trailing projection: filter the combined result, then
     // project. $match (trailing) lands before $project (both after the set-op stage).
     [Fact]
@@ -1075,11 +1091,12 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     // Union dedups WHOLE ENTITIES before the projection, so two DISTINCT entities that happen to project to
     // the same value both survive (a duplicate projected value) — matching BCL Union(...).Select(...))
     // (Select never dedups). A constant projection (Select(i => new { K = 1 })) cannot be used to demonstrate
-    // this: a constant leaf is not natively representable at all — SP3's projection binder accepts only
-    // top-level member accesses (see Computed_leaf_projection_after_union_falls_back_gracefully below) — so it
-    // falls back under Native and throws under NativeOnly for a reason unrelated to set-op dedup semantics.
-    // Two items sharing the same Name (but distinct Value, hence distinct whole documents) give a real,
-    // natively-representable (plain member-access) collision instead.
+    // this: a bare-constant leaf is still not natively representable — the projection binder accepts only
+    // top-level member accesses and arithmetic-binary leaves (EF-347; see
+    // Computed_leaf_projection_after_union_goes_native below), not a bare constant — so it falls back under
+    // Native and throws under NativeOnly for a reason unrelated to set-op dedup semantics. Two items sharing
+    // the same Name (but distinct Value, hence distinct whole documents) give a real, natively-representable
+    // (plain member-access) collision instead.
     [Fact]
     public void Union_dedups_entities_then_projects_keeping_duplicate_projected_values()
     {
@@ -1190,21 +1207,27 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([1, 2, 3, 4, 5], result);
     }
 
-    // Deferred (unchanged): a COMPUTED-leaf trailing projection is not SP3-representable → graceful fallback.
+    // EF-347 (arithmetic computed projections): a numeric arithmetic computed leaf (i.Value * 2) trailing a
+    // whole-entity set op now ALSO goes native — the binder change that lets an arithmetic-binary leaf
+    // populate Select.Projection (NativeProjectionBinder.TryTranslateLeaf) is global, not scoped to plain
+    // Select, so it applies here too. NativeOnly succeeding proves native; Union has a driver-LINQ oracle,
+    // so assert Native == DriverLinq parity plus the correct doubled value set.
     [Fact]
-    public void Computed_leaf_projection_after_union_falls_back_gracefully()
+    public void Computed_leaf_projection_after_union_goes_native()
     {
-        var collection = SeedCollection(nameof(Computed_leaf_projection_after_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
-                    .Select(i => new { Doubled = i.Value * 2 }).ToList());
-        }
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
-            .Select(i => new { Doubled = i.Value * 2 }).ToList();
-        Assert.Equal(5, result.Count);
+        var collection = SeedCollection(nameof(Computed_leaf_projection_after_union_goes_native));
+
+        List<int> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
+                .Select(i => new { Doubled = i.Value * 2 })
+                .ToList().Select(x => x.Doubled).OrderBy(v => v).ToList();
+
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        var native = Run(nativeOnlyDb); // NativeOnly succeeding proves native
+        Assert.Equal([2, 4, 6, 8, 10], native); // {1,2,3} U {3,4,5} deduped (5 rows), each doubled
+
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        Assert.Equal(Run(driverDb), native);
     }
 
     // NOTE: a Concat().OfType<T>() variant was attempted here too, but it hits an UNRELATED pre-existing bug
@@ -1315,14 +1338,13 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(new[] { "One", "Two" }, result); // Value 1,2 (<=3) minus Value 3 (in second) = One, Two
     }
 
-    // ── EF-347 C1 deferred shapes keep current behavior (fall back / hard-fail) ──────────────────────
+    // ── EF-347 C1 deferred shape keeps current behavior (falls back) ─────────────────────────────────
     //
-    // A bare-scalar operand (Select(i => i.Name)) or a computed-leaf operand (Select(i => new { i.Value * 2 }))
-    // never populates Projection (IsPlainProjectedSelect requires a top-level member-access-only shape), so
-    // neither operand qualifies as a "plain projected select" -- these fall back gracefully for Union, same as
-    // the whole-entity Bare_scalar_projection_after_union_falls_back_gracefully /
-    // Computed_leaf_projection_after_union_falls_back_gracefully tests above (which cover a trailing
-    // projection AFTER a whole-entity set op; these two cover the operand ITSELF being one of these shapes).
+    // A bare-scalar operand (Select(i => i.Name)) never populates Projection (IsPlainProjectedSelect requires
+    // Route == Projection && Projection.Count > 0), so it does not qualify as a "plain projected select" --
+    // this falls back gracefully for Union, same as the whole-entity
+    // Bare_scalar_projection_after_union_falls_back_gracefully test above (which covers a trailing projection
+    // AFTER a whole-entity set op; this one covers the operand ITSELF being this shape).
     // NOTE: a "mixed operands" test (one whole-entity operand, one projected operand) is unreachable by
     // construction -- Union requires both operand queryables to share a CLR result type, so a whole-entity
     // Item and a projected anonymous-type operand do not compile together; no test is added for that case.
@@ -1345,22 +1367,27 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
             .Union(nativeDb.Entities.Select(i => i.Name)).ToList().Count);
     }
 
+    // EF-347 (arithmetic computed projections): a computed-leaf operand (Select(i => new { Doubled = i.Value
+    // * 2 })) now DOES populate Projection (the arithmetic-binary leaf gate in NativeProjectionBinder is not
+    // scoped to plain Select), so IsPlainProjectedSelect now accepts it as a projected operand and the set op
+    // goes native, same as the member-access Projected_operand_union_goes_native test above. Both operands are
+    // the identical projection over the SAME 5 items, so C1's projected-value dedup (see the class doc) should
+    // collapse the 10 pre-dedup rows down to the 5 distinct doubled values.
     [Fact]
-    public void Computed_leaf_operand_union_falls_back_gracefully()
+    public void Computed_leaf_operand_union_goes_native()
     {
-        // Computed projection leaf (i.Value * 2) is not the SP3 member-access surface -> operand not a plain
-        // projected select -> graceful fallback for Union.
-        var collection = SeedCollection(nameof(Computed_leaf_operand_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Select(i => new { Doubled = i.Value * 2 })
-                    .Union(nativeOnlyDb.Entities.Select(i => new { Doubled = i.Value * 2 })).ToList());
-        }
+        var collection = SeedCollection(nameof(Computed_leaf_operand_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly); // NativeOnly succeeding proves native
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        Assert.NotEmpty(nativeDb.Entities.Select(i => new { Doubled = i.Value * 2 })
-            .Union(nativeDb.Entities.Select(i => new { Doubled = i.Value * 2 })).ToList());
+        static List<int> Q(SingleEntityDbContext<Item> db) =>
+            db.Entities.Select(i => new { Doubled = i.Value * 2 })
+                .Union(db.Entities.Select(i => new { Doubled = i.Value * 2 }))
+                .ToList().Select(x => x.Doubled).OrderBy(v => v).ToList();
+
+        var native = Q(nativeOnlyDb);
+        Assert.Equal([2, 4, 6, 8, 10], native);
+        Assert.Equal(Q(driverDb), native);
     }
 
     // ── EF-347 C1 post-composition WRONG-DATA probe: an operator composed directly AFTER a

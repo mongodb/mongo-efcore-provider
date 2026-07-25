@@ -147,6 +147,28 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
                 return new ProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
 
+            // Arithmetic computed projection leaf (EF-347): register the whole binary node as ONE projection
+            // leaf, exactly like a MemberExpression, so it maps to a single ProjectionMember slot. Without this,
+            // the default walk would visit each operand's MemberExpression separately, both writing the SAME
+            // current ProjectionMember and silently producing wrong data ((A*B)² instead of A*B). Gated to the
+            // same arithmetic operators NativeProjectionBinder accepts.
+            // The Route == Projection guard is load-bearing (mirrors the { Index: not null } case above): it is
+            // what CONFINES this mapping to the native path. The binder only populates Select.Projection (flipping
+            // Route to Projection) for a projection whose EVERY leaf is natively representable; a MIXED shape like
+            // Select(c => new { c, Total = c.Age * c.Score }) has an entity leaf the binder cannot represent, so it
+            // stays Route == Fallback and routes to the mixed shaper (MongoMixedProjectionBindingRemovingExpression-
+            // Visitor). Without this guard the case would still fire on that fallback shape and hand the mixed
+            // shaper a raw BinaryExpression it cannot read (TryResolveFieldAccess returns null for it), silently
+            // reading a non-existent field literally named after the alias. Gating on Route == Projection makes the
+            // case fire ONLY when the binder already accepted the whole projection — i.e. only on the native path —
+            // and fall through to the default walk (pre-existing behavior) for every mixed/fallback shape.
+            case BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
+                    or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo } binaryExpression
+                when _queryExpression.Select.Route == NativeRoute.Projection:
+                var arithProjectionMember = GetCurrentProjectionMember();
+                _projectionMapping[arithProjectionMember] = binaryExpression;
+                return new ProjectionBindingExpression(_queryExpression, arithProjectionMember, expression.Type);
+
             case MethodCallExpression methodCallExpression
                 when IsScalarMethodPropertyAccess(methodCallExpression):
                 var projMember = GetCurrentProjectionMember();
