@@ -18,6 +18,7 @@ using System.Collections.ObjectModel;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 
@@ -50,4 +51,12 @@ public record MongoExecutableQuery(
 
     /// <summary>When true, native rows are RawBsonDocument and materialized by the forward-only streaming reader.</summary>
     internal bool Streaming { get; init; }
+
+    /// <summary>
+    /// The per-execution one-pass output serializer (SP7 P1.2). When set (and <see cref="Streaming"/> is true),
+    /// <c>MongoClientWrapper.Execute</c> supplies it to <c>Aggregate</c> as the pipeline output serializer, so
+    /// each cursor row is deserialized directly into the finished entity (deserialize IS materialize — a single
+    /// forward pass). Null for the RawBsonDocument streaming fallback and for all non-streaming paths.
+    /// </summary>
+    internal IBsonSerializer? OutputSerializer { get; init; }
 }

@@ -23,6 +23,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
@@ -107,6 +108,25 @@ public class MongoClientWrapper : IMongoClientWrapper
             log = () => _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
             if (executableQuery.Streaming)
             {
+                if (executableQuery.OutputSerializer is { } outputSerializer)
+                {
+                    // One-pass "deserialize IS materialize" (SP7 P1.2): the custom output serializer runs the
+                    // compiled EF materializer off the cursor's own IBsonReader, so the Aggregate cursor yields
+                    // finished (T == the shaped entity) instances directly — a single forward pass, no
+                    // RawBsonDocument wrapper + second materialization pass. T is the shaped result type, so the
+                    // supplied serializer is an IBsonSerializer<T>.
+                    var entityCollection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
+                    PipelineDefinition<BsonDocument, BsonDocument> basePipe = loggedStages;
+                    var typedPipeline = basePipe.As<BsonDocument, BsonDocument, T>((IBsonSerializer<T>)outputSerializer);
+                    var typedCursor = executableQuery.Session is { } typedSession
+                        ? entityCollection.Aggregate(typedSession, typedPipeline)
+                        : entityCollection.Aggregate(typedPipeline);
+                    return (IEnumerable<T>)typedCursor.ToEnumerable();
+                }
+
+                // Fallback streaming path (no one-pass serializer built): forward-only RawBsonDocument rows
+                // materialized by the caller's compiled streaming shaper. Retained for streaming shapes the
+                // one-pass serializer path does not cover.
                 var rawCollection = Database.GetCollection<RawBsonDocument>(executableQuery.CollectionNamespace.CollectionName);
                 PipelineDefinition<RawBsonDocument, RawBsonDocument> rawPipeline = loggedStages;
                 var rawCursor = executableQuery.Session is { } rawSession

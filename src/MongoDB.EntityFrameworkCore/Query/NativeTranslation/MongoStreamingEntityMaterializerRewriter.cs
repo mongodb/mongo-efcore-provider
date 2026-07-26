@@ -53,20 +53,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 {
     private readonly IEntityType _rootEntityType;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
-    private readonly ParameterExpression _row;
 
     public MongoStreamingEntityMaterializerRewriter(
         IEntityType rootEntityType,
-        BsonSerializerFactory bsonSerializerFactory,
-        ParameterExpression row)
+        BsonSerializerFactory bsonSerializerFactory)
     {
         _rootEntityType = rootEntityType;
         _bsonSerializerFactory = bsonSerializerFactory;
-        _row = row;
     }
-
-    private static readonly MethodInfo OpenMethod =
-        typeof(BsonRowReader).GetMethod(nameof(BsonRowReader.Open))!;
 
     private static readonly MethodInfo ReadStartDocumentMethod =
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadStartDocument))!;
@@ -89,14 +83,6 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     private static readonly MethodInfo SkipValueMethod =
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.SkipValue))!;
-
-    private static readonly MethodInfo DisposeMethod =
-        typeof(IDisposable).GetMethod(nameof(IDisposable.Dispose))!;
-
-    private static readonly MethodInfo CreateRootMethod =
-        typeof(BsonDeserializationContext).GetMethod(
-            nameof(BsonDeserializationContext.CreateRoot),
-            [typeof(IBsonReader), typeof(Action<BsonDeserializationContext.Builder>)])!;
 
     private static readonly MethodInfo DeserializeMethod =
         typeof(IBsonSerializer).GetMethod(
@@ -195,14 +181,29 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         typeof(MongoStreamingEntityMaterializerRewriter).GetTypeInfo()
             .GetDeclaredMethod(nameof(IncludeCollection))!;
 
-    private readonly ParameterExpression _reader = Expression.Variable(typeof(IBsonReader), "__reader");
+    // Set by Rewrite from its readerParameter argument. The caller owns opening/positioning/disposing the
+    // reader (see Rewrite's doc comment); this instance only ever serves a single Rewrite call, so a plain
+    // (non-readonly) field assigned at the top of Rewrite is sufficient and mirrors the pre-refactor local.
+    private ParameterExpression _reader = null!;
+
+    // The per-document BsonDeserializationContext threaded in from MongoEntityMaterializerSerializer.Deserialize
+    // (its Reader IS _reader). Reused for EVERY per-property typed read of the row — including nested owned
+    // sub-documents, which share the same reader — so no context is allocated per property (SP7 P1.3).
+    private ParameterExpression _context = null!;
     private readonly ParameterExpression _name = Expression.Variable(typeof(string), "__name");
 
     /// <summary>
-    /// Rewrite the post-injection materializer into a forward-streaming materializer.
+    /// Rewrite the post-injection materializer into a forward-streaming materializer that reads from
+    /// <paramref name="readerParameter"/>. The caller is responsible for opening (via
+    /// <see cref="BsonRowReader.Open"/> or otherwise), positioning, and disposing the reader — this method
+    /// only reads the root document's fields (<c>ReadStartDocument</c> / fill loop / <c>ReadEndDocument</c>)
+    /// and rewrites the materializer body to consume the streamed locals.
     /// </summary>
-    public BlockExpression Rewrite(Expression injectedBody)
+    public BlockExpression Rewrite(
+        Expression injectedBody, ParameterExpression readerParameter, ParameterExpression contextParameter)
     {
+        _reader = readerParameter;
+        _context = contextParameter;
         var resultType = injectedBody.Type;
 
         // Build the per-entity plans (typed locals + owned-navigation plans), recursively. The root entity
@@ -221,28 +222,13 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         var initializers = new List<Expression>();
         CollectLocals(rootPlan, allLocals, initializers);
 
-        var prelude = new List<Expression>
-        {
-            Expression.Assign(_reader, Expression.Call(OpenMethod, _row)),
-            Expression.Call(_reader, ReadStartDocumentMethod)
-        };
-        prelude.AddRange(initializers);
-        prelude.Add(fillLoop);
-        prelude.Add(Expression.Call(_reader, ReadEndDocumentMethod));
-        prelude.Add(rewrittenBody);
+        var body = new List<Expression> { Expression.Call(_reader, ReadStartDocumentMethod) };
+        body.AddRange(initializers);
+        body.Add(fillLoop);
+        body.Add(Expression.Call(_reader, ReadEndDocumentMethod));
+        body.Add(rewrittenBody);
 
-        var tryBody = Expression.Block(resultType, allLocals, prelude);
-
-        var withFinally = Expression.TryFinally(
-            tryBody,
-            Expression.IfThen(
-                Expression.NotEqual(_reader, Expression.Constant(null, typeof(IBsonReader))),
-                Expression.Call(_reader, DisposeMethod)));
-
-        return Expression.Block(
-            resultType,
-            new[] { _reader },
-            withFinally);
+        return Expression.Block(resultType, allLocals, body);
     }
 
     /// <summary>
@@ -1130,18 +1116,45 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     {
         var serializer = BsonSerializerFactory.GetPropertySerializationInfo(property).Serializer;
 
-        var context = Expression.Call(
-            CreateRootMethod,
-            _reader,
-            Expression.Constant(null, typeof(Action<BsonDeserializationContext.Builder>)));
+        // Reuse the threaded per-row context (its Reader is _reader) instead of allocating a fresh
+        // BsonDeserializationContext.CreateRoot(...) per property. When the serializer is the strongly-typed
+        // IBsonSerializer<TValue> (the common case — Int32Serializer, StringSerializer, NullableSerializer<T>,
+        // ValueConverterSerializer<TModel,TStorage>, a BsonRepresentation-configured numeric serializer, …),
+        // call the generic Deserialize returning TValue directly — no boxing to object and no Convert-unbox.
+        // Only a serializer that does NOT implement IBsonSerializer<TValue> falls back to the boxed
+        // non-generic IBsonSerializer.Deserialize (returns object) + Convert, exactly as before.
+        var valueType = serializer.ValueType;
+        var genericSerializerType = typeof(IBsonSerializer<>).MakeGenericType(valueType);
 
-        Expression deserialize = Expression.Call(
-            Expression.Constant(serializer, typeof(IBsonSerializer)),
-            DeserializeMethod,
-            context,
-            Expression.Default(typeof(BsonDeserializationArgs)));
+        Expression deserialize;
+        if (genericSerializerType.IsInstanceOfType(serializer))
+        {
+            var typedDeserialize = genericSerializerType.GetMethod(
+                nameof(IBsonSerializer.Deserialize),
+                [typeof(BsonDeserializationContext), typeof(BsonDeserializationArgs)])!;
 
-        var readAssign = Expression.Assign(local, Expression.Convert(deserialize, local.Type));
+            Expression typedCall = Expression.Call(
+                Expression.Constant(serializer, genericSerializerType),
+                typedDeserialize,
+                _context,
+                Expression.Default(typeof(BsonDeserializationArgs)));
+
+            deserialize = typedCall.Type == local.Type
+                ? typedCall
+                : Expression.Convert(typedCall, local.Type);
+        }
+        else
+        {
+            Expression boxedCall = Expression.Call(
+                Expression.Constant(serializer, typeof(IBsonSerializer)),
+                DeserializeMethod,
+                _context,
+                Expression.Default(typeof(BsonDeserializationArgs)));
+
+            deserialize = Expression.Convert(boxedCall, local.Type);
+        }
+
+        var readAssign = Expression.Assign(local, deserialize);
 
         return Expression.IfThenElse(
             Expression.Equal(

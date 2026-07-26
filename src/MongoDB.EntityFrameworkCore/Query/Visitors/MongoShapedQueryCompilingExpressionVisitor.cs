@@ -27,6 +27,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
+using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
@@ -418,29 +419,46 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         if (streaming)
         {
-            // Forward-only streaming materialization: rewrite the post-injection materializer to read each
-            // native-path RawBsonDocument row via a single forward IBsonReader pass into typed locals. The
-            // rewriter throws on any shape it cannot stream; because the native factory is fixed at compile
-            // time, an un-streamable shape is a compile-time decision — fall back to the DOM shaper over the
-            // (still native) BsonDocument pipeline rather than to a run-time dual-shaper, except under
-            // NativeOnly where the un-streamable shape must surface.
-            var rawRowParameter = Expression.Parameter(typeof(RawBsonDocument), "rawRow");
+            // One-pass "deserialize IS materialize" (SP7 P1.2): rewrite the post-injection materializer to read
+            // exactly one document off a passed-in IBsonReader (ReadStartDocument … fill loop … ReadEndDocument;
+            // no open, no dispose — the driver cursor owns the reader). The compiled shaper becomes the
+            // Deserialize body of a custom IBsonSerializer<TEntity> supplied to Aggregate as the pipeline output
+            // serializer, so the driver's own deserialization pass produces the finished entity — the cursor
+            // yields TEntity directly and the QueryingEnumerable shaper is an identity map. The rewriter throws
+            // on any shape it cannot stream; because the native factory is fixed at compile time, an
+            // un-streamable shape is a compile-time decision — fall back to the DOM shaper over the (still
+            // native) BsonDocument pipeline, except under NativeOnly where the un-streamable shape must surface.
+            var readerParameter = Expression.Parameter(typeof(IBsonReader), "__reader");
+            var contextParameter = Expression.Parameter(typeof(BsonDeserializationContext), "__context");
             try
             {
-                var streamingBody = new MongoStreamingEntityMaterializerRewriter(
-                        rootEntityType, _bsonSerializerFactory, rawRowParameter)
-                    .Rewrite(injectedBody);
-                var streamingLambda = Expression.Lambda(
-                    streamingBody,
+                var onePassBody = new MongoStreamingEntityMaterializerRewriter(rootEntityType, _bsonSerializerFactory)
+                    .Rewrite(injectedBody, readerParameter, contextParameter);
+
+                var onePassLambda = Expression.Lambda(
+                    onePassBody,
                     QueryCompilationContext.QueryContextParameter,
-                    rawRowParameter);
-                var compiledStreamingShaper = streamingLambda.Compile();
+                    readerParameter,
+                    contextParameter);
+                var compiledOnePassShaper = onePassLambda.Compile(); // Func<QueryContext, IBsonReader, BsonDeserializationContext, TResult>
+
+                // The cursor yields the finished TResult, so TSource == TResult and the QueryingEnumerable
+                // shaper is identity. The per-execution output serializer is built in TranslateQuery from this
+                // compiled shaper + the live MongoQueryContext (see ExecuteShapedQuery / onePassShaper).
+                var resultType = onePassLambda.ReturnType;
+                var rowParameter = Expression.Parameter(resultType, "row");
+                var identityShaper = Expression.Lambda(
+                    rowParameter, QueryCompilationContext.QueryContextParameter, rowParameter).Compile();
 
                 return BuildExecuteCall(
-                    typeof(RawBsonDocument),
-                    Expression.Constant(compiledStreamingShaper),
-                    streamingLambda.ReturnType,
-                    streaming: true);
+                    resultType,
+                    Expression.Constant(identityShaper),
+                    resultType,
+                    streaming: true,
+                    onePassShaper: Expression.Constant(
+                        compiledOnePassShaper,
+                        typeof(Func<,,,>).MakeGenericType(
+                            typeof(QueryContext), typeof(IBsonReader), typeof(BsonDeserializationContext), resultType)));
             }
             catch (Exception) when (mode != MongoQueryMode.NativeOnly)
             {
@@ -478,9 +496,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             streaming: false);
 
         // Builds the ExecuteShapedQuery call. Every argument is shared across the streaming and DOM paths
-        // except the row generic type, the compiled shaper, the return-type generic, and the trailing
-        // streaming flag — those four vary; the rest are baked in here.
-        MethodCallExpression BuildExecuteCall(Type rowType, Expression compiledShaper, Type returnType, bool streaming)
+        // except the row generic type, the compiled shaper, the return-type generic, the streaming flag, and
+        // the one-pass output shaper — those vary; the rest are baked in here. onePassShaper is a
+        // Func<QueryContext, IBsonReader, BsonDeserializationContext, TResult> only on the one-pass streaming
+        // path (null otherwise), from which ExecuteShapedQuery builds the per-execution output serializer.
+        MethodCallExpression BuildExecuteCall(
+            Type rowType, Expression compiledShaper, Type returnType, bool streaming, Expression? onePassShaper = null)
             => Expression.Call(null,
                 ExecuteShapedQueryMethodInfo.MakeGenericMethod(
                     rowType, rootEntityType.ClrType, returnType),
@@ -494,7 +515,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 Expression.Constant(_threadSafetyChecksEnabled),
                 Expression.Constant(shapedQueryExpression.ResultCardinality),
                 Expression.Constant(nativeFactory, typeof(MongoPipelineFactory)),
-                Expression.Constant(streaming));
+                Expression.Constant(streaming),
+                onePassShaper ?? Expression.Constant(
+                    null,
+                    typeof(Func<,,,>).MakeGenericType(
+                        typeof(QueryContext), typeof(IBsonReader), typeof(BsonDeserializationContext), returnType)));
     }
 
     /// <summary>
@@ -799,7 +824,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         ResultCardinality resultCardinality,
         MongoPipelineFactory? nativeFactory,
         bool streaming,
-        Func<MongoEFToLinqTranslatingExpressionVisitor, Expression?, Expression> translate)
+        Func<MongoEFToLinqTranslatingExpressionVisitor, Expression?, Expression> translate,
+        Func<MongoQueryContext, IBsonSerializer>? outputSerializerFactory = null)
     {
         var mongoQueryContext = (MongoQueryContext)queryContext;
         var collection = mongoQueryContext.MongoClient.GetCollection<TEntity>(queryExpression.CollectionExpression.CollectionName);
@@ -823,7 +849,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             {
                 NativePipeline = pipeline,
                 Session = transaction?.Session,
-                Streaming = streaming
+                Streaming = streaming,
+                // One-pass streaming only: build the output serializer from the live MongoQueryContext so its
+                // Deserialize (which runs during cursor creation — the driver eagerly materializes batch 1)
+                // sees this execution's initialized state manager on the tracked path.
+                OutputSerializer = outputSerializerFactory?.Invoke(mongoQueryContext)
             };
 
             return (mongoQueryContext, nativeExecutable);
@@ -926,12 +956,23 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         bool threadSafetyChecksEnabled,
         ResultCardinality resultCardinality,
         MongoPipelineFactory? nativeFactory,
-        bool streaming)
+        bool streaming,
+        Func<QueryContext, IBsonReader, BsonDeserializationContext, TResult>? onePassShaper)
     {
+        // One-pass streaming: build the per-execution output serializer from the compiled reader-based shaper
+        // and the live MongoQueryContext. The serializer's Deserialize runs the materializer off the cursor's
+        // own IBsonReader (deserialize IS materialize), so TSource == TResult and `shaper` above is identity.
+        // Null for the DOM / RawBsonDocument-fallback / driver-LINQ paths.
+        Func<MongoQueryContext, IBsonSerializer>? outputSerializerFactory =
+            onePassShaper is null
+                ? null
+                : qc => new MongoEntityMaterializerSerializer<TResult>(onePassShaper, qc);
+
         var (mongoQueryContext, executableQuery) = TranslateQuery<TEntity>(
             queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
             nativeFactory, streaming,
-            (translator, expression) => translator.Translate(expression, resultCardinality));
+            (translator, expression) => translator.Translate(expression, resultCardinality),
+            outputSerializerFactory);
 
         return new QueryingEnumerable<TSource, TResult>(
             mongoQueryContext,

@@ -108,3 +108,34 @@ Verified by running each shape against `MongoQueryMode.NativeOnly` — a mode th
 | WholeEntityToList | NATIVE OK |
 | OrderByTake | NATIVE OK |
 | ReferenceInclude | FALLBACK CONFIRMED (NativeTranslationNotSupportedException thrown) |
+
+---
+
+## SP7 — one-pass materializer (EF-322 sub-project 7)
+
+Run: 2026-07-26, Apple M4 Max host, Release EF10, InProcessEmitToolchain, 3 warmup / 10 iterations, MemoryDiagnoser, N=10,000, against a local replica-set mongod. `EF_Native` here is the **SP7 one-pass** path: a custom `IBsonSerializer<TEntity>` (EF's compiled materializer reading off the cursor's own `IBsonReader`) as the `Aggregate<TEntity>` output serializer (deserialize *is* materialize), plus allocation-free per-property typed reads (reused `BsonDeserializationContext`, generic `Deserialize`, no boxing). Compare the `EF_Native` **Allocated** column against the pre-SP7 native numbers in the "Native config (EF-323)" table above. Allocation is deterministic under MemoryDiagnoser; timing on this pass is directional (not the quiet-machine methodology).
+
+| Shape | Config | Mean | Allocated |
+|---|---|---|---|
+| WhereToList | DriverOnly | 5.27 ms | 1589.85 KB |
+| WhereToList | EF_DriverLinq | 15.86 ms | 22565.86 KB |
+| WhereToList | **EF_Native (SP7)** | 5.14 ms | **2751.28 KB** |
+| WholeEntityToList | DriverOnly | 8.28 ms | 3133.07 KB |
+| WholeEntityToList | EF_DriverLinq (no-track) | 35.42 ms | 45049.17 KB |
+| WholeEntityToList | EF_DriverLinq (tracked) | 42.56 ms | 51134.51 KB |
+| WholeEntityToList | **EF_Native (SP7, no-track)** | 8.78 ms | **5430.45 KB** |
+| WholeEntityToList | **EF_Native (SP7, tracked)** | 17.64 ms | **11518.93 KB** |
+| OrderByTake | DriverOnly | 2.00 ms | 59.42 KB |
+| OrderByTake | EF_DriverLinq | 2.97 ms | 511.52 KB |
+| OrderByTake | **EF_Native (SP7)** | 2.10 ms | **106.63 KB** |
+
+### SP7 native allocation delta
+
+| Shape | pre-SP7 native | SP7 native | Δ vs pre-SP7 | × driver-only floor |
+|---|---|---|---|---|
+| WhereToList | 9590.97 KB | 2751.28 KB | **−71.3%** | 1.73× (floor 1589.85) |
+| WholeEntity no-track | 19108.57 KB | 5430.45 KB | **−71.6%** | 1.73× (floor 3133.07) |
+| WholeEntity tracked | 25196.83 KB | 11518.93 KB | **−54.3%** | — (tracking overhead; no driver-only tracked floor) |
+| OrderByTake | 243.13 KB | 106.63 KB | **−56.1%** | 1.79× (floor 59.42) |
+
+**Result.** The two-optimization one-pass materializer (custom output serializer collapsing the double-pass + allocation-free per-property reads) cuts native allocation ~54–72% and brings the streaming shapes to ~**1.73× the raw-driver floor** (from ~6.1× pre-SP7). Wall-clock also improves: WhereToList native (5.14 ms) is on par with / below DriverOnly (5.27 ms), and whole-entity no-track (8.78 ms) ≈ the driver-only floor (8.28 ms). The residual ~1.73× is EF's own materializer / tracking-buffer allocation — a separate axis SP7 does not target. Correctness: full EF8/EF9/EF10 suite green (7384/7745/7342, 0 failed); the `NativeOnly` EF10 spec pass-set is unchanged at 2192/2397/19 (materialization-only; no eligibility change).
