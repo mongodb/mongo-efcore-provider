@@ -535,24 +535,99 @@ internal static class NativeSelectManyBinder
 
         foreach (var (alias, argExpr) in members)
         {
-            if (argExpr is not MemberExpression member
-                || !TryResolveScopeDepth(member.Expression, ti, sources.Count, out var scopeIndex))
-                return false;
+            MongoExpression projected;
 
-            var rerooted = Expression.MakeMemberAccess(scopeParams[scopeIndex], member.Member);
-            if (!translators[scopeIndex].TryTranslateField(rerooted, out var field))
-                return false;
+            if (argExpr is MemberExpression member
+                && TryResolveScopeDepth(member.Expression, ti, sources.Count, out var scopeIndex))
+            {
+                var rerooted = Expression.MakeMemberAccess(scopeParams[scopeIndex], member.Member);
+                if (!translators[scopeIndex].TryTranslateField(rerooted, out var field))
+                    return false;
 
-            if (scopeIndex > 0)
-                field = new MongoFieldExpression(field.Property, sources[scopeIndex - 1].InnerScopePath + "." + field.ElementName);
+                projected = scopeIndex > 0
+                    ? new MongoFieldExpression(field.Property, sources[scopeIndex - 1].InnerScopePath + "." + field.ElementName)
+                    : field;
+            }
+            else if (argExpr is BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
+                         or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo }
+                     && TryTranslateSingleScopeComputedLeaf(argExpr, ti, sources, translators, scopeParams, out var computed))
+            {
+                projected = computed;
+            }
+            else
+            {
+                return false;
+            }
 
             if (!seen.Add(alias)) return false;
-            projections.Add(new MongoProjection(alias, field));
+            projections.Add(new MongoProjection(alias, projected));
         }
 
         foreach (var p in projections)
             mongoQ.Select.AddProjection(p);
         return true;
+    }
+
+    /// <summary>
+    /// Translates a SINGLE-SCOPE arithmetic computed projection leaf (EF-347 SelectMany computed-leaf) — every
+    /// scope-rooted member operand (<c>ti.Outer…</c>/<c>ti.Inner…</c>) in the leaf must resolve to the SAME scope.
+    /// Re-roots the whole arithmetic subtree onto that scope's synthetic parameter, reuses
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> (arithmetic assembly + the integer-division and
+    /// converter/representation guards), then prefixes inner-scope field refs with the unwind path via
+    /// <see cref="MongoFieldPrefixRewriter"/> — exactly as the bare-member branch prefixes a single field. Declines
+    /// (returns <see langword="false"/>, with NO mutation) for a cross-scope leaf, a leaf with no scope-rooted
+    /// operand, or anything <see cref="MongoExpressionTranslator.TryTranslateValue"/> rejects. Cross-scope leaves
+    /// (e.g. <c>o.Discount * i.Price</c>) are a deferred follow-on.
+    /// </summary>
+    private static bool TryTranslateSingleScopeComputedLeaf(
+        Expression leaf,
+        ParameterExpression ti,
+        IReadOnlyList<MongoUnwindSource> sources,
+        MongoExpressionTranslator[] translators,
+        ParameterExpression[] scopeParams,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        var visitor = new ScopeRerootingVisitor(ti, sources.Count, scopeParams);
+        var rerooted = visitor.Visit(leaf);
+        if (visitor.CrossScope || visitor.ResolvedScope is not { } scope)
+            return false;
+
+        if (!translators[scope].TryTranslateValue(rerooted, out var computed))
+            return false;
+
+        result = scope > 0
+            ? MongoFieldPrefixRewriter.Rewrite(computed, sources[scope - 1].InnerScopePath)
+            : computed;
+        return true;
+    }
+
+    /// <summary>
+    /// Rewrites every scope-rooted transparent-identifier member access (<c>ti.Outer…/ti.Inner…</c>) in an
+    /// arithmetic leaf onto the matching per-scope synthetic parameter, recording the single scope it resolves to
+    /// (or flagging <see cref="CrossScope"/> if operands span more than one). A member whose accessor chain is not
+    /// a scope-rooted transparent-identifier chain is left untouched (so a constant/parameter operand still reaches
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> unchanged).
+    /// </summary>
+    private sealed class ScopeRerootingVisitor(ParameterExpression ti, int sourceCount, ParameterExpression[] scopeParams)
+        : ExpressionVisitor
+    {
+        public int? ResolvedScope { get; private set; }
+        public bool CrossScope { get; private set; }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (TryResolveScopeDepth(node.Expression, ti, sourceCount, out var scope))
+            {
+                if (ResolvedScope is { } prior && prior != scope)
+                    CrossScope = true;
+                ResolvedScope = scope;
+                return Expression.MakeMemberAccess(scopeParams[scope], node.Member);
+            }
+
+            return base.VisitMember(node);
+        }
     }
 
     /// <summary>

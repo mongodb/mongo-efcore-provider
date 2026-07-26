@@ -49,6 +49,7 @@ public class NativeSelectManyBinderTests
     {
         public int Id { get; set; }
         public string Name { get; set; } = "";
+        public decimal Rank { get; set; }
         public List<Item> Items { get; set; } = [];
         public List<Tag> Tags { get; set; } = [];
     }
@@ -513,7 +514,7 @@ public class NativeSelectManyBinderTests
     }
 
     [Fact]
-    public void TryBindTransparentIdentifierProjection_computed_leaf_returns_false()
+    public void TryBindTransparentIdentifierProjection_single_scope_arithmetic_leaf_returns_true()
     {
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
@@ -522,6 +523,74 @@ public class NativeSelectManyBinderTests
         var body = Expression.MemberInit(Expression.New(typeof(ComputedLeafProjected)),
             Expression.Bind(typeof(ComputedLeafProjected).GetProperty(nameof(ComputedLeafProjected.X))!,
                 Expression.Multiply(Expression.Property(inner, nameof(Item.Price)), Expression.Constant(2m))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("X", projection.Alias);
+        var binary = Assert.IsType<MongoBinaryExpression>(projection.Expression);
+        Assert.Equal(MongoBinaryOperator.Multiply, binary.Operator);
+        Assert.Equal("Items.Price", Assert.IsType<MongoFieldExpression>(binary.Left).ElementName);
+        Assert.Equal(2m, Assert.IsType<MongoConstantExpression>(binary.Right).Value);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_cross_scope_computed_leaf_returns_false()
+    {
+        // A leaf mixing an OUTER-scope numeric member (o.Rank) and an INNER-scope numeric member (i.Price) spans
+        // two distinct scopes in one arithmetic leaf. ScopeRerootingVisitor sets CrossScope in this case, and
+        // TryTranslateSingleScopeComputedLeaf must decline — a cross-scope leaf must NEVER silently mis-scope.
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, outer, inner) = TiScopes();
+        var body = Expression.MemberInit(Expression.New(typeof(ComputedLeafProjected)),
+            Expression.Bind(typeof(ComputedLeafProjected).GetProperty(nameof(ComputedLeafProjected.X))!,
+                Expression.Multiply(Expression.Property(outer, nameof(Owner.Rank)), Expression.Property(inner, nameof(Item.Price)))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_root_scope_arithmetic_leaf_returns_true()
+    {
+        // An all-outer (scope 0) arithmetic leaf is in-scope and takes a distinct no-prefix code path: root
+        // scope 0 gets no unwind-path prefix, unlike the inner-scope positive test's "Items.Price".
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, outer, _) = TiScopes();
+        var body = Expression.MemberInit(Expression.New(typeof(ComputedLeafProjected)),
+            Expression.Bind(typeof(ComputedLeafProjected).GetProperty(nameof(ComputedLeafProjected.X))!,
+                Expression.Multiply(Expression.Property(outer, nameof(Owner.Rank)), Expression.Constant(2m))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("X", projection.Alias);
+        var binary = Assert.IsType<MongoBinaryExpression>(projection.Expression);
+        Assert.Equal(MongoBinaryOperator.Multiply, binary.Operator);
+        Assert.Equal("Rank", Assert.IsType<MongoFieldExpression>(binary.Left).ElementName);
+        Assert.Equal(2m, Assert.IsType<MongoConstantExpression>(binary.Right).Value);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_non_arithmetic_computed_leaf_returns_false()
+    {
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, _, inner) = TiScopes();
+        var concat = Expression.Add(
+            Expression.Property(inner, nameof(Item.Name)),
+            Expression.Constant("x"),
+            typeof(string).GetMethod(nameof(string.Concat), [typeof(string), typeof(string)]));
+        var body = Expression.MemberInit(Expression.New(typeof(OtherScopeProjected)),
+            Expression.Bind(typeof(OtherScopeProjected).GetProperty(nameof(OtherScopeProjected.X))!, concat));
         var selector = Expression.Lambda(body, ti);
 
         Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));

@@ -120,6 +120,11 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         public ObjectId Id { get; set; }
         public string Name { get; set; } = "";
+
+        // EF-347 root-scope computed leaf: a numeric member on the OUTER/root entity, so a computed leaf like
+        // `o.Rank * 2m` inside a SelectMany trailing projection exercises the scope-0 (no-prefix, "$Rank")
+        // re-rooting path end-to-end, not just Item.Price's scope-1 ("$Items.Price") path.
+        public decimal Rank { get; set; }
         public List<Item> Items { get; set; } = [];
     }
 
@@ -135,17 +140,17 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [
         new()
         {
-            Id = ObjectId.GenerateNewId(), Name = "Alice",
+            Id = ObjectId.GenerateNewId(), Name = "Alice", Rank = 3m,
             Items =
             [
                 new Item { Name = "Widget", Price = 9.99m },
                 new Item { Name = "Gadget", Price = 19.99m },
             ],
         },
-        new() { Id = ObjectId.GenerateNewId(), Name = "Bob", Items = [] }, // empty owned collection
+        new() { Id = ObjectId.GenerateNewId(), Name = "Bob", Rank = 5m, Items = [] }, // empty owned collection
         new()
         {
-            Id = ObjectId.GenerateNewId(), Name = "Carol",
+            Id = ObjectId.GenerateNewId(), Name = "Carol", Rank = 7m,
             Items = [new Item { Name = "Thing", Price = 5m }],
         },
         // EF-347 correlated-beyond-outer: discriminating owner so a correlated predicate like
@@ -154,7 +159,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // correlated-equality test below would pass vacuously (empty == empty).
         new()
         {
-            Id = ObjectId.GenerateNewId(), Name = "Match",
+            Id = ObjectId.GenerateNewId(), Name = "Match", Rank = 11m,
             Items =
             [
                 new Item { Name = "Match", Price = 3m }, // i.Name == o.Name → included
@@ -495,41 +500,83 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Explicit_result_selector_form_computed_leaf_falls_back_gracefully_except_under_NativeOnly()
+    public void Explicit_result_selector_form_computed_arithmetic_leaf_goes_native()
     {
-        // EF-347 slice 4: DIFFERENT hard-fail mechanism from the inner-Select form. There, TryBind rejects the
-        // computed leaf structurally BEFORE TranslateSelectMany ever returns, so it returns null and EF's own
-        // translation-failure path is reached directly (no fallback attempt at all — see
-        // Computed_leaf_hard_fails_in_every_mode above, the inner-Select-form sibling of this test). Here,
-        // TranslateSelectMany's bare-nav bind (TryBindBareNavUnwind) succeeds on STRUCTURE alone (o => o.Items
-        // is a valid owned-collection nav) before it can know the trailing projection is unsupported, so
-        // UnwindSource is set unconditionally; only the SEPARATE trailing Select's
-        // TryBindTransparentIdentifierProjection rejects the computed leaf (i.Price * 2 is not a bare
-        // ti.Outer.<m>/ti.Inner.<m> access) and calls the ordinary MarkNotNativelyRepresentable() guard — the
-        // SAME graceful-fallback mechanism Count_after_SelectMany_falls_back_gracefully_except_under_NativeOnly
-        // demonstrates elsewhere. Empirically (verified against expected in-memory results, not just "no
-        // exception") the driver-LINQ fallback rebuilds this shape correctly from the captured method chain, so
-        // Native/DriverLinq succeed with the CORRECT computed values; only NativeOnly (which forbids the
-        // fallback) throws.
+        // EF-347 SelectMany computed-leaf: a single-scope (inner-only) arithmetic leaf in the trailing
+        // projection now binds natively via TryBindTransparentIdentifierProjection's arithmetic branch
+        // (reusing TryTranslateValue). Owned inner-only projection HAS a driver oracle, so assert parity
+        // across Native/DriverLinq AND that NativeOnly succeeds (the "went native" signal).
         var seed = SeedOwners();
-        var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = i.Price * 2 })
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = i.Price * 2m })
             .OrderBy(r => r.X).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var db = CreateContext(seed, mode,
-                nameof(Explicit_result_selector_form_computed_leaf_falls_back_gracefully_except_under_NativeOnly) + mode);
-
-            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { X = i.Price * 2 })
+                nameof(Explicit_result_selector_form_computed_arithmetic_leaf_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { X = i.Price * 2m })
                 .AsEnumerable().OrderBy(r => r.X).ToList();
             Assert.Equal(expected, result);
         }
+    }
 
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(Explicit_result_selector_form_computed_leaf_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
+    [Fact]
+    public void Root_scope_computed_leaf_in_selectmany_goes_native()
+    {
+        // EF-347 external-review gap: the prior computed-leaf coverage above only exercised an INNER-scope
+        // (scope k>0, unwind-path-prefixed "$Items.Price") leaf end-to-end. A pure OUTER/root-scope (scope 0,
+        // NO-prefix "$Rank") computed leaf was previously only covered at the IR level. Owner.Rank makes this
+        // shape materializable end-to-end: NativeOnly succeeding is the "went native" signal, and the expected
+        // set proves the VALUES are right too (one row per unwound item, each carrying its owner's Rank * 2).
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { Doubled = o.Rank * 2m })
+            .OrderBy(r => r.Doubled).ToList();
 
-        Assert.ThrowsAny<Exception>(() =>
-            nativeOnlyDb.Entities.SelectMany(o => o.Items, (o, i) => new { X = i.Price * 2 }).ToList());
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Root_scope_computed_leaf_in_selectmany_goes_native));
+        var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Doubled = o.Rank * 2m })
+            .AsEnumerable().OrderBy(r => r.Doubled).ToList();
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Root_scope_computed_leaf_in_selectmany_emits_unprefixed_field_in_mql()
+    {
+        // Same shape as Root_scope_computed_leaf_in_selectmany_goes_native, but additionally proves the
+        // no-prefix claim directly against the emitted MQL: the $project's $multiply operates over "$Rank",
+        // never "$Items.Rank" (Item has no Rank member at all, so a prefixed reference would be a bug, not
+        // just a stylistic difference).
+        var seed = SeedOwners();
+        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+            nameof(Root_scope_computed_leaf_in_selectmany_emits_unprefixed_field_in_mql), out var spyLogger);
+
+        _ = db.Entities.SelectMany(o => o.Items, (o, i) => new { Doubled = o.Rank * 2m }).ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$multiply", message);
+        Assert.Contains("$Rank", message);
+        Assert.DoesNotContain("Items.Rank", message);
+    }
+
+    [Fact]
+    public void Mixed_operator_computed_leaves_in_selectmany_go_native()
+    {
+        // EF-347 external-review gap: all prior SelectMany computed-leaf coverage used multiply only. This
+        // exercises +, -, %, and decimal / (NOT integer division, so Guard A's truncation check doesn't apply)
+        // over an inner-only (i.Price) leaf, all four in one projection.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items,
+                (o, i) => new { Sum = i.Price + 1m, Diff = i.Price - 1m, Mod = i.Price % 2m, Half = i.Price / 2m })
+            .OrderBy(r => r.Sum).ToList();
+
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Mixed_operator_computed_leaves_in_selectmany_go_native));
+        var result = db.Entities.SelectMany(o => o.Items,
+                (o, i) => new { Sum = i.Price + 1m, Diff = i.Price - 1m, Mod = i.Price % 2m, Half = i.Price / 2m })
+            .AsEnumerable().OrderBy(r => r.Sum).ToList();
+
+        Assert.Equal(expected, result);
     }
 
     [Fact]
@@ -804,37 +851,23 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Filtered_owned_computed_projection_leaf_falls_back_gracefully_except_under_NativeOnly()
+    public void Filtered_owned_computed_arithmetic_leaf_goes_native()
     {
-        // A FILTERED owned SelectMany whose trailing projection has a COMPUTED, INNER-ONLY leaf (i.Price * 2):
-        // the bare-nav bind succeeds and sets UnwindSource+Filter, but the separate trailing
-        // TryBindTransparentIdentifierProjection rejects the computed leaf -> MarkNotNativelyRepresentable() ->
-        // driver-LINQ fallback. Unlike the SUPPORTED filtered shapes (whose projection references the OUTER
-        // entity, e.g. new { o.Name, i.Price } — a cross-scope owner flatten the driver's LINQ v3 cannot
-        // translate, hence NativeOnly-only verification there), this projection reads ONLY the inner element, so
-        // the driver CAN translate the flattened Items.Where(...).Select(i => i.Price * 2): Native/DriverLinq fall
-        // back and return the CORRECT computed values, and only NativeOnly (which forbids the fallback) throws.
-        // The determinant of a driver oracle for a filtered owned SelectMany is the PROJECTION (outer-referencing
-        // vs inner-only), not the presence of the inner Where.
+        // A FILTERED owned SelectMany whose trailing projection has a single-scope (inner-only) arithmetic
+        // leaf (i.Price * 2m) now goes native (the $match from the inner Where is emitted before the
+        // computed $project). Inner-only projection has a driver oracle → parity + NativeOnly succeeds.
         var seed = SeedOwners();
-        var expected = seed.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2 })
+        var expected = seed.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2m })
             .OrderBy(r => r.X).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var db = CreateContext(seed, mode,
-                nameof(Filtered_owned_computed_projection_leaf_falls_back_gracefully_except_under_NativeOnly) + mode);
-
-            var result = db.Entities.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2 })
+                nameof(Filtered_owned_computed_arithmetic_leaf_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2m })
                 .AsEnumerable().OrderBy(r => r.X).ToList();
             Assert.Equal(expected, result);
         }
-
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(Filtered_owned_computed_projection_leaf_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
-
-        Assert.ThrowsAny<Exception>(() =>
-            nativeOnlyDb.Entities.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2 }).ToList());
     }
 
     private class RefOwner
@@ -1021,6 +1054,12 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         public ObjectId? MidId { get; set; }
         public NestMid? Mid { get; set; }
         public List<NestGrandLeaf> GrandLeaves { get; set; } = [];
+
+        // EF-347 SelectMany computed-leaf: a numeric field at the deepest nested-reference scope, to prove the
+        // arithmetic-computed-leaf binder's InnerScopePath prefixing at scope k=2 (see
+        // Nested_reference_single_scope_computed_leaf_goes_native). Other NestLeaf seed instances are unaffected
+        // at the default 0.
+        public int Height { get; set; }
     }
 
     private class NestGrandLeaf
@@ -1120,9 +1159,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var midA2 = new NestMid { Id = ObjectId.GenerateNewId(), Tag = "A2", OwnerId = ownerA.Id };
         var midC1 = new NestMid { Id = ObjectId.GenerateNewId(), Tag = "C1", OwnerId = ownerC.Id }; // no leaves
 
-        var leafA1a = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Red", MidId = midA1.Id };
-        var leafA1b = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Blue", MidId = midA1.Id };
-        var leafA2a = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Green", MidId = midA2.Id };
+        var leafA1a = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Red", MidId = midA1.Id, Height = 1 };
+        var leafA1b = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Blue", MidId = midA1.Id, Height = 2 };
+        var leafA2a = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Green", MidId = midA2.Id, Height = 3 };
 
         return (
             [ownerA, ownerB, ownerC],
@@ -2200,6 +2239,116 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         Assert.ThrowsAny<Exception>(() =>
             nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" }).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_computed_arithmetic_leaf_goes_native()
+    {
+        // Reference SelectMany has NO driver oracle, so prove native via NativeOnly + expected in-memory set,
+        // and assert the computed $project MQL. r.Score * 2 is single inner scope → $_lookup_Refs.Score.
+        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_computed_arithmetic_leaf_goes_native), out var owners, out var items, out var spyLogger);
+
+        var result = db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, Doubled = r.Score * 2 })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Doubled).ToList();
+
+        var expected = owners.SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => new { o.Name, Doubled = r.Score * 2 })
+            .OrderBy(x => x.Name).ThenBy(x => x.Doubled).ToList();
+
+        Assert.Equal(expected, result);
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"Name\" : \"$Name\"", message);
+        Assert.Contains("$multiply", message);
+        Assert.Contains("$_lookup_Refs.Score", message);
+    }
+
+    [Fact]
+    public void Two_field_single_scope_computed_leaf_goes_native()
+    {
+        // Two field-refs in one leaf, both inner scope → both get the Items. prefix. Owned inner-only has an oracle.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { Sq = i.Price * i.Price })
+            .OrderBy(r => r.Sq).ToList();
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode, nameof(Two_field_single_scope_computed_leaf_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Sq = i.Price * i.Price })
+                .AsEnumerable().OrderBy(r => r.Sq).ToList();
+            Assert.Equal(expected, result);
+        }
+    }
+
+    [Fact]
+    public void Mixed_member_and_computed_leaf_projection_goes_native()
+    {
+        // One bare member (o.Name) + one arithmetic leaf (i.Price * 2m) in the same projection — both aliases correct.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { o.Name, Doubled = i.Price * 2m })
+            .OrderBy(r => r.Name).ThenBy(r => r.Doubled).ToList();
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode, nameof(Mixed_member_and_computed_leaf_projection_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { o.Name, Doubled = i.Price * 2m })
+                .AsEnumerable().OrderBy(r => r.Name).ThenBy(r => r.Doubled).ToList();
+            Assert.Equal(expected, result);
+        }
+    }
+
+    [Fact]
+    public void Nested_reference_single_scope_computed_leaf_goes_native()
+    {
+        // A single-scope arithmetic leaf at the DEEPEST scope (k=2, the leaf) of a two-level nested reference
+        // SelectMany — proves the deeper InnerScopePath prefixing (_lookup_Leaves.Height). No driver oracle
+        // (cross-collection) → prove via Native + NativeOnly + expected in-memory set.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateNestContext(mode,
+                nameof(Nested_reference_single_scope_computed_leaf_goes_native) + mode, out var owners, out var mids, out var leaves);
+
+            var result = (from o in db.Owners from m in o.Mids from l in m.Leaves
+                          select new { o.Name, m.Tag, Doubled = l.Height * 2 })
+                .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Tag).ThenBy(x => x.Doubled).ToList();
+
+            var expected = (from o in owners
+                            from m in mids.Where(m => m.OwnerId == o.Id)
+                            from l in leaves.Where(l => l.MidId == m.Id)
+                            select new { o.Name, m.Tag, Doubled = l.Height * 2 })
+                .OrderBy(x => x.Name).ThenBy(x => x.Tag).ThenBy(x => x.Doubled).ToList();
+
+            Assert.Equal(expected, result);
+            Assert.Equal(3, result.Count);
+        }
+    }
+
+    [Fact]
+    public void Cross_scope_computed_leaf_declines_and_hard_fails_in_every_mode()
+    {
+        // o.Threshold * r.Score spans OUTER + INNER → single-scope check declines → whole projection declines.
+        // Reference form has no driver oracle → hard-fail in every mode (the retained single-scope boundary).
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode,
+                nameof(Cross_scope_computed_leaf_declines_and_hard_fails_in_every_mode) + mode, out _, out _);
+            Assert.ThrowsAny<Exception>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { Combined = o.Threshold * r.Score }).ToList());
+        }
+    }
+
+    [Fact]
+    public void Integer_division_computed_leaf_declines_and_hard_fails_in_every_mode()
+    {
+        // r.Score / 2 is an integer-result division → Guard A in TryTranslateValue declines → projection declines.
+        // Reference form has no oracle → hard-fail in every mode.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(mode,
+                nameof(Integer_division_computed_leaf_declines_and_hard_fails_in_every_mode) + mode, out _, out _);
+            Assert.ThrowsAny<Exception>(() =>
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { Half = r.Score / 2 }).ToList());
+        }
     }
 
     [Fact]
