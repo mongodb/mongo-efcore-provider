@@ -24,10 +24,11 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal static class StreamingEligibility
 {
     /// <summary>
-    /// Eligible: a simple single-property primary key; navigations are only single (reference) owned
-    /// sub-documents whose target types are themselves eligible. No owned collections, no
-    /// cross-collection / non-owned navigations, no TPH discriminator hierarchy. Scalar and mapped-array
-    /// properties are always fine (read via their serializers).
+    /// Eligible: a simple single-property primary key; navigations are single (reference) owned
+    /// sub-documents OR owned collections, each whose target type is itself eligible AND (for a collection)
+    /// whose element carries no navigations of its own — no cross-collection / non-owned navigations, no
+    /// TPH discriminator hierarchy. Scalar and mapped-array properties are always fine (read via their
+    /// serializers).
     /// </summary>
     public static bool IsEligible(IEntityType entityType)
         => IsEligible(entityType, new HashSet<IEntityType>());
@@ -80,11 +81,16 @@ internal static class StreamingEligibility
                 return false;
             }
 
-            // The rewriter cannot yet stream a collection whose element type itself owns a collection
-            // (collection-of-collection). Single owned references nested in a collection element, and
-            // nested single references, remain allowed.
-            if (navigation.IsCollection
-                && navigation.TargetEntityType.GetNavigations().Any(n => n.IsCollection))
+            // The streaming rewriter's forward-only reader has no IncludeExpression case for a collection
+            // element (FindCollectionShaper doesn't descend into one), so a collection whose element
+            // carries ANY navigation of its own — a nested owned single reference just as much as a
+            // nested owned/non-owned collection — is streaming-ineligible: it crashes at shaper-compile
+            // with NativeTranslationNotSupportedException rather than materializing correctly. Reject any
+            // such collection here so it routes to the native DOM shaper instead, which handles it fine.
+            // Collection-of-collection was already rejected by this check before; a collection element with
+            // a nested single reference is a NEW rejection (EF-322 owned-collection slice) — it used to be
+            // (wrongly) deemed streaming-eligible.
+            if (navigation.IsCollection && navigation.TargetEntityType.GetNavigations().Any())
             {
                 return false;
             }

@@ -236,7 +236,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
         else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector)
                  && !IsTransparentIdentifierMemberAccessSelector(selector)
-                 && !IsOwnedEmbeddedReferenceIncludeSelector(selector))
+                 && !IsOwnedEmbeddedIncludeSelector(selector))
         {
             // Post-terminal guard: a projected Select applied AFTER a native terminal grouping/distinct — a
             // projected Distinct (IsDistinct, key-only Grouping), a prior GroupBy (IsGroupBy), or any finalized
@@ -624,31 +624,34 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
     /// <c>Select(x =&gt; IncludeExpression(...))</c> EF's nav-expansion generates for one or more OWNED
-    /// (embedded) SINGLE-REFERENCE navigations, auto-included eagerly by EF Core convention — e.g.
-    /// <c>Blog { Address }</c> with <c>OwnsOne(b =&gt; b.Address)</c>, or a nested chain
+    /// (embedded) navigations — a single reference OR a collection — auto-included eagerly by EF Core
+    /// convention — e.g. <c>Blog { Address }</c> with <c>OwnsOne(b =&gt; b.Address)</c>, a nested chain
     /// <c>IncludeExpression(IncludeExpression(x, Address), Address.Geo)</c> for a further owned single-ref
-    /// under the first. See the EF-322 Task 1 spike
-    /// (<c>.superpowers/sdd/EF-322-owned-ref-whole-entity-spike.md</c>) for the exact gate site and admit
-    /// condition this predicate implements.
+    /// under the first, or <c>Blog { Tags }</c> with <c>OwnsMany(b =&gt; b.Tags)</c>. See the EF-322 Task 1
+    /// spike (<c>.superpowers/sdd/EF-322-owned-ref-whole-entity-spike.md</c>) and the EF-322 owned-collection
+    /// follow-on spike (<c>.superpowers/sdd/EF-322-owned-collection-whole-entity-spike.md</c>) for the exact
+    /// gate site and admit condition this predicate implements.
     /// <para>
     /// Because owned data is embedded in the very same document as its owner, this auto-include carries NO
     /// projection of its own to push down to a native <c>$project</c> — the whole document (owner fields
-    /// plus embedded sub-document) is read back as-is by the ordinary whole-entity DOM/streaming shaper,
-    /// which already recurses into owned single-refs. So this <c>Select</c> must not be marked
-    /// non-natively-representable (mirrors <see cref="IsSingleLevelCollectionIncludeSelector"/> for the
-    /// collection-Include case, and <see cref="IsTransparentIdentifierSelector"/>/
+    /// plus embedded sub-document or sub-array) is read back as-is by the ordinary whole-entity DOM/streaming
+    /// shaper, which already recurses into owned single-refs and owned collections. So this <c>Select</c>
+    /// must not be marked non-natively-representable (mirrors <see cref="IsSingleLevelCollectionIncludeSelector"/>
+    /// for the NON-owned collection-Include case, and <see cref="IsTransparentIdentifierSelector"/>/
     /// <see cref="IsTransparentIdentifierMemberAccessSelector"/> more generally: all four predicates identify
     /// a synthetic Select that carries no projection of its own).
     /// </para>
     /// <para>
-    /// Deliberately narrow: rejects an owned COLLECTION navigation (<c>navigation.IsCollection</c> — that
-    /// shape has its own, unrelated native <c>$lookup</c>/<c>$unwind</c> path and is unaffected by this
-    /// predicate either way) and a non-owned/reference navigation (<c>!navigation.IsEmbedded()</c> — single-
-    /// level reference <c>Include</c> has no native representation yet), so both keep falling back to
-    /// driver-LINQ exactly as before this predicate existed.
+    /// Deliberately narrow: the ONLY navigations excluded are non-embedded ones — a non-owned/reference
+    /// navigation (<c>!navigation.IsEmbedded()</c> — single-level reference <c>Include</c> has no native
+    /// representation yet) — which keeps falling back to driver-LINQ exactly as before this predicate
+    /// existed. An owned collection is admitted here on equal footing with an owned single reference; a
+    /// collection whose ELEMENT itself carries further navigations is separately excluded from the
+    /// *streaming* shaper (not this gate) by <see cref="StreamingEligibility"/>, routing it to the native
+    /// DOM shaper instead.
     /// </para>
     /// </summary>
-    private static bool IsOwnedEmbeddedReferenceIncludeSelector(LambdaExpression selector)
+    private static bool IsOwnedEmbeddedIncludeSelector(LambdaExpression selector)
     {
         if (selector.Parameters.Count != 1)
         {
@@ -660,7 +663,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         while (body is IncludeExpression { Navigation: INavigation navigation } include)
         {
-            if (navigation.IsCollection || !navigation.IsEmbedded())
+            // Admit any EMBEDDED (owned) navigation — a single reference OR a collection. An owned
+            // collection embeds as a BSON array in the same document, so the whole-entity DOM/streaming
+            // shaper reads it back with no extra pipeline stage, exactly like an owned single reference.
+            if (!navigation.IsEmbedded())
             {
                 return false;
             }

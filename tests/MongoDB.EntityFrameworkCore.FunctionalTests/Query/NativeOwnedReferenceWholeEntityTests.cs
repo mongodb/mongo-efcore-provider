@@ -131,7 +131,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Guard: the admit stays narrow — owned COLLECTION and non-owned reference still fall back
+    //  Guard: the admit stays narrow — non-owned reference still falls back
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class BlogWithTags
@@ -149,22 +149,24 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     private static readonly Action<ModelBuilder> BlogWithTagsModel = mb => mb.Entity<BlogWithTags>().OwnsMany(b => b.Tags);
 
     [Fact]
-    public void Owned_collection_whole_entity_still_falls_back()
+    public void Owned_collection_whole_entity_goes_native()
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(
-            UniqueCollectionName(nameof(Owned_collection_whole_entity_still_falls_back)));
+            UniqueCollectionName(nameof(Owned_collection_whole_entity_goes_native)));
         coll.InsertOne(new BsonDocument
         {
             { "_id", ObjectId.GenerateNewId() }, { "Title", "Alpha" },
-            { "Tags", new BsonArray { new BsonDocument("Name", "a") } }
+            { "Tags", new BsonArray { new BsonDocument("Name", "a"), new BsonDocument("Name", "b") } }
         });
         var collection = database.MongoDatabase.GetCollection<BlogWithTags>(coll.CollectionNamespace.CollectionName);
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogWithTagsModel);
 
-        // An owned COLLECTION navigation's auto-include Select must NOT be admitted by the new predicate
-        // (navigation.IsCollection is true) — it stays on its pre-existing fallback route.
-        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.AsNoTracking().ToList());
+        // Under NativeOnly a shape that falls back throws; success here proves the owned-COLLECTION
+        // auto-include Select went through the native whole-entity path (EF-322 owned-collection slice).
+        var blog = Assert.Single(db.Entities.AsNoTracking().ToList());
+        Assert.Equal("Alpha", blog.Title);
+        Assert.Equal(["a", "b"], blog.Tags.Select(t => t.Name));
     }
 
     private class Order
@@ -613,9 +615,9 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Review M1 strengthening: mixed owned-ref + owned-collection must fall back — a routing guard,
-    //  not just parity (see NativeMaterializerOnePassTests.Owned_reference_and_owned_collection_
-    //  materialize_correct_nested_values, which only asserts Native==DriverLinq parity for this shape).
+    //  EF-322 owned-collection slice: mixed owned-ref + owned-collection now goes native — a routing
+    //  proof (see also NativeMaterializerOnePassTests.Owned_reference_and_owned_collection_
+    //  materialize_correct_nested_values, which asserts Native==DriverLinq parity for this shape).
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class BlogMixed
@@ -633,10 +635,10 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     };
 
     [Fact]
-    public void Mixed_owned_reference_and_owned_collection_still_falls_back_under_NativeOnly()
+    public void Mixed_owned_reference_and_owned_collection_goes_native_under_NativeOnly()
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(
-            UniqueCollectionName(nameof(Mixed_owned_reference_and_owned_collection_still_falls_back_under_NativeOnly)));
+            UniqueCollectionName(nameof(Mixed_owned_reference_and_owned_collection_goes_native_under_NativeOnly)));
         coll.InsertOne(new BsonDocument
         {
             { "_id", ObjectId.GenerateNewId() }, { "Title", "Alpha" },
@@ -647,11 +649,11 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogMixedModel);
 
-        // The admit predicate requires EVERY navigation in the auto-include chain to be an embedded
-        // non-collection single-reference. Mixing the owned reference (Address) with an owned
-        // COLLECTION (Tags) on the same root must still reject the whole selector and fall back — a
-        // hard routing assertion, so a future accidental over-admit of this mixed shape is caught here
-        // (by a throw) rather than only by a parity test that would keep passing either way.
-        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.AsNoTracking().ToList());
+        // The admit predicate now accepts EVERY embedded navigation in the auto-include chain — an owned
+        // reference (Address) mixed with an owned COLLECTION (Tags) on the same root is admitted as a whole
+        // and goes native (EF-322 owned-collection slice; previously this fell back).
+        var blog = Assert.Single(db.Entities.AsNoTracking().ToList());
+        Assert.Equal("NYC", blog.Address.City);
+        Assert.Equal(["a"], blog.Tags.Select(t => t.Name));
     }
 }

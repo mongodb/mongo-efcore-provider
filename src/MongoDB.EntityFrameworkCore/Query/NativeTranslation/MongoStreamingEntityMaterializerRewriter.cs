@@ -37,10 +37,13 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <para>
 /// Rewrites EF's post-injection entity-materializer block for a streaming-eligible entity so that each
 /// native-path row is materialized via a single forward <see cref="IBsonReader"/> pass into typed locals —
-/// instead of building a <see cref="BsonDocument"/> DOM. Handles flat (scalar / mapped-array) entities and
+/// instead of building a <see cref="BsonDocument"/> DOM. Handles flat (scalar / mapped-array) entities,
 /// entities with single (reference) owned sub-documents, recursively (an owned type may itself own further
-/// reference sub-documents). Owned <em>collections</em> and cross-collection / non-owned navigations are
-/// rejected with <see cref="NativeTranslationNotSupportedException"/>.
+/// reference sub-documents), and owned collections whose element carries no navigation of its own (built via
+/// a forward-fill loop; see <see cref="BuildFillLoop"/>). A NON-owned collection navigation, and an owned
+/// collection whose element itself carries a further navigation (rejected upstream by
+/// <see cref="StreamingEligibility"/>, which the streaming path is gated on), are rejected with
+/// <see cref="NativeTranslationNotSupportedException"/>.
 /// </para>
 /// <para>
 /// EF's construction / tracking blocks are reused verbatim, with their <c>ValueBufferTryReadValue</c> reads
@@ -233,8 +236,11 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     /// <summary>
     /// Build a plan for <paramref name="entityType"/>: one typed local per scalar property, a "present" flag
-    /// (for owned sub-documents), and recursively a plan for each single owned reference navigation. Rejects
-    /// owned collections and any non-owned navigation.
+    /// (for owned sub-documents), a recursive plan for each single owned reference navigation, and a
+    /// <see cref="CollectionPlan"/> (element plan + counter + accumulator list) for each owned collection
+    /// navigation, materialized via the fill loop (<see cref="BuildFillLoop"/>). Rejects a NON-owned
+    /// collection navigation (and, one level up, an owned collection whose element itself carries a further
+    /// navigation — see <see cref="StreamingEligibility"/>) with <see cref="NativeTranslationNotSupportedException"/>.
     /// </summary>
     private EntityPlan BuildPlan(
         IEntityType entityType,

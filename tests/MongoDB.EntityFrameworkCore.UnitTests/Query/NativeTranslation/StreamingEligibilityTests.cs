@@ -200,6 +200,40 @@ public class StreamingEligibilityTests
         Assert.False(StreamingEligibility.IsEligible(entityType));
     }
 
+    // --- Owned collection whose element type owns a single REFERENCE navigation: root is ineligible ---
+
+    private class RefType
+    {
+        public string Value { get; set; } = "";
+    }
+
+    private class Outer
+    {
+        public string Label { get; set; } = "";
+        public RefType Ref { get; set; } = null!;
+    }
+
+    private class EntityWithOwnedCollectionOfOwnedReference
+    {
+        public int Id { get; set; }
+        public IList<Outer> Outer { get; set; } = [];
+    }
+
+    [Fact]
+    public void Entity_WithOwnedCollectionNavigation_WhoseElementHasOwnedReference_IsNotEligible()
+    {
+        // A collection element type that owns a nested single REFERENCE navigation is also
+        // streaming-ineligible — the forward-only reader has no IncludeExpression case for a collection
+        // element, so ANY navigation on the element (not just a nested collection) must route to the
+        // native DOM shaper instead (EF-322 owned-collection slice; locks in the .Any() narrowing added
+        // to StreamingEligibility alongside the collection-of-collection check above).
+        var entityType = GetEntityType<EntityWithOwnedCollectionOfOwnedReference>(mb =>
+        {
+            mb.Entity<EntityWithOwnedCollectionOfOwnedReference>().OwnsMany(e => e.Outer, o => o.OwnsOne(x => x.Ref));
+        });
+        Assert.False(StreamingEligibility.IsEligible(entityType));
+    }
+
     // --- Helper ---
 
     private static IEntityType GetEntityType<T>(Action<ModelBuilder>? configure = null) where T : class

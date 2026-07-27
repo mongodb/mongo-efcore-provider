@@ -206,7 +206,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     //
     // NOTE: as of EF-322 Task 2 an owned single-reference whole-entity query DOES route to the native
     // pipeline (the gate now admits the owned-embedded auto-include Select — see
-    // MongoQueryableMethodTranslatingExpressionVisitor.IsOwnedEmbeddedReferenceIncludeSelector and
+    // MongoQueryableMethodTranslatingExpressionVisitor.IsOwnedEmbeddedIncludeSelector and
     // .superpowers/sdd/EF-322-owned-ref-whole-entity-spike.md), and the one-pass streaming materializer's
     // recursion applies the same missing/null handling to owned sub-documents (RequiredPresence is built for
     // every EntityPlan, including owned children, and BuildFillLoop(child) enforces it). These tests still

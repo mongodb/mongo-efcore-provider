@@ -174,15 +174,13 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
     }
 
     // ── (c) owned reference AND owned collection materialize correct nested values ─────────────────
-    // NOTE (updated EF-322 Task 2): an owned SINGLE-REFERENCE-only whole-entity query now DOES route to the
-    // native (one-pass streaming) path — see
-    // MongoQueryableMethodTranslatingExpressionVisitor.IsOwnedEmbeddedReferenceIncludeSelector and
-    // .superpowers/sdd/EF-322-owned-ref-whole-entity-spike.md. THIS entity mixes an owned reference (ShipTo)
-    // with an owned COLLECTION (Lines) in the SAME auto-include chain, and the admit predicate requires EVERY
-    // navigation in the chain to be an embedded non-collection single-reference — the collection nav makes it
-    // reject the whole selector, so this shape STILL falls back to driver-LINQ (DOM), unchanged by Task 2. So
-    // this asserts Native↔DriverLinq PARITY of the nested values — a guard that the one-pass changes do not
-    // regress owned materialization — rather than a NativeOnly routing assertion.
+    // NOTE (updated EF-322 owned-collection slice): the admit predicate (IsOwnedEmbeddedIncludeSelector) now
+    // accepts EVERY embedded navigation in the auto-include chain, including owned COLLECTION navigations —
+    // so this entity, which mixes an owned reference (ShipTo) with an owned COLLECTION (Lines) on the same
+    // root, ALSO goes native (previously it fell back to driver-LINQ/DOM under Task 2). This test still
+    // asserts Native↔DriverLinq PARITY of the nested values as a materialization guard that the one-pass
+    // changes do not regress owned materialization, and additionally proves routing with a NativeOnly
+    // success assertion below.
 
     [Fact]
     public void Owned_reference_and_owned_collection_materialize_correct_nested_values()
@@ -251,6 +249,13 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         using (var ctx = CreateContext(collection, MongoQueryMode.Native, model))
         {
             AssertNesting(ctx.Entities.AsNoTracking().OrderBy(o => o.Customer).ToList(), id1);
+        }
+
+        // EF-322 owned-collection slice: this mixed owned-ref + owned-collection shape now ALSO routes
+        // native — prove it (NativeOnly succeeds instead of throwing) in addition to the parity guard above.
+        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
+        {
+            AssertNesting(nativeOnly.Entities.AsNoTracking().ToList(), id1);
         }
     }
 
