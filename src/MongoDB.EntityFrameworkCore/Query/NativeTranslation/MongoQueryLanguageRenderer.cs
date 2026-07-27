@@ -84,6 +84,7 @@ internal sealed class MongoQueryLanguageRenderer
             MongoFieldExpression field => RenderBareField(field, placeholders),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
             MongoRegexExpression regex => RenderRegex(regex, placeholders),
+            MongoElemMatchExpression elemMatch => RenderElemMatch(elemMatch, placeholders),
             _ => RenderAsExpr(node, placeholders)
         };
 
@@ -229,6 +230,88 @@ internal sealed class MongoQueryLanguageRenderer
             ? new BsonDocument(regex.Field.ElementName, new BsonDocument("$not", body))
             : new BsonDocument(regex.Field.ElementName, body);
     }
+
+    // ------------------------------------------------------------------
+    // Existential quantifier over an embedded array ($elemMatch)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Renders a <see cref="MongoElemMatchExpression"/>.
+    /// <para>
+    /// With an element predicate: <c>{ path: { $elemMatch: &lt;child&gt; } }</c>, negated as
+    /// <c>{ path: { $not: { $elemMatch: &lt;child&gt; } } }</c>. The child goes through the same
+    /// <see cref="RenderNode"/> dispatch and its field names stay ELEMENT-RELATIVE — they are deliberately
+    /// not prefixed with the array path, which is exactly what <c>$elemMatch</c> expects. Multi-condition
+    /// children merge into one document via <see cref="CombineAnd"/>, so all conditions must hold for the
+    /// SAME element.
+    /// </para>
+    /// <para>
+    /// Without one (bare <c>Any()</c>): <c>{ "path.0": { $exists: true } }</c> — index-usable, and true for
+    /// exactly those documents whose array has at least one element. A missing field and an empty array both
+    /// correctly yield false, whereas <c>{ path: { $ne: [] } }</c> would wrongly match a missing field.
+    /// Negated: <c>$exists: false</c>.
+    /// </para>
+    /// <para>
+    /// The child is guaranteed to have a query-dialect rendering because
+    /// <see cref="IsQueryDialectRenderable"/> gates node construction in
+    /// <c>MongoExpressionTranslator</c> — <c>$expr</c> is not usable inside <c>$elemMatch</c>.
+    /// </para>
+    /// </summary>
+    private BsonDocument RenderElemMatch(MongoElemMatchExpression elemMatch, PlaceholderTable placeholders)
+    {
+        if (elemMatch.ElementPredicate is null)
+            return new BsonDocument(
+                elemMatch.ArrayPath + ".0", new BsonDocument("$exists", !elemMatch.Negated));
+
+        var body = new BsonDocument(
+            "$elemMatch", (BsonDocument)RenderNode(elemMatch.ElementPredicate, placeholders));
+
+        return elemMatch.Negated
+            ? new BsonDocument(elemMatch.ArrayPath, new BsonDocument("$not", body))
+            : new BsonDocument(elemMatch.ArrayPath, body);
+    }
+
+    // ------------------------------------------------------------------
+    // Query-dialect renderability — MUST STAY IN SYNC WITH RenderNode ABOVE
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Returns whether <paramref name="node"/> has a QUERY-dialect rendering: whether
+    /// <see cref="RenderNode"/> would render it without falling through to <see cref="RenderAsExpr"/> (which
+    /// emits <c>$expr</c>, the aggregation dialect) and without throwing.
+    /// </summary>
+    /// <remarks>
+    /// Used by <c>MongoExpressionTranslator</c> to decline an <c>$elemMatch</c> whose element predicate has
+    /// no query-dialect form. This is a <b>correctness</b> gate, not an indexing preference:
+    /// <c>$expr</c> inside <c>$elemMatch</c> is a hard server error — <c>Command find failed: $expr can only
+    /// be applied to the top-level document</c> — so a child that slipped through to the <c>$expr</c>
+    /// catch-all would make the whole query throw at execution time, under <c>Native</c> as well as
+    /// <c>NativeOnly</c>. Declining at translate time falls the query back to driver-LINQ instead.
+    /// <b>This method and <see cref="RenderNode"/> must be changed together:</b> a node this method admits
+    /// but <see cref="RenderNode"/> sends to <c>$expr</c> (or throws on) becomes exactly that runtime
+    /// failure.
+    /// </remarks>
+    public static bool IsQueryDialectRenderable(MongoExpression node)
+        => node switch
+        {
+            MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso } a
+                => IsQueryDialectRenderable(a.Left) && IsQueryDialectRenderable(a.Right),
+            MongoBinaryExpression { Operator: MongoBinaryOperator.OrElse } o
+                => IsQueryDialectRenderable(o.Left) && IsQueryDialectRenderable(o.Right),
+            MongoBinaryExpression comparison => IsQueryNativeComparison(comparison),
+            // RenderUnary supports Not over a bare field only, and throws otherwise.
+            MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoFieldExpression } => true,
+            MongoFieldExpression => true,
+            // RenderInValues throws for any values node other than a constant enumerable or a parameter.
+            MongoInExpression inExpr
+                => inExpr.Values is MongoConstantExpression { Value: System.Collections.IEnumerable }
+                    or MongoParameterExpression,
+            // RenderRegex throws for a parameterized term — only a constant is baked into a pattern.
+            MongoRegexExpression { Term: MongoConstantExpression { Value: string } } => true,
+            MongoElemMatchExpression { ElementPredicate: null } => true,
+            MongoElemMatchExpression elemMatch => IsQueryDialectRenderable(elemMatch.ElementPredicate),
+            _ => false
+        };
 
     // ------------------------------------------------------------------
     // AND / OR combining helpers (ported verbatim from the spike MongoPredicateTranslator)

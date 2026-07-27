@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -41,6 +42,27 @@ public class MongoQueryLanguageRendererTests
     {
         using var db = SingleEntityDbContext.Create<T>();
         return db.Model.FindEntityType(typeof(T))!.FindProperty(propertyName)!;
+    }
+
+    private class Blog
+    {
+        public MongoDB.Bson.ObjectId Id { get; set; }
+        public string Title { get; set; } = null!;
+        public List<Post> Posts { get; set; } = [];
+    }
+
+    private class Post
+    {
+        public string Heading { get; set; } = null!;
+        public int Rank { get; set; }
+    }
+
+    // A property of the owned COLLECTION ELEMENT type (Post), for building element-relative field refs.
+    private static IProperty GetPostProperty(string propertyName)
+    {
+        using var db = SingleEntityDbContext.Create<Blog>(mb => mb.Entity<Blog>().OwnsMany(b => b.Posts));
+        return db.Model.FindEntityType(typeof(Blog))!
+            .FindNavigation(nameof(Blog.Posts))!.TargetEntityType.FindProperty(propertyName)!;
     }
 
     // ------------------------------------------------------------------
@@ -472,5 +494,184 @@ public class MongoQueryLanguageRendererTests
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable()));
+    }
+
+    // ------------------------------------------------------------------
+    // $elemMatch over an owned (embedded) array
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_elem_match_with_element_relative_child()
+    {
+        var heading = GetPostProperty(nameof(Post.Heading));
+        var pred = new MongoElemMatchExpression(
+            "Posts",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal,
+                new MongoFieldExpression(heading, "Heading"),   // element-relative, NOT "Posts.Heading"
+                new MongoConstantExpression("x", heading)),
+            negated: false);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ Posts: { $elemMatch: { Heading: 'x' } } }"), rendered);
+    }
+
+    [Fact]
+    public void Renders_multi_condition_elem_match_as_a_single_element_match()
+    {
+        // The whole point of $elemMatch over the dotted-path alternative: BOTH conditions must hold for
+        // the SAME element. Pinning the rendered shape locks that semantic.
+        var heading = GetPostProperty(nameof(Post.Heading));
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var pred = new MongoElemMatchExpression(
+            "Posts",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.AndAlso,
+                new MongoBinaryExpression(
+                    MongoBinaryOperator.Equal,
+                    new MongoFieldExpression(heading, "Heading"),
+                    new MongoConstantExpression("x", heading)),
+                new MongoBinaryExpression(
+                    MongoBinaryOperator.GreaterThan,
+                    new MongoFieldExpression(rank, "Rank"),
+                    new MongoConstantExpression(2, rank))),
+            negated: false);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ Posts: { $elemMatch: { Heading: 'x', Rank: { $gt: 2 } } } }"), rendered);
+    }
+
+    [Fact]
+    public void Renders_negated_elem_match_with_not()
+    {
+        var heading = GetPostProperty(nameof(Post.Heading));
+        var pred = new MongoElemMatchExpression(
+            "Posts",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal,
+                new MongoFieldExpression(heading, "Heading"),
+                new MongoConstantExpression("x", heading)),
+            negated: true);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ Posts: { $not: { $elemMatch: { Heading: 'x' } } } }"), rendered);
+    }
+
+    [Fact]
+    public void Renders_bare_Any_as_array_index_exists()
+    {
+        // { "Posts.0": { $exists: true } } is index-usable AND correct for both an empty array and a
+        // MISSING field ({ Posts: { $ne: [] } } would wrongly match a missing field).
+        var pred = new MongoElemMatchExpression("Posts", elementPredicate: null, negated: false);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ 'Posts.0': { $exists: true } }"), rendered);
+    }
+
+    [Fact]
+    public void Renders_negated_bare_Any_as_array_index_not_exists()
+    {
+        var pred = new MongoElemMatchExpression("Posts", elementPredicate: null, negated: true);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ 'Posts.0': { $exists: false } }"), rendered);
+    }
+
+    [Fact]
+    public void Renders_nested_elem_match_with_relative_inner_path()
+    {
+        // The inner array path is relative to the ELEMENT ("Comments"), not the root ("Posts.Comments").
+        var heading = GetPostProperty(nameof(Post.Heading));
+        var inner = new MongoElemMatchExpression(
+            "Comments",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal,
+                new MongoFieldExpression(heading, "Text"),   // property identity is irrelevant to rendering
+                new MongoConstantExpression("t", heading)),
+            negated: false);
+        var pred = new MongoElemMatchExpression("Posts", inner, negated: false);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse("{ Posts: { $elemMatch: { Comments: { $elemMatch: { Text: 't' } } } } }"),
+            rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // IsQueryDialectRenderable — the classifier the translator gates $elemMatch children on
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void IsQueryDialectRenderable_accepts_a_field_to_constant_comparison()
+    {
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(rank, "Rank"),
+            new MongoConstantExpression(2, rank));
+
+        Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(pred));
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_rejects_a_field_to_field_comparison()
+    {
+        // Field-to-field has no query-dialect form: RenderNode would fall through to RenderAsExpr ($expr),
+        // which is not usable inside $elemMatch.
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(rank, "Rank"),
+            new MongoFieldExpression(rank, "Other"));
+
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(pred));
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_rejects_Not_over_a_non_field_operand()
+    {
+        // RenderUnary supports Not only over a bare MongoFieldExpression and THROWS otherwise.
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var pred = new MongoUnaryExpression(
+            MongoUnaryOperator.Not,
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal,
+                new MongoFieldExpression(rank, "Rank"),
+                new MongoConstantExpression(2, rank)));
+
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(pred));
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_recurses_through_elem_match_and_conjunctions()
+    {
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var good = new MongoElemMatchExpression(
+            "Comments",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal,
+                new MongoFieldExpression(rank, "Rank"),
+                new MongoConstantExpression(1, rank)),
+            negated: false);
+        var bad = new MongoElemMatchExpression(
+            "Comments",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.GreaterThan,
+                new MongoFieldExpression(rank, "Rank"),
+                new MongoFieldExpression(rank, "Other")),
+            negated: false);
+
+        Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
+            new MongoBinaryExpression(MongoBinaryOperator.AndAlso, good, good)));
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
+            new MongoBinaryExpression(MongoBinaryOperator.AndAlso, good, bad)));
+        Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
+            new MongoElemMatchExpression("Posts", elementPredicate: null, negated: false)));
     }
 }

@@ -75,6 +75,16 @@ slices → tip `1dd7862`. Nothing is merged to `main` yet — the whole native s
     correlated beyond the FK
   - Nested (exactly two-level) reference `SelectMany` → two chained `$lookup` + `$unwind`
   - Single-scope arithmetic computed leaf inside a SelectMany trailing projection (the final tail item, tip `1dd7862`)
+- **Owned-collection `Any` quantifier predicates (EF-322, landed after this doc's tip `1dd7862`).**
+  `Any()`/`Any(pred)` over an owned (embedded) collection navigation, negated forms, nested
+  `Any`-within-`Any`, and a collection reached through owned single-reference hops → `$elemMatch` (bare
+  `Any()` → an array-index `{"path.0": {$exists}}` test, correct for empty/missing/null arrays alike, unlike
+  `{$ne: []}`). An owned `SelectMany` whose inner filter is itself an owned-sub-collection `Any` — previously
+  a hard fail in every mode with no driver-LINQ oracle — now also goes native. See
+  `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` (the "Owned-collection `Any` quantifier predicates"
+  note) for the full mechanism. Not reflected in the §7 measured counts below (those predate this landing);
+  the EF10 `NativeOnly` spec sweep re-run for this addition showed **zero delta** (Northwind has no owned
+  collections).
 
 ---
 
@@ -93,6 +103,11 @@ slices → tip `1dd7862`. Nothing is merged to `main` yet — the whole native s
 - Contains / ElementAt / Last; computed aggregate selectors; `All` with a comparison predicate (EF-335).
 - Guarded-out for correctness: value-converter / non-default `BsonRepresentation` operands (arithmetic,
   GroupBy keys, Distinct keys, OfType discriminators).
+- **Owned-collection predicate/projection long tail (EF-322), unaffected by the `Any`-quantifier addition
+  above:** `All` over an owned collection, `.Count` used in a predicate, an embedded-collection projection
+  (`Select(b => b.Posts.Count)`, an array projection), a non-query-dialect owned-collection element predicate
+  (field-to-field / arithmetic — no query-dialect form to put inside `$elemMatch`), and a two-scope
+  (cross-scope, inside a `SelectMany`) owned quantifier.
 
 **Hard-fails in every mode (no driver-LINQ oracle):** cross-collection SelectMany forms outside the native
 slice, three-level+ nested SelectMany, whole-outer SelectMany, and any operator composed *after* a native
@@ -111,6 +126,10 @@ SelectMany (shaper-rebuild limitation).
 - **Parity cutover.** Once native reaches parity: retire the driver-LINQ fallback and delete the delegation code.
 - **Minor SelectMany follow-ons (EF-347 leftovers):** cross-scope computed leaf (`o.Discount * i.Price`),
   the inner-`Select`-form computed-leaf binder.
+- **Owned-collection predicate follow-ons (EF-322):** `All`, `.Count`-in-predicate, and array-projection
+  over an owned collection remain deferred (see §4); relativizing the owned single-reference dotted-path
+  scalar resolver (`TryResolveOwnedFieldPath`) the same way the new `Any`-quantifier resolver is scoped
+  would let a two-scope owned dotted access work without its current blanket decline.
 
 ---
 

@@ -37,6 +37,11 @@ internal static class MongoFieldPrefixRewriter
                 (MongoFieldExpression)Rewrite(i.Field, prefix), Rewrite(i.Values, prefix), i.Negated),
             MongoRegexExpression r => new MongoRegexExpression(
                 (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated),
+            // Prefix the ARRAY path only. The element predicate's field paths are ELEMENT-relative (that is
+            // what $elemMatch requires), so rewriting them would mis-address every field inside the
+            // $elemMatch and silently match nothing.
+            MongoElemMatchExpression e => new MongoElemMatchExpression(
+                prefix + "." + e.ArrayPath, e.ElementPredicate, e.Negated),
             MongoConstantExpression or MongoParameterExpression => expr,
             _ => throw new NativeTranslationNotSupportedException(
                 $"Cannot prefix-rewrite MongoExpression node '{expr.GetType().Name}'.")

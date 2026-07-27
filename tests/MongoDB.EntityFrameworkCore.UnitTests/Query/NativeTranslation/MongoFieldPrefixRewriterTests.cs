@@ -65,4 +65,21 @@ public class MongoFieldPrefixRewriterTests
         Assert.Equal("_lookup_Refs.Total", ((MongoFieldExpression)left.Left).ElementName);
         Assert.Equal("_lookup_Refs.Name", ((MongoFieldExpression)right.Left).ElementName);
     }
+
+    [Fact]
+    public void Prefixes_the_elem_match_array_path_and_leaves_the_element_predicate_alone()
+    {
+        var child = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal, Field("Name"),
+            new MongoConstantExpression("x", forSerialization: null));
+        var expr = new MongoElemMatchExpression("Posts", child, negated: false);
+
+        var rewritten = (MongoElemMatchExpression)MongoFieldPrefixRewriter.Rewrite(expr, "_lookup_Refs");
+
+        Assert.Equal("_lookup_Refs.Posts", rewritten.ArrayPath);
+        // The child is element-relative and must be untouched — NOT "_lookup_Refs.Name".
+        var childField = (MongoFieldExpression)((MongoBinaryExpression)rewritten.ElementPredicate!).Left;
+        Assert.Equal("Name", childField.ElementName);
+        Assert.False(rewritten.Negated);
+    }
 }

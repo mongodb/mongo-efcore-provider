@@ -254,6 +254,12 @@ internal sealed class MongoExpressionTranslator
                 // which the renderer applies based on this flag).
                 if (operand is MongoRegexExpression regexExpr)
                     return new MongoRegexExpression(regexExpr.Field, regexExpr.Kind, regexExpr.Term, negated: !regexExpr.Negated);
+                // !collection.Any(...) → flip Negated rather than wrapping in a generic Not node: RenderUnary
+                // supports Not over a bare field only, and $elemMatch has direct query-dialect negations
+                // ({ path: { $not: { $elemMatch: ... } } }, and $exists: false for the bare Any() form).
+                if (operand is MongoElemMatchExpression elemMatchExpr)
+                    return new MongoElemMatchExpression(
+                        elemMatchExpr.ArrayPath, elemMatchExpr.ElementPredicate, negated: !elemMatchExpr.Negated);
                 // Only allow Not over a field or further translated expression; nullable bools fall back.
                 if (operand is MongoFieldExpression fieldExpr && fieldExpr.Property.IsNullable)
                     return null; // conservative: nullable bool Not could diverge from driver rendering
@@ -291,6 +297,40 @@ internal sealed class MongoExpressionTranslator
 
                 var fieldExpr3 = new MongoFieldExpression(property, fieldPath!);
                 return new MongoRegexExpression(fieldExpr3, kind, termNode, negated: false);
+            }
+
+            // --- Existential quantifier over an owned (embedded) collection: source.Any() / source.Any(pred) ---
+
+            case MethodCallExpression call when TryMatchAnyMethod(call, out var quantifierSource, out var elementLambda):
+            {
+                if (!TryResolveOwnedCollectionPath(Unwrap(quantifierSource), out var arrayPath, out var elementType))
+                    return null; // not an owned-collection source rooted at the query parameter
+
+                if (elementLambda is null)
+                    return new MongoElemMatchExpression(arrayPath, elementPredicate: null, negated: false);
+
+                // A CORRELATED element predicate — one reaching outside the element into the enclosing entity —
+                // must be declined BEFORE the element-scoped translator ever sees it. See the helper's remarks:
+                // the element-scoped translator resolves a member by NAME alone, so an enclosing-scoped access
+                // whose name also exists on the element would be silently retargeted at the element.
+                if (ReferencesEnclosingScope(elementLambda.Body, elementLambda.Parameters[0]))
+                    return null;
+
+                // Translate the element predicate with an ELEMENT-SCOPED translator: its field paths come out
+                // element-relative, which is what $elemMatch requires. This is the mirror image of
+                // NativeSelectManyBinder.TryBuildOwnedInnerFilter, which translates the same way and then
+                // PREFIXES the result with the unwind path.
+                var elementTranslator = new MongoExpressionTranslator(elementType);
+                if (!elementTranslator.TryTranslate(elementLambda.Body, out var elementPredicate))
+                    return null;
+
+                // $expr is not usable inside $elemMatch, and RenderNode's catch-all would silently wrap a
+                // non-query-dialect child in $expr. Decline here (translate time) so the query falls back to
+                // driver-LINQ instead.
+                if (!MongoQueryLanguageRenderer.IsQueryDialectRenderable(elementPredicate))
+                    return null;
+
+                return new MongoElemMatchExpression(arrayPath, elementPredicate, negated: false);
             }
 
             // --- Bare boolean member access (c.Active) ---
@@ -657,6 +697,256 @@ internal sealed class MongoExpressionTranslator
                 name = null!;
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Matches an existential quantifier call — <c>source.Any()</c> or <c>source.Any(element =&gt; predicate)</c>
+    /// — returning the quantifier's SOURCE with its <c>AsQueryable()</c> wrapper stripped and, for the
+    /// predicate form, the unquoted element lambda.
+    /// </summary>
+    /// <remarks>
+    /// EF hands the native translator the <see cref="Queryable"/> spelling, with the lambda
+    /// <c>Quote</c>-wrapped and the source wrapped in exactly one <c>AsQueryable()</c> call:
+    /// <c>Queryable.Any(Call(AsQueryable, [EF.Property(b, "Posts")]), Quote(p =&gt; ...))</c> — confirmed for
+    /// every spelling, including the bare 1-argument form, a nested quantifier (whose own source has the
+    /// identical shape, rooted on the element parameter), and a collection reached through owned references.
+    /// The <see cref="Enumerable"/> spelling is accepted too, so a hand-built expression tree translates
+    /// identically to an EF-produced one.
+    /// </remarks>
+    private static bool TryMatchAnyMethod(
+        MethodCallExpression call,
+        [NotNullWhen(true)] out Expression? source,
+        out LambdaExpression? elementLambda)
+    {
+        source = null;
+        elementLambda = null;
+
+        if (call.Method.Name != nameof(Enumerable.Any))
+            return false;
+
+        var declaringType = call.Method.DeclaringType;
+        if (declaringType != typeof(Enumerable) && declaringType != typeof(Queryable))
+            return false;
+
+        switch (call.Arguments.Count)
+        {
+            case 1:
+                source = UnwrapAsQueryable(call.Arguments[0]);
+                return true;
+
+            case 2:
+            {
+                // The Queryable spelling quotes its lambda; the Enumerable spelling does not.
+                var argument = call.Arguments[1];
+                if (argument is UnaryExpression { NodeType: ExpressionType.Quote } quote)
+                    argument = quote.Operand;
+
+                if (argument is not LambdaExpression { Parameters.Count: 1 } lambda)
+                    return false;
+
+                source = UnwrapAsQueryable(call.Arguments[0]);
+                elementLambda = lambda;
+                return true;
+            }
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="body"/> — the body of an <c>Any</c> element-predicate lambda — references any
+    /// <b>free</b> <see cref="ParameterExpression"/> other than <paramref name="elementParameter"/>, i.e. the
+    /// predicate is CORRELATED with an enclosing scope (in practice the query parameter, as in
+    /// <c>Where(o =&gt; o.Items.Any(i =&gt; o.Name == "x"))</c>). Such a predicate is DECLINED by the <c>Any</c> arm.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The hazard — identity, not name, decides scope.</b> The <c>Any</c> arm translates its element predicate
+    /// with a SINGLE-SCOPE <see cref="MongoExpressionTranslator"/> built on the element entity type, and
+    /// single-scope <see cref="TryResolveMember"/> resolves a member access by <em>name</em> against that one
+    /// scope with no parameter-identity check (it never needs one for its other callers, which only ever
+    /// translate a genuinely single-parameter lambda body). So a member rooted on the ENCLOSING query parameter
+    /// would be silently resolved against the ELEMENT type whenever both types declare a property of the same
+    /// name — extremely common (<c>Name</c>, <c>Id</c>, <c>Status</c>, …) — retargeting the condition from the
+    /// owner to the element and returning WRONG ROWS rather than declining. This mirrors the rule, and the
+    /// reasoning, behind <c>NativeSelectManyBinder.ReferencesParameter</c>: scope is decided by reference
+    /// identity, never by member name.
+    /// </para>
+    /// <para>
+    /// <b>Free, not merely present.</b> A <see cref="ParameterExpression"/> declared by a
+    /// <see cref="LambdaExpression"/> INSIDE the body is bound, not free, and must not trigger a decline — a
+    /// nested quantifier (<c>Any(p =&gt; p.Comments.Any(c =&gt; c.Text == "t"))</c>) is supported and its inner
+    /// <c>c</c> is bound by the inner lambda. Parameters bound while descending are therefore tracked and
+    /// exempted. EF query parameters are exempt too: on EF8/EF9 a query parameter IS a
+    /// <see cref="ParameterExpression"/> (a <c>__</c>-prefixed name — see
+    /// <see cref="NativeQueryParameter.TryGetQueryParameterName"/>), so a captured value in the element
+    /// predicate (<c>Any(i =&gt; i.Name == captured)</c>) would otherwise decline on those versions only.
+    /// </para>
+    /// <para>
+    /// <b>Deferred, not impossible.</b> Supporting a correlated element predicate is a legitimate follow-on
+    /// slice, but it needs more than a two-scope translator: <c>$elemMatch</c> itself cannot reference the
+    /// enclosing document at all, so the correlated form would have to render as a top-level <c>$expr</c> over
+    /// <c>$filter</c>/<c>$anyElementTrue</c> instead. Declining keeps the shape on the driver-LINQ path, which
+    /// translates it correctly today.
+    /// </para>
+    /// </remarks>
+    private static bool ReferencesEnclosingScope(Expression body, ParameterExpression elementParameter)
+    {
+        var visitor = new FreeParameterVisitor(elementParameter);
+        visitor.Visit(body);
+        return visitor.FoundFreeParameter;
+    }
+
+    /// <summary>
+    /// Finds a reference to a <see cref="ParameterExpression"/> that is free in the visited expression — i.e.
+    /// neither the element parameter it was constructed with, nor bound by a <see cref="LambdaExpression"/>
+    /// encountered while descending, nor an EF query parameter. See
+    /// <see cref="ReferencesEnclosingScope"/> for why this distinction matters.
+    /// </summary>
+    private sealed class FreeParameterVisitor(ParameterExpression elementParameter) : ExpressionVisitor
+    {
+        private readonly List<ParameterExpression> _bound = [elementParameter];
+
+        public bool FoundFreeParameter { get; private set; }
+
+        protected override Expression VisitLambda<T>(Expression<T> node)
+        {
+            var added = 0;
+            foreach (var parameter in node.Parameters)
+            {
+                if (!ContainsByIdentity(parameter))
+                {
+                    _bound.Add(parameter);
+                    added++;
+                }
+            }
+
+            var result = base.VisitLambda(node);
+
+            // Pop only what this lambda actually pushed, so an outer binding of the same instance survives.
+            _bound.RemoveRange(_bound.Count - added, added);
+            return result;
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (!ContainsByIdentity(node) && !NativeQueryParameter.TryGetQueryParameterName(node, out _))
+                FoundFreeParameter = true;
+
+            return node;
+        }
+
+        private bool ContainsByIdentity(ParameterExpression parameter)
+        {
+            foreach (var bound in _bound)
+            {
+                if (ReferenceEquals(bound, parameter))
+                    return true;
+            }
+
+            return false;
+        }
+    }
+
+    // EF wraps a quantifier's collection source in a single Queryable.AsQueryable() call; strip that one
+    // layer so the hop walk sees the bare member / EF.Property chain underneath.
+    private static Expression UnwrapAsQueryable(Expression source)
+    {
+        if (source is MethodCallExpression { Arguments: [var inner] } call
+            && call.Method.Name == nameof(Queryable.AsQueryable)
+            && call.Method.DeclaringType == typeof(Queryable))
+        {
+            return inner;
+        }
+
+        return source;
+    }
+
+    /// <summary>
+    /// Resolves the SOURCE of an owned-collection quantifier (<c>b.Posts</c>, <c>b.Address.Notes</c>) to the
+    /// dotted document path of the embedded array — <b>relative to this translator's scope entity type</b> —
+    /// and yields the array's element entity type. Every non-final hop must be an embedded single-reference
+    /// navigation; the final hop must be an embedded collection navigation; the chain must be rooted at the
+    /// query parameter. Returns <see langword="false"/> (caller falls back to driver-LINQ) for anything else,
+    /// including a reference (non-embedded) navigation and a primitive collection property.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why scope-relative, and why there is deliberately no <c>IsDocumentRoot</c> guard here</b> (unlike
+    /// <see cref="TryResolveOwnedFieldPath"/>): that method builds paths with
+    /// <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>, which is always relative to the TRUE document
+    /// root, so a translator built on a non-root scope whose caller separately prefixes the result would
+    /// double-prefix and silently match nothing — hence its blanket decline. This method instead joins the
+    /// hop navigations' own containing element names, so the path is relative to <c>_entityType</c> by
+    /// construction. That composes correctly with
+    /// <see cref="MongoFieldPrefixRewriter"/> prepending rather than fighting it, and it is what makes a
+    /// nested <c>Any</c>-within-<c>Any</c> correct: the element-scoped child translator resolves the inner
+    /// array relative to the element, which is exactly what the enclosing <c>$elemMatch</c> expects.
+    /// </para>
+    /// <para>
+    /// Two-scope mode is still declined: a cross-scope quantifier is out of scope for this slice.
+    /// </para>
+    /// <para>
+    /// <b>Why accepting ANY <see cref="ParameterExpression"/> root is safe.</b> This walk does not check WHICH
+    /// parameter roots the chain, so on its own it would resolve a source rooted on an ENCLOSING parameter
+    /// (<c>b.Posts.Any(p =&gt; b.Posts.Any(q =&gt; …))</c>) against this translator's own scope type. That shape cannot
+    /// reach here: the enclosing parameter is free in the element-predicate body, so the <c>Any</c> arm's
+    /// <see cref="ReferencesEnclosingScope"/> guard declines the whole quantifier before the element-scoped child
+    /// translator is even constructed. At the outermost level the only parameter in scope IS the query parameter.
+    /// </para>
+    /// </remarks>
+    private bool TryResolveOwnedCollectionPath(
+        Expression source,
+        [NotNullWhen(true)] out string? arrayPath,
+        [NotNullWhen(true)] out IEntityType? elementType)
+    {
+        arrayPath = null;
+        elementType = null;
+
+        if (_outerParam is not null || _innerPrefix is not null)
+            return false; // two-scope mode: cross-scope quantifiers are out of scope (declined, falls back)
+
+        // Collect hop names from the outer hop inward; the root must be the query parameter.
+        var names = new List<string>();
+        var current = source;
+        while (TryGetMemberOrEFProperty(current, out var inner, out var name))
+        {
+            names.Add(name);
+            current = inner;
+        }
+
+        if (current is not ParameterExpression || names.Count == 0)
+            return false;
+
+        names.Reverse(); // now root-first: [ownedRefNav, ..., collectionNav]
+
+        var scopeType = _entityType;
+        var segments = new List<string>(names.Count);
+        for (var i = 0; i < names.Count; i++)
+        {
+            var navigation = scopeType.FindNavigation(names[i]);
+            if (navigation is null || !navigation.IsEmbedded())
+                return false; // a primitive collection property or a reference nav has no embedded path
+
+            // A collection is allowed only as the FINAL hop (it is the quantifier's source); every
+            // intermediate hop must be an owned single reference.
+            if (navigation.IsCollection != (i == names.Count - 1))
+                return false;
+
+            // The navigation's containing element name is the same source the shapers and pipeline use, so
+            // the emitted path matches stored layout (including HasElementName overrides and shared types).
+            var elementName = navigation.TargetEntityType.GetContainingElementName();
+            if (string.IsNullOrEmpty(elementName))
+                return false;
+
+            segments.Add(elementName);
+            scopeType = navigation.TargetEntityType;
+        }
+
+        arrayPath = string.Join(".", segments);
+        elementType = scopeType;
+        return true;
     }
 
     // True when the operand wraps the member in a Convert/ConvertChecked to a semantically different

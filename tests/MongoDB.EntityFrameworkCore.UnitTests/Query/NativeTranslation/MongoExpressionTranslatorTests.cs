@@ -83,7 +83,21 @@ public class MongoExpressionTranslatorTests
     {
         public ObjectId Id { get; set; }
         public string Title { get; set; } = "";
+        // Deliberately shares its name (and CLR type) with OwnedPost.IsActive — see OwnedPost.
+        public bool IsActive { get; set; }
         public OwnedAddress Address { get; set; } = null!;
+        public List<OwnedPost> Posts { get; set; } = [];
+        // Deliberately shares its NAVIGATION NAME with OwnedPost.Comments, and its element deliberately shares
+        // the "Text" property name with OwnedComment — the pair needed to give
+        // Correlated_owned_collection_Any_nested_quantifier_source_is_declined teeth (a differently-named nav,
+        // or an element without a matching scalar name, would decline for an unrelated reason).
+        public List<OwnedTag> Comments { get; set; } = [];
+        public List<string> Tags { get; set; } = [];
+    }
+
+    private class OwnedTag
+    {
+        public string Text { get; set; } = "";
     }
 
     private class OwnedAddress
@@ -91,6 +105,7 @@ public class MongoExpressionTranslatorTests
         public string City { get; set; } = "";
         public bool IsPrimary { get; set; }
         public OwnedGeo Geo { get; set; } = null!;
+        public List<OwnedNote> Notes { get; set; } = [];
     }
 
     private class OwnedGeo
@@ -98,10 +113,48 @@ public class MongoExpressionTranslatorTests
         public string Country { get; set; } = "";
     }
 
+    private class OwnedPost
+    {
+        public string Heading { get; set; } = "";
+        // Title/IsActive DELIBERATELY COLLIDE with OwnedBlog.Title/OwnedBlog.IsActive (same name, same CLR
+        // type). Without a colliding name the correlated-element-predicate guard cannot be exercised at all:
+        // the element-scoped translator resolves members by NAME, so an enclosing-scoped `b.Title` only
+        // mis-resolves — instead of declining for the unrelated reason "no such property on the element" —
+        // when the element declares the same name too. See the Correlated_* tests below.
+        public string Title { get; set; } = "";
+        public bool IsActive { get; set; }
+        public int Rank { get; set; }
+        public int Other { get; set; }
+        public OwnedGeo Geo { get; set; } = null!;
+        public List<OwnedComment> Comments { get; set; } = [];
+    }
+
+    private class OwnedComment
+    {
+        public string Text { get; set; } = "";
+    }
+
+    private class OwnedNote
+    {
+        public string Body { get; set; } = "";
+    }
+
     private static IEntityType GetOwnedBlogEntityType()
     {
         using var db = SingleEntityDbContext.Create<OwnedBlog>(mb =>
-            mb.Entity<OwnedBlog>().OwnsOne(b => b.Address, a => a.OwnsOne(x => x.Geo)));
+        {
+            mb.Entity<OwnedBlog>().OwnsOne(b => b.Address, a =>
+            {
+                a.OwnsOne(x => x.Geo);
+                a.OwnsMany(x => x.Notes);
+            });
+            mb.Entity<OwnedBlog>().OwnsMany(b => b.Posts, p =>
+            {
+                p.OwnsOne(x => x.Geo);
+                p.OwnsMany(x => x.Comments);
+            });
+            mb.Entity<OwnedBlog>().OwnsMany(b => b.Comments);
+        });
         return db.Model.FindEntityType(typeof(OwnedBlog))!;
     }
 
@@ -1084,9 +1137,16 @@ public class MongoExpressionTranslatorTests
     [Fact]
     public void Two_scope_owned_subproperty_is_declined()
     {
-        // A two-scope (SelectMany-unwind) translator must NOT engage the owned dotted-path walk.
+        // A two-scope (SelectMany-unwind) translator must NOT engage the owned dotted-path walk. innerType is
+        // deliberately GetOwnedBlogEntityType() (a type that genuinely owns an "Address" embedded-reference
+        // navigation), not an unrelated type: an unrelated innerType (e.g. Customer, which has no "Address")
+        // would decline anyway via FindNavigation returning null, passing vacuously even if the two-scope
+        // guard were deleted. Probed directly (fix-report record): with ONLY the two-scope guard commented
+        // out, this test fails — TryResolveOwnedFieldPath's sibling IsDocumentRoot guard does NOT also catch
+        // this input, because innerType here is the ROOT OwnedBlog type (IsDocumentRoot() is true for it),
+        // not an owned sub-type — so the two guards do not overlap for this shape.
         var outerType = GetOwnedBlogEntityType();
-        var innerType = GetEntityType<Customer>();
+        var innerType = GetOwnedBlogEntityType();
         var outerParam = Expression.Parameter(typeof(OwnedBlog), "o");
         var translator = new MongoExpressionTranslator(innerType, outerParam, outerType, "_lookup_X");
         var body = Expression.Property(Expression.Property(outerParam, nameof(OwnedBlog.Address)), nameof(OwnedAddress.City));
@@ -1109,5 +1169,267 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslateField(body, out var field));
         Assert.Equal("Address.City", field!.ElementName);
+    }
+
+    // ------------------------------------------------------------------
+    // Owned-collection quantifiers → $elemMatch (EF-322)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Owned_collection_Any_with_predicate_translates_to_elem_match()
+    {
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => p.Heading == "x"));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.Equal("Posts", elemMatch.ArrayPath);
+        Assert.False(elemMatch.Negated);
+        var comparison = Assert.IsType<MongoBinaryExpression>(elemMatch.ElementPredicate);
+        // ELEMENT-RELATIVE: "Heading", NOT "Posts.Heading".
+        Assert.Equal("Heading", Assert.IsType<MongoFieldExpression>(comparison.Left).ElementName);
+    }
+
+    [Fact]
+    public void Owned_collection_bare_Any_translates_to_elem_match_with_no_element_predicate()
+    {
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any());
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.Equal("Posts", elemMatch.ArrayPath);
+        Assert.Null(elemMatch.ElementPredicate);
+        Assert.False(elemMatch.Negated);
+    }
+
+    [Fact]
+    public void Negated_owned_collection_Any_flips_the_negated_flag()
+    {
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => !b.Posts.Any(p => p.Heading == "x"));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.True(elemMatch.Negated);
+        Assert.NotNull(elemMatch.ElementPredicate);
+    }
+
+    [Fact]
+    public void Nested_owned_collection_Any_translates_to_nested_elem_match_with_relative_paths()
+    {
+        // The inner array path must be ELEMENT-relative ("Comments"), not root-relative
+        // ("Posts.Comments"). This is the proof that scope-relative path building works.
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => p.Comments.Any(c => c.Text == "t")));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var outer = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.Equal("Posts", outer.ArrayPath);
+        var inner = Assert.IsType<MongoElemMatchExpression>(outer.ElementPredicate);
+        Assert.Equal("Comments", inner.ArrayPath);
+        var comparison = Assert.IsType<MongoBinaryExpression>(inner.ElementPredicate);
+        Assert.Equal("Text", Assert.IsType<MongoFieldExpression>(comparison.Left).ElementName);
+    }
+
+    [Fact]
+    public void Owned_collection_Any_through_an_owned_reference_hop_builds_a_dotted_array_path()
+    {
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Address.Notes.Any(n => n.Body == "b"));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.Equal("Address.Notes", elemMatch.ArrayPath);
+    }
+
+    [Fact]
+    public void Owned_collection_Any_in_the_exact_shape_EF_produces_resolves()
+    {
+        // EF hands the translator the Queryable overload, the source wrapped in ONE AsQueryable() call, the
+        // lambda Quote-wrapped, and owned-nav hops rewritten to EF.Property calls:
+        //   Queryable.Any(Call(AsQueryable, [EF.Property(b, "Posts")]), Quote(p => p.Heading == "x"))
+        // A C# lambda compiles to the Enumerable overload instead, so this hand-built tree is the ONLY unit
+        // coverage of the shape production queries actually take.
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+        var param = Expression.Parameter(typeof(OwnedBlog), "b");
+        var efProperty = typeof(EF).GetMethod(nameof(EF.Property))!.MakeGenericMethod(typeof(List<OwnedPost>));
+        var postsCall = Expression.Call(efProperty, param, Expression.Constant("Posts"));
+        var asQueryable = typeof(Queryable).GetMethods()
+            .Single(m => m.Name == nameof(Queryable.AsQueryable) && m.IsGenericMethodDefinition)
+            .MakeGenericMethod(typeof(OwnedPost));
+        var source = Expression.Call(asQueryable, postsCall);
+        Expression<Func<OwnedPost, bool>> elementPredicate = p => p.Heading == "x";
+        var anyMethod = typeof(Queryable).GetMethods()
+            .Single(m => m.Name == nameof(Queryable.Any) && m.GetParameters().Length == 2)
+            .MakeGenericMethod(typeof(OwnedPost));
+        var body = Expression.Call(anyMethod, source, Expression.Quote(elementPredicate));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.Equal("Posts", elemMatch.ArrayPath);
+        var comparison = Assert.IsType<MongoBinaryExpression>(elemMatch.ElementPredicate);
+        Assert.Equal("Heading", Assert.IsType<MongoFieldExpression>(comparison.Left).ElementName);
+    }
+
+    [Fact]
+    public void Owned_collection_Any_with_field_to_field_element_predicate_is_declined()
+    {
+        // Field-to-field has no query-dialect form and $expr is not usable inside $elemMatch, so the
+        // whole quantifier declines (query falls back to driver-LINQ).
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => p.Rank > p.Other));
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Owned_collection_Any_with_nested_owned_scalar_leaf_is_declined()
+    {
+        // p.Geo.Country is a scalar leaf reached through an owned reference INSIDE the element. The
+        // element-scoped child translator is not a document root, so TryResolveOwnedFieldPath's
+        // IsDocumentRoot guard declines it — a clean decline, not a mis-addressed path.
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => p.Geo.Country == "US"));
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Primitive_collection_Any_is_declined_by_the_quantifier_matcher()
+    {
+        // Tags is a primitive collection PROPERTY, not a navigation — FindNavigation returns null, so the
+        // path resolver declines. Defensive lock only: in a real query EF's own
+        // AllAnyToContainsRewritingExpressionVisitor rewrites `Any(t => t == "x")` into `Contains("x")`
+        // BEFORE the native translator sees it, so no Any node reaches this matcher for this shape.
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Tags.Any(t => t == "x"));
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Whole_element_equality_Any_is_declined()
+    {
+        // The element parameter itself has no member access to resolve.
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var target = new OwnedComment { Text = "t" };
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => p.Comments.Any(c => c == target)));
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Two_scope_owned_collection_Any_is_declined()
+    {
+        // A two-scope (SelectMany-unwind) translator must not engage the owned-collection walk. innerType is
+        // deliberately GetOwnedBlogEntityType() (a type that genuinely owns a "Posts" embedded-collection
+        // navigation), not an unrelated type: absent the _outerParam/_innerPrefix guard, the hop walk below
+        // would find that navigation on innerType and build a (wrongly-scoped) path instead of declining, so
+        // this test only passes because the guard fires — an unrelated innerType would pass vacuously even
+        // with the guard deleted, which is why it is not used here.
+        var outerType = GetOwnedBlogEntityType();
+        var innerType = GetOwnedBlogEntityType();
+        var outerParam = Expression.Parameter(typeof(OwnedBlog), "o");
+        var translator = new MongoExpressionTranslator(innerType, outerParam, outerType, "_lookup_X");
+        Expression<Func<OwnedPost, bool>> elementPredicate = p => p.Heading == "x";
+        var anyMethod = typeof(Enumerable).GetMethods()
+            .Single(m => m.Name == nameof(Enumerable.Any) && m.GetParameters().Length == 2)
+            .MakeGenericMethod(typeof(OwnedPost));
+        var body = Expression.Call(
+            anyMethod, Expression.Property(outerParam, nameof(OwnedBlog.Posts)), elementPredicate);
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Negated_owned_collection_bare_Any_flips_the_negated_flag()
+    {
+        // The ElementPredicate == null variant of the Not flip (the sibling test above covers the predicated
+        // variant). Rendering differs materially between the two — negated-bare emits
+        // {"path.0": {$exists: false}} rather than a $not/$elemMatch — so the flag flip is pinned for both.
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => !b.Posts.Any());
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.Equal("Posts", elemMatch.ArrayPath);
+        Assert.Null(elemMatch.ElementPredicate);
+        Assert.True(elemMatch.Negated);
+    }
+
+    // ------------------------------------------------------------------
+    // Correlated element predicates are DECLINED (EF-322 review fix C1)
+    // ------------------------------------------------------------------
+    //
+    // The Any arm translates its element predicate with a SINGLE-SCOPE, element-scoped translator, and
+    // single-scope TryResolveMember resolves a member by NAME with no parameter-identity check. So a member
+    // rooted on the ENCLOSING query parameter silently resolves against the ELEMENT type whenever both types
+    // declare the same name — retargeting the condition and returning WRONG ROWS. OwnedPost.Title/IsActive
+    // exist purely to make that collision reachable here (see the class); with the guard removed, each of the
+    // three tests below translates successfully to an $elemMatch on the ELEMENT's own Title/IsActive.
+
+    [Fact]
+    public void Correlated_owned_collection_Any_element_predicate_is_declined()
+    {
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        // b.Title is the OWNER's Title; OwnedPost declares a Title too, so a name-based resolution would
+        // happily (and wrongly) build { Posts: { $elemMatch: { Title: "x" } } }.
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => b.Title == "x"));
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Correlated_owned_collection_Any_mixed_conjunct_element_predicate_is_declined()
+    {
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        // The element-only conjunct is perfectly translatable; the correlated one poisons the whole predicate,
+        // so the WHOLE quantifier must decline rather than translate the half it understands.
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => b.Title == "x" && p.Rank > 1));
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Correlated_owned_collection_Any_bare_bool_element_predicate_is_declined()
+    {
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        // The bare-boolean arm of TranslateNode has the same name-only resolution hazard.
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => b.IsActive));
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Correlated_owned_collection_Any_nested_quantifier_source_is_declined()
+    {
+        // TryResolveOwnedCollectionPath accepts ANY ParameterExpression root, so an inner quantifier whose
+        // SOURCE is rooted on the enclosing parameter resolves against the ELEMENT scope when the element
+        // declares a same-named collection navigation — b.Comments (the OWNER's OwnedTag collection) would
+        // silently become the element's own Comments. The correlation guard closes that too, because the
+        // enclosing parameter is free in the OUTER element-predicate body. OwnedBlog.Comments/OwnedTag.Text are
+        // named to collide precisely so this test fails when the guard is removed (verified).
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => b.Comments.Any(c => c.Text == "t")));
+
+        Assert.False(translator.TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Nested_owned_collection_Any_is_not_declined_by_the_correlation_guard()
+    {
+        // GUARD-DOES-NOT-OVER-DECLINE. `c` is a ParameterExpression appearing inside the outer element
+        // predicate's body, but it is BOUND by the inner lambda, so it is not FREE and must not trigger the
+        // correlation decline. A naive "any parameter other than mine" check would kill nested Any, which is a
+        // supported shape.
+        var translator = NewTranslator(GetOwnedBlogEntityType());
+        var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => p.Comments.Any(c => c.Text == "t")));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var outer = Assert.IsType<MongoElemMatchExpression>(result);
+        var inner = Assert.IsType<MongoElemMatchExpression>(outer.ElementPredicate);
+        Assert.Equal("Comments", inner.ArrayPath);
     }
 }
