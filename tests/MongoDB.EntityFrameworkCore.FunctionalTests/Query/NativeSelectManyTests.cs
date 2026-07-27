@@ -870,6 +870,112 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
+    private class NestedSubFilterOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<NestedSubFilterItem> Items { get; set; } = [];
+    }
+
+    private class NestedSubFilterItem
+    {
+        public decimal Price { get; set; }
+        public NestedSubFilterSub Sub { get; set; } = new();
+    }
+
+    private class NestedSubFilterSub
+    {
+        public string City { get; set; } = "";
+    }
+
+    private SingleEntityDbContext<NestedSubFilterOwner> CreateNestedSubFilterContext(
+        NestedSubFilterOwner[] seed, MongoQueryMode mode, string name)
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<NestedSubFilterOwner>(collectionName);
+        if (seed.Length > 0)
+            collection.InsertMany(seed);
+
+        return SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<NestedSubFilterOwner>()
+                .OwnsMany(o => o.Items, ib => ib.OwnsOne(i => i.Sub)),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+    }
+
+    [Fact]
+    public void Filtered_owned_nested_subproperty_predicate_hard_fails_in_every_mode_not_double_prefixed()
+    {
+        // CRITICAL regression fix (EF-322 whole-branch review): TryBuildOwnedInnerFilter builds a
+        // SINGLE-scope MongoExpressionTranslator on the OWNED inner element type (NestedSubFilterItem — NOT a
+        // document root) and then prefixes whatever it translates with the unwind path ("Items") via
+        // MongoFieldPrefixRewriter.Rewrite. When the inner filter itself reaches through a FURTHER owned
+        // single-reference sub-property (i.Sub.City), it hits MongoExpressionTranslator.TryResolveOwnedFieldPath,
+        // which resolves the field path via scopeType.GetDocumentPath() — a path ALREADY rooted from the TRUE
+        // document root, so it ALREADY contains the "Items" containing-element name. TryBuildOwnedInnerFilter's
+        // blanket MongoFieldPrefixRewriter.Rewrite(..., "Items") then prefixes "Items" a SECOND time, producing
+        // a double-prefixed, non-existent field path ("Items.Items.Sub.City") — a $match that never matches
+        // anything. BEFORE the fix this shape wrongly went NATIVE (the resolver "succeeded") and silently
+        // returned an EMPTY result set under MongoQueryMode.Native instead of the two matching rows — confirmed
+        // empirically (not assumed) by running this exact test body before the fix landed: the Native-mode
+        // result was `[]` against an expected `[{Price=5},{Price=9.99}]`.
+        //
+        // AFTER the fix (the one-line guard in TryResolveOwnedFieldPath: decline whenever _entityType is not
+        // IsDocumentRoot()), TryResolveOwnedFieldPath declines this shape — which propagates to
+        // TryBuildOwnedInnerFilter returning false, which (per NativeSelectManyBinder's own contract — see the
+        // "Filtered_owned_computed_operator_hard_fails_in_every_mode" sibling test and the class-level doc
+        // comment) makes the WHOLE SelectMany binder return false, so TranslateSelectMany returns null and EF
+        // Core's OWN translation-failure path is reached directly, at COMPILE time, before MongoQueryMode is
+        // even consulted. That means this shape hard-fails with the SAME exception (an EF Core
+        // InvalidOperationException) in EVERY mode — Native, DriverLinq, and NativeOnly alike — confirmed
+        // empirically by running this exact test body after the fix. This is NOT the "graceful fallback,
+        // NativeOnly-only-throws" pattern most other declines in this file follow (that pattern only applies
+        // when the FAILURE is in the trailing PROJECTION, whose own binder calls MarkNotNativelyRepresentable()
+        // — a genuinely graceful decline); a decline inside the FILTER itself, which is what this shape and
+        // "Filtered_owned_computed_operator_hard_fails_in_every_mode" both are, has no such graceful path. What
+        // matters for correctness — and what this test exists to prove — is that after the fix this shape NEVER
+        // silently returns wrong data in any mode: it throws every time instead.
+        var seed = new[]
+        {
+            new NestedSubFilterOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items =
+                [
+                    new NestedSubFilterItem { Price = 9.99m, Sub = new NestedSubFilterSub { City = "NYC" } },
+                    new NestedSubFilterItem { Price = 19.99m, Sub = new NestedSubFilterSub { City = "LA" } },
+                ],
+            },
+            new NestedSubFilterOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items = [new NestedSubFilterItem { Price = 5m, Sub = new NestedSubFilterSub { City = "NYC" } }],
+            },
+        };
+
+        // Sanity: the fixture must actually have matching rows for the pre-fix silent-empty-result bug to be
+        // observable at all (a query with no matching rows would "succeed" vacuously either way).
+        Assert.NotEmpty(seed.SelectMany(o => o.Items.Where(i => i.Sub.City == "NYC"), (o, i) => new { i.Price }));
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateNestedSubFilterContext(seed, mode,
+                nameof(Filtered_owned_nested_subproperty_predicate_hard_fails_in_every_mode_not_double_prefixed) + mode);
+
+            var ex = Assert.ThrowsAny<Exception>(() =>
+                db.Entities
+                    .SelectMany(o => o.Items.Where(i => i.Sub.City == "NYC"), (o, i) => new { i.Price })
+                    .ToList());
+
+            // The failure must be a translation-time decline, never a runtime crash reachable only after
+            // partially executing a wrong (double-prefixed) query.
+            Assert.IsNotType<KeyNotFoundException>(ex);
+        }
+    }
+
     private class RefOwner
     {
         public ObjectId Id { get; set; }

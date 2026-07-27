@@ -77,6 +77,38 @@ public class MongoExpressionTranslatorTests
         public int EncStatus { get; set; }
     }
 
+    // Fixtures for owned single-reference dotted-path resolution (EF-322 Task 2).
+
+    private class OwnedBlog
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; } = "";
+        public OwnedAddress Address { get; set; } = null!;
+    }
+
+    private class OwnedAddress
+    {
+        public string City { get; set; } = "";
+        public bool IsPrimary { get; set; }
+        public OwnedGeo Geo { get; set; } = null!;
+    }
+
+    private class OwnedGeo
+    {
+        public string Country { get; set; } = "";
+    }
+
+    private static IEntityType GetOwnedBlogEntityType()
+    {
+        using var db = SingleEntityDbContext.Create<OwnedBlog>(mb =>
+            mb.Entity<OwnedBlog>().OwnsOne(b => b.Address, a => a.OwnsOne(x => x.Geo)));
+        return db.Model.FindEntityType(typeof(OwnedBlog))!;
+    }
+
+    // b => b.Address.City style selectors (value-type members get a Convert-to-object wrapper; strip it).
+    private static Expression FieldBody<T>(Expression<Func<T, object?>> selector)
+        => selector.Body is UnaryExpression { NodeType: ExpressionType.Convert } u ? u.Operand : selector.Body;
+
     /// <summary>
     /// Returns the entity type for <typeparamref name="T"/> from a minimal in-memory model.
     /// </summary>
@@ -993,5 +1025,89 @@ public class MongoExpressionTranslatorTests
         // of silent-truncation bug as the bare narrowing cast above; must be rejected, not silently dropped.
         var (translator, body) = BuildValueBody<Order>(o => (short)(o.Price + o.Qty));
         Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    // ------------------------------------------------------------------
+    // Owned single-reference dotted-path resolution (EF-322 Task 2)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Owned_single_ref_subproperty_resolves_to_dotted_field()
+    {
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+
+        var ok = translator.TryTranslateField(FieldBody<OwnedBlog>(b => b.Address.City), out var field);
+
+        Assert.True(ok);
+        Assert.Equal("Address.City", field!.ElementName);
+    }
+
+    [Fact]
+    public void Nested_owned_single_ref_subproperty_resolves_to_deep_dotted_field()
+    {
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+
+        var ok = translator.TryTranslateField(FieldBody<OwnedBlog>(b => b.Address.Geo.Country), out var field);
+
+        Assert.True(ok);
+        Assert.Equal("Address.Geo.Country", field!.ElementName);
+    }
+
+    [Fact]
+    public void Owned_subproperty_comparison_translates_to_dotted_field_op()
+    {
+        var entityType = GetOwnedBlogEntityType();
+        var body = PredicateBody<OwnedBlog>(b => b.Address.City == "NYC");
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(bin.Left);
+        Assert.Equal("Address.City", field.ElementName);
+    }
+
+    [Fact]
+    public void Owned_bare_bool_subproperty_translates_to_dotted_field()
+    {
+        var entityType = GetOwnedBlogEntityType();
+        var body = PredicateBody<OwnedBlog>(b => b.Address.IsPrimary);
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var field = Assert.IsType<MongoFieldExpression>(result);
+        Assert.Equal("Address.IsPrimary", field.ElementName);
+    }
+
+    [Fact]
+    public void Two_scope_owned_subproperty_is_declined()
+    {
+        // A two-scope (SelectMany-unwind) translator must NOT engage the owned dotted-path walk.
+        var outerType = GetOwnedBlogEntityType();
+        var innerType = GetEntityType<Customer>();
+        var outerParam = Expression.Parameter(typeof(OwnedBlog), "o");
+        var translator = new MongoExpressionTranslator(innerType, outerParam, outerType, "_lookup_X");
+        var body = Expression.Property(Expression.Property(outerParam, nameof(OwnedBlog.Address)), nameof(OwnedAddress.City));
+
+        Assert.False(translator.TryTranslateField(body, out _));
+    }
+
+    [Fact]
+    public void Owned_subproperty_via_EFProperty_shape_resolves_to_dotted_field()
+    {
+        // Real EF-translated queries rewrite owned-nav hops to EF.Property(root, "Nav") calls (NOT plain
+        // member access). Build that shape by hand to lock the EF.Property branch of the walk:
+        //   EF.Property<OwnedAddress>(b, "Address").City   -> "Address.City"
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+        var param = Expression.Parameter(typeof(OwnedBlog), "b");
+        var efProperty = typeof(EF).GetMethod(nameof(EF.Property))!.MakeGenericMethod(typeof(OwnedAddress));
+        var addressCall = Expression.Call(efProperty, param, Expression.Constant("Address"));
+        var body = Expression.Property(addressCall, nameof(OwnedAddress.City));
+
+        Assert.True(translator.TryTranslateField(body, out var field));
+        Assert.Equal("Address.City", field!.ElementName);
     }
 }

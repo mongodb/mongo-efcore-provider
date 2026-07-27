@@ -284,28 +284,32 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void B_owned_subproperty_where_equals_routing()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_where_equals_routing));
-        // Locked routing: an owned sub-property predicate is NOT natively representable (the translator
-        // only resolves members rooted directly on the parameter), so it falls back to driver-LINQ.
-        Assert.False(WentNative(collection, q => q.Where(e => e.Address.City == "NYC").ToList(), AddressModel));
+        // Locked routing (EF-322 Task 2): an owned sub-property predicate now resolves to a dotted document
+        // path ("Address.City") via MongoExpressionTranslator.TryResolveOwnedFieldPath and goes native.
+        Assert.True(WentNative(collection, q => q.Where(e => e.Address.City == "NYC").ToList(), AddressModel));
     }
 
     [Fact]
     public void B_owned_subproperty_order_by_routing()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_order_by_routing));
-        Assert.False(WentNative(collection,
+        // Locked routing (EF-322 Task 2): an owned sub-property sort key now goes native, same mechanism as
+        // the predicate case above.
+        Assert.True(WentNative(collection,
             q => q.OrderBy(e => e.Address.City).ThenBy(e => e.Name).ToList(), AddressModel));
     }
 
     [Fact]
-    public void B_owned_subproperty_projection_falls_back_under_NativeOnly()
+    public void B_owned_subproperty_projection_now_goes_native()
     {
-        var collection = SeedAddress(nameof(B_owned_subproperty_projection_falls_back_under_NativeOnly));
-        // Locked fallback boundary: a projection whose leaf is an owned sub-property (e.Address.City) is NOT
-        // natively representable — the projection translator only resolves members rooted directly on the
-        // parameter — so it must fall back to driver-LINQ rather than emit a wrong-shape $project. Pins the
-        // boundary so a future loosening of the binder can't silently start emitting a nested $project.
-        Assert.False(WentNative(collection, q => q.Select(e => new { e.Address.City }), AddressModel));
+        var collection = SeedAddress(nameof(B_owned_subproperty_projection_now_goes_native));
+        // EF-322 Task 2 wires the owned dotted-path resolver into the ONE shared member-resolution gate,
+        // MongoExpressionTranslator.TryResolveMember/TryTranslateField — the same gate NativeProjectionBinder's
+        // TryTranslateLeaf already calls for a plain member-access projection leaf. As a verified-correct side
+        // effect (see the parity test below), a single owned-scalar leaf in an anonymous-type projection
+        // (e.Address.City) now ALSO goes native, even though full projection support is a later task's scope.
+        // This was previously a locked fallback boundary; the boundary has genuinely moved, not regressed.
+        Assert.True(WentNative(collection, q => q.Select(e => new { e.Address.City }), AddressModel));
     }
 
     [Fact]

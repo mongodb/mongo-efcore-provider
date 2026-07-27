@@ -106,6 +106,17 @@ internal static class NativeProjectionBinder
     {
         if (leafExpression is MemberExpression && translator.TryTranslateField(leafExpression, out var field))
         {
+            // A dotted (owned single-ref) leaf is read back RAW by the DOM shaper (the shaper's field-access
+            // resolver is single-hop and cannot apply the converter for a nested owned chain), so a
+            // value-converted or non-default-BsonRepresentation owned leaf would diverge from the CLR value.
+            // Decline it → the projection falls back to driver-LINQ (which resolves it correctly). Top-level
+            // leaves have no dot and are unaffected (they already round-trip converters correctly).
+            if (field.ElementName.Contains('.')
+                && !NativeGroupByBinder.HasDefaultKeySerialization(field.Property))
+            {
+                result = null!;
+                return false;
+            }
             result = field;
             return true;
         }
