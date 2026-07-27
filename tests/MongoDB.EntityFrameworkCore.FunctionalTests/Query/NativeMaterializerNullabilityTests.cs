@@ -22,6 +22,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -203,13 +204,15 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
     // ── Owned sub-property: missing required scalar on owned reference ────────────────────────────
     //
-    // NOTE: at the EF-323 foundation an owned-reference query is NOT yet routed to the native/streaming
-    // path (the gate marks it non-representable and falls back to driver-LINQ even under Native mode — see
-    // Query/AGENTS.md "Reference Include is deferred"). So today these owned cases assert driver-LINQ↔native
-    // PARITY while both run the DOM/driver path. The streaming materializer's recursion still applies the
-    // same missing/null handling to owned sub-documents (RequiredPresence is built for every EntityPlan,
-    // including owned children, and BuildFillLoop(child) enforces it) — so when owned-reference streaming is
-    // enabled in a later sub-project these tests already pin the correct (parity) behavior.
+    // NOTE: as of EF-322 Task 2 an owned single-reference whole-entity query DOES route to the native
+    // pipeline (the gate now admits the owned-embedded auto-include Select — see
+    // MongoQueryableMethodTranslatingExpressionVisitor.IsOwnedEmbeddedReferenceIncludeSelector and
+    // .superpowers/sdd/EF-322-owned-ref-whole-entity-spike.md), and the one-pass streaming materializer's
+    // recursion applies the same missing/null handling to owned sub-documents (RequiredPresence is built for
+    // every EntityPlan, including owned children, and BuildFillLoop(child) enforces it). These tests still
+    // assert driver-LINQ↔native PARITY (rather than a hard-coded expectation) so they remain valid regardless
+    // of which internal path (native/streaming vs. DOM) each side takes — see the "Native default not a
+    // break"/"which internal execution path" carve-out in AGENTS.md's versioning rubric.
 
     [Fact]
     public void Missing_required_scalar_on_owned_subdocument_matches_driver()
@@ -239,6 +242,17 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
         // Parity: native must match driver-LINQ — same throw-or-not, same type if thrown.
         Assert.Equal(driverEx?.GetType(), nativeEx?.GetType());
+
+        // Routing proof: under NativeOnly this shape must throw InvalidOperationException (the domain
+        // exception from the native streaming materializer's required-presence check) and NOT
+        // NativeTranslationNotSupportedException — the latter would mean the query silently fell back to
+        // driver-LINQ instead of genuinely reaching the native materializer. This is the assertion that
+        // catches a future regression of "missing required scalar within a PRESENT owned sub-document"
+        // back to fallback.
+        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
+        {
+            Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.ToList());
+        }
     }
 
     [Fact]
@@ -271,5 +285,16 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
         Assert.Equal(driverEx?.GetType(), nativeEx?.GetType());
         Assert.Equal(driverScore, nativeScore);
+
+        // Routing proof: a present-but-null required scalar under an owned sub-document materializes to
+        // default(T) (matching the Bug-2 flat-property behavior) rather than throwing — assert that
+        // NativeOnly genuinely reaches that outcome (not NativeTranslationNotSupportedException, which
+        // would mean the query fell back to driver-LINQ instead of the native materializer), and that the
+        // NativeOnly result matches the driver-LINQ oracle.
+        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
+        {
+            var nativeOnlyScore = nativeOnly.Entities.ToList().Single().Stats.Score;
+            Assert.Equal(driverScore, nativeOnlyScore);
+        }
     }
 }

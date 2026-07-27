@@ -174,11 +174,15 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
     }
 
     // ── (c) owned reference AND owned collection materialize correct nested values ─────────────────
-    // NOTE: an owned-navigation whole-entity query is NOT routed to the native/streaming path at this
-    // sub-project (the gate marks it non-representable and falls back to driver-LINQ even under Native —
-    // owned streaming support is built but dormant; see NativeMaterializerNullabilityTests' owned note and
-    // Query/AGENTS.md). So this asserts Native↔DriverLinq PARITY of the nested values — a guard that the
-    // one-pass changes do not regress owned materialization — rather than a NativeOnly routing assertion.
+    // NOTE (updated EF-322 Task 2): an owned SINGLE-REFERENCE-only whole-entity query now DOES route to the
+    // native (one-pass streaming) path — see
+    // MongoQueryableMethodTranslatingExpressionVisitor.IsOwnedEmbeddedReferenceIncludeSelector and
+    // .superpowers/sdd/EF-322-owned-ref-whole-entity-spike.md. THIS entity mixes an owned reference (ShipTo)
+    // with an owned COLLECTION (Lines) in the SAME auto-include chain, and the admit predicate requires EVERY
+    // navigation in the chain to be an embedded non-collection single-reference — the collection nav makes it
+    // reject the whole selector, so this shape STILL falls back to driver-LINQ (DOM), unchanged by Task 2. So
+    // this asserts Native↔DriverLinq PARITY of the nested values — a guard that the one-pass changes do not
+    // regress owned materialization — rather than a NativeOnly routing assertion.
 
     [Fact]
     public void Owned_reference_and_owned_collection_materialize_correct_nested_values()
