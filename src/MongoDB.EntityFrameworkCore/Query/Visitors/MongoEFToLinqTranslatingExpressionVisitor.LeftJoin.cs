@@ -573,12 +573,27 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Strips the Join chain and returns the base source; the pending <c>$lookup</c> stages handle the
-    /// actual join. A user-composed operator above/between the joins is not plumbing and must be
-    /// reattached instead of dropped (dropping it silently returns unfiltered/unordered results — EF-369),
-    /// with its lambdas rewritten to read the flattened <c>_lookup_&lt;Nav&gt;</c> fields.
-    /// Returns <see langword="null"/> when the shape can't be handled — the join survives and callers fall
-    /// back to the driver rendering it natively, rather than emitting a pipeline with the wrong row set.
+    /// For explicit Join queries, strip the Join chain and return just the base source.
+    /// The $lookup stages appended by AppendLookupStages handle the actual join.
+    /// <para>
+    /// The chain reaching here is flat:
+    /// <c>root [.Where/.OrderBy/.Skip/.Take]* (.LeftJoin(...) [.Where/.OrderBy/...]*)+ .Select(...) [.Count()]</c>.
+    /// Everything below the innermost join is the base source and survives verbatim. The join nodes
+    /// themselves are replaced by the pending <c>$lookup</c> stages, and the EF-synthesized trailing
+    /// <c>Select</c> that unpacks the TransparentIdentifier is dropped (the shaper runs client-side).
+    /// Any OTHER operator sitting between or above the joins is <b>user-composed</b> and must be
+    /// reattached — dropping it silently returns unfiltered/unordered results (EF-369). Because such an
+    /// operator was written against the TransparentIdentifier element type produced by the joins, its
+    /// lambdas are rewritten to read the flattened <c>_lookup_&lt;Nav&gt;</c> fields the $lookup stages
+    /// produce, and those lookups are recorded in <see cref="_injectedEarlyLookups"/> so they are
+    /// emitted immediately above the base source — below the reattached stages, but still above nothing
+    /// the user wrote below the joins.
+    /// </para>
+    /// Returns <see langword="null"/> when the shape cannot be handled. The join then survives in the
+    /// returned tree and the callers (<c>TranslateProjected</c> / <c>Translate</c>) fall back to letting
+    /// the driver render it natively, suppressing the forced-unwind <c>$lookup</c> stages that would
+    /// otherwise duplicate it; if the driver cannot render it either, translation fails there. Falling
+    /// back is deliberately preferred over emitting a pipeline whose row set does not match the query.
     /// </summary>
     private Expression? StripJoinForLookup(Expression expression)
     {
@@ -598,21 +613,29 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         var innermostJoin = chain.FindLastIndex(IsJoinMethod);
 
-        // Applies to EVERY join chain, not only all-LeftJoin ones — safe now that each pending lookup
-        // carries its own PreserveNullAndEmptyArrays from the actual LINQ join operator (LookupExpression),
-        // so an inner Join's semantics are preserved whether EF synthesized it or the user wrote it.
+        // This path applies to EVERY join chain, not only all-LeftJoin ones. It could not, until each
+        // pending lookup carried its own PreserveNullAndEmptyArrays taken from the LINQ join operator EF
+        // produced (see LookupExpression): before that, the $lookup stages were always left-outer and so
+        // could not reproduce an explicit Join's inner semantics, which is why an earlier version of this
+        // code was gated to all-LeftJoin chains. With the flag in place, whether EF synthesized a join
+        // from a required navigation or the user wrote one stops mattering - both are inner - so the
+        // otherwise undecidable synthesized-vs-user question does not have to be answered here.
         if (innermostJoin >= 0)
         {
             var baseSource = chain[innermostJoin].Arguments[0];
             var baseItemType = baseSource.Type.TryGetItemType();
 
-            // Operators at or above the innermost join that are not join plumbing, innermost-first.
+            // Operators at or above the innermost join that are not join plumbing, innermost-first, paired
+            // with their chain index so an operator INTERLEAVED BETWEEN two joins can be told apart from one
+            // sitting above every join (EF-373).
             var composed = new List<MethodCallExpression>();
+            var composedIndexes = new List<int>();
             for (var i = innermostJoin - 1; i >= 0; i--)
             {
                 if (!IsJoinMethod(chain[i]) && !IsSynthesizedIdentifierSelect(chain[i]))
                 {
                     composed.Add(chain[i]);
+                    composedIndexes.Add(i);
                 }
             }
 
@@ -637,6 +660,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 var rewriter = new TransparentIdentifierToLookupFieldRewriter(
                     baseItemType, joinsInnermostFirst, _pendingLookups, _bsonSerializerFactory, MqlFieldMethodInfo);
 
+                // An operator sitting between two joins has a chain index ABOVE the innermost join (so it is
+                // in `composed`) and BELOW the outermost one. When there is no such operator every lookup
+                // belongs above the base source and the pre-EF-373 contiguous group is emitted verbatim.
+                var outermostJoin = chain.FindIndex(IsJoinMethod);
+                var hasInterleavedOperator = composedIndexes.Any(i => i > outermostJoin);
+
+                if (hasInterleavedOperator)
+                {
+                    return StripInterleavedJoinChain(chain, innermostJoin, baseSource, rewriter);
+                }
+
                 var result = baseSource;
                 foreach (var call in composed)
                 {
@@ -652,17 +686,61 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     result = rebuilt;
                 }
 
-                // Emit lookups just above the base source: an inner $unwind drops rows, so hoisting it above
-                // a base-source Skip/Take/Distinct would change what they see. Flag ALL join-replacing
-                // lookups since a transitive one's localField chains into an earlier unwound output.
-                // TODO(EF-373): an operator interleaved BETWEEN two joins is still hoisted above both.
-                // TODO(EF-372): the localField prefix chain is only correct to depth two.
-                foreach (var lookup in _pendingLookups.Where(l => l.ForceUnwind))
+                // The reattached stages read the $lookup output fields, so the lookups have to be emitted
+                // BELOW them rather than tail-appended after them — but no lower than the base source,
+                // which the user wrote below the joins. That distinction is load-bearing: an inner
+                // $unwind DROPS rows, so hoisting it above a base-source Skip/Take/Distinct would change
+                // which rows those operators see. Emitting immediately after the base source therefore
+                // preserves the ordering for every operator the user wrote BELOW the joins.
+                //
+                // This branch is reached only when NO operator is interleaved between two joins, so every
+                // lookup genuinely belongs above the base source and the contiguous group below is correct.
+                // The interleaved case is EF-373 and is handled by StripInterleavedJoinChain, which splits
+                // the group along the join order instead; it is kept as a separate path specifically so this
+                // one stays byte-identical (including the emission ORDER, which is _pendingLookups order
+                // here and join order there).
+                //
+                // Flag ALL of the join-replacing lookups, not just the ones the reattached lambdas read:
+                // a transitive lookup's localField points into an earlier lookup's unwound output (e.g.
+                // "_lookup_Customer.region_id"), so splitting them across the reattached stages would
+                // break that chain — and any tail-appended remainder would also be appended after a
+                // scalar terminal such as Count. That prefixing chain now holds at ANY depth (EF-372 fixed
+                // the third-and-deeper hop, which used to emit an unprefixed localField and drop every
+                // row), so this contiguous-group reasoning applies to a chain of any length. The narrow claim
+                // EF-372 actually established is about the hops that reach its resolver: a hop that ENTERS
+                // the transitive resolution either gets a scoped prefix or DECLINES translation outright — it
+                // is never emitted with a silently-missing prefix.
+                //
+                // That is NOT the same as "every chain reaching here is fully scoped", and the difference is
+                // MEASURED. The version of this paragraph that used to sit here said a hop reaches the
+                // transitive resolution only once no ROOT navigation matches, so a root carrying its own
+                // navigation to the hop's target type is treated as ROOT-level; EF-379 has since SHIPPED on this
+                // branch and closed exactly that, by classifying the hop from the key selector's RECEIVER
+                // (MongoQueryableMethodTranslatingExpressionVisitor.ClassifyJoinHop) BEFORE either root tier
+                // runs — so a hop recognised as transitive can no longer be short-circuited by a root
+                // navigation. Corrected here rather than left standing.
+                //
+                // TODO(EF-407) — what is STILL open, and why an unprefixed localField remains reachable: the
+                // classifier's Unclassifiable family falls through to the root tiers unchanged (deliberately —
+                // see ClassifyJoinHop's remarks). The reachable member of that family is a receiver that is
+                // itself an EF.Property hop, i.e. a real ThenInclude nested underneath an OWNED (embedded) hop:
+                // Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region). MEASURED
+                // at this branch's base and at HEAD alike (so not a regression): it emits an unprefixed
+                // localField and returns the deep navigation SILENTLY NULL under BOTH Native and DriverLinq;
+                // only NativeOnly throws. EF-379 is the shipped context, EF-407 is the residual — do not read
+                // the EF-379 reference as closing this.
+                //
+                // Grouping is still correct for that case, which is why it is not a caveat on this reasoning:
+                // an unprefixed localField reads a root field and so depends on no earlier lookup at all, and
+                // the group is a conservative SUPERSET of the dependency chain — it only ever keeps together
+                // lookups that could depend on one another.
+                var contiguousGroup = _pendingLookups.Where(l => l.ForceUnwind).ToList();
+                foreach (var lookup in contiguousGroup)
                 {
-                    _injectAfterBaseSourceLookups.Add(lookup);
+                    _injectedEarlyLookups.Add(lookup);
                 }
 
-                _injectAfterBaseSource = baseSource;
+                _injectAboveNodeLookups[baseSource] = contiguousGroup;
 
                 return result;
             }
@@ -701,6 +779,217 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         return Expression.Call(null, method, newArgs);
+    }
+
+    /// <summary>
+    /// EF-373. Rebuilds a join chain that has a user-composed operator INTERLEAVED BETWEEN two joins, by
+    /// splitting the join-replacing <c>$lookup</c> stages along the join order instead of emitting them as
+    /// one contiguous group above the base source.
+    /// <para>
+    /// The contiguous group is correct for every operator the user wrote BELOW the joins, but it has no
+    /// correct position for one written between two of them: the group is emitted below the reattached
+    /// operator, so the SECOND join's row-dropping <c>$unwind</c> runs before a <c>Skip</c>/<c>Take</c> the
+    /// user wrote before that join ever existed — a silently wrong page. Each lookup is instead emitted at
+    /// the reattachment boundary its own join occupied, so an interleaved operator lands between the two
+    /// <c>$lookup</c>s.
+    /// </para>
+    /// <para>
+    /// The contiguous group exists because a TRANSITIVE lookup's <c>localField</c> reads an earlier lookup's
+    /// unwound output (e.g. <c>"_lookup_Customer.region_id"</c>), so the lookups form a dependency chain that
+    /// cannot be reordered. Splitting along the JOIN order preserves that chain by construction — a later
+    /// join can only depend on an earlier join's output, never the reverse — and the split is nonetheless
+    /// VERIFIED rather than assumed: <see cref="DependenciesPrecede"/> re-checks the emitted order against
+    /// the actual <c>localField</c> prefixes, and the whole strip is declined if it does not hold.
+    /// </para>
+    /// <para>
+    /// Returns <see langword="null"/> (declining the strip exactly as the caller does) whenever the split
+    /// cannot be established: a join whose lookup cannot be resolved unambiguously, a <c>ForceUnwind</c>
+    /// lookup that belongs to no join in the chain (the retroactive-flattening registration can produce one),
+    /// a dependency-order violation, or an operator that cannot be reattached. Declining is deliberately
+    /// preferred over emitting the mispositioned group, which returns a wrong page silently.
+    /// </para>
+    /// </summary>
+    private Expression? StripInterleavedJoinChain(
+        List<MethodCallExpression> chain,
+        int innermostJoin,
+        Expression baseSource,
+        TransparentIdentifierToLookupFieldRewriter rewriter)
+    {
+        var forceUnwindLookups = _pendingLookups.Where(l => l.ForceUnwind).ToList();
+        var groups = new List<(Expression Node, List<LookupExpression> Lookups)>();
+        var emissionOrder = new List<LookupExpression>();
+        var currentGroup = new List<LookupExpression>();
+        var assigned = new HashSet<LookupExpression>();
+
+        var result = baseSource;
+        for (var i = innermostJoin; i >= 0; i--)
+        {
+            var call = chain[i];
+
+            if (IsJoinMethod(call))
+            {
+                var lookup = ResolveLookupForJoin(call, forceUnwindLookups);
+                if (lookup == null || !assigned.Add(lookup))
+                {
+                    // Unresolvable or double-assigned: no defensible position for this join's lookup.
+                    return null;
+                }
+
+                currentGroup.Add(lookup);
+                continue;
+            }
+
+            if (IsSynthesizedIdentifierSelect(call))
+            {
+                continue;
+            }
+
+            if (currentGroup.Count > 0)
+            {
+                // Everything joined so far has to be in the document before this operator runs.
+                groups.Add((result, currentGroup));
+                emissionOrder.AddRange(currentGroup);
+                currentGroup = [];
+            }
+
+            var rebuilt = ReattachComposedOperator(call, result, rewriter);
+            if (rebuilt == null)
+            {
+                return null;
+            }
+
+            result = rebuilt;
+        }
+
+        // Lookups with no composed operator above them are left to AppendLookupStages, which tail-appends
+        // them in _pendingLookups order - the same position and order they would occupy today, and the path
+        // that already handles a scalar terminal (it appends below the terminal, not above it).
+        emissionOrder.AddRange(forceUnwindLookups.Where(currentGroup.Contains));
+
+        if (assigned.Count != forceUnwindLookups.Count || !DependenciesPrecede(emissionOrder))
+        {
+            return null;
+        }
+
+        foreach (var (node, lookups) in groups)
+        {
+            // Add, not indexer assignment: two groups keyed on the same node would mean one join's lookups
+            // silently replacing another's, i.e. a $lookup vanishing from the pipeline and unjoined rows
+            // being returned. Everything else on this path is fail-closed; this keeps that property here too.
+            _injectAboveNodeLookups.Add(node, lookups);
+            foreach (var lookup in lookups)
+            {
+                _injectedEarlyLookups.Add(lookup);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The one resolver for "which <c>$lookup</c> stands in for this join operator": matched on the join's
+    /// inner entity CLR type AND its outer key (the FK property), so two navigations to the same entity type
+    /// stay distinguishable. Only <c>ForceUnwind</c> lookups are considered. Returns <see langword="null"/>
+    /// when the match is missing or ambiguous.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the two sites that MUST agree about which lookup a join owns: the group split in
+    /// <see cref="StripInterleavedJoinChain"/> (which decides WHERE that lookup is emitted) and
+    /// <see cref="TransparentIdentifierToLookupFieldRewriter.ResolveLookup"/> (which decides WHICH field the
+    /// reattached lambdas READ). They were two hand-written copies of the same match; a future edit to one
+    /// alone would desynchronise the position from the read — a <c>$lookup</c> on the wrong side of an
+    /// interleaved operator, i.e. a silently wrong page, which is the very defect EF-373 fixed.
+    /// </remarks>
+    /// <param name="joinCall">The join operator whose lookup is wanted.</param>
+    /// <param name="innerType">
+    /// The join's inner entity CLR type. Deliberately a PARAMETER rather than one derivation hardcoded here,
+    /// because the two call sites have different authoritative inputs for it: the rewriter has the
+    /// TransparentIdentifier's <c>Inner</c> MEMBER type (exactly what the lambda being rewritten reads),
+    /// while the group split has the join's inner SEQUENCE type.
+    /// <para>
+    /// MEASURED: the two cannot be made to disagree here. An assertion comparing them at every join of every
+    /// stripped chain held across the whole EF10 functional and specification suites (zero divergences), and a
+    /// deliberately constructed divergent shape — a user-authored <c>Join</c> with EXPLICIT type arguments
+    /// whose <c>TInner</c> is a base type while its inner sequence is typed <c>IQueryable&lt;Derived&gt;</c> —
+    /// never arrives here in that form at all: EF Core's own nav-expansion re-emits every join with its own
+    /// TransparentIdentifier result selector (observed even for a user selector of <c>(r, m) =&gt; r</c>) and
+    /// takes <c>TInner</c> from the inner query root, so the covariance is normalised away before this bridge
+    /// sees the chain. Every join observed at this site had sequence type == <c>Inner</c> member type ==
+    /// <c>TInner</c>.
+    /// </para>
+    /// <para>
+    /// The parameter is kept anyway, rather than collapsing both sites onto one derivation: it costs nothing,
+    /// it leaves each site reading the input that is authoritative FOR IT (in particular the rewriter keeps
+    /// using the very member type it is rewriting, rather than a type re-derived from the join call), and the
+    /// failure mode of getting it wrong on this path is a <c>$lookup</c> emitted on the wrong side of an
+    /// interleaved operator — silently wrong data, not an error.
+    /// </para>
+    /// </param>
+    /// <param name="candidates">The lookups to match against.</param>
+    private static LookupExpression? ResolveJoinLookup(
+        MethodCallExpression joinCall, Type innerType, IReadOnlyList<LookupExpression> candidates)
+    {
+        if (joinCall.Arguments.Count < 3)
+        {
+            return null;
+        }
+
+        var keyName = joinCall.Arguments[2].UnwrapLambdaFromQuote().Body.TryGetSimplePropertyName();
+
+        var matches = candidates
+            .Where(l => l.ForceUnwind
+                        && l.Navigation.TargetEntityType.ClrType == innerType
+                        && (keyName == null
+                            || l.Navigation.ForeignKey.Properties.Any(p => p.Name == keyName)
+                            || l.Navigation.ForeignKey.PrincipalKey.Properties.Any(p => p.Name == keyName)))
+            .ToList();
+
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    /// <summary>
+    /// Resolves the <c>$lookup</c> for one join in the chain being split, deriving the inner entity CLR type
+    /// from the join's inner SEQUENCE (see <see cref="ResolveJoinLookup"/> for why the derivation lives at
+    /// the call site rather than in the shared resolver).
+    /// </summary>
+    private static LookupExpression? ResolveLookupForJoin(
+        MethodCallExpression joinCall, IReadOnlyList<LookupExpression> candidates)
+    {
+        var innerType = joinCall.Arguments.Count > 1 ? joinCall.Arguments[1].Type.TryGetItemType() : null;
+
+        return innerType == null ? null : ResolveJoinLookup(joinCall, innerType, candidates);
+    }
+
+    /// <summary>
+    /// Whether the given emission order respects the <c>localField</c> dependency chain: a lookup whose
+    /// <c>localField</c> reads another lookup's unwound output (<c>"&lt;other.As&gt;."</c> prefix) must be
+    /// emitted after it. This is the invariant the contiguous group preserved for free, re-checked here
+    /// because the interleaved path splits the group.
+    /// </summary>
+    /// <remarks>
+    /// FAIL-CLOSED INSURANCE, with no known reachable violating input: splitting along the JOIN order
+    /// preserves the chain by construction (a later join can only read an earlier join's output), so this
+    /// re-check is expected to hold for every shape. Mutating it to always return <see langword="false"/>
+    /// turns the interleaved functional tests red, proving it is on the live path; mutating it to always
+    /// return <see langword="true"/> turns no FUNCTIONAL test red, because no ordinary-LINQ shape has been
+    /// found that violates it. Its own ordering logic is therefore pinned directly, at unit level, by
+    /// <c>Ef373DependenciesPrecedeTests</c> — which is why this is <c>internal</c> rather than
+    /// <c>private</c>; that is the only reason.
+    /// </remarks>
+    internal static bool DependenciesPrecede(List<LookupExpression> emissionOrder)
+    {
+        for (var i = 0; i < emissionOrder.Count; i++)
+        {
+            for (var j = i + 1; j < emissionOrder.Count; j++)
+            {
+                if (emissionOrder[i].LocalField.StartsWith(emissionOrder[j].As + ".", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -787,7 +1076,24 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             }
         }
 
-        if (genericArgs.Contains(oldSourceItemType) || genericArgs.Any(a => ContainsType(a, oldSourceItemType)))
+        // Only a genuine residual TransparentIdentifier reference is a problem. EF-368 fix round 1 (C1)
+        // finding: a composed operator positioned ABOVE the synthesized flattening Select (e.g. the 2-arg
+        // Queryable.First(source, predicate) EF folds Include(o => o.Carrier).First(o => o.Carrier == null)
+        // into — see IsSynthesizedIdentifierSelect) has an oldSourceItemType that is ALREADY the flattened
+        // root entity type, not the join's TransparentIdentifier, because ITS OWN immediate source (in the
+        // ORIGINAL captured chain) is that synthesized Select, not the join. In that case oldSourceItemType
+        // equals newSourceItemType (both the flattened root type, e.g. Order) even though NONE of this
+        // operator's generic arguments ever mentioned the TransparentIdentifier at all — so the OLD version
+        // of this check, "does a generic arg still equal oldSourceItemType", fired a FALSE POSITIVE the
+        // moment the flattened type reappeared as a perfectly ordinary generic argument (TSource=Order for
+        // First<Order>), refusing the strip and leaving the join to be rendered by the driver's own native
+        // LeftJoin — a shape the shaper (already committed to the flat _lookup_<Nav> layout by
+        // MongoQueryExpression.UsesDriverJoinFields, decided BEFORE this rewrite ever runs) cannot read,
+        // corrupting rather than merely missing an optimization. Gating on
+        // IsTransparentIdentifierType(oldSourceItemType) restores the check's actual intent — decline only when
+        // a TI-shaped generic argument genuinely could not be eliminated by the substitution above.
+        if (oldSourceItemType.IsTransparentIdentifierType()
+            && (genericArgs.Contains(oldSourceItemType) || genericArgs.Any(a => ContainsType(a, oldSourceItemType))))
         {
             // A generic argument still mentions the (now non-existent) TransparentIdentifier type.
             return null;
@@ -797,8 +1103,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         {
             return Expression.Call(null, call.Method.GetGenericMethodDefinition().MakeGenericMethod(genericArgs), newArgs);
         }
-        // Only the two exceptions this reconstruction can legitimately raise for an unrebuildable shape;
-        // anything else is a bug here and must not be laundered into an ordinary shape rejection.
+        // Narrowly the two exception types the reconstruction above can legitimately raise for a shape this
+        // method cannot rebuild: MakeGenericMethod throws ArgumentException when a substituted type argument
+        // violates the method's constraints, and Expression.Call throws ArgumentException /
+        // InvalidOperationException when the rewritten arguments no longer match the constructed signature.
+        // Anything else is a bug here and must not be laundered into an ordinary shape rejection.
         catch (ArgumentException)
         {
             return null;
@@ -824,9 +1133,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     /// <summary>
     /// Distinguishes the EF-synthesized trailing <c>Select</c> that merely unpacks the join's
-    /// TransparentIdentifier (join plumbing to drop) from a user-composed <c>Select</c> projection (to
-    /// reattach): the synthesized one's selector body is only ever an <see cref="IncludeExpression"/> or a
-    /// bare chain of <c>.Outer</c> accesses back to the parameter.
+    /// TransparentIdentifier back to the root entity (join plumbing the <c>$lookup</c> replaces, so it
+    /// must be dropped) from a user-composed <c>Select</c> projection (which must be reattached).
+    /// The synthesized one is recognised structurally: its selector body is either an
+    /// <see cref="IncludeExpression"/> (the shaped Include path) or a bare chain of <c>.Outer</c> field
+    /// accesses back to the parameter — neither of which a user selector can be.
     /// </summary>
     private static bool IsSynthesizedIdentifierSelect(MethodCallExpression call)
     {
@@ -834,7 +1145,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             || call.Arguments.Count < 2
             || call.Arguments[1] is not UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression selector }
             || selector.Parameters.Count != 1
-            || !IsTransparentIdentifier(selector.Parameters[0].Type))
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType())
         {
             return false;
         }
@@ -848,7 +1159,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     body = include.EntityExpression;
                     continue;
                 case MemberExpression { Member.Name: "Outer" } member
-                    when IsTransparentIdentifier(member.Member.DeclaringType):
+                    when member.Member.DeclaringType.IsTransparentIdentifierType():
                     body = member.Expression!;
                     continue;
                 case ParameterExpression parameter:
@@ -858,9 +1169,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             }
         }
     }
-
-    private static bool IsTransparentIdentifier(Type? type)
-        => type is { IsGenericType: true } && type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
 
     /// <summary>
     /// Rewrites a lambda written against a join's TransparentIdentifier element type so it reads from the
@@ -911,61 +1219,15 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         /// <summary>
         /// Resolves the <c>$lookup</c> that supplies the <c>Inner</c> of the TransparentIdentifier at
-        /// <paramref name="depth"/> (0 = innermost join). Matched on the join's inner entity CLR type
-        /// AND the join's outer key (the FK property), so two navigations to the same entity type stay
-        /// distinguishable. Returns <see langword="null"/> when the match is missing.
+        /// <paramref name="depth"/> (0 = innermost join), through the shared
+        /// <see cref="ResolveJoinLookup"/> — the same match the group split uses, deliberately not a second
+        /// copy of it. The inner entity CLR type is the <c>Inner</c> MEMBER type the lambda actually reads
+        /// (see that method's remarks). Returns <see langword="null"/> when missing or ambiguous.
         /// </summary>
         private LookupExpression? ResolveLookup(int depth, Type innerType)
-        {
-            if (depth < 0 || depth >= _joinsInnermostFirst.Count)
-            {
-                return null;
-            }
-
-            var keyName = _joinsInnermostFirst[depth].Arguments[2].UnwrapLambdaFromQuote().Body.TryGetSimplePropertyName();
-
-            var candidates = _pendingLookups
-                .Where(l => l.ForceUnwind
-                            && l.TargetEntityType.ClrType == innerType
-                            && (keyName == null
-                                // A navigation-less lookup (EF-377) has no ForeignKey to filter by;
-                                // its TargetEntityType match above is all we can go on here — any
-                                // remaining ambiguity is resolved by the structural depth/prefix logic
-                                // below, same as a self-referencing navigation chain.
-                                || l.Navigation == null
-                                || l.Navigation.ForeignKey.Properties.Any(p => p.Name == keyName)
-                                || l.Navigation.ForeignKey.PrincipalKey.Properties.Any(p => p.Name == keyName)))
-                .ToList();
-
-            if (candidates.Count == 1)
-            {
-                return candidates[0];
-            }
-
-            if (candidates.Count == 0)
-            {
-                return null;
-            }
-
-            // Ambiguous by type/key alone: a self-referencing chain (e.g. Employee.Manager.Manager)
-            // registers more than one hop for the same navigation against the same target entity type.
-            // Disambiguate structurally instead, mirroring the dependency relation OrderLookupsByDependency
-            // already relies on: the innermost (depth 0) hop's lookup reads straight off the root
-            // document, so its LocalField isn't prefixed by any sibling candidate's alias; every deeper
-            // hop's lookup is chained onto the alias of the hop immediately before it.
-            if (depth == 0)
-            {
-                return candidates.FirstOrDefault(candidate => candidates.All(other =>
-                    ReferenceEquals(other, candidate)
-                    || !candidate.LocalField.StartsWith(other.As + ".", StringComparison.Ordinal)));
-            }
-
-            var previous = ResolveLookup(depth - 1, innerType);
-            return previous == null
+            => depth < 0 || depth >= _joinsInnermostFirst.Count
                 ? null
-                : candidates.FirstOrDefault(candidate =>
-                    candidate.LocalField.StartsWith(previous.As + ".", StringComparison.Ordinal));
-        }
+                : ResolveJoinLookup(_joinsInnermostFirst[depth], innerType, _pendingLookups);
 
         private sealed class Rewriter(TransparentIdentifierToLookupFieldRewriter owner, ParameterExpression oldParam)
             : System.Linq.Expressions.ExpressionVisitor
@@ -973,7 +1235,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             protected override Expression VisitMember(MemberExpression node)
             {
                 if (node.Member.Name is "Outer" or "Inner"
-                    && IsTransparentIdentifier(node.Member.DeclaringType)
+                    && node.Member.DeclaringType.IsTransparentIdentifierType()
                     && TryGetDepth(node.Expression, out var depth))
                 {
                     if (node.Member.Name == "Outer")
@@ -990,7 +1252,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         return node;
                     }
 
-                    var serializer = owner._bsonSerializerFactory.GetEntitySerializer(lookup.TargetEntityType);
+                    var serializer = owner._bsonSerializerFactory.GetEntitySerializer(lookup.Navigation.TargetEntityType);
                     var mqlField = owner._mqlFieldMethod.MakeGenericMethod(owner._rootType, node.Type);
                     return Expression.Call(null, mqlField, owner._rootParam,
                         Expression.Constant(lookup.As),
@@ -1029,7 +1291,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         case ParameterExpression p when p == oldParam:
                             return depth >= 0;
                         case MemberExpression { Member.Name: "Outer" } m
-                            when IsTransparentIdentifier(m.Member.DeclaringType):
+                            when m.Member.DeclaringType.IsTransparentIdentifierType():
                             depth--;
                             expression = m.Expression;
                             continue;
@@ -1050,7 +1312,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
             /// <summary>Number of nested TransparentIdentifier levels in a join element type.</summary>
             private static int NestingDepth(Type type)
-                => IsTransparentIdentifier(type) ? 1 + NestingDepth(type.GetGenericArguments()[0]) : 0;
+                => type.IsTransparentIdentifierType() ? 1 + NestingDepth(type.GetGenericArguments()[0]) : 0;
         }
     }
 
@@ -1095,13 +1357,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         => EmitLookupStages(query, _pendingLookups.Where(l => l.InjectAfterRoot));
 
     /// <summary>
-    /// Whether a lookup is already emitted below the pipeline tail and so must not be tail-appended too:
-    /// either compile-time <see cref="LookupExpression.InjectAfterRoot"/>, or this execution's
-    /// <see cref="StripJoinForLookup"/> scheduling it via <see cref="_injectAfterBaseSourceLookups"/> (kept
-    /// as per-execution state, not written back onto the shared, compile-time <see cref="LookupExpression"/>).
+    /// Whether a lookup is emitted somewhere below the tail of the pipeline, and so must not also be
+    /// tail-appended: either because the projection binder marked it for injection right after the root
+    /// source at model/compile time (<see cref="LookupExpression.InjectAfterRoot"/>), or because THIS
+    /// execution's <see cref="StripJoinForLookup"/> reattached user-composed operators that read its
+    /// output field and so scheduled it above the join chain's base source
+    /// (<see cref="_injectedEarlyLookups"/>). The latter is kept as per-execution visitor state
+    /// rather than written back onto the shared <see cref="LookupExpression"/>, which is compile-time
+    /// state owned by <see cref="Expressions.MongoQueryExpression"/> and reused across executions.
     /// </summary>
     private bool IsInjectedEarly(LookupExpression lookup)
-        => lookup.InjectAfterRoot || _injectAfterBaseSourceLookups.Contains(lookup);
+        => lookup.InjectAfterRoot || _injectedEarlyLookups.Contains(lookup);
 
     private Expression EmitLookupStages(Expression query, IEnumerable<LookupExpression> lookups)
     {

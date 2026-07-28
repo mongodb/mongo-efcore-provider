@@ -6,6 +6,122 @@ In order to evolve the provider as we introduce new features, we will be using t
 
 ## Breaking changes in 8.5.0 / 9.2.0 / 10.1.0
 
+### Projecting a required property whose stored element is absent or `null` now throws
+
+#### Old behavior
+
+Projecting a non-nullable property returned the CLR default — `0`, `null`, `false`, … — for any document in which that element was absent, or was present but stored as BSON `null`. This applied to both spellings of a projection:
+
+```c#
+context.Blogs.Select(b => b.Rank);            // returned 0 for a document with no "Rank" element
+context.Blogs.Select(b => new { b.Rank });    // the same
+```
+
+The projected value was deserialized by the MongoDB C# driver, whose serializers are lenient about a missing element and substitute the default.
+
+A *whole-entity* query over those same documents already behaved differently: `context.Blogs.ToList()` (and `Select(b => b)`) threw `InvalidOperationException: Document element 'Rank' is missing for required non-nullable property 'Rank'`. So two read paths over one document disagreed about whether it was acceptable.
+
+#### New behavior
+
+Projections are now materialized by the provider's own shaper, which applies the same required-property rule as a whole-entity read. Projecting a non-nullable property whose stored element is absent, or is explicitly BSON `null`, throws:
+
+```
+System.InvalidOperationException: Document element 'Rank' is missing for required non-nullable property 'Rank'.
+```
+
+Both spellings above are affected, and the change applies under the default query mode with no configuration change.
+
+Nullable properties are unaffected: `int?`, `string?` and friends still read back as `null` for both of those stored states, in every spelling. Documents that do store the element are unaffected, whatever its value.
+
+#### Why
+
+The two read paths over the same document disagreed — a whole-entity query refused it, a projection quietly substituted a default — and only one of those can be right for a property the model declares required. A projection now agrees with the whole-entity read that was already rejecting these documents, rather than silently answering `0` for data that is not there.
+
+#### Mitigations
+
+In preference order:
+
+1. **Make the property nullable** if the element is genuinely optional. This is the recommended fix: it makes the intent explicit in the model, both read paths then agree on `null`, and nothing else in the application has to change.
+
+2. **Backfill the documents** so the element is present, if the property really is required:
+
+    ```c#
+    var collection = client.GetDatabase("mydb").GetCollection<BsonDocument>("Blogs");
+
+    collection.UpdateMany(
+        Builders<BsonDocument>.Filter.Exists("Rank", false),
+        Builders<BsonDocument>.Update.Set("Rank", 0));
+
+    collection.UpdateMany(
+        Builders<BsonDocument>.Filter.Eq("Rank", BsonNull.Value),
+        Builders<BsonDocument>.Update.Set("Rank", 0));
+    ```
+
+    Use the same `IMongoClient` your `DbContext` is configured with, or a new `MongoClient` against the same connection string. To find the affected documents before changing anything, run the same two filters through `Find` instead.
+
+3. **As a temporary measure**, restore the previous values by opting the context back onto the driver's LINQ provider:
+
+    ```c#
+    optionsBuilder.UseMongoDB(connectionString, databaseName, o => o.UseQueryMode(MongoQueryMode.DriverLinq));
+    ```
+
+    This restores the old projection results only. A whole-entity read of the same documents throws in every query mode, as it did in previous versions — so this is a way to keep a projection working while you apply mitigation 1 or 2, not a way to make those documents readable in general.
+
+### A missing or `null` embedded array now materializes as an empty collection, not `null`
+
+#### Old behavior
+
+When a stored document had no field at all for an embedded (owned) collection, or had that field explicitly set to BSON `null`, the provider created no collection for the navigation. What you observed then depended on your own class: a navigation declared as a plain `public List<Post> Posts { get; set; }` read back as `null`, while one declared `public List<Post> Posts { get; set; } = []` read back as an empty collection, because the field initializer had already supplied one.
+
+Projecting the collection directly made the `null` unambiguous and usable, since no field initializer was involved: `Select(b => b.Posts)` returned `null` for those documents, so `posts is null` was a reliable test for "the stored array was absent or `null`", as distinct from "the stored array was present but empty".
+
+#### New behavior
+
+A missing or explicitly-`null` embedded array now materializes as an **empty** collection on every read path — whole-entity queries, `Include`, and projections alike — regardless of how the navigation property is declared. The collection is created through the navigation's own collection accessor, so a `HashSet<T>` or custom collection navigation gets its declared type.
+
+The distinction between "the stored array was absent or `null`" and "the stored array was present but empty" is therefore no longer observable through a materialized collection navigation.
+
+Nullable primitive collection *properties* (for example `List<string>? Tags`) are unaffected and still read back as `null`, because they map through a property serializer with its own nullability semantics rather than as a collection navigation.
+
+**This can change stored documents, through a read-modify-write cycle.** The write path itself is unchanged: assigning `null` to a collection navigation and saving still persists `null`. But if you load an entity, change anything about it, and call `SaveChanges`, what gets written back for the collection navigation is now the empty collection that materialization produced, where it used to be the `null` that materialization produced. Measured, for a tracked load of one document, an edit to an unrelated scalar property, and `SaveChanges` — identical in both query modes:
+
+| Stored `Posts` before the cycle | Written back, previous versions | Written back, this version |
+|---|---|---|
+| field absent | `"Posts": null` | `"Posts": []` |
+| `"Posts": null` | `"Posts": null` | `"Posts": []` |
+| `"Posts": []` | `"Posts": []` | `"Posts": []` |
+
+So loading, mutating and saving entities whose embedded arrays are ragged will normalize those arrays **in the database**. Note this is not new *document-rewriting* behavior — the previous versions already replaced an absent field with `"Posts": null` on the same cycle; what changed is the value written. It follows from the read change described above, and nothing about how a collection is serialized changed.
+
+#### Why
+
+Empty-not-null is Entity Framework Core's contract for a collection navigation, independent of the CLR type's nullability or its field initializer. The previous behavior made the materialized result depend on the application's field initializer, which meant two models over the same documents disagreed, and different read paths over the same document could disagree with each other. It also made a projected count of such a collection throw `ArgumentNullException` instead of returning `0`.
+
+#### Mitigations
+
+If you need to tell an absent or `null` stored array apart from a present-but-empty one, ask the database rather than the materialized collection. A LINQ predicate cannot express it (`!b.Posts.Any()` is true for all three states), so query the documents through the driver, where the stored shape is visible:
+
+```c#
+var collection = client.GetDatabase("mydb").GetCollection<BsonDocument>("Blogs");
+var absentOrNull = collection.Find(
+        Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Exists("Posts", false),
+            Builders<BsonDocument>.Filter.Eq("Posts", BsonNull.Value)))
+    .ToList();
+```
+
+Use the same `IMongoClient` your `DbContext` is configured with, or a new `MongoClient` against the same connection string. If you were relying on `Select(b => b.Posts)` returning `null`, replace that test with the above.
+
+Do that check **before** the documents pass through a read-modify-write cycle, because that cycle normalizes them (see *New behavior*). If you need the ragged stored shape preserved, avoid round-tripping those entities through the change tracker: update only the fields you actually want to change, either with `ExecuteUpdate` (whose setter API differs between EF Core versions — see the EF Core docs for the form your version takes) or with a driver update, which leaves the array field untouched:
+
+```c#
+collection.UpdateOne(
+    Builders<BsonDocument>.Filter.Eq("_id", id),
+    Builders<BsonDocument>.Update.Set("Title", "New title"));
+```
+
+Otherwise, treat the normalization as a one-time migration of the documents you save, and take whatever record of the distinction you need — a backup, or an audit query using the `Find` above — before saving.
+
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 
 #### Old behavior
@@ -33,6 +149,47 @@ modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress);
 ```
 
 (or `OwnsMany` for collection navigations). If you want the new separate-collection behavior, no change is required. Models whose embedded types never had their own `DbSet` are unaffected, and the stored documents for those types are unchanged.
+
+### Query results can differ for a numeric cast in a `Where` clause
+
+#### Old behavior
+
+A numeric cast applied to a mapped property inside a `Where` clause — `(int)x.D`, `(double)x.Weight` — was translated by the MongoDB C# driver's LINQ provider, which for many shapes **silently dropped the cast** and filtered on the raw stored value instead:
+
+```c#
+context.Blogs.Where(x => (int)x.Score > 0);   // ran as though it were: x.Score > 0
+```
+
+#### New behavior
+
+The provider's own MQL translator now renders the cast explicitly, as `$toInt` / `$toLong` / `$toDouble` / `$toDecimal`, instead of handing the query to the driver's LINQ provider. Two observable consequences for a query that ran successfully in `10.0.2` / `9.1.2` / `8.4.2`:
+
+* **A narrowing cast compared against a constant now returns the C#-correct rows.** `Where(x => (int)x.D > 0)` over a document with `D = 0.5` previously matched (the cast was dropped, so `0.5 > 0` was evaluated); it no longer does, because `(int)0.5` is `0`. This is a deliberate correctness fix — the new result is the one C# itself produces for the same expression.
+
+* **A value outside the target type's range now raises a server error** where rows were previously returned. `Where(x => (int)x.D > 0)` over a document storing `D = 1e30` fails with `MongoDB.Driver.MongoCommandException: … Conversion would overflow target type in $convert with no onError value: 1e+30`. **The failure aborts the whole query, not just the offending document** — the conversion is evaluated for every document the query scans, including documents that would never have matched the predicate — so no rows are returned at all. Unchecked C# would instead have produced an unspecified truncated value for that document.
+
+#### Why
+
+Dropping a cast answers a different question from the one the query asked, and does so silently. Rendering it explicitly makes a filtered query agree with what the same expression means in C#.
+
+The overflow case is a deliberate choice between three answers that all differ: the previous behavior (rows, from a comparison the query did not ask for), unchecked C# (an unspecified value), and suppressing the error (a converted-to-`null` operand, which then participates in a BSON-ordering comparison and quietly moves the document into or out of the result depending on the operator). A loud failure is the only one of the three that cannot be mistaken for an answer, and a value that does not fit the cast's target type indicates a defect in the query or in the stored data.
+
+#### Mitigations
+
+In preference order:
+
+1. **Fix the expression or the data.** If the cast was incidental, remove it (`Where(x => x.D > 0)`) — that is the query the old behavior actually ran. If a stored value genuinely cannot fit the cast's target type, either widen the target (`(long)`, `(double)`) or correct the document.
+
+2. **Restore the previous behavior for the whole context** by opting out of the native translator:
+
+    ```c#
+    optionsBuilder.UseMongoDB(connectionString, databaseName)
+        .UseQueryMode(MongoQueryMode.DriverLinq);
+    ```
+
+    This routes every query through the driver's LINQ provider, as in earlier versions, and restores the old result for both consequences above.
+
+Queries with no numeric cast in their filter are unaffected, as are casts whose stored values all fit the target type and whose truncation does not change the comparison's outcome. A relational comparison (`<`, `<=`, `>`, `>=`) whose cast is applied to a **nullable** property is also unaffected: that shape still routes through the driver's LINQ provider, so it keeps the old behavior described above rather than either new consequence.
 
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 

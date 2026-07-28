@@ -1,0 +1,227 @@
+/* Copyright 2023-present MongoDB Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+using System;
+using System.Linq.Expressions;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
+
+namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+
+/// <summary>
+/// Populates <see cref="MongoSelectDefinition.Cardinality"/> for an entity-reducer terminal operator
+/// (First/FirstOrDefault/Single/SingleOrDefault), mirroring <see cref="NativeProjectionBinder"/>'s role
+/// for projections. Called from <see cref="NativeSlotPopulator.PopulateNativeSlots"/>. Returns
+/// <see langword="false"/> when the operator is not natively representable (e.g. a limit is already
+/// present from a preceding Take/Skip); the caller then marks the query non-native.
+/// </summary>
+internal static class NativeCardinalityBinder
+{
+    /// <summary>
+    /// Synthesizes a native <c>$limit</c> (1 for First*, 2 for Single*, so the server-side reducer can
+    /// still distinguish "more than one" from "exactly one" for the Single family) and records the
+    /// reducer kind on <see cref="MongoSelectDefinition.Cardinality"/>. EF Core's base cardinality
+    /// reduction (over the returned <see cref="System.Collections.Generic.IEnumerable{T}"/>) performs the
+    /// actual First/Single semantics, including the empty-throw / more-than-one-throw behavior.
+    /// </summary>
+    internal static bool TryBindReducer(MongoQueryExpression mongoQ, MongoReducerKind kind, Type resultType)
+    {
+        var select = mongoQ.Select;
+
+        // Post-group guard (symmetric to NativeSlotPopulator's post-group slot-operator guard and to
+        // TryBindAggregate below). A reducer applied AFTER a finalized GroupBy(key).Select(anon) must fall
+        // back: a reducer sets Cardinality.Reducer (not .Aggregate), so Route stays GroupBy and the lowerer
+        // emits the [$group, $project] pipeline — but the reducer would also stamp a $limit onto that grouped
+        // pipeline (select.AppendLimit below), truncating the group rows and yielding a wrong/non-deterministic
+        // single result instead of reducing over the grouped sequence. Fall back cleanly. See the Query
+        // AGENTS.md GroupBy note. (The aggregate path in TryBindAggregate is worse — it flips Route to
+        // ScalarAggregate and crashes; documented there.) IsDistinct rides the same guard: a projected Distinct
+        // binds the same degenerate $group, so a post-Distinct reducer must fall back for the identical reason.
+        // (Centralized as HasTerminalOperator, EF-347 review follow-up — see MongoSelectDefinition.)
+        // EF-347 slice B: a set-op-only terminal is EXEMPT — an aggregate/reducer composed after a set op
+        // binds here and goes native. The reducer $limit / aggregate-injected predicate record into
+        // TrailingOps (ActiveOps flips once SetOperation is attached), landing AFTER the set-op stage, and the
+        // lowerer emits the $count/$group/$limit after the set-op stage (it keys off SetOperation, not Route,
+        // and no longer early-returns). A GroupBy/Distinct/SelectMany terminal still falls back.
+        if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
+            return false;
+
+        // A user Take/Skip already populated the limit slot; composing a reducer limit on top is not
+        // representable in canonical order. Fall back rather than reconcile two limits.
+        // EF-347 slice B note: HasLimit deliberately scans PipelineOps only, not TrailingOps (see
+        // MongoSelectDefinition). For a set-op terminal (e.g. Union(a,b).Take(n).First()), the preceding
+        // Take's limit is recorded in TrailingOps (post-set-op ops), so this guard does not see it and does
+        // not fire here — the reducer instead appends its OWN $limit onto TrailingOps too (ActiveOps still
+        // targets TrailingOps), producing two consecutive $limit stages after the set-op stage. That composes
+        // correctly (verified): the second $limit only ever narrows the first, so First/Single still see at
+        // most 1/2 rows. This is a deliberate divergence from the non-set-op Take(n).First() path, which
+        // falls back here — not a bug.
+        if (select.HasLimit)
+            return false;
+
+        var limit = kind is MongoReducerKind.Single or MongoReducerKind.SingleOrDefault ? 2 : 1;
+        select.AppendLimit(new MongoConstantExpression(limit, forSerialization: null));
+        select.Cardinality = MongoCardinality.ForReducer(kind, resultType);
+        return true;
+    }
+
+    /// <summary>
+    /// Attempts to bind a scalar aggregate terminal operator (Count/LongCount/Any/All/Sum/Min/Max/Average)
+    /// to <see cref="MongoSelectDefinition.Cardinality"/>. Returns <see langword="false"/> for any shape
+    /// outside the current native acceptance set (e.g. a computed selector), so the caller marks the query
+    /// non-native and falls back to driver-LINQ.
+    /// </summary>
+    internal static bool TryBindAggregate(
+        MongoQueryExpression mongoQ,
+        MongoAggregateOperator op,
+        LambdaExpression? selector,
+        LambdaExpression? predicate,
+        Type resultType)
+    {
+        var select = mongoQ.Select;
+
+        // Post-group guard (symmetric to NativeSlotPopulator's post-group slot-operator guard, and to
+        // TryBindReducer above). A scalar aggregate applied AFTER a finalized GroupBy(key).Select(anon)
+        // must fall back: setting Cardinality on an already-grouped select flips
+        // MongoSelectDefinition.Route to ScalarAggregate (Cardinality is prioritized above Grouping) while
+        // the lowerer's grouping branch still emits a [$group, $project] pipeline with no terminal
+        // $count/aggregate stage — the scalar shaper then reads a nonexistent element and crashes with
+        // KeyNotFoundException instead of falling back cleanly. See the Query AGENTS.md GroupBy note.
+        // IsDistinct rides the same guard: a projected Distinct binds the same degenerate $group, so a
+        // post-Distinct scalar aggregate must fall back for the identical reason.
+        // (Centralized as HasTerminalOperator, EF-347 review follow-up — see MongoSelectDefinition.)
+        // EF-347 slice B: a set-op-only terminal is EXEMPT — an aggregate/reducer composed after a set op
+        // binds here and goes native. The reducer $limit / aggregate-injected predicate record into
+        // TrailingOps (ActiveOps flips once SetOperation is attached), landing AFTER the set-op stage, and the
+        // lowerer emits the $count/$group/$limit after the set-op stage (it keys off SetOperation, not Route,
+        // and no longer early-returns). A GroupBy/Distinct/SelectMany terminal still falls back.
+        if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
+            return false;
+
+        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+
+        MongoFieldExpression? operand = null;
+        if (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
+               or MongoAggregateOperator.Max or MongoAggregateOperator.Average)
+        {
+            // Selector must be a plain member access → field ref. Computed selectors fall back.
+            if (selector?.Body is not MemberExpression || !translator.TryTranslateField(selector.Body, out operand))
+                return false;
+        }
+
+        // An aggregate that injects a predicate as a $match (All always does; Count/Any defensively when an
+        // unnormalized predicate overload reaches here) is safe to inject even when paging (Take/Skip) is
+        // already present on the select: AddPredicateConjunct (below) always ANDs into — or appends after —
+        // the TAIL of the ordered op list, i.e. AFTER any $skip/$limit already recorded, never hoisting ahead
+        // of it. So Take(n).All(pred)/Count(pred)/Any(pred) correctly evaluate the predicate over only the
+        // first n rows, matching MongoDB's sequential pipeline semantics (EF-347 Task 3 — this used to be a
+        // guarded fallback before the ordered op list made tail-append the natural, always-correct behavior).
+
+        if (op is MongoAggregateOperator.All)
+        {
+            // All(pred) ≡ no row fails pred. Push the EXACT COMPLEMENT of the predicate as a $match; presence
+            // of any surviving row (after $count) means at least one row failed pred, so All is false.
+            //
+            // The complement is built by MongoExpressionNegator over the TRANSLATED tree, not by wrapping the
+            // LINQ body in Expression.Not (which is what this did before EF-335). The old form translated a
+            // negated comparison into MongoUnaryExpression(Not, comparison) — a node the renderer had no case
+            // for, so it threw at RENDER time and the gate silently fell back. Negating after translation also
+            // means De Morgan applies, so a conjunctive/disjunctive predicate goes native too.
+            if (predicate is null)
+                return false;
+
+            if (!translator.TryTranslate(predicate.Body, out var predicateNode))
+                return false;
+
+            if (!MongoExpressionNegator.TryNegate(predicateNode, out var negatedNode))
+                return false; // no exact complement — decline, so the query falls back to driver-LINQ
+
+            select.AddPredicateConjunct(negatedNode);
+        }
+        else if (predicate != null)
+        {
+            // Count(pred)/Any(pred) — the normalizer usually rewrites these to Where(pred) + op, but handle
+            // defensively in case an unnormalized predicate-taking overload reaches here.
+            if (!translator.TryTranslate(predicate.Body, out var predNode))
+                return false;
+
+            select.AddPredicateConjunct(predNode);
+        }
+
+        BuildEmptyBehavior(op, resultType, out var emptyValue, out var emptyBehavior);
+
+        // Any/All are presence-only: the result is determined by whether a row survived the terminal $limit
+        // stage, not by deserializing a field from it. See MongoSelectLowerer / ExecuteAggregate.
+        var presenceOnly = op is MongoAggregateOperator.Any or MongoAggregateOperator.All;
+        object? presentValue = op switch
+        {
+            MongoAggregateOperator.Any => true,
+            MongoAggregateOperator.All => false,
+            _ => null
+        };
+
+        select.Cardinality = MongoCardinality.ForAggregate(
+            op, operand, emptyBehavior, emptyValue, resultType, presenceOnly, presentValue);
+        return true;
+    }
+
+    /// <summary>
+    /// Maps each aggregate's empty-input semantics to the BCL LINQ contract: what value (if any) the
+    /// aggregate yields when the server returns zero rows.
+    /// </summary>
+    internal static void BuildEmptyBehavior(
+        MongoAggregateOperator op, Type resultType, out object? emptyValue, out MongoEmptyAggregateBehavior behavior)
+    {
+        emptyValue = null;
+        switch (op)
+        {
+            case MongoAggregateOperator.Count:
+                emptyValue = 0;
+                behavior = MongoEmptyAggregateBehavior.DefaultValue;
+                break;
+            case MongoAggregateOperator.LongCount:
+                emptyValue = 0L;
+                behavior = MongoEmptyAggregateBehavior.DefaultValue;
+                break;
+            case MongoAggregateOperator.Any:
+                emptyValue = false;
+                behavior = MongoEmptyAggregateBehavior.DefaultValue;
+                break;
+            case MongoAggregateOperator.All:
+                emptyValue = true;
+                behavior = MongoEmptyAggregateBehavior.DefaultValue;
+                break;
+            case MongoAggregateOperator.Sum:
+                // Sum over empty is 0 (typed), including for nullable numeric result types — never null.
+                emptyValue = TypedZero(resultType);
+                behavior = MongoEmptyAggregateBehavior.DefaultValue;
+                break;
+            case MongoAggregateOperator.Min:
+            case MongoAggregateOperator.Max:
+            case MongoAggregateOperator.Average:
+                behavior = Nullable.GetUnderlyingType(resultType) != null
+                    ? MongoEmptyAggregateBehavior.ReturnNull
+                    : MongoEmptyAggregateBehavior.Throw;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(op));
+        }
+    }
+
+    private static object TypedZero(Type resultType)
+    {
+        var t = Nullable.GetUnderlyingType(resultType) ?? resultType;
+        return Convert.ChangeType(0, t);
+    }
+}

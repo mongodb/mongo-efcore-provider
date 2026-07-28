@@ -192,7 +192,7 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "_v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "v" }
 """,
             //
             """
@@ -204,11 +204,11 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "_v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "v" }
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }] } }, { "$count" : "_v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }] } }, { "$count" : "v" }
 """);
     }
 
@@ -240,6 +240,29 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 """);
     }
 
+    // Fails: Cross-document navigation access issue EF-216
+    //
+    // EF-322 step 3a re-baseline. This is a MESSAGE change on a shape that is unsupported either way — the
+    // exception TYPE is still InvalidOperationException and the query still produces no data in any
+    // MongoQueryMode — so what follows is where it is now raised, traced rather than guessed.
+    //
+    // `Multiple_queries` compiles `<subquery1> + <subquery2>`, so the top-level expression handed to
+    // QueryCompilationContext is a BinaryExpression, NOT a ShapedQueryExpression. MongoQueryTranslationPostprocessor
+    // .Process calls ApplyProjection() only when the top-level expression IS a ShapedQueryExpression, so neither
+    // sub-query's ProjectionMember mapping is ever rewritten to its Constant(index) form. Before step 3a a bare
+    // scalar projection populated no native Projection, Route was Fallback, that missing mapping was never read,
+    // and the driver-LINQ bridge got far enough to raise its own explanatory "Unsupported cross-DbSet query
+    // between ..." error. With step 3a the bare projection IS pushed down, Route is Projection, and
+    // MongoProjectionBindingRemovingExpressionVisitor.GetProjectionIndex reads the un-rewritten mapping first —
+    // throwing the PARAMETERLESS InvalidOperationException from ExpressionExtensionMethods.GetConstantValue<int>
+    // ("Operation is not valid due to the current state of the object") before the bridge is reached.
+    //
+    // So the postprocessor's single-ShapedQueryExpression assumption is a PRE-EXISTING gap that step 3a merely
+    // makes reachable. Widening it is deliberately NOT done here: applying the projection to every shaped query
+    // in the tree would very likely make this query SUCCEED (the two sub-queries are independent
+    // single-collection natives with no cross-DbSet bridging left to do), which is a different test and a
+    // separate, measured change. Until then this asserts the type and the shape of the failure, not the message,
+    // so it cannot be quietly satisfied by some third unrelated InvalidOperationException.
     public override void Multiple_queries()
     {
         // Fails: two separately-compiled queries against different DbSets on the same context leak
@@ -473,8 +496,4 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$lookup" : { "from" : "Orders",
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
 
-    // Fails: Cross-document navigation access issue EF-216
-    private static void AssertNoMultiCollectionQuerySupport(Action query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            Assert.Throws<InvalidOperationException>(query).Message);
 }

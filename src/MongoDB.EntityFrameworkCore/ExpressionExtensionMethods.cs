@@ -114,6 +114,27 @@ internal static class ExpressionExtensionMethods
             : expression;
 
     /// <summary>
+    /// Whether <paramref name="type"/> is one of EF Core's compiler-generated
+    /// <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c> constructions — the anonymous result type a join's
+    /// result selector wraps its outer/inner pair in.
+    /// </summary>
+    /// <remarks>
+    /// Anchoring an <c>"Outer"</c>/<c>"Inner"</c> member-name match to the member's DECLARING TYPE, rather
+    /// than matching the name alone, is the version-safer form: a declaring-type check tracks a rename of the
+    /// generated type, a bare string literal does not, and without it any user type that happens to expose a
+    /// member called <c>Outer</c> or <c>Inner</c> would be mistaken for join plumbing.
+    /// <para>
+    /// This lives here because there are two consumers and that argument only holds while they agree:
+    /// <c>MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs</c>'s transparent-identifier rewriters, and
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.ClassifyJoinHop</c> (EF-379). Each shipped its own
+    /// byte-identical private copy first; a single definition is what keeps them in step.
+    /// </para>
+    /// </remarks>
+    internal static bool IsTransparentIdentifierType(this Type? type)
+        => type is { IsGenericType: true }
+           && type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
+
+    /// <summary>
     /// Extracts the simple member/property name from a key-selector-style expression — a member access
     /// (<c>o.CustomerId</c>) or an <c>EF.Property(o, "CustomerId")</c> call — after stripping any
     /// <see cref="ExpressionType.Convert"/> / <see cref="ExpressionType.ConvertChecked"/> wrappers. Returns

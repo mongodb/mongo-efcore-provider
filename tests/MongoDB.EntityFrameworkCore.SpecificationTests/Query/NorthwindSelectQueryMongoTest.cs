@@ -175,8 +175,8 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$Region", "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "Region" : "$Region", "_id" : 0 } }
+""");
     }
 
     public override async Task Projection_when_client_evald_subquery(bool async)
@@ -262,8 +262,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$City", "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "City" : "$City", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_anonymous_one(bool async)
@@ -362,8 +362,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Employees.{ "$limit" : 9 }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Employees.{ "$limit" : 9 }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Select_project_filter(bool async)
@@ -372,8 +372,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "_v" : "$CompanyName", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_project_filter2(bool async)
@@ -382,8 +382,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "_v" : "$City", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "City" : "$City", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_nested_collection(bool async)
@@ -448,7 +448,7 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "Count" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "Count" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
 """);
     }
 
@@ -897,8 +897,8 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$OrderDate", "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }
+""");
     }
 
     public override async Task Anonymous_projection_with_repeated_property_being_ordered(bool async)
@@ -982,18 +982,33 @@ Customers.
 
     public override async Task Multiple_select_many_with_predicate(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Multiple_select_many_with_predicate(async));
+        // Fails: Subquery selection EF-X001 — a two-level nested reference SelectMany
+        // (from c ... from o in c.Orders from od in o.OrderDetails) carrying an inner predicate AND a
+        // whole-outer `select c` result: out of scope for the EF-347 nested-reference slice (which covers
+        // only UNFILTERED two-level nesting with a projected / leaf result). It still declines cleanly, but
+        // now that the nested-reference carve-out binds BOTH levels before the whole-outer filtered shape
+        // falls back, the decline surfaces as the driver-LINQ bridge's cross-DbSet guard
+        // (InvalidOperationException, "Unsupported cross-DbSet query …") rather than EF's generic
+        // TranslationFailed message. The exact decline message of an unsupported shape is not part of the
+        // contract, so assert via the lenient translation-failure helper — which still turns red on any
+        // wrong-data (xUnit assertion) failure, so a future silent-wrong-data regression is not masked.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Multiple_select_many_with_predicate(async));
 
         AssertMql();
     }
 
     public override async Task SelectMany_without_result_selector_naked_collection_navigation(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.SelectMany_without_result_selector_naked_collection_navigation(async));
+        // EF-347 Task 4: a bare cross-collection reference SelectMany (Kind == Reference,
+        // IsWholeElementRepresentable's eager-loaded-nav check) now goes NATIVE — Order's own navigations
+        // (Customer, OrderDetails, etc.) are not eager-loaded in this fixture, so the shape is representable
+        // and materializes correctly via $lookup + inner-join $unwind + a plain $replaceRoot.
+        await base.SelectMany_without_result_selector_naked_collection_navigation(async);
 
-        AssertMql();
+        AssertMql(
+            """
+            Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$replaceRoot" : { "newRoot" : "$_lookup_Orders" } }
+            """);
     }
 
     public override async Task SelectMany_without_result_selector_collection_navigation_composed(bool async)
@@ -1418,15 +1433,22 @@ Customers.
 
         AssertMql();
 #else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Reverse_in_join_inner_with_skip(async))).Message);
+        // The join's inner is Orders.OrderByDescending(OrderID).Skip(2).Reverse() — a self-paging inner, which
+        // makes the CSHARP-6017 paged-join-inner guard hard-decline before the query ever reaches the driver.
+        // Unlike the wrong-data shapes this guard exists for, THIS query never returned wrong rows: before the
+        // guard existed it already threw driver ExpressionNotSupportedException, because the driver's LINQ
+        // provider separately rejects Reverse inside a join (CSHARP-5836, the same reason the EF8/EF9 arm
+        // above throws). Only the exception source/type changes here — driver-side Reverse rejection becomes
+        // a provider-side translation decline — not a throw-where-it-used-to-succeed change.
+        // TODO(EF-406): on driver fix, revert to the ExpressionNotSupportedException assertion with a
+        // real MQL baseline. "On driver fix" means the tripwire
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes: it is already Closed/Done at fixVersion 3.10.0, the driver
+        // version this branch pins, and the fold is MEASURED still live against it.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Reverse_in_join_inner_with_skip(async));
 
-        AssertMql(
-            """
-Customers.
-""");
+        AssertMql();
 #endif
     }
 
@@ -1529,7 +1551,7 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
 """);
     }
 
@@ -1539,7 +1561,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
 """);
     }
 
@@ -1826,8 +1848,8 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-            Employees.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Employees.{ "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Client_method_in_projection_requiring_materialization_2(bool async)
@@ -1866,8 +1888,8 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Select_bool_closure(bool async)
