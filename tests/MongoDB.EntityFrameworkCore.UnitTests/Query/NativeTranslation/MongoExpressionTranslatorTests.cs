@@ -1432,4 +1432,92 @@ public class MongoExpressionTranslatorTests
         var inner = Assert.IsType<MongoElemMatchExpression>(outer.ElementPredicate);
         Assert.Equal("Comments", inner.ArrayPath);
     }
+
+    // ------------------------------------------------------------------
+    // Owned-collection All → negated $elemMatch (EF-322 Task 2)
+    // ------------------------------------------------------------------
+    //
+    // These helpers render the FULL MQL (rather than just inspecting the MongoExpression tree) because the
+    // point of this section is the negated-complement SHAPE ($not/$elemMatch over the De Morgan'd predicate),
+    // which is easiest to verify end-to-end as BSON. They reuse OwnedBlog/OwnedPost — that fixture already has
+    // Posts/Heading/Rank/Other/Title with Post.Title deliberately colliding with Blog.Title (see the class
+    // comments above), which is exactly what the correlation-decline test below needs.
+
+    private static MongoExpression? TryTranslateBlogPredicate(Expression<Func<OwnedBlog, bool>> predicate)
+    {
+        var entityType = GetOwnedBlogEntityType();
+        return new MongoExpressionTranslator(entityType).TryTranslate(predicate.Body, out var result)
+            ? result
+            : null;
+    }
+
+    private static MongoExpression TranslateBlogPredicate(
+        Expression<Func<OwnedBlog, bool>> predicate, out BsonDocument rendered)
+    {
+        var translated = TryTranslateBlogPredicate(predicate);
+        Assert.NotNull(translated);
+        rendered = new MongoQueryLanguageRenderer().Render(translated, new PlaceholderTable()).AsBsonDocument;
+        return translated;
+    }
+
+    [Fact]
+    public void Owned_collection_All_translates_to_a_negated_elem_match()
+    {
+        var translated = TranslateBlogPredicate(b => b.Posts.All(p => p.Rank > 5), out var renderer);
+
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(translated);
+        Assert.Equal("Posts", elemMatch.ArrayPath);
+        Assert.True(elemMatch.Negated);
+        Assert.Equal(
+            BsonDocument.Parse("{ Posts: { $not: { $elemMatch: { Rank: { $not: { $gt: 5 } } } } } }"),
+            renderer);
+    }
+
+    [Fact]
+    public void Owned_collection_All_with_equality_renders_the_ne_complement()
+    {
+        TranslateBlogPredicate(b => b.Posts.All(p => p.Heading == "x"), out var renderer);
+        Assert.Equal(
+            BsonDocument.Parse("{ Posts: { $not: { $elemMatch: { Heading: { $ne: 'x' } } } } }"),
+            renderer);
+    }
+
+    [Fact]
+    public void Owned_collection_All_with_a_conjunction_renders_a_de_morgan_or()
+    {
+        TranslateBlogPredicate(b => b.Posts.All(p => p.Rank > 5 && p.Heading == "x"), out var renderer);
+        Assert.Equal(
+            BsonDocument.Parse(
+                "{ Posts: { $not: { $elemMatch: { $or: [ { Rank: { $not: { $gt: 5 } } }, { Heading: { $ne: 'x' } } ] } } } }"),
+            renderer);
+    }
+
+    [Fact]
+    public void Negated_owned_collection_All_drops_the_not_wrapper()
+    {
+        var translated = TranslateBlogPredicate(b => !b.Posts.All(p => p.Rank > 5), out var renderer);
+
+        Assert.False(Assert.IsType<MongoElemMatchExpression>(translated).Negated);
+        Assert.Equal(
+            BsonDocument.Parse("{ Posts: { $elemMatch: { Rank: { $not: { $gt: 5 } } } } }"),
+            renderer);
+    }
+
+    [Fact]
+    public void Owned_collection_All_over_a_field_to_field_element_predicate_declines()
+    {
+        // The negator has no exact complement for a field-to-field comparison, so the whole quantifier
+        // declines and the query falls back — it must NOT emit an $expr inside $elemMatch, which is a hard
+        // server error.
+        Assert.Null(TryTranslateBlogPredicate(b => b.Posts.All(p => p.Rank > p.Other)));
+    }
+
+    [Fact]
+    public void Owned_collection_All_with_a_correlated_element_predicate_declines()
+    {
+        // Same ReferencesEnclosingScope guard the Any arm relies on: the element-scoped translator resolves
+        // members by NAME, and OwnedBlog.Title / OwnedPost.Title deliberately collide, so without the guard
+        // the owner-rooted condition would be silently retargeted at the element.
+        Assert.Null(TryTranslateBlogPredicate(b => b.Posts.All(p => b.Title == "x")));
+    }
 }

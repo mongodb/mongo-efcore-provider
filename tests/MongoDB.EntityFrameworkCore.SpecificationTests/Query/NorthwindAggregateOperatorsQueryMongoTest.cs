@@ -591,9 +591,15 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     {
         await base.Select_All(async);
 
+        // Re-baselined by the owned-collection `All` / predicate-negator slice (EF-322, closing EF-335): the
+        // top-level `All` aggregate now negates its predicate via MongoExpressionNegator instead of
+        // Expression.Not, so this query goes NATIVE instead of falling back to driver-LINQ. The `$match` is
+        // byte-identical; only the fallback's trailing scalar-placeholder `$project: {_id: 0, _v: null}`
+        // disappears (the native presence-only aggregate derives its boolean from whether a row survived
+        // `$limit`, so it needs no projection). Results are unchanged — `base.Select_All` above still passes.
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : { "$ne" : "ALFKI" } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Orders.{ "$match" : { "CustomerID" : { "$ne" : "ALFKI" } } }, { "$limit" : 1 }
             """);
     }
 

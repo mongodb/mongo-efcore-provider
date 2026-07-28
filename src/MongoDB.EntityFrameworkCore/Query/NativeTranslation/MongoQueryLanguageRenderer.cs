@@ -95,7 +95,10 @@ internal sealed class MongoQueryLanguageRenderer
     // be delegated to the $expr (aggregation-expression) renderer.
     // ------------------------------------------------------------------
 
-    private static bool IsQueryNativeComparison(MongoBinaryExpression b)
+    // Widened from private to internal so MongoExpressionNegator can share the ONE definition of
+    // "query-native" rather than duplicating it — the negator must decline any comparison this returns false
+    // for, because such a node has no query-dialect complement (see MongoExpressionNegator.TryNegate).
+    internal static bool IsQueryNativeComparison(MongoBinaryExpression b)
         => b.Left is MongoFieldExpression && b.Right is MongoConstantExpression or MongoParameterExpression;
 
     private BsonDocument RenderAsExpr(MongoExpression node, PlaceholderTable placeholders)
@@ -139,9 +142,51 @@ internal sealed class MongoQueryLanguageRenderer
             throw new NativeTranslationNotSupportedException(
                 $"Unsupported unary operator '{unary.Operator}'.");
 
+        // !<query-native comparison> → { field: { $not: { <op>: value } } }.
+        //
+        // $not over an OPERATOR DOCUMENT is the exact set complement of that operator document — including
+        // documents where the field is missing or explicitly null. That exactness is why
+        // MongoExpressionNegator $not-wraps the four relational operators instead of inverting them:
+        // neither { $gt: 5 } nor { $lte: 5 } matches a missing field, so the pair does NOT partition the
+        // value space and an inversion would silently mis-answer All() for such a document.
+        if (unary.Operand is MongoBinaryExpression comparison && IsQueryNativeComparison(comparison))
+        {
+            // Reuse RenderComparison so element naming and value serialization are identical to the
+            // un-negated form (a parameter still records a placeholder in the shared table).
+            var element = RenderComparison(comparison, placeholders).GetElement(0);
+
+            // RenderComparison emits Equal as a BARE { field: value }; every other operator emits
+            // { field: { $op: value } }. Only the latter is already an operator document — check for a
+            // leading '$' rather than assuming.
+            //
+            // The reachable document-valued case here is NOT "equality against a document-valued property"
+            // (the translator only ever hands this a mapped SCALAR IProperty leaf, so that input never
+            // occurs) — it is PlaceholderTable's parameter sentinel, { __mongoef_param__: N }, which
+            // RenderComparison's own value rendering produces whenever the compared value is a captured
+            // local / EF query parameter rather than a constant (e.g. !(x.A == capturedLocal)). That
+            // sentinel key is deliberately NOT '$'-prefixed, so the check above correctly treats it as a
+            // bare value and wraps it in { $eq: … } rather than mistaking it for an already-built operator
+            // document. This wrap is therefore correct only because PlaceholderTable.SentinelKey never
+            // starts with '$' — see PlaceholderTable.SentinelKey's own doc comment for that invariant. If it
+            // ever did, this branch would skip the $eq wrap for a parameterized equality and emit
+            // { field: { $not: { __mongoef_param__: N } } } — the illegal bare-value-under-$not form below.
+            //
+            // THIS WRAP IS MANDATORY, NOT DEFENSIVE (spike-measured): { field: { $not: <bareValue> } } is a
+            // HARD SERVER ERROR — "$not argument must be a regex or an object". It is reachable in practice
+            // through !(x.A == 1), which EF does NOT normalize away. Emitting the bare form would fail every
+            // such query at execution time, in every mode.
+            var body = element.Value is BsonDocument candidate
+                && candidate.ElementCount > 0
+                && candidate.GetElement(0).Name.StartsWith('$')
+                    ? candidate
+                    : new BsonDocument("$eq", element.Value);
+
+            return new BsonDocument(element.Name, new BsonDocument("$not", body));
+        }
+
         if (unary.Operand is not MongoFieldExpression field)
             throw new NativeTranslationNotSupportedException(
-                "MongoQueryLanguageRenderer only supports Not over a MongoFieldExpression.");
+                "MongoQueryLanguageRenderer only supports Not over a MongoFieldExpression or a query-native comparison.");
 
         // !boolProperty → { field: { $ne: true } }
         // (Matches driver-LINQ rendering; also matches missing/null-field semantics.)
@@ -299,8 +344,11 @@ internal sealed class MongoQueryLanguageRenderer
             MongoBinaryExpression { Operator: MongoBinaryOperator.OrElse } o
                 => IsQueryDialectRenderable(o.Left) && IsQueryDialectRenderable(o.Right),
             MongoBinaryExpression comparison => IsQueryNativeComparison(comparison),
-            // RenderUnary supports Not over a bare field only, and throws otherwise.
+            // RenderUnary supports Not over a bare field, and over a QUERY-NATIVE comparison; it throws for
+            // anything else (e.g. Not over a conjunction, or over a field-to-field comparison).
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoFieldExpression } => true,
+            MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoBinaryExpression cmp }
+                => IsQueryNativeComparison(cmp),
             MongoFieldExpression => true,
             // RenderInValues throws for any values node other than a constant enumerable or a parameter.
             MongoInExpression inExpr

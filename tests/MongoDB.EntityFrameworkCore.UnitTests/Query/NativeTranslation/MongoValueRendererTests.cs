@@ -57,4 +57,18 @@ public class MongoValueRendererTests
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => MongoValueRenderer.RenderValue(node, placeholders));
     }
+
+    [Fact]
+    public void SentinelKey_is_not_dollar_prefixed()
+    {
+        // Final-review finding I-1: MongoQueryLanguageRenderer.RenderUnary's !(x == value) arm distinguishes
+        // an already-built operator document (e.g. { $gt: 5 }) from a bare value it must still wrap in
+        // { $eq: … } by checking whether the value is a BsonDocument whose first element name starts with
+        // '$'. The one document-valued value that check actually sees is THIS sentinel (a parameterized
+        // equality's rendered value) — so the wrap is correct only because the sentinel key is not
+        // '$'-prefixed. If it ever became one, RenderUnary would misclassify the sentinel as an operator
+        // document and skip the $eq wrap, emitting the illegal { field: { $not: <bareValue> } } form for
+        // every parameterized equality negation.
+        Assert.False(PlaceholderTable.SentinelKey.StartsWith('$'));
+    }
 }

@@ -666,18 +666,40 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     }
 
     [Fact]
-    public void All_over_owned_collection_declines_cleanly()
+    public void All_over_owned_collection_goes_native()
     {
-        var collection = SeedBlogs(nameof(All_over_owned_collection_declines_cleanly));
+        // EF-322 Task 2 (commit 3759cb7, immediately before EF-335's top-level-All slice) made this shape go
+        // native: All(pred) translates to a NEGATED $elemMatch over the EXACT complement of pred
+        // ({ Posts: { $not: { $elemMatch: { Heading: { $ne: "x" } } } } }) — no element may satisfy ¬pred. That
+        // form is also correct for an empty, missing, or explicitly-null array: $elemMatch can never match a
+        // non-array/absent field, so the enclosing $not is true and All is (correctly) true, mirroring LINQ's
+        // "All is vacuously true over an empty sequence" semantics. This test used to assert a clean DECLINE
+        // (pre-Task-2 behavior) and was not updated when Task 2 landed — a scoping gap in that task's
+        // verification (it ran the unit-test project, not this functional one), caught late by EF-335's
+        // required whole-Query-subset sweep. Flipped here per the "invert, don't delete; keep a proof of
+        // correctness" rule: NativeOnly is the routing proof, and the full SeedBlogs matrix is the value proof.
+        var collection = SeedBlogs(nameof(All_over_owned_collection_goes_native));
 
-        AssertDeclinesCleanlyNoFallbackOracle(collection, q => q.Where(b => b.Posts.All(p => p.Heading == "x")));
+        // Full-matrix leg (SeedBlogs: match/nomatch/empty/missing/null) — hand-derived, then verified against
+        // the actual database rather than assumed:
+        //   "match"  — Posts = [Heading:"x", Heading:"z"]. The "z" element satisfies ¬pred (Heading != "x"),
+        //              so the $elemMatch DOES find a violator ⇒ the enclosing $not is false ⇒ All is false.
+        //   "nomatch" — Posts = [Heading:"y"]. "y" != "x" satisfies ¬pred ⇒ same as above ⇒ All is false.
+        //   "empty"  — Posts = []. No element can satisfy ¬pred ⇒ $elemMatch is false ⇒ $not is true ⇒ All true.
+        //   "missing" — no Posts field at all. $elemMatch cannot match a missing field ⇒ same as empty ⇒ true.
+        //   "null"   — Posts is explicit BSON null. $elemMatch cannot match a non-array field ⇒ same ⇒ true.
+        // So the surviving (All == true) titles are exactly ["empty", "missing", "null"].
+        var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.All(p => p.Heading == "x")));
+        Assert.Equal(["empty", "missing", "null"], titles);
 
-        // Independent-oracle leg (fix round 1) — see Field_to_field_element_predicate_declines_cleanly's
-        // comment above. NOTE the well-formed expectation is NOT ["match"]: LINQ's All() is vacuously true
-        // over an empty sequence, so "empty" (Posts: []) satisfies `All(p => p.Heading == "x")` trivially,
-        // while "match" (Headings "x" and "z") and "nomatch" (Heading "y") both have an element that fails.
-        var wellFormed = SeedWellFormedBlogs(nameof(All_over_owned_collection_declines_cleanly) + "_WellFormed");
-        var wfTitles = AssertDeclinesCleanly(wellFormed, q => q.Where(b => b.Posts.All(p => p.Heading == "x")));
+        // Independent-oracle leg (well-formed seed: match/nomatch/empty only, no missing/null — see
+        // SeedWellFormedBlogs's comment for why DriverLinq can't run over the full matrix). All() semantics
+        // are unchanged by this routing change — LINQ's All() is vacuously true over an empty sequence, so
+        // "empty" (Posts: []) satisfies All(p => p.Heading == "x") trivially, while "match" (Headings "x" and
+        // "z") and "nomatch" (Heading "y") both have an element that fails — same expectation as before the
+        // flip, just now proven via NativeOnly == DriverLinq parity instead of a clean-decline assertion.
+        var wellFormed = SeedWellFormedBlogs(nameof(All_over_owned_collection_goes_native) + "_WellFormed");
+        var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.All(p => p.Heading == "x")));
         Assert.Equal(["empty"], wfTitles);
     }
 

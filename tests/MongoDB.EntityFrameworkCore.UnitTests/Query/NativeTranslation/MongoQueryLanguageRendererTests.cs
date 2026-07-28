@@ -55,6 +55,7 @@ public class MongoQueryLanguageRendererTests
     {
         public string Heading { get; set; } = null!;
         public int Rank { get; set; }
+        public int Other { get; set; }
     }
 
     // A property of the owned COLLECTION ELEMENT type (Post), for building element-relative field refs.
@@ -634,9 +635,11 @@ public class MongoQueryLanguageRendererTests
     }
 
     [Fact]
-    public void IsQueryDialectRenderable_rejects_Not_over_a_non_field_operand()
+    public void IsQueryDialectRenderable_accepts_Not_over_a_query_native_comparison()
     {
-        // RenderUnary supports Not only over a bare MongoFieldExpression and THROWS otherwise.
+        // Flipped by the owned-collection All slice: RenderUnary now renders this as
+        // { Rank: { $not: { $eq: 2 } } }, the exact complement. Previously it threw, so the classifier
+        // correctly rejected it.
         var rank = GetPostProperty(nameof(Post.Rank));
         var pred = new MongoUnaryExpression(
             MongoUnaryOperator.Not,
@@ -645,7 +648,99 @@ public class MongoQueryLanguageRendererTests
                 new MongoFieldExpression(rank, "Rank"),
                 new MongoConstantExpression(2, rank)));
 
+        Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(pred));
+        Assert.Equal(
+            BsonDocument.Parse("{ Rank: { $not: { $eq: 2 } } }"),
+            new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable()));
+    }
+
+    [Fact]
+    public void Not_over_a_parameterized_equality_wraps_the_sentinel_in_eq()
+    {
+        // Final-review finding I-1: the ONLY document-valued RenderComparison output RenderUnary's '$'-prefix
+        // check can actually see here is PlaceholderTable's parameter sentinel, { __mongoef_param__: N } —
+        // NOT "equality against a document-valued property" (RenderComparison only ever receives a mapped
+        // SCALAR IProperty leaf, so that input never occurs). The sentinel IS a BsonDocument but is NOT
+        // '$'-prefixed, so this pins that the $eq wrap still applies to it exactly as it does for an inline
+        // constant — i.e. !(x.Rank == capturedLocal) renders correctly, not as the illegal
+        // { Rank: { $not: { __mongoef_param__: 0 } } } bare-value-under-$not form.
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var pred = new MongoUnaryExpression(
+            MongoUnaryOperator.Not,
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal,
+                new MongoFieldExpression(rank, "Rank"),
+                new MongoParameterExpression("p0", rank)));
+
+        var placeholders = new PlaceholderTable();
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, placeholders);
+
+        var doc = Assert.IsType<BsonDocument>(rendered);
+        var rankCond = Assert.IsType<BsonDocument>(doc["Rank"]);
+        var notCond = Assert.IsType<BsonDocument>(rankCond["$not"]);
+        var sentinel = Assert.IsType<BsonDocument>(notCond["$eq"]);
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(sentinel, out var index));
+        Assert.Equal(0, index);
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_still_rejects_Not_over_a_field_to_field_comparison()
+    {
+        // RenderUnary's new arm is gated on IsQueryNativeComparison, so this still throws and the
+        // classifier must still reject it. Deleting that gate must make this test red.
+        //
+        // Asserting on the MESSAGE (not just the exception TYPE) is deliberate and load-bearing: without the
+        // gate, RenderUnary would still call RenderComparison, which calls MongoValueRenderer.RenderValue on
+        // the field-valued right operand — and THAT throws NativeTranslationNotSupportedException too (a
+        // different message, "Cannot render value node of type '...'"), one call deeper. A bare
+        // Assert.Throws<NativeTranslationNotSupportedException> cannot tell those two throw sites apart, so
+        // it would stay green even with the gate deleted. The message pinned here is RenderUnary's OWN throw,
+        // reached only when the gate rejects the Not-over-comparison arm outright.
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var pred = new MongoUnaryExpression(
+            MongoUnaryOperator.Not,
+            new MongoBinaryExpression(
+                MongoBinaryOperator.GreaterThan,
+                new MongoFieldExpression(rank, "Rank"),
+                new MongoFieldExpression(rank, "Other")));
+
         Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(pred));
+        var ex = Assert.Throws<NativeTranslationNotSupportedException>(
+            () => new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable()));
+        Assert.Equal(
+            "MongoQueryLanguageRenderer only supports Not over a MongoFieldExpression or a query-native comparison.",
+            ex.Message);
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_still_rejects_Not_over_a_conjunction()
+    {
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var cmp = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoFieldExpression(rank, "Rank"),
+            new MongoConstantExpression(1, rank));
+        var pred = new MongoUnaryExpression(
+            MongoUnaryOperator.Not,
+            new MongoBinaryExpression(MongoBinaryOperator.AndAlso, cmp, cmp));
+
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(pred));
+    }
+
+    [Fact]
+    public void Not_over_a_relational_comparison_renders_as_not_over_the_operator_document()
+    {
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var pred = new MongoUnaryExpression(
+            MongoUnaryOperator.Not,
+            new MongoBinaryExpression(
+                MongoBinaryOperator.GreaterThan,
+                new MongoFieldExpression(rank, "Rank"),
+                new MongoConstantExpression(5, rank)));
+
+        Assert.Equal(
+            BsonDocument.Parse("{ Rank: { $not: { $gt: 5 } } }"),
+            new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable()));
     }
 
     [Fact]

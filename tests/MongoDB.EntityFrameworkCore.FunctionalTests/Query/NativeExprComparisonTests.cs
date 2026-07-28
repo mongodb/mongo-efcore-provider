@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
@@ -39,7 +40,10 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    private class Customer
+    // Public (not private): a [Theory]/[MemberData] test method below takes an
+    // Expression<Func<Customer, bool>> parameter, and xUnit requires public test methods to have
+    // at-least-as-accessible parameter types.
+    public class Customer
     {
         public ObjectId Id { get; set; }
         public string Name { get; set; } = "";
@@ -272,5 +276,110 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         var query = db.Entities.Where(c => (double)c.Age + c.Score > 5);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
+    }
+
+    // ── 5. The !(comparison) widening (EF-335 / EF-322 Task 1) ─────────────────────────────────────
+    //
+    // MongoExpressionTranslator's Not arm builds MongoUnaryExpression(Not, <comparison>) for ANY of the six
+    // comparison operators — EF does not normalize any of !(a>b)/!(a==b)/etc. away (spike-confirmed), so all
+    // six are reachable from ordinary user code, not just from the All() aggregate this task's main slice
+    // targets. RenderUnary's new $not-wrapped-comparison arm (Task 1) is what makes them all render.
+    //
+    // Threshold 7 (Alice's own Age) against the fixed SeedCustomers fixture (Alice=7, Bob=20, Carol=-7) is
+    // chosen so EVERY operator below discriminates — i.e. the negated predicate is neither trivially true
+    // nor trivially false over the three seeded rows (each yields a genuine 1-2 or 2-1 split); a threshold of
+    // e.g. 100 (all fail) or -100 (all pass) would prove nothing about $not being wired correctly.
+
+    public static IEnumerable<object[]> NegatedComparisonCases()
+    {
+        Expression<Func<Customer, bool>> gt = c => !(c.Age > 7);
+        Expression<Func<Customer, bool>> gte = c => !(c.Age >= 7);
+        Expression<Func<Customer, bool>> lt = c => !(c.Age < 7);
+        Expression<Func<Customer, bool>> lte = c => !(c.Age <= 7);
+        Expression<Func<Customer, bool>> eq = c => !(c.Age == 7);
+        Expression<Func<Customer, bool>> neq = c => !(c.Age != 7);
+
+        yield return ["GreaterThan", gt];
+        yield return ["GreaterThanOrEqual", gte];
+        yield return ["LessThan", lt];
+        yield return ["LessThanOrEqual", lte];
+        yield return ["Equal", eq];
+        yield return ["NotEqual", neq];
+    }
+
+    [Theory]
+    [MemberData(nameof(NegatedComparisonCases))]
+    public void Negated_comparison_predicate_goes_native(string name, Expression<Func<Customer, bool>> predicate)
+    {
+        // MongoQueryLanguageRenderer.RenderUnary now renders Not over a query-native comparison as
+        // { field: { $not: { <op>: value } } }; previously it threw NativeTranslationNotSupportedException and
+        // the gate fell back to driver-LINQ. That renderer arm was added for MongoExpressionNegator (which
+        // $not-wraps relational comparisons when complementing an All() predicate), but it also widens plain
+        // Where(!(comparison)) to native as a side effect — EF does not normalize any of these six forms away
+        // (spike-confirmed), so all six are reachable from ordinary user code.
+        var (collection, logs) = SeedCustomers(nameof(Negated_comparison_predicate_goes_native) + name);
+        using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        // Whole-entity Where + ToList(), NOT a projected Select — a bare-scalar Select is its own,
+        // unrelated fallback (non-entity NativeOnly result), which would mask what this test is about.
+        var nativeNames = nativeOnly.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList(); // succeeds => went native
+
+        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        var driverNames = driver.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(driverNames, nativeNames);
+    }
+
+    // I-1 (final whole-branch review of EF-322-owned-collection-all-native): NegatedComparisonCases above uses
+    // inline constants only, so element.Value in RenderUnary is always a bare BSON scalar there — it never
+    // exercises the BsonDocument branch of the '$'-prefix check at all. The one thing that DOES make
+    // element.Value a BsonDocument for an Equal comparison is a captured local / EF query parameter, which
+    // renders through PlaceholderTable's sentinel { __mongoef_param__: N } instead of a bare constant. This
+    // pins that !(x.Age == capturedLocal) still goes native and substitutes correctly — the live case the
+    // rationale in RenderUnary's comment and Query/AGENTS.md now names explicitly.
+    [Fact]
+    public void Negated_equality_against_a_captured_local_goes_native()
+    {
+        var (collection, logs) = SeedCustomers(nameof(Negated_equality_against_a_captured_local_goes_native));
+        var threshold = 7;
+
+        using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        var nativeNames = nativeOnly.Entities.Where(c => !(c.Age == threshold)).ToList()
+            .Select(c => c.Name).OrderBy(n => n).ToList(); // succeeds => went native, sentinel substituted correctly
+
+        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        var driverNames = driver.Entities.Where(c => !(c.Age == threshold)).ToList()
+            .Select(c => c.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(driverNames, nativeNames);
+        Assert.Equal(["Bob", "Carol"], nativeNames); // Alice (Age=7) is the only row excluded
+    }
+
+    // The two equality forms (Equal/NotEqual above) are the important ones — they are what exercise illegal
+    // form 1 ({field: {$not: <bareValue>}}, a hard server error: "$not argument must be a regex or an
+    // object"). RenderUnary wraps a bare Equal rendering in { $eq: … } to avoid emitting that form; the
+    // teeth-check for this (temporarily removing the '$'-prefix guard and confirming the server rejects the
+    // resulting bare form) is recorded in task-3-report.md, not as a permanent test — reverting the guard
+    // removal would defeat its own purpose.
+
+    [Fact]
+    public void Negated_conjunction_predicate_still_falls_back()
+    {
+        // A Not over a conjunction is not itself a comparison, so IsQueryDialectRenderable still refuses it
+        // — this is the boundary that keeps Where-level De Morgan out of scope (only All()'s own negator
+        // does De Morgan; a bare Where(!(a && b)) does not). Values: Alice (Age=7) is the only row for which
+        // (Age > 5 && Name == "Alice") is true, so negating it yields a genuine two-row/one-row split, not a
+        // vacuous all-true/all-false predicate.
+        var (collection, logs) = SeedCustomers(nameof(Negated_conjunction_predicate_still_falls_back));
+        using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => nativeOnly.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice")).ToList());
+
+        using var native = CreateContext(collection, [], MongoQueryMode.Native);
+        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        var nativeNames = native.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice")).Select(c => c.Name).OrderBy(n => n).ToList();
+        var driverNames = driver.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice")).Select(c => c.Name).OrderBy(n => n).ToList();
+        Assert.Equal(driverNames, nativeNames);
+        Assert.Equal(["Bob", "Carol"], nativeNames); // Alice is the only row excluded
     }
 }

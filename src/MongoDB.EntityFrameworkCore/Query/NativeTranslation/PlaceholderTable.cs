@@ -33,6 +33,15 @@ internal sealed class PlaceholderTable
     /// A sentinel is a <see cref="BsonDocument"/> of the form <c>{ __mongoef_param__: &lt;index&gt; }</c>.
     /// This key is reserved and will never appear in server-sent BSON.
     /// </summary>
+    /// <remarks>
+    /// Load-bearing invariant: this key must never start with <c>'$'</c>.
+    /// <see cref="MongoQueryLanguageRenderer.RenderUnary"/>'s <c>!(x == value)</c> arm distinguishes an
+    /// already-built MongoDB operator document (e.g. <c>{ $gt: 5 }</c>) from a bare value it must still wrap
+    /// in <c>{ $eq: … }</c> by checking whether the value is a <see cref="BsonDocument"/> whose first element
+    /// name starts with <c>'$'</c>. A parameterized equality's rendered value IS a <see cref="BsonDocument"/>
+    /// (this sentinel) but must be treated as a bare value, which only holds because this key is not
+    /// <c>'$'</c>-prefixed.
+    /// </remarks>
     internal const string SentinelKey = "__mongoef_param__";
 
     private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray)> _entries = [];

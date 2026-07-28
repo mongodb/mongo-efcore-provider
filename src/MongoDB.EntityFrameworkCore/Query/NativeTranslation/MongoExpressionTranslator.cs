@@ -254,9 +254,10 @@ internal sealed class MongoExpressionTranslator
                 // which the renderer applies based on this flag).
                 if (operand is MongoRegexExpression regexExpr)
                     return new MongoRegexExpression(regexExpr.Field, regexExpr.Kind, regexExpr.Term, negated: !regexExpr.Negated);
-                // !collection.Any(...) → flip Negated rather than wrapping in a generic Not node: RenderUnary
-                // supports Not over a bare field only, and $elemMatch has direct query-dialect negations
-                // ({ path: { $not: { $elemMatch: ... } } }, and $exists: false for the bare Any() form).
+                // !collection.Any(...)/!collection.All(...) → flip Negated rather than wrapping in a generic
+                // Not node: RenderUnary supports Not over a bare field only, and $elemMatch has direct
+                // query-dialect negations ({ path: { $not: { $elemMatch: ... } } }, and $exists: false for the
+                // bare Any() form).
                 if (operand is MongoElemMatchExpression elemMatchExpr)
                     return new MongoElemMatchExpression(
                         elemMatchExpr.ArrayPath, elemMatchExpr.ElementPredicate, negated: !elemMatchExpr.Negated);
@@ -299,9 +300,10 @@ internal sealed class MongoExpressionTranslator
                 return new MongoRegexExpression(fieldExpr3, kind, termNode, negated: false);
             }
 
-            // --- Existential quantifier over an owned (embedded) collection: source.Any() / source.Any(pred) ---
+            // --- Quantifiers over an owned (embedded) collection: source.Any() / Any(pred) / All(pred) ---
 
-            case MethodCallExpression call when TryMatchAnyMethod(call, out var quantifierSource, out var elementLambda):
+            case MethodCallExpression call
+                when TryMatchQuantifierMethod(call, out var quantifier, out var quantifierSource, out var elementLambda):
             {
                 if (!TryResolveOwnedCollectionPath(Unwrap(quantifierSource), out var arrayPath, out var elementType))
                     return null; // not an owned-collection source rooted at the query parameter
@@ -312,7 +314,8 @@ internal sealed class MongoExpressionTranslator
                 // A CORRELATED element predicate — one reaching outside the element into the enclosing entity —
                 // must be declined BEFORE the element-scoped translator ever sees it. See the helper's remarks:
                 // the element-scoped translator resolves a member by NAME alone, so an enclosing-scoped access
-                // whose name also exists on the element would be silently retargeted at the element.
+                // whose name also exists on the element would be silently retargeted at the element. This
+                // applies to All exactly as it does to Any.
                 if (ReferencesEnclosingScope(elementLambda.Body, elementLambda.Parameters[0]))
                     return null;
 
@@ -321,16 +324,36 @@ internal sealed class MongoExpressionTranslator
                 // NativeSelectManyBinder.TryBuildOwnedInnerFilter, which translates the same way and then
                 // PREFIXES the result with the unwind path.
                 var elementTranslator = new MongoExpressionTranslator(elementType);
-                if (!elementTranslator.TryTranslate(elementLambda.Body, out var elementPredicate))
+                if (!elementTranslator.TryTranslate(elementLambda.Body, out var translated))
                     return null;
+
+                MongoExpression child = translated;
+                var negated = false;
+
+                if (quantifier is MongoQuantifierKind.All)
+                {
+                    // All(pred) is true exactly when NO element satisfies ¬pred, i.e. a negated $elemMatch
+                    // over the EXACT complement. That form is also correct for an empty, missing, or
+                    // explicitly-null array: nothing satisfies the $elemMatch, so the enclosing $not matches
+                    // and All is true — which is what LINQ's All over an empty sequence returns.
+                    //
+                    // A predicate with no exact complement declines the whole quantifier (clean fallback to
+                    // driver-LINQ) rather than emitting an approximation, which would return wrong rows.
+                    if (!MongoExpressionNegator.TryNegate(child, out var complement))
+                        return null;
+
+                    child = complement;
+                    negated = true;
+                }
 
                 // $expr is not usable inside $elemMatch, and RenderNode's catch-all would silently wrap a
                 // non-query-dialect child in $expr. Decline here (translate time) so the query falls back to
-                // driver-LINQ instead.
-                if (!MongoQueryLanguageRenderer.IsQueryDialectRenderable(elementPredicate))
+                // driver-LINQ instead. For All this is belt-and-braces — the negator gates on the same
+                // classifier — but it stays because it is the invariant the renderer's contract depends on.
+                if (!MongoQueryLanguageRenderer.IsQueryDialectRenderable(child))
                     return null;
 
-                return new MongoElemMatchExpression(arrayPath, elementPredicate, negated: false);
+                return new MongoElemMatchExpression(arrayPath, child, negated);
             }
 
             // --- Bare boolean member access (c.Active) ---
@@ -699,10 +722,20 @@ internal sealed class MongoExpressionTranslator
         }
     }
 
+    /// <summary>Which quantifier <see cref="TryMatchQuantifierMethod"/> matched.</summary>
+    private enum MongoQuantifierKind
+    {
+        /// <summary><c>Any</c> — at least one element satisfies the predicate (or, bare, the array is non-empty).</summary>
+        Any,
+
+        /// <summary><c>All</c> — every element satisfies the predicate. Has no parameterless form.</summary>
+        All
+    }
+
     /// <summary>
-    /// Matches an existential quantifier call — <c>source.Any()</c> or <c>source.Any(element =&gt; predicate)</c>
-    /// — returning the quantifier's SOURCE with its <c>AsQueryable()</c> wrapper stripped and, for the
-    /// predicate form, the unquoted element lambda.
+    /// Matches a quantifier call — <c>source.Any()</c>, <c>source.Any(element =&gt; predicate)</c>, or
+    /// <c>source.All(element =&gt; predicate)</c> — returning the quantifier's SOURCE with its
+    /// <c>AsQueryable()</c> wrapper stripped and, for the predicate form, the unquoted element lambda.
     /// </summary>
     /// <remarks>
     /// EF hands the native translator the <see cref="Queryable"/> spelling, with the lambda
@@ -711,17 +744,24 @@ internal sealed class MongoExpressionTranslator
     /// every spelling, including the bare 1-argument form, a nested quantifier (whose own source has the
     /// identical shape, rooted on the element parameter), and a collection reached through owned references.
     /// The <see cref="Enumerable"/> spelling is accepted too, so a hand-built expression tree translates
-    /// identically to an EF-produced one.
+    /// identically to an EF-produced one. <c>All</c> follows the identical shape but has no parameterless
+    /// overload, so a 1-argument call can only ever be <c>Any</c>.
     /// </remarks>
-    private static bool TryMatchAnyMethod(
+    private static bool TryMatchQuantifierMethod(
         MethodCallExpression call,
+        out MongoQuantifierKind kind,
         [NotNullWhen(true)] out Expression? source,
         out LambdaExpression? elementLambda)
     {
+        kind = MongoQuantifierKind.Any;
         source = null;
         elementLambda = null;
 
-        if (call.Method.Name != nameof(Enumerable.Any))
+        if (call.Method.Name == nameof(Enumerable.Any))
+            kind = MongoQuantifierKind.Any;
+        else if (call.Method.Name == nameof(Enumerable.All))
+            kind = MongoQuantifierKind.All;
+        else
             return false;
 
         var declaringType = call.Method.DeclaringType;
@@ -731,6 +771,11 @@ internal sealed class MongoExpressionTranslator
         switch (call.Arguments.Count)
         {
             case 1:
+                // Bare Any() — the array-is-non-empty test. There is no parameterless All overload, so a
+                // 1-argument call can only ever be Any; reject anything else rather than silently treating
+                // it as a bare existential.
+                if (kind is not MongoQuantifierKind.Any)
+                    return false;
                 source = UnwrapAsQueryable(call.Arguments[0]);
                 return true;
 

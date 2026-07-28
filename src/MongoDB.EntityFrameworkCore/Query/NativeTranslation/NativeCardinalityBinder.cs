@@ -130,14 +130,22 @@ internal static class NativeCardinalityBinder
 
         if (op is MongoAggregateOperator.All)
         {
-            // All(pred) ≡ no element fails pred. Push the NEGATED predicate as a $match; presence of any
-            // surviving row (after $count) means at least one element failed pred, so All is false.
+            // All(pred) ≡ no row fails pred. Push the EXACT COMPLEMENT of the predicate as a $match; presence
+            // of any surviving row (after $count) means at least one row failed pred, so All is false.
+            //
+            // The complement is built by MongoExpressionNegator over the TRANSLATED tree, not by wrapping the
+            // LINQ body in Expression.Not (which is what this did before EF-335). The old form translated a
+            // negated comparison into MongoUnaryExpression(Not, comparison) — a node the renderer had no case
+            // for, so it threw at RENDER time and the gate silently fell back. Negating after translation also
+            // means De Morgan applies, so a conjunctive/disjunctive predicate goes native too.
             if (predicate is null)
                 return false;
 
-            var negated = Expression.Not(predicate.Body);
-            if (!translator.TryTranslate(negated, out var negatedNode))
+            if (!translator.TryTranslate(predicate.Body, out var predicateNode))
                 return false;
+
+            if (!MongoExpressionNegator.TryNegate(predicateNode, out var negatedNode))
+                return false; // no exact complement — decline, so the query falls back to driver-LINQ
 
             select.AddPredicateConjunct(negatedNode);
         }
