@@ -44,6 +44,15 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// inversion is exact — and it keeps the common case rendering as idiomatic <c>{f: {$ne: v}}</c>.
 /// </para>
 /// <para>
+/// <b>The one documented exception — an ARRAY-COUNT comparison is inverted.</b> The rule above is not "relational
+/// operators are always wrapped"; it is "ask whether the RENDERED pair partitions". An array-count comparison
+/// (<c>MongoSizeExpression</c> on the left) renders as <c>{"path.k": {$exists: true|false}}</c>, and
+/// <c>$exists</c> DOES partition — every document either has <c>path.k</c> or does not — so inverting the
+/// operator is the exact complement for that family, and the admitted set is closed under inversion. Getting
+/// this backwards in either direction matters: wrapping where inversion is exact merely loses an index, but
+/// inverting where it is not exact returns wrong rows.
+/// </para>
+/// <para>
 /// <b>Domain invariants, both pinned by <c>MongoExpressionNegatorTests</c>:</b> the admitted input set is a
 /// subset of <see cref="MongoQueryLanguageRenderer.IsQueryDialectRenderable"/>'s (enforced directly, by
 /// gating on it), and every node produced is itself query-dialect renderable — it never routes to the
@@ -132,6 +141,42 @@ internal static class MongoExpressionNegator
                     default:
                         return false;
                 }
+            }
+
+            // AN ARRAY-COUNT COMPARISON IS INVERTED, NOT $not-WRAPPED — the documented exception to the
+            // relational rule in the class remarks, and it is the SAME test with the opposite answer.
+            //
+            // A count comparison renders as { "path.k": { $exists: true|false } } (see
+            // MongoQueryLanguageRenderer.TryRenderSizeComparison), and $exists DOES partition the document
+            // set: every document either has path.k or does not. So for a fixed k the two forms are exact
+            // complements and inverting the operator is exact. Contrast a relational comparison on a scalar
+            // field, where NEITHER { $gt: 5 } nor { $lte: 5 } matches a missing field, so inverting would
+            // report All == true where LINQ says false.
+            //
+            // Inverting is also safe with respect to the output-domain invariant: the admitted set is CLOSED
+            // under inversion (C > n ↔ C <= n, C >= n ↔ C < n, C == n ↔ C != n each preserve the "every
+            // required array index >= 0" condition), so the result is renderable whenever the input was —
+            // and TryNegate's entry gate has already established that it was.
+            case MongoBinaryExpression { Left: MongoSizeExpression } sizeComparison:
+            {
+                var inverted = sizeComparison.Operator switch
+                {
+                    MongoBinaryOperator.GreaterThan => MongoBinaryOperator.LessThanOrEqual,
+                    MongoBinaryOperator.GreaterThanOrEqual => MongoBinaryOperator.LessThan,
+                    MongoBinaryOperator.LessThan => MongoBinaryOperator.GreaterThanOrEqual,
+                    MongoBinaryOperator.LessThanOrEqual => MongoBinaryOperator.GreaterThan,
+                    MongoBinaryOperator.Equal => MongoBinaryOperator.NotEqual,
+                    MongoBinaryOperator.NotEqual => MongoBinaryOperator.Equal,
+                    // An arithmetic operator is not a predicate; nothing to complement.
+                    _ => (MongoBinaryOperator?)null
+                };
+
+                if (inverted is null)
+                    return false;
+
+                negated = new MongoBinaryExpression(
+                    inverted.Value, sizeComparison.Left, sizeComparison.Right);
+                return true;
             }
 
             case MongoInExpression inExpr:

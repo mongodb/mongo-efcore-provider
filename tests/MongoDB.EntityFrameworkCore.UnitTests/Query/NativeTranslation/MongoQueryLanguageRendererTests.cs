@@ -564,9 +564,13 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Renders_bare_Any_as_array_index_exists()
     {
-        // { "Posts.0": { $exists: true } } is index-usable AND correct for both an empty array and a
-        // MISSING field ({ Posts: { $ne: [] } } would wrongly match a missing field).
-        var pred = new MongoElemMatchExpression("Posts", elementPredicate: null, negated: false);
+        // Bare Any() IS "Count >= 1" and is represented as exactly that, so the two cannot render differently.
+        // { "Posts.0": { $exists: true } } is index-usable AND correct for an empty array, a MISSING field, and
+        // an explicitly-null one ({ Posts: { $ne: [] } } would wrongly match the last two).
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThanOrEqual,
+            new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
+            new MongoConstantExpression(1, null));
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
@@ -576,9 +580,15 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Renders_negated_bare_Any_as_array_index_not_exists()
     {
-        var pred = new MongoElemMatchExpression("Posts", elementPredicate: null, negated: true);
+        // !Any() needs no dedicated handling: the negator inverts >= to <, giving Count < 1.
+        var bareAny = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThanOrEqual,
+            new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
+            new MongoConstantExpression(1, null));
 
-        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+        Assert.True(MongoExpressionNegator.TryNegate(bareAny, out var negated));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(negated, new PlaceholderTable());
 
         Assert.Equal(BsonDocument.Parse("{ 'Posts.0': { $exists: false } }"), rendered);
     }
@@ -766,7 +776,209 @@ public class MongoQueryLanguageRendererTests
             new MongoBinaryExpression(MongoBinaryOperator.AndAlso, good, good)));
         Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
             new MongoBinaryExpression(MongoBinaryOperator.AndAlso, good, bad)));
+        // Bare Any() IS "Count >= 1" — represented as a count comparison, not a MongoElemMatchExpression.
         Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
-            new MongoElemMatchExpression("Posts", elementPredicate: null, negated: false)));
+            new MongoBinaryExpression(
+                MongoBinaryOperator.GreaterThanOrEqual,
+                new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
+                new MongoConstantExpression(1, null))));
+    }
+
+    // ------------------------------------------------------------------
+    // MongoSizeExpression.NullSafe (EF-322 Task 2)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_a_null_safe_size_in_the_expr_dialect_with_ifNull()
+    {
+        // $size against a MISSING or explicitly-null embedded array is a HARD SERVER ERROR that aborts the
+        // whole aggregate — the same failure mode the driver's own count translation has. $ifNull maps both
+        // states to [], giving 0, which is what LINQ's Count answers for a missing embedded array.
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
+            new MongoParameterExpression("__n", null));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        var expr = rendered.AsBsonDocument["$expr"].AsBsonDocument;
+        var size = expr["$gt"].AsBsonArray[0].AsBsonDocument;
+        Assert.Equal(
+            BsonDocument.Parse("{ $size: { $ifNull: [ '$Posts', [] ] } }"),
+            size);
+    }
+
+    [Fact]
+    public void Renders_a_non_null_safe_size_without_ifNull_so_the_lookup_alias_form_is_unchanged()
+    {
+        // The projected reference-collection Count path constructs MongoSizeExpression with the DEFAULT
+        // nullSafe: false, because a $lookup output alias is always an array. Several committed spec
+        // baselines pin { "$size" : "$_lookup_Orders" }; this test is what keeps them from moving.
+        var rendered = MongoAggregationExpressionRenderer.Render(
+            new MongoSizeExpression("_lookup_Orders", typeof(int)), new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ $size: '$_lookup_Orders' }"), rendered);
+    }
+
+    // --- Array cardinality: the query-dialect array-index existence form ---
+
+    private static MongoBinaryExpression Count(MongoBinaryOperator op, object threshold)
+        => new(op,
+            new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
+            new MongoConstantExpression(threshold, null));
+
+    private static BsonValue RenderCount(MongoBinaryOperator op, object threshold)
+        => new MongoQueryLanguageRenderer().Render(Count(op, threshold), new PlaceholderTable());
+
+    [Fact]
+    public void Renders_count_greater_than_as_index_exists()
+        => Assert.Equal(
+            BsonDocument.Parse("{ 'Posts.2': { $exists: true } }"),
+            RenderCount(MongoBinaryOperator.GreaterThan, 2));
+
+    [Fact]
+    public void Renders_count_greater_than_or_equal_as_one_lower_index_exists()
+        => Assert.Equal(
+            BsonDocument.Parse("{ 'Posts.1': { $exists: true } }"),
+            RenderCount(MongoBinaryOperator.GreaterThanOrEqual, 2));
+
+    [Fact]
+    public void Renders_count_less_than_as_one_lower_index_absent()
+        => Assert.Equal(
+            BsonDocument.Parse("{ 'Posts.1': { $exists: false } }"),
+            RenderCount(MongoBinaryOperator.LessThan, 2));
+
+    [Fact]
+    public void Renders_count_less_than_or_equal_as_index_absent()
+        => Assert.Equal(
+            BsonDocument.Parse("{ 'Posts.2': { $exists: false } }"),
+            RenderCount(MongoBinaryOperator.LessThanOrEqual, 2));
+
+    [Fact]
+    public void Renders_count_equal_as_a_merged_two_key_document()
+        // C == 2 ⇔ more than 1 AND at most 2. CombineAnd merges the two distinct keys into one document.
+        => Assert.Equal(
+            BsonDocument.Parse("{ 'Posts.1': { $exists: true }, 'Posts.2': { $exists: false } }"),
+            RenderCount(MongoBinaryOperator.Equal, 2));
+
+    [Fact]
+    public void Renders_count_equal_zero_as_a_single_absent_index()
+        // C == 0 needs only the upper bound — and it is TRUE for a missing or explicitly-null array, which is
+        // what LINQ answers. { Posts: { $size: 0 } } would wrongly answer false for both.
+        => Assert.Equal(
+            BsonDocument.Parse("{ 'Posts.0': { $exists: false } }"),
+            RenderCount(MongoBinaryOperator.Equal, 0));
+
+    [Fact]
+    public void Renders_count_not_equal_as_an_or_of_the_two_flips()
+        => Assert.Equal(
+            BsonDocument.Parse(
+                "{ $or: [ { 'Posts.1': { $exists: false } }, { 'Posts.2': { $exists: true } } ] }"),
+            RenderCount(MongoBinaryOperator.NotEqual, 2));
+
+    [Fact]
+    public void Renders_count_not_equal_zero_as_a_single_present_index()
+        => Assert.Equal(
+            BsonDocument.Parse("{ 'Posts.0': { $exists: true } }"),
+            RenderCount(MongoBinaryOperator.NotEqual, 0));
+
+    [Fact]
+    public void Renders_a_long_threshold_in_the_index_form()
+        => Assert.Equal(
+            BsonDocument.Parse("{ 'Posts.2': { $exists: true } }"),
+            RenderCount(MongoBinaryOperator.GreaterThan, 2L));
+
+    // NOTE: the brief specified a single [Theory]/[InlineData(MongoBinaryOperator..., ...)] here, but
+    // MongoBinaryOperator is internal and a public [Theory] method cannot expose an internal type in its
+    // signature (CS0051) while the class itself stays public — the same CS0051 already documented in
+    // MongoExpressionNegatorTests.cs. Split into five [Fact]s (via a private, non-public helper) carrying
+    // the identical assertions instead.
+
+    // Tautologies and contradictions: no index arithmetic is possible, so these are NOT admissible in the
+    // query dialect and must route to $expr, which handles them correctly and generally.
+    private static void AssertDegenerateCountThresholdRoutesToExpr(MongoBinaryOperator op, int threshold)
+    {
+        var rendered = RenderCount(op, threshold).AsBsonDocument;
+
+        Assert.True(rendered.Contains("$expr"));
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(Count(op, threshold)));
+    }
+
+    [Fact]
+    public void Degenerate_count_threshold_greater_than_or_equal_zero_routes_to_expr() // always true
+        => AssertDegenerateCountThresholdRoutesToExpr(MongoBinaryOperator.GreaterThanOrEqual, 0);
+
+    [Fact]
+    public void Degenerate_count_threshold_greater_than_minus_one_routes_to_expr() // always true
+        => AssertDegenerateCountThresholdRoutesToExpr(MongoBinaryOperator.GreaterThan, -1);
+
+    [Fact]
+    public void Degenerate_count_threshold_less_than_zero_routes_to_expr() // always false
+        => AssertDegenerateCountThresholdRoutesToExpr(MongoBinaryOperator.LessThan, 0);
+
+    [Fact]
+    public void Degenerate_count_threshold_less_than_or_equal_minus_one_routes_to_expr() // always false
+        => AssertDegenerateCountThresholdRoutesToExpr(MongoBinaryOperator.LessThanOrEqual, -1);
+
+    [Fact]
+    public void Degenerate_count_threshold_equal_minus_one_routes_to_expr() // always false
+        => AssertDegenerateCountThresholdRoutesToExpr(MongoBinaryOperator.Equal, -1);
+
+    [Fact]
+    public void A_hand_built_non_integer_count_threshold_routes_to_expr()
+    {
+        // This node is constructed directly (Count(...) below builds a MongoBinaryExpression by hand), not
+        // translated from LINQ — that framing matters here. `Where(b => b.Posts.Count > 2.5)` written as
+        // ordinary C# LINQ never reaches TryGetIntegerThreshold at all: C# promotes the int count via a
+        // compiler-inserted Convert(count, double), and TranslateOperand's convert guard (allowNumericWidening:
+        // false on the comparison path) rejects that convert first, so the whole predicate falls back to
+        // driver-LINQ before this renderer is ever consulted. TryGetIntegerThreshold's non-integral rejection
+        // is real code, but it is reachable only from a hand-built tree like this one — the same class of
+        // statement as the Count() > 0 upstream-rewrite finding recorded in Query/AGENTS.md.
+        var rendered = RenderCount(MongoBinaryOperator.GreaterThan, 2.5).AsBsonDocument;
+
+        Assert.True(rendered.Contains("$expr"));
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
+            Count(MongoBinaryOperator.GreaterThan, 2.5)));
+    }
+
+    [Fact]
+    public void A_parameterized_count_threshold_is_not_query_dialect_renderable()
+    {
+        // This is what makes a parameterized count nested inside $elemMatch decline with NO new guard: the
+        // quantifier arm already gates its child on this classifier, and $expr inside $elemMatch is a hard
+        // server error.
+        var parameterized = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
+            new MongoParameterExpression("__n", null));
+
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(parameterized));
+    }
+
+    [Fact]
+    public void An_admissible_count_comparison_is_query_dialect_renderable()
+        => Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
+            Count(MongoBinaryOperator.GreaterThan, 2)));
+
+    [Fact]
+    public void A_count_comparison_composes_inside_an_elem_match()
+    {
+        // The whole point of the constant tier: pure query dialect, so it is legal inside $elemMatch, where
+        // $expr is a hard server error. The inner array path is ELEMENT-relative ("Comments"), as $elemMatch
+        // requires.
+        var pred = new MongoElemMatchExpression(
+            "Posts",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.GreaterThan,
+                new MongoSizeExpression("Comments", typeof(int), nullSafe: true),
+                new MongoConstantExpression(1, null)),
+            negated: false);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse("{ Posts: { $elemMatch: { 'Comments.1': { $exists: true } } } }"),
+            rendered);
     }
 }

@@ -42,6 +42,11 @@ internal static class MongoFieldPrefixRewriter
             // $elemMatch and silently match nothing.
             MongoElemMatchExpression e => new MongoElemMatchExpression(
                 prefix + "." + e.ArrayPath, e.ElementPredicate, e.Negated),
+            // A size node's FieldName is a document path like any field reference, so it prefixes the same way.
+            // This case is LOAD-BEARING, not defensive: an owned SelectMany's inner filter reaches Rewrite, so a
+            // count inside one (SelectMany(b => b.Posts.Where(p => p.Comments.Count > 1), …)) would otherwise
+            // hit the throw below — turning a clean decline into a crash inside pre-existing code.
+            MongoSizeExpression s => new MongoSizeExpression(prefix + "." + s.FieldName, s.Type, s.NullSafe),
             MongoConstantExpression or MongoParameterExpression => expr,
             _ => throw new NativeTranslationNotSupportedException(
                 $"Cannot prefix-rewrite MongoExpression node '{expr.GetType().Name}'.")

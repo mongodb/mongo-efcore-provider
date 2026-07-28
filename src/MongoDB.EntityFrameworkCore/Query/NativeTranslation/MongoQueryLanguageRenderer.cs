@@ -80,6 +80,8 @@ internal sealed class MongoQueryLanguageRenderer
                 => CombineOr((BsonDocument)RenderNode(o.Left, placeholders), (BsonDocument)RenderNode(o.Right, placeholders)),
             MongoBinaryExpression comparison when IsQueryNativeComparison(comparison)
                 => RenderComparison(comparison, placeholders),
+            MongoBinaryExpression sizeComparison
+                when TryRenderSizeComparison(sizeComparison) is { } arrayIndexForm => arrayIndexForm,
             MongoUnaryExpression unary => RenderUnary(unary, placeholders),
             MongoFieldExpression field => RenderBareField(field, placeholders),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
@@ -291,12 +293,6 @@ internal sealed class MongoQueryLanguageRenderer
     /// SAME element.
     /// </para>
     /// <para>
-    /// Without one (bare <c>Any()</c>): <c>{ "path.0": { $exists: true } }</c> — index-usable, and true for
-    /// exactly those documents whose array has at least one element. A missing field and an empty array both
-    /// correctly yield false, whereas <c>{ path: { $ne: [] } }</c> would wrongly match a missing field.
-    /// Negated: <c>$exists: false</c>.
-    /// </para>
-    /// <para>
     /// The child is guaranteed to have a query-dialect rendering because
     /// <see cref="IsQueryDialectRenderable"/> gates node construction in
     /// <c>MongoExpressionTranslator</c> — <c>$expr</c> is not usable inside <c>$elemMatch</c>.
@@ -304,16 +300,114 @@ internal sealed class MongoQueryLanguageRenderer
     /// </summary>
     private BsonDocument RenderElemMatch(MongoElemMatchExpression elemMatch, PlaceholderTable placeholders)
     {
-        if (elemMatch.ElementPredicate is null)
-            return new BsonDocument(
-                elemMatch.ArrayPath + ".0", new BsonDocument("$exists", !elemMatch.Negated));
-
         var body = new BsonDocument(
             "$elemMatch", (BsonDocument)RenderNode(elemMatch.ElementPredicate, placeholders));
 
         return elemMatch.Negated
             ? new BsonDocument(elemMatch.ArrayPath, new BsonDocument("$not", body))
             : new BsonDocument(elemMatch.ArrayPath, body);
+    }
+
+    // ------------------------------------------------------------------
+    // Array cardinality — the query-dialect array-index existence form
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Renders a comparison between an array's element count and an INTEGER CONSTANT to the query dialect,
+    /// or returns <see langword="null"/> when the comparison has no query-dialect form (a parameterized
+    /// or degenerate threshold routes to <c>$expr</c> instead; a non-integral threshold is rejected by
+    /// <c>TryGetIntegerThreshold</c> but is reachable only from a hand-built expression tree — see the
+    /// reachability note below).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The form is an array-index existence test: <c>{"path.k": {$exists: true}}</c> is true for exactly those
+    /// documents whose array has MORE THAN <c>k</c> elements, and <c>$exists: false</c> for AT MOST <c>k</c>.
+    /// Every operator is expressed by choosing <c>k</c>; <c>==</c> and <c>!=</c> combine two of them through
+    /// the existing <see cref="CombineAnd"/> / <see cref="CombineOr"/> helpers.
+    /// </para>
+    /// <para>
+    /// <b>Why not query-dialect <c>$size</c>:</b> it can only express an exact size, it cannot use an index,
+    /// and — decisively — <c>{path: {$size: 0}}</c> does NOT match a document whose array is MISSING or
+    /// explicitly <c>null</c>, where LINQ's <c>Count == 0</c> is <see langword="true"/> (EF materializes a
+    /// missing embedded array as an empty list). The index form is correct for all three states for free,
+    /// because none of them has an element at any index. This is the same reasoning that rejected
+    /// <c>{path: {$ne: []}}</c> for bare <c>Any()</c>.
+    /// </para>
+    /// <para>
+    /// <b>This method is the single definition of admissibility.</b>
+    /// <see cref="IsQueryDialectRenderable"/> calls it rather than re-deriving the condition, so the
+    /// classifier and the renderer cannot drift — which matters because the three-way
+    /// negator/classifier/renderer contract (see <see cref="MongoExpressionNegator"/>) depends on them
+    /// agreeing exactly.
+    /// </para>
+    /// <para>
+    /// A rejected threshold needs no clamping and no decline: a tautology (<c>C &gt;= 0</c>), a contradiction
+    /// (<c>C &lt; 0</c>), and a parameterized threshold all fall through to <see cref="RenderAsExpr"/>, which
+    /// renders every one of them correctly. Returning <see langword="null"/> here therefore loses only the
+    /// index, never correctness.
+    /// </para>
+    /// <para>
+    /// <b>Reachability, measured (a non-integral threshold does NOT reach <c>$expr</c> via ordinary LINQ):</b>
+    /// <c>TryGetIntegerThreshold</c>'s rejection of a non-integral threshold (<c>C &gt; 2.5</c>) is real code,
+    /// but C# promotes the <c>int</c> count via a compiler-inserted <c>Convert(count, double)</c>, and
+    /// <c>TranslateOperand</c>'s convert guard — called with <c>allowNumericWidening: false</c> on the
+    /// comparison path — rejects that convert outright, so the whole predicate falls back to driver-LINQ
+    /// before this method is ever reached. The rejection is reachable only from a hand-built expression tree
+    /// (the same class of statement as the <c>Count() &gt; 0</c> upstream-rewrite finding recorded in
+    /// <c>Query/AGENTS.md</c>), not from a query written as ordinary C# LINQ.
+    /// </para>
+    /// </remarks>
+    private static BsonDocument? TryRenderSizeComparison(MongoBinaryExpression binary)
+    {
+        if (binary.Left is not MongoSizeExpression size
+            || binary.Right is not MongoConstantExpression { Value: { } rawThreshold }
+            || !TryGetIntegerThreshold(rawThreshold, out var n))
+        {
+            return null;
+        }
+
+        // MoreThan(k) ⇔ count >= k + 1;  AtMost(k) ⇔ count <= k.
+        return binary.Operator switch
+        {
+            MongoBinaryOperator.GreaterThan when n >= 0 => MoreThan(size.FieldName, n),
+            MongoBinaryOperator.GreaterThanOrEqual when n >= 1 => MoreThan(size.FieldName, n - 1),
+            MongoBinaryOperator.LessThan when n >= 1 => AtMost(size.FieldName, n - 1),
+            MongoBinaryOperator.LessThanOrEqual when n >= 0 => AtMost(size.FieldName, n),
+            // C == 0 needs only the upper bound; C == n (n >= 1) is "more than n-1 AND at most n".
+            MongoBinaryOperator.Equal when n == 0 => AtMost(size.FieldName, 0),
+            MongoBinaryOperator.Equal when n >= 1
+                => CombineAnd(MoreThan(size.FieldName, n - 1), AtMost(size.FieldName, n)),
+            // C != 0 needs only the lower bound; C != n (n >= 1) is "at most n-1 OR more than n".
+            MongoBinaryOperator.NotEqual when n == 0 => MoreThan(size.FieldName, 0),
+            MongoBinaryOperator.NotEqual when n >= 1
+                => CombineOr(AtMost(size.FieldName, n - 1), MoreThan(size.FieldName, n)),
+            _ => null
+        };
+    }
+
+    private static BsonDocument MoreThan(string arrayPath, int index)
+        => new($"{arrayPath}.{index}", new BsonDocument("$exists", true));
+
+    private static BsonDocument AtMost(string arrayPath, int index)
+        => new($"{arrayPath}.{index}", new BsonDocument("$exists", false));
+
+    // An array index is a path SEGMENT, so only an integral, in-range threshold has an index form. A
+    // floating-point threshold is rejected even when whole-valued (2.0) — the $expr tier renders it correctly,
+    // and accepting it here would add a rounding decision for no coverage gain.
+    private static bool TryGetIntegerThreshold(object raw, out int value)
+    {
+        switch (raw)
+        {
+            case int i: value = i; return true;
+            case long l when l is >= int.MinValue and <= int.MaxValue: value = (int)l; return true;
+            case short s: value = s; return true;
+            case byte b: value = b; return true;
+            case sbyte sb: value = sb; return true;
+            case ushort us: value = us; return true;
+            case uint ui when ui <= int.MaxValue: value = (int)ui; return true;
+            default: value = 0; return false;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -343,6 +437,11 @@ internal sealed class MongoQueryLanguageRenderer
                 => IsQueryDialectRenderable(a.Left) && IsQueryDialectRenderable(a.Right),
             MongoBinaryExpression { Operator: MongoBinaryOperator.OrElse } o
                 => IsQueryDialectRenderable(o.Left) && IsQueryDialectRenderable(o.Right),
+            // An array-count comparison against an admissible integer constant. Calls the renderer rather than
+            // re-deriving its condition, so the two cannot drift. A parameterized or degenerate threshold
+            // answers false here, which is exactly what declines it inside $elemMatch.
+            MongoBinaryExpression sizeComparison when TryRenderSizeComparison(sizeComparison) is not null
+                => true,
             MongoBinaryExpression comparison => IsQueryNativeComparison(comparison),
             // RenderUnary supports Not over a bare field, and over a QUERY-NATIVE comparison; it throws for
             // anything else (e.g. Not over a conjunction, or over a field-to-field comparison).
@@ -356,7 +455,6 @@ internal sealed class MongoQueryLanguageRenderer
                     or MongoParameterExpression,
             // RenderRegex throws for a parameterized term — only a constant is baked into a pattern.
             MongoRegexExpression { Term: MongoConstantExpression { Value: string } } => true,
-            MongoElemMatchExpression { ElementPredicate: null } => true,
             MongoElemMatchExpression elemMatch => IsQueryDialectRenderable(elemMatch.ElementPredicate),
             _ => false
         };

@@ -181,7 +181,13 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void Bare_Any_elem_match_flips_to_exists_false()
     {
-        var bareAny = new MongoElemMatchExpression("Comments", elementPredicate: null, negated: false);
+        // Bare Any() IS "Count >= 1", represented as exactly that (not a MongoElemMatchExpression) — see
+        // MongoElemMatchExpression's remarks. !Any() needs no dedicated handling: the negator inverts >= to <,
+        // giving Count < 1, which renders through the same array-index existence form.
+        var bareAny = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThanOrEqual,
+            new MongoSizeExpression("Comments", typeof(int), nullSafe: true),
+            new MongoConstantExpression(1, null));
 
         Assert.True(MongoExpressionNegator.TryNegate(bareAny, out var negated));
         Assert.Equal(BsonDocument.Parse("{ 'Comments.0': { $exists: false } }"), RenderOf(negated));
@@ -309,7 +315,12 @@ public class MongoExpressionNegatorTests
             new MongoInExpression(new MongoFieldExpression(rank, "Rank"), new MongoConstantExpression(new[] { 1 }, rank), negated: false),
             new MongoRegexExpression(new MongoFieldExpression(heading, "Heading"), MongoRegexKind.Contains, new MongoConstantExpression("a", heading), negated: false),
             new MongoElemMatchExpression("Comments", Comparison(MongoBinaryOperator.Equal, 1), negated: false),
-            new MongoElemMatchExpression("Comments", elementPredicate: null, negated: false),
+            // Bare Any() IS "Count >= 1" — still a member of the supported set, just expressed as a count
+            // comparison rather than a MongoElemMatchExpression (see MongoElemMatchExpression's remarks).
+            new MongoBinaryExpression(
+                MongoBinaryOperator.GreaterThanOrEqual,
+                new MongoSizeExpression("Comments", typeof(int), nullSafe: true),
+                new MongoConstantExpression(1, null)),
             new MongoUnaryExpression(MongoUnaryOperator.Not, Comparison(MongoBinaryOperator.GreaterThan)),
             new MongoFieldExpression(flag, "Flag"),
         ];
@@ -323,6 +334,132 @@ public class MongoExpressionNegatorTests
             var rendered = RenderOf(negated).AsBsonDocument;
             Assert.False(rendered.Contains("$expr"), $"negation of {input.GetType().Name} rendered $expr");
         }
+    }
+
+    private static MongoBinaryExpression Count(MongoBinaryOperator op, int threshold)
+        => new(op,
+            new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
+            new MongoConstantExpression(threshold, null));
+
+    // NOTE ON TEST SHAPE: `MongoBinaryOperator` is internal, and a public [Theory] method cannot expose an
+    // internal type in its signature (CS0051) while the test class stays public. This file already solved that
+    // — see the four `Relational_operators_are_not_wrapped_never_inverted_*` [Fact]s, each delegating to a
+    // private helper. Follow that established idiom; do NOT try [Theory]/[InlineData] or a [MemberData]
+    // returning `TheoryData<MongoBinaryOperator, …>` (same accessibility problem).
+
+    // THE EXCEPTION TO THE RELATIONAL RULE. A count comparison renders as { "path.k": { $exists: … } }, and
+    // $exists DOES partition the document set — every document either has path.k or does not. So inverting the
+    // operator is the EXACT complement here, unlike a relational comparison on a scalar field, where
+    // { $gt: 5 } and { $lte: 5 } both fail to match a missing field and inversion would silently mis-answer
+    // All(). Same test, opposite answer, because the rendered form differs.
+    private static void AssertCountComparisonIsInvertedNotWrapped(
+        MongoBinaryOperator op, MongoBinaryOperator expected)
+    {
+        Assert.True(MongoExpressionNegator.TryNegate(Count(op, 2), out var negated));
+
+        // A MongoBinaryExpression with the inverted operator — NOT a MongoUnaryExpression($not) wrap.
+        var comparison = Assert.IsType<MongoBinaryExpression>(negated);
+        Assert.Equal(expected, comparison.Operator);
+        Assert.IsType<MongoSizeExpression>(comparison.Left);
+    }
+
+    [Fact]
+    public void Count_comparison_inverts_GreaterThan_to_LessThanOrEqual()
+        => AssertCountComparisonIsInvertedNotWrapped(
+            MongoBinaryOperator.GreaterThan, MongoBinaryOperator.LessThanOrEqual);
+
+    [Fact]
+    public void Count_comparison_inverts_GreaterThanOrEqual_to_LessThan()
+        => AssertCountComparisonIsInvertedNotWrapped(
+            MongoBinaryOperator.GreaterThanOrEqual, MongoBinaryOperator.LessThan);
+
+    [Fact]
+    public void Count_comparison_inverts_LessThan_to_GreaterThanOrEqual()
+        => AssertCountComparisonIsInvertedNotWrapped(
+            MongoBinaryOperator.LessThan, MongoBinaryOperator.GreaterThanOrEqual);
+
+    [Fact]
+    public void Count_comparison_inverts_LessThanOrEqual_to_GreaterThan()
+        => AssertCountComparisonIsInvertedNotWrapped(
+            MongoBinaryOperator.LessThanOrEqual, MongoBinaryOperator.GreaterThan);
+
+    [Fact]
+    public void Count_comparison_inverts_Equal_to_NotEqual()
+        => AssertCountComparisonIsInvertedNotWrapped(
+            MongoBinaryOperator.Equal, MongoBinaryOperator.NotEqual);
+
+    [Fact]
+    public void Count_comparison_inverts_NotEqual_to_Equal()
+        => AssertCountComparisonIsInvertedNotWrapped(
+            MongoBinaryOperator.NotEqual, MongoBinaryOperator.Equal);
+
+    [Fact]
+    public void The_admitted_count_set_is_closed_under_inversion()
+    {
+        // The safety property that makes delegating the rule to the negator sound: every inverse of an
+        // admissible count comparison is ITSELF admissible, so the negator can never hand the renderer a form
+        // the classifier rejects. Written as one property test over the whole admitted set rather than a Fact
+        // per row — the claim IS "for all of these", and a per-row failure message keeps it diagnosable.
+        (MongoBinaryOperator Op, int Threshold)[] admitted =
+        [
+            (MongoBinaryOperator.GreaterThan, 0), (MongoBinaryOperator.GreaterThan, 5),
+            (MongoBinaryOperator.GreaterThanOrEqual, 1), (MongoBinaryOperator.GreaterThanOrEqual, 5),
+            (MongoBinaryOperator.LessThan, 1), (MongoBinaryOperator.LessThan, 5),
+            (MongoBinaryOperator.LessThanOrEqual, 0), (MongoBinaryOperator.LessThanOrEqual, 5),
+            (MongoBinaryOperator.Equal, 0), (MongoBinaryOperator.Equal, 5),
+            (MongoBinaryOperator.NotEqual, 0), (MongoBinaryOperator.NotEqual, 5)
+        ];
+
+        foreach (var (op, threshold) in admitted)
+        {
+            var because = $"{op} vs {threshold}";
+            var original = Count(op, threshold);
+            Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(original), because);
+
+            Assert.True(MongoExpressionNegator.TryNegate(original, out var negated), because);
+            Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(negated), because);
+
+            // Involution: negating twice returns the original operator.
+            Assert.True(MongoExpressionNegator.TryNegate(negated, out var twice), because);
+            Assert.Equal(op, Assert.IsType<MongoBinaryExpression>(twice).Operator);
+        }
+    }
+
+    [Fact]
+    public void A_parameterized_count_comparison_declines()
+    {
+        // The negator's entry gate is IsQueryDialectRenderable, and the $expr tier is not query dialect.
+        // Inversion WOULD be exact there (both $expr operands are always numbers, thanks to $ifNull), so this
+        // is an accepted coverage gap — !(Count > @param) falls back — not a correctness compromise.
+        var parameterized = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
+            new MongoParameterExpression("__n", null));
+
+        Assert.False(MongoExpressionNegator.TryNegate(parameterized, out _));
+    }
+
+    [Fact]
+    public void A_degenerate_count_comparison_declines()
+    {
+        Assert.False(MongoExpressionNegator.TryNegate(
+            Count(MongoBinaryOperator.GreaterThanOrEqual, 0), out _));
+    }
+
+    [Fact]
+    public void A_count_comparison_negates_inside_a_conjunction_via_de_morgan()
+    {
+        var conjunction = new MongoBinaryExpression(
+            MongoBinaryOperator.AndAlso,
+            Count(MongoBinaryOperator.GreaterThan, 2),
+            Count(MongoBinaryOperator.LessThan, 9));
+
+        Assert.True(MongoExpressionNegator.TryNegate(conjunction, out var negated));
+
+        var or = Assert.IsType<MongoBinaryExpression>(negated);
+        Assert.Equal(MongoBinaryOperator.OrElse, or.Operator);
+        Assert.Equal(MongoBinaryOperator.LessThanOrEqual, Assert.IsType<MongoBinaryExpression>(or.Left).Operator);
+        Assert.Equal(MongoBinaryOperator.GreaterThanOrEqual, Assert.IsType<MongoBinaryExpression>(or.Right).Operator);
     }
 
     [Fact]

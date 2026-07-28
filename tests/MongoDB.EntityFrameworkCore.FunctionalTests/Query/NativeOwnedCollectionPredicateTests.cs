@@ -704,16 +704,29 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     }
 
     [Fact]
-    public void Owned_collection_Count_predicate_declines_cleanly()
+    public void Owned_collection_Count_predicate_goes_native()
     {
-        var collection = SeedBlogs(nameof(Owned_collection_Count_predicate_declines_cleanly));
+        // FLIPPED by EF-322 Task 6 (the eligibility change): .Count in a predicate now goes native, via the
+        // array-index existence form ({"Posts.1": {$exists: true}}) rather than declining. That form is a
+        // plain dotted-path match — no $size, no $expr — so unlike the driver's own Count() translation
+        // (which renders $expr-based $size and crashes on a missing/explicit-null array field, per the
+        // AssertDeclinesCleanlyNoFallbackOracle comment above) it does NOT crash on SeedBlogs's missing/null
+        // rows. So this is now proven via AssertNativeOnlyMatches (NativeOnly routing proof, full matrix —
+        // DriverLinq still has no working oracle over missing/null rows for this shape) plus the well-formed
+        // independent-oracle leg (NativeOnly == DriverLinq parity), exactly like the sibling Any/All tests.
+        var collection = SeedBlogs(nameof(Owned_collection_Count_predicate_goes_native));
 
-        AssertDeclinesCleanlyNoFallbackOracle(collection, q => q.Where(b => b.Posts.Count > 1));
+        var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.Count > 1));
 
-        // Independent-oracle leg (fix round 1): only "match" has more than one Post (2); "nomatch" has 1,
-        // "empty" has 0.
-        var wellFormed = SeedWellFormedBlogs(nameof(Owned_collection_Count_predicate_declines_cleanly) + "_WellFormed");
-        var wfTitles = AssertDeclinesCleanly(wellFormed, q => q.Where(b => b.Posts.Count > 1));
+        // Only "match" has more than one Post (2); "nomatch" has 1; "empty"/"missing"/"null" all count as 0
+        // (a missing/null embedded array counts as empty, matching LINQ's own List<T>.Count over EF's
+        // materialized-as-empty-list reading of a missing/null owned collection).
+        Assert.Equal(["match"], titles);
+
+        // Independent-oracle leg: well-formed seed (no missing/null Posts), so DriverLinq can actually run —
+        // NativeOnly == DriverLinq parity, not just a hand-verified expectation.
+        var wellFormed = SeedWellFormedBlogs(nameof(Owned_collection_Count_predicate_goes_native) + "_WellFormed");
+        var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Count > 1));
         Assert.Equal(["match"], wfTitles);
     }
 }

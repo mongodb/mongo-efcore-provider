@@ -52,6 +52,7 @@ SP7 Phase 1:
 | 3 | Owned single-ref **sub-property** predicates / sorts / projections (dotted paths) | `2a9b56e` |
 | 4 | Owned-collection **`Any`** quantifier predicates → `$elemMatch` | `791037b` |
 | 5 | Owned-collection **`All`** quantifier predicates → negated `$elemMatch`; **closes EF-335** | `b087957` |
+| 6 | Owned-collection **`.Count`** in a predicate — array-index `$exists` (constant tier) / null-safe `$size` inside `$expr` (parameterized/degenerate tier) | `7532b15` |
 
 Refactor interludes (not user-facing): EF-330 (extract `MongoSelectDefinition`), EF-332 (separate the
 native-translation layer from QMTEV), EF-334 (centralize the is-native gate into `ClassifyNativeDisposition`).
@@ -123,6 +124,22 @@ merged to `main` yet — the whole native stack lands at parity/cutover.
   COLLSCAN — a deliberate correctness-over-index trade (the index-friendly alternative returns wrong answers),
   and the already-shipped `!Any(...)` form scans equally. See
   `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for both quantifier notes.
+- **Owned-collection `.Count` in a predicate (owned-data slice 6).** `Where(b => b.Posts.Count > 2)` and all
+  six comparison operators, both operand orders, `.Count`/`.Count()`/`.LongCount()`, a constant *or*
+  parameterized threshold, a count reached through owned single-reference hops, and a count nested inside a
+  quantifier's element predicate now go native — previously always fell back. A constant threshold renders as
+  the query-dialect array-index existence test (`{"path.k": {$exists: true|false}}`) — the same family bare
+  `Any()` already used, now unified with it as `Count >= 1`; a parameterized or degenerate threshold renders
+  `$expr` over a null-safe `$size` (`$ifNull` maps a missing/`null` array to `[]`, since bare `$size` against
+  either is a hard server error). Negation *inverts* the operator (an exact complement, since `$exists`
+  partitions the value space) rather than `$not`-wrapping it, the documented exception to the `All` slice's
+  `$not`-wrap rule. Index note, as measured (not assumed): all four relational array-index forms come back
+  **COLLSCAN** with both a collection- and leaf-level multikey index present — the form is still required
+  regardless, since it is the only one legal inside `$elemMatch` and the only one correct for missing/null
+  arrays. See `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s dedicated `.Count` note for the full
+  two-tier mechanism, the negator exception, and the settled finding that EF Core rewrites `Count() > 0` into
+  `Any()` upstream (so that one spelling is unreachable via ordinary LINQ for the constant-tier `GreaterThan`
+  arm at `n = 0`).
 
 ---
 
@@ -142,14 +159,14 @@ merged to `main` yet — the whole native stack lands at parity/cutover.
   is NO LONGER on this list: closed by the owned-data slice 5 negator.**)
 - Guarded-out for correctness: value-converter / non-default `BsonRepresentation` operands (arithmetic,
   GroupBy keys, Distinct keys, OfType discriminators).
-- **Owned-collection predicate/projection long tail (EF-322), as it stands after the `Any` *and* `All`
-  quantifier slices:** `.Count` used in a predicate (`Where(b => b.Posts.Count > 2)`), an embedded-collection
-  projection (`Select(b => b.Posts.Count)`, an array projection), a non-query-dialect owned-collection element
-  predicate (field-to-field / arithmetic — no query-dialect form to put inside `$elemMatch`, and for `All` no
-  exact complement either), a **correlated** element predicate (one referencing the enclosing entity —
-  declined by a dedicated guard, because `$elemMatch` cannot reference the enclosing document at all), and a
-  two-scope (cross-scope, inside a `SelectMany`) owned quantifier. An owned-COLLECTION intermediate hop in a
-  dotted sub-property path also still declines (slice 3 covers single-reference hops only).
+- **Owned-collection predicate/projection long tail (EF-322), as it stands after the `Any`, `All`, *and*
+  `.Count` slices:** an embedded-collection projection (`Select(b => b.Posts.Count)`, an array projection), a
+  non-query-dialect owned-collection element predicate (field-to-field / arithmetic — no query-dialect form to
+  put inside `$elemMatch`, and for `All` no exact complement either), a **correlated** element predicate (one
+  referencing the enclosing entity — declined by a dedicated guard, because `$elemMatch` cannot reference the
+  enclosing document at all), and a two-scope (cross-scope, inside a `SelectMany`) owned quantifier. An
+  owned-COLLECTION intermediate hop in a dotted sub-property path also still declines (slice 3 covers
+  single-reference hops only).
 
 **Hard-fails in every mode (no driver-LINQ oracle):** cross-collection SelectMany forms outside the native
 slice, three-level+ nested SelectMany, whole-outer SelectMany, and any operator composed *after* a native
@@ -169,8 +186,8 @@ SelectMany (shaper-rebuild limitation).
 - **Parity cutover.** Once native reaches parity: retire the driver-LINQ fallback and delete the delegation code.
 - **Minor SelectMany follow-ons (EF-347 leftovers):** cross-scope computed leaf (`o.Discount * i.Price`),
   the inner-`Select`-form computed-leaf binder.
-- **Owned-collection predicate follow-ons (EF-322), as they stand after slices 4–5:** `.Count`-in-predicate and
-  embedded-collection/array projections remain deferred (see §4) — `All` no longer does. A **correlated**
+- **Owned-collection predicate follow-ons (EF-322), as they stand after slices 4–6:** embedded-collection/array
+  projections remain deferred (see §4) — `All` and `.Count`-in-predicate no longer do. A **correlated**
   element predicate needs more than a two-scope translator: `$elemMatch` cannot reference the enclosing
   document, so it would have to render as a top-level `$expr` over `$filter`/`$allElementsTrue`. Relativizing
   the owned single-reference dotted-path scalar resolver (`TryResolveOwnedFieldPath`) the way the quantifier
@@ -186,6 +203,7 @@ SelectMany (shaper-rebuild limitation).
 | **EF-354** | Bug | `SelectMany(o => o.Items, (o,i) => o)` (whole-outer, explicit method-call spelling) **crashes** ("Id missing") instead of declining cleanly; query-syntax spelling already declines | Loud crash, not wrong data |
 | **EF-355** | Bug | Filtered reference SelectMany: folded-predicate split in `TrySplitCorrelation` can **silently drop a `!= null` inner filter** → returns all children | Silent wrong data, **latent/unreachable** today (EF emits nested, not folded, shape) |
 | **EF-356** | Bug | Mixed whole-entity + computed-arithmetic projection (`new { c, Total = c.Age * c.Score }`) returns **silently wrong** values (`Score²`) — mixed shaper has no `BinaryExpression` handling | Silent wrong data, **pre-existing**, pinned by a documenting test |
+| **EF-357** | Bug | Bare embedded-collection `.Count` projection (`Select(b => b.Posts.Count)`) throws `ArgumentException` in **every** query mode — a `MongoProjectionBindingExpressionVisitor` gap, not a native decline | Hard fail every mode, **pre-existing** (reproduced on `main`), pinned by a documenting test |
 
 Of these, **EF-356** (reachable today under `Native`) and **EF-355** (latent) are the two that produce (or
 could produce) *silent* wrong data.
@@ -194,7 +212,8 @@ could produce) *silent* wrong data.
 
 ## 7. Which tests require driver-LINQ to pass — empirical measurement
 
-Measured by the two-sweep subtraction on the **EF10 specification suite**, re-measured at tip `b087957`:
+Measured by the two-sweep subtraction on the **EF10 specification suite**, re-measured at tip `7532b15`
+(the `.Count`-in-a-predicate slice) with **zero further delta** from `b087957` — see the note below the table:
 
 > `{ tests requiring driver-LINQ } = { pass under Native } − { pass under NativeOnly }`
 
@@ -215,7 +234,12 @@ the driver fallback's trailing `{ "$project" : { "_id" : 0, "_v" : null } }` sta
 signature of native routing. Results were unchanged.
 
 Everything else measured identical across the two tips — notably, the four owned-data slices *before* slice 5
-produced **zero** spec delta, because Northwind has no owned collections or owned sub-property coverage. Two
+produced **zero** spec delta, because Northwind has no owned collections or owned sub-property coverage. The
+`.Count`-in-a-predicate slice (owned-data slice 6, `7532b15`) measured the **same story a third time**: `Native`
+4589/0/19 and `NativeOnly` 2194/2395/19, both axes checked per-test (not just the aggregate), exact match to the
+`b087957` figures above — expected, since Northwind still has no owned collections for the new `.Count`
+machinery to touch, and `Native` failing zero tests is itself proof no `Native`-mode MQL baseline moved (a
+baseline that had changed would show up as a failure against its checked-in string, which none did). Two
 cautions for whoever re-measures next:
 
 - **A total of 4608 is correct.** One intermediate measurement during slice 5 reported 4601 (7 low) and was
@@ -323,13 +347,15 @@ silently fall back throws instead.
 
 SP1–SP4 are complete; SP5–SP6 are substantially complete with a well-characterized fallback set; the
 SelectMany tail (SP6) is finished. **SP7 Phase 1 (the one-pass materializer) has landed**, cutting native
-allocation 54–72% to roughly the raw-driver floor. Since then, a five-slice **owned-data work stream** has made
+allocation 54–72% to roughly the raw-driver floor. Since then, a six-slice **owned-data work stream** has made
 embedded documents largely native: whole-entity (single-ref and collection), single-ref sub-property dotted
-paths, and both `Any` and `All` quantifier predicates — the last closing **EF-335**.
+paths, both `Any` and `All` quantifier predicates — the latter closing **EF-335** — and `.Count` used in a
+predicate, unified with bare `Any()` as one array-cardinality representation.
 
 **The remaining native work is SP7 Phase 2 (streaming breadth: reducer/aggregate, collection-Include arrays,
-reference-Include) plus the parity cutover that retires driver-LINQ.** The nearest owned-data follow-ons are
-`.Count`-in-a-predicate and embedded-collection projections.
+reference-Include) plus the parity cutover that retires driver-LINQ.** The nearest owned-data follow-on is now
+embedded-collection projections (the bare form is a separate, pre-existing hard-fail predating this whole work
+stream; an arithmetic projection leaf containing a count already goes native as an incidental widening).
 
 Empirically, 2395 EF10 spec tests still lean on the driver-LINQ fallback — roughly 1744 for correct results
 (real coverage gaps) and ~647 only for the expected exception shape (re-baselined at cutover). That number has

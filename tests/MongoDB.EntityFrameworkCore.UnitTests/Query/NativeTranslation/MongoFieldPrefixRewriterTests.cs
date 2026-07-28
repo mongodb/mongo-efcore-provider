@@ -67,6 +67,31 @@ public class MongoFieldPrefixRewriterTests
     }
 
     [Fact]
+    public void Prefixes_the_array_path_of_a_size_node()
+    {
+        var rewritten = MongoFieldPrefixRewriter.Rewrite(
+            new MongoSizeExpression("Comments", typeof(int), nullSafe: true), "Posts");
+
+        var size = Assert.IsType<MongoSizeExpression>(rewritten);
+        Assert.Equal("Posts.Comments", size.FieldName);
+        Assert.True(size.NullSafe);
+    }
+
+    [Fact]
+    public void Prefixes_a_size_node_inside_a_comparison()
+    {
+        var comparison = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoSizeExpression("Comments", typeof(int), nullSafe: true),
+            new MongoConstantExpression(2, null));
+
+        var rewritten = Assert.IsType<MongoBinaryExpression>(
+            MongoFieldPrefixRewriter.Rewrite(comparison, "Posts"));
+
+        Assert.Equal("Posts.Comments", Assert.IsType<MongoSizeExpression>(rewritten.Left).FieldName);
+    }
+
+    [Fact]
     public void Prefixes_the_elem_match_array_path_and_leaves_the_element_predicate_alone()
     {
         var child = new MongoBinaryExpression(

@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure; // IsEFPropertyMethod()
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -199,6 +200,8 @@ internal sealed class MongoExpressionTranslator
         {
             MongoFieldExpression f => NativeGroupByBinder.HasDefaultKeySerialization(f.Property),
             MongoBinaryExpression b => AllFieldsDefaultSerialized(b.Left) && AllFieldsDefaultSerialized(b.Right),
+            // A MongoSizeExpression falls into the catch-all below, deliberately: an array COUNT carries no
+            // property serialization, so there is no converter / BsonRepresentation for it to diverge on.
             _ => true
         };
 
@@ -261,6 +264,16 @@ internal sealed class MongoExpressionTranslator
                 if (operand is MongoElemMatchExpression elemMatchExpr)
                     return new MongoElemMatchExpression(
                         elemMatchExpr.ArrayPath, elemMatchExpr.ElementPredicate, negated: !elemMatchExpr.Negated);
+                // !(collection.Count > n) → INVERT the comparison rather than wrapping in a generic Not node:
+                // the array-index form has no $not wrapper, and MongoExpressionNegator owns the (exact)
+                // inversion rule for this family — see its remarks for why inversion is exact here and is NOT
+                // for a relational comparison on a scalar field. A parameterized threshold declines here,
+                // because the negator is gated on query-dialect renderability; that is an accepted coverage
+                // gap, not a correctness one.
+                if (operand is MongoBinaryExpression { Left: MongoSizeExpression })
+                    return MongoExpressionNegator.TryNegate(operand, out var countComplement)
+                        ? countComplement
+                        : null;
                 // Only allow Not over a field or further translated expression; nullable bools fall back.
                 if (operand is MongoFieldExpression fieldExpr && fieldExpr.Property.IsNullable)
                     return null; // conservative: nullable bool Not could diverge from driver rendering
@@ -309,7 +322,16 @@ internal sealed class MongoExpressionTranslator
                     return null; // not an owned-collection source rooted at the query parameter
 
                 if (elementLambda is null)
-                    return new MongoElemMatchExpression(arrayPath, elementPredicate: null, negated: false);
+                {
+                    // A bare Any() IS "at least one element", i.e. Count >= 1 — the same predicate, rendered by
+                    // the same array-index existence form ({ "path.0": { $exists: true } }). Representing it as
+                    // a count comparison keeps ONE representation for array cardinality, and !Any() then falls
+                    // out of the negator's inversion (Count < 1) with no dedicated code.
+                    return new MongoBinaryExpression(
+                        MongoBinaryOperator.GreaterThanOrEqual,
+                        new MongoSizeExpression(arrayPath, typeof(int), nullSafe: true),
+                        new MongoConstantExpression(1, forSerialization: null));
+                }
 
                 // A CORRELATED element predicate — one reaching outside the element into the enclosing entity —
                 // must be declined BEFORE the element-scoped translator ever sees it. See the helper's remarks:
@@ -447,6 +469,19 @@ internal sealed class MongoExpressionTranslator
         if (rightOperand is null)
             return null;
 
+        // Normalize a count-vs-value comparison so the size node is on the LEFT, mirroring the operator: the
+        // query renderer's array-index form recognizes only that orientation. Field-to-field and arithmetic
+        // comparisons are deliberately NOT mirrored — they render inside $expr, where operand order matters.
+        if (rightOperand is MongoSizeExpression
+            && leftOperand is MongoConstantExpression or MongoParameterExpression)
+        {
+            var mirroredOp = MapComparisonOperator(Mirror(be.NodeType));
+            if (mirroredOp is null)
+                return null;
+
+            return new MongoBinaryExpression(mirroredOp.Value, rightOperand, leftOperand);
+        }
+
         return new MongoBinaryExpression(generalOp.Value, leftOperand, rightOperand);
     }
 
@@ -520,6 +555,34 @@ internal sealed class MongoExpressionTranslator
 
         if (TryResolveMember(node, out var property, out var fieldPath))
             return new MongoFieldExpression(property, fieldPath!);
+
+        // An OWNED-collection element count — b.Posts.Count / .Count() / .LongCount(). The renderer decides the
+        // dialect: a comparison against an admissible integer constant becomes an array-index existence test,
+        // anything else routes to $expr with a null-safe $size (see MongoQueryLanguageRenderer).
+        //
+        // Ordering note: this runs AFTER the TryResolveMember attempt above, which means an entity with a real
+        // mapped scalar property called "Count" resolves as that FIELD. That ordering is defence-in-depth and an
+        // efficiency guard, NOT the safety property — measured by moving this block ahead of TryResolveMember,
+        // which turned no test red. The actual protection is structural, in TryResolveOwnedCollectionPath: it
+        // requires the chain to be rooted at the query parameter with at least one hop, every non-final hop to be
+        // an embedded single reference, and the FINAL hop to be an embedded collection NAVIGATION. A mapped
+        // scalar's receiver is an entity, never a collection, so a name collision can never resolve — `o.Count`
+        // declines on the zero-hop check, `b.Address.Count` on the final-hop check. The resolver also declines
+        // outright in two-scope mode, so a cross-scope count stays out of scope for free.
+        //
+        // INHERITED INVARIANT, worth knowing before adding another caller: TryResolveOwnedCollectionPath does not
+        // check WHICH ParameterExpression roots the chain (see its own remarks), so its safety depends on every
+        // non-root single-scope translator being constructed only after an identity guard has run — the quantifier
+        // arm's ReferencesEnclosingScope, or NativeSelectManyBinder's ReferencesParameter, which routes an
+        // outer-referencing layer to the two-scope constructor where this resolver declines outright. A future
+        // caller that builds a non-root single-scope translator WITHOUT such a guard reopens a by-name retarget
+        // (an enclosing member resolved against the inner scope because the two types share a property name),
+        // which is a wrong-rows failure, not a decline.
+        if (TryMatchCountExpression(node, out var countSource)
+            && TryResolveOwnedCollectionPath(countSource, out var arrayPath, out _))
+        {
+            return new MongoSizeExpression(arrayPath, node.Type, nullSafe: true);
+        }
 
         // Restrict to numeric operand types: ExpressionType.Add on strings is compiler-generated
         // concatenation (string.Concat), not arithmetic — it has no $add equivalent (confirmed empirically:
@@ -793,6 +856,75 @@ internal sealed class MongoExpressionTranslator
                 elementLambda = lambda;
                 return true;
             }
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Matches an element-count expression over a collection — the <c>Count</c> property on the collection
+    /// itself, or a PARAMETERLESS <c>Count()</c>/<c>LongCount()</c> call — and yields the collection SOURCE
+    /// with any <c>AsQueryable()</c> wrapper stripped.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Both shapes are live, for different callers</b> (Task 1 spike, measured on EF8/EF9/EF10): EF's own
+    /// preprocessing normalizes a <c>.Count</c> PROPERTY access into the method-call form before the native
+    /// translator ever sees it, so every real query arrives as
+    /// <c>Queryable.Count(EF.Property(b, "Posts").AsQueryable())</c> — the <c>Count</c> property and
+    /// <c>Count()</c> call are byte-identical trees by then. The <see cref="MemberExpression"/> arm is
+    /// nonetheless required, because a HAND-BUILT expression tree (a unit test calling
+    /// <c>TryTranslate</c> on a raw C# lambda, which bypasses EF's pipeline entirely) does carry a real
+    /// <c>List&lt;T&gt;.Count</c> member access. This mirrors why
+    /// <see cref="TryMatchQuantifierMethod"/> accepts the <see cref="Enumerable"/> spelling as well as
+    /// <see cref="Queryable"/>: so a hand-built tree translates identically to an EF-produced one.
+    /// </para>
+    /// <para>
+    /// A PREDICATED <c>Count(source, predicate)</c> is deliberately NOT matched: it has no array-index form and
+    /// would need <c>$expr</c> over <c>$filter</c>, which is a separate slice. Rejecting it here keeps it on the
+    /// driver-LINQ path, which translates it correctly.
+    /// </para>
+    /// <para>
+    /// This matcher is PURE and must stay that way: the spike observed
+    /// <see cref="TranslateComparison"/> being entered twice per query, so any recognition hung off it has to be
+    /// idempotent.
+    /// </para>
+    /// <para>
+    /// <b>This matcher is name-based and therefore not sufficient on its own</b> — an entity may legitimately have
+    /// a mapped scalar property called <c>Count</c>. What makes that safe is <b>structural</b>, not the call-site
+    /// ordering: every match is gated on <see cref="TryResolveOwnedCollectionPath"/>, which requires the source
+    /// chain to be rooted at the query parameter with at least one hop and its FINAL hop to be an embedded
+    /// collection navigation. A mapped scalar's receiver is an entity, never a collection, so a same-named scalar
+    /// cannot resolve to an array path. The call site in <see cref="TranslateOperand"/> additionally runs this
+    /// after <see cref="TryResolveMember"/>, which is worth keeping as defence-in-depth and to avoid the work,
+    /// but it is not what prevents the collision.
+    /// </para>
+    /// </remarks>
+    private static bool TryMatchCountExpression(Expression node, [NotNullWhen(true)] out Expression? source)
+    {
+        source = null;
+
+        // Only int/long-valued nodes can be a count; this cheaply excludes unrelated members named "Count".
+        if (node.Type != typeof(int) && node.Type != typeof(long))
+            return false;
+
+        switch (node)
+        {
+            // b.Posts.Count — the ICollection<T>/List<T> Count property. Reached only by a HAND-BUILT tree
+            // (see the remarks); EF itself normalizes this into the call form below.
+            case MemberExpression { Member: PropertyInfo { Name: nameof(List<int>.Count) }, Expression: { } receiver }:
+                source = UnwrapAsQueryable(receiver);
+                return true;
+
+            // Enumerable/Queryable.Count(source) / LongCount(source) — the parameterless overloads only. This is
+            // the shape EVERY real EF query arrives in, for both the .Count property and the .Count() call.
+            case MethodCallExpression { Arguments.Count: 1 } call
+                when call.Method.Name is nameof(Enumerable.Count) or nameof(Enumerable.LongCount)
+                     && (call.Method.DeclaringType == typeof(Enumerable)
+                         || call.Method.DeclaringType == typeof(Queryable)):
+                source = UnwrapAsQueryable(call.Arguments[0]);
+                return true;
 
             default:
                 return false;

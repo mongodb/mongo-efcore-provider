@@ -48,10 +48,20 @@ internal static class MongoAggregationExpressionRenderer
             MongoElementRefExpression elementRef => "$" + elementRef.Path,
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders),
-            MongoSizeExpression size => new BsonDocument("$size", "$" + size.FieldName),
+            MongoSizeExpression size => RenderSize(size),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
+
+    // A missing or explicitly-null array makes $size a hard server error that aborts the whole aggregate, so an
+    // EMBEDDED array path is wrapped in $ifNull (count 0 — what LINQ answers for a missing embedded array). A
+    // $lookup output alias is always an array, so that path keeps the plain form and its committed spec
+    // baselines stay byte-identical. See MongoSizeExpression's remarks.
+    private static BsonValue RenderSize(MongoSizeExpression size)
+        => size.NullSafe
+            ? new BsonDocument("$size",
+                new BsonDocument("$ifNull", new BsonArray { "$" + size.FieldName, new BsonArray() }))
+            : new BsonDocument("$size", "$" + size.FieldName);
 
     private static BsonValue RenderBinary(MongoBinaryExpression binary, PlaceholderTable placeholders)
     {

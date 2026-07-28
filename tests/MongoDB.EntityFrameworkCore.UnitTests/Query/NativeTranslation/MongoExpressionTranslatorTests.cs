@@ -1191,16 +1191,20 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void Owned_collection_bare_Any_translates_to_elem_match_with_no_element_predicate()
+    public void Owned_collection_bare_Any_translates_to_a_count_comparison()
     {
+        // Bare Any() IS "Count >= 1" and is no longer represented by MongoElemMatchExpression at all — see
+        // MongoElemMatchExpression's remarks (EF-322 Task 5, unifying the two representations).
         var translator = NewTranslator(GetOwnedBlogEntityType());
         var body = PredicateBody<OwnedBlog>(b => b.Posts.Any());
 
         Assert.True(translator.TryTranslate(body, out var result));
-        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
-        Assert.Equal("Posts", elemMatch.ArrayPath);
-        Assert.Null(elemMatch.ElementPredicate);
-        Assert.False(elemMatch.Negated);
+        var comparison = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.GreaterThanOrEqual, comparison.Operator);
+        var size = Assert.IsType<MongoSizeExpression>(comparison.Left);
+        Assert.Equal("Posts", size.FieldName);
+        Assert.True(size.NullSafe);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(comparison.Right).Value);
     }
 
     [Fact]
@@ -1344,19 +1348,27 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void Negated_owned_collection_bare_Any_flips_the_negated_flag()
+    public void Negated_owned_collection_bare_Any_inverts_the_count_comparison_via_the_negator()
     {
-        // The ElementPredicate == null variant of the Not flip (the sibling test above covers the predicated
-        // variant). Rendering differs materially between the two — negated-bare emits
-        // {"path.0": {$exists: false}} rather than a $not/$elemMatch — so the flag flip is pinned for both.
+        // Bare Any() is no longer a MongoElemMatchExpression (see the sibling
+        // Owned_collection_bare_Any_translates_to_a_count_comparison test), so the Not arm no longer has a
+        // MongoElemMatchExpression operand to flip Negated on for this shape. FIX ROUND 1 (EF-322 Task 5,
+        // pulled forward from Task 6): the Not arm now recognizes a MongoBinaryExpression over a
+        // MongoSizeExpression and routes it through MongoExpressionNegator.TryNegate rather than wrapping it
+        // in a generic MongoUnaryExpression(Not, ...) — that generic wrap does NOT render (RenderUnary
+        // requires a MongoFieldExpression on the comparison's left, which MongoSizeExpression is not), so
+        // without this routing !Posts.Any() would decline to render at all. The negator inverts >= to <,
+        // giving Count < 1, which Task 3's renderer renders as the same array-index existence form
+        // (negated). This test pins the FIXED translate-time shape.
         var translator = NewTranslator(GetOwnedBlogEntityType());
         var body = PredicateBody<OwnedBlog>(b => !b.Posts.Any());
 
         Assert.True(translator.TryTranslate(body, out var result));
-        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
-        Assert.Equal("Posts", elemMatch.ArrayPath);
-        Assert.Null(elemMatch.ElementPredicate);
-        Assert.True(elemMatch.Negated);
+        var comparison = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.LessThan, comparison.Operator);
+        var size = Assert.IsType<MongoSizeExpression>(comparison.Left);
+        Assert.Equal("Posts", size.FieldName);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(comparison.Right).Value);
     }
 
     // ------------------------------------------------------------------
@@ -1520,4 +1532,114 @@ public class MongoExpressionTranslatorTests
         // the owner-rooted condition would be silently retargeted at the element.
         Assert.Null(TryTranslateBlogPredicate(b => b.Posts.All(p => b.Title == "x")));
     }
+
+    // ------------------------------------------------------------------
+    // Owned-collection Count in a predicate goes native (EF-322 Task 6)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Translates_owned_collection_Count_greater_than_constant()
+    {
+        var translated = TryTranslateBlogPredicate(b => b.Posts.Count > 2);
+
+        var comparison = Assert.IsType<MongoBinaryExpression>(translated);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, comparison.Operator);
+        var size = Assert.IsType<MongoSizeExpression>(comparison.Left);
+        Assert.Equal("Posts", size.FieldName);
+        Assert.True(size.NullSafe);
+    }
+
+    [Fact]
+    public void Translates_owned_collection_Count_call_form()
+        => Assert.NotNull(TryTranslateBlogPredicate(b => b.Posts.Count() > 2));
+
+    [Fact]
+    public void Translates_owned_collection_LongCount_call_form()
+        => Assert.NotNull(TryTranslateBlogPredicate(b => b.Posts.LongCount() > 2L));
+
+    [Fact]
+    public void Normalizes_a_reversed_count_comparison_so_the_size_node_is_on_the_left()
+    {
+        // The query renderer's array-index form recognizes only size-on-the-left, so the translator mirrors.
+        var comparison = Assert.IsType<MongoBinaryExpression>(
+            TryTranslateBlogPredicate(b => 2 < b.Posts.Count));
+
+        Assert.IsType<MongoSizeExpression>(comparison.Left);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, comparison.Operator);
+    }
+
+    [Fact]
+    public void Translates_a_count_reached_through_an_owned_reference_hop()
+    {
+        var comparison = Assert.IsType<MongoBinaryExpression>(
+            TryTranslateBlogPredicate(b => b.Address.Notes.Count > 1));
+
+        Assert.Equal("Address.Notes", Assert.IsType<MongoSizeExpression>(comparison.Left).FieldName);
+    }
+
+    [Fact]
+    public void Negates_a_count_comparison_by_inverting_rather_than_wrapping()
+    {
+        var comparison = Assert.IsType<MongoBinaryExpression>(
+            TryTranslateBlogPredicate(b => !(b.Posts.Count > 2)));
+
+        Assert.Equal(MongoBinaryOperator.LessThanOrEqual, comparison.Operator);
+    }
+
+    [Fact]
+    public void A_count_inside_a_quantifier_resolves_element_relatively()
+    {
+        // The element-scoped child translator resolves the inner array relative to the ELEMENT ("Comments"),
+        // not the root ("Posts.Comments") — which is what the enclosing $elemMatch expects.
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(
+            TryTranslateBlogPredicate(b => b.Posts.Any(p => p.Comments.Count > 1)));
+
+        var inner = Assert.IsType<MongoBinaryExpression>(elemMatch.ElementPredicate);
+        Assert.Equal("Comments", Assert.IsType<MongoSizeExpression>(inner.Left).FieldName);
+    }
+
+    [Fact]
+    public void A_mapped_scalar_property_named_Count_is_not_mistaken_for_a_cardinality_expression()
+    {
+        // `o.Count > 2` is resolved by TranslateComparison's first branch (bare member vs. simple value) and
+        // never reaches TranslateOperand at all, so this pins the end-to-end result — a mapped `Count` field
+        // resolves as that FIELD, not a cardinality expression — without exercising TranslateOperand's own
+        // ordering. See the sibling test below for the TranslateOperand-routed case, and TryMatchCountExpression's
+        // remarks for why the real protection is structural (TryResolveOwnedCollectionPath), not call-site order.
+        var translator = NewTranslator(GetEntityType<Order>());
+
+        Assert.True(translator.TryTranslate(
+            PredicateBody<Order>(o => o.Count > 2), out var translated));
+
+        var comparison = Assert.IsType<MongoBinaryExpression>(translated);
+        Assert.Equal("Count", Assert.IsType<MongoFieldExpression>(comparison.Left).ElementName);
+    }
+
+    [Fact]
+    public void A_mapped_scalar_property_named_Count_still_resolves_as_a_field_inside_TranslateOperand()
+    {
+        // A field-to-field comparison has no simple-value side, so BOTH operands route through TranslateOperand —
+        // unlike the sibling test above, whose `o.Count > 2` is resolved by TranslateComparison's first branch and
+        // never reaches TranslateOperand at all. This therefore covers the TranslateOperand path specifically.
+        // It does NOT pin the call-site ORDERING: moving count recognition ahead of TryResolveMember was measured
+        // to turn no test red, because TryResolveOwnedCollectionPath declines a bare-parameter receiver on its
+        // zero-hop check regardless of order. See that method's remarks for the structural argument.
+        var translator = NewTranslator(GetEntityType<Order>());
+
+        Assert.True(translator.TryTranslate(PredicateBody<Order>(o => o.Count > o.Qty), out var translated));
+
+        var comparison = Assert.IsType<MongoBinaryExpression>(translated);
+        Assert.Equal("Count", Assert.IsType<MongoFieldExpression>(comparison.Left).ElementName);
+        Assert.Equal("Qty", Assert.IsType<MongoFieldExpression>(comparison.Right).ElementName);
+    }
+
+    [Fact]
+    public void A_predicated_Count_declines()
+        // Count(pred) has no array-index form and needs $expr over $filter — a separate slice.
+        => Assert.Null(TryTranslateBlogPredicate(b => b.Posts.Count(p => p.Rank > 1) > 2));
+
+    [Fact]
+    public void A_primitive_collection_Count_declines()
+        // TryResolveOwnedCollectionPath requires an embedded collection NAVIGATION; Tags is a property.
+        => Assert.Null(TryTranslateBlogPredicate(b => b.Tags.Count > 2));
 }

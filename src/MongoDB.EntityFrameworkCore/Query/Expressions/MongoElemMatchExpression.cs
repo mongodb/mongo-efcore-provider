@@ -20,8 +20,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <summary>
 /// Represents an existential quantifier over an embedded (owned) array field: at least one element of
 /// <see cref="ArrayPath"/> satisfies <see cref="ElementPredicate"/>, optionally negated. Renders to
-/// <c>$elemMatch</c> (or, for the bare <c>Any()</c> form where <see cref="ElementPredicate"/> is
-/// <see langword="null"/>, to an array-index <c>$exists</c> test).
+/// <c>$elemMatch</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -36,6 +35,13 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <see cref="ArrayPath"/> only. Rewriting the element predicate would mis-address every field inside the
 /// <c>$elemMatch</c>.
 /// </para>
+/// <para>
+/// A BARE <c>Any()</c> is deliberately NOT represented by this node: it is exactly <c>Count &gt;= 1</c>, so it
+/// is translated as an array-count comparison over <see cref="MongoSizeExpression"/> and renders through the
+/// same array-index existence form (<c>{"path.0": {$exists: true}}</c>). Keeping one representation for array
+/// cardinality is what makes <c>Any()</c> and <c>Count &gt;= 1</c> structurally identical rather than
+/// coincidentally equal, and it is why this node's predicate is non-nullable.
+/// </para>
 /// </remarks>
 internal sealed class MongoElemMatchExpression : MongoExpression
 {
@@ -47,11 +53,10 @@ internal sealed class MongoElemMatchExpression : MongoExpression
     /// or <c>"Home.Notes"</c> when reached through an owned single reference).
     /// </param>
     /// <param name="elementPredicate">
-    /// The predicate each candidate element is tested against, with ELEMENT-RELATIVE field paths; or
-    /// <see langword="null"/> for a bare <c>Any()</c> (array-is-non-empty) test.
+    /// The predicate each candidate element is tested against, with ELEMENT-RELATIVE field paths.
     /// </param>
     /// <param name="negated"><see langword="true"/> for the negated form (<c>!source.Any(...)</c>).</param>
-    public MongoElemMatchExpression(string arrayPath, MongoExpression? elementPredicate, bool negated)
+    public MongoElemMatchExpression(string arrayPath, MongoExpression elementPredicate, bool negated)
     {
         ArrayPath = arrayPath;
         ElementPredicate = elementPredicate;
@@ -62,10 +67,9 @@ internal sealed class MongoElemMatchExpression : MongoExpression
     public string ArrayPath { get; }
 
     /// <summary>
-    /// The predicate each candidate element is tested against, with ELEMENT-RELATIVE field paths, or
-    /// <see langword="null"/> for a bare <c>Any()</c> test.
+    /// The predicate each candidate element is tested against, with ELEMENT-RELATIVE field paths.
     /// </summary>
-    public MongoExpression? ElementPredicate { get; }
+    public MongoExpression ElementPredicate { get; }
 
     /// <summary><see langword="true"/> for the negated form (<c>!source.Any(...)</c>).</summary>
     public bool Negated { get; }
