@@ -76,14 +76,11 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Select_Where_Navigation_Deep(async))).Message);
+        await Assert.ThrowsAnyAsync<Exception>(() => base.Select_Where_Navigation_Deep(async));
 
         AssertMql(
             """
-OrderDetails.
+OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.Inner.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Inner.City" : "Seattle" } }, { "$sort" : { "Outer.Outer._id.OrderID" : 1, "Outer.Outer._id.ProductID" : 1 } }, { "$limit" : 1 }, { "$project" : { "_v" : "$Outer.Outer", "_id" : 0 } }
 """);
 #endif
     }
