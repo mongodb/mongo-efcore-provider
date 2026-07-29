@@ -129,14 +129,63 @@ internal static class NativeProjectionBinder
 
         // Arithmetic computed leaf (EF-347): a numeric (+ - * / %) projection leaf renders as an aggregation
         // operator document (e.g. { $multiply: [...] }) via MongoAggregationExpressionRenderer, and the DOM shaper
-        // reads it back raw by alias. Gate to a BINARY arithmetic top node only — a bare constant/parameter leaf
-        // would render as a bare value that $project misreads as an inclusion flag; TryTranslateValue's numeric-type
-        // and divergence guards handle string-concat / integer-division / converted operands.
+        // reads it back raw by alias. Gate to a BINARY arithmetic top node only, so a bare constant/parameter leaf
+        // stays on the fallback path; TryTranslateValue's numeric-type and divergence guards handle
+        // string-concat / integer-division / converted operands.
+        //
+        // This comment USED TO SAY a bare constant/parameter leaf "would render as a bare value that $project
+        // misreads as an inclusion flag", which implies silently wrong results. That mechanism was MEASURED
+        // FALSE — see the correction on the count branch ~20 lines below, whose mutation (relaxing the count gate
+        // to plain TryTranslateValue success) admits exactly the set that dropping THIS branch's BinaryExpression
+        // requirement would, so the same measurement covers this line: a truthy constant / captured parameter
+        // returns CORRECT values (folded client-side, junk field in the emitted $project), while a 0/false
+        // constant ABORTS the aggregate. Same narrow gate, different reason for it.
         if (leafExpression is BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
                 or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo }
             && translator.TryTranslateValue(leafExpression, out var computed))
         {
             result = computed;
+            return true;
+        }
+
+        // Owned (embedded) collection count leaf (EF-322): `new { N = b.Posts.Count }`. The same
+        // TryMatchCountExpression + TryResolveOwnedCollectionPath pair the arithmetic branch above already
+        // reaches through TryTranslateValue — a count inside `Count * 2` has been native since the .Count
+        // predicate slice — just with no arithmetic wrapped around it.
+        //
+        // Gate on the resulting NODE KIND, not on "TryTranslateValue succeeded" — a bare constant/parameter leaf
+        // translates perfectly well but renders as a BARE VALUE, and $project reads a bare value as an
+        // inclusion/exclusion FLAG rather than a literal. { $size: ... } is a document, so it is safe exactly
+        // where a bare value is not.
+        //
+        // The CONSEQUENCE of widening is MEASURED, and it is not what this comment first claimed. It used to say
+        // $project "misreads" the value as an inclusion flag ({X: 1}), which implies silently wrong results.
+        // Mutation-tested (gate relaxed to plain TryTranslateValue success): `new { b.Title, X = 5 }` and a
+        // captured-parameter leaf return CORRECT values — Visit's own constant/parameter cases fold them
+        // client-side, and the only damage is a junk `X: 5` in the emitted $project — but `new { b.Title, X = 0 }`
+        // HARD-FAILS under the default Native mode with
+        //   MongoCommandException: Invalid $project :: caused by :: Cannot do exclusion on field X in inclusion projection
+        // because $project reads 0/false as an EXCLUSION flag. So the gate is still right to be narrow; the
+        // hazard is an abort on a 0/false constant, not a silent misread.
+        //
+        // Widening is also caught by a test now. It was NOT before: at the time that mutation was first run, the
+        // whole functional Query namespace stayed green, 0 failed — nothing caught it. (Bare pass COUNTS are
+        // deliberately not recorded here or in the sibling comments: three different counts from three different
+        // points in this branch's life were irreconcilable to a later reader, and a fourth run of the same filter
+        // gave a fifth number. The outcome plus what was run is the durable part.) See
+        // NativeOwnedCollectionCountTests.Constant_projection_leaf_is_not_admitted_by_the_count_binder_gate,
+        // which pins the measured routing (the shape DECLINES today — NativeOnly throws) and the correct values.
+        //
+        // Ordering: this runs AFTER the arithmetic branch, but that ordering is NOT load-bearing — also measured:
+        // swapping the two branches kept the full functional Query suite green, 0 failed (run on this branch under
+        // "Debug EF10"; see the note above on why no pass count is quoted), including
+        // Arithmetic_projection_leaf_containing_a_count_goes_native, because `Count * 2` translates to a
+        // MongoBinaryExpression, fails the `is MongoSizeExpression` test, and reaches the arithmetic branch
+        // regardless of order. What decides the binding is the node-kind test. The order only avoids calling
+        // TryTranslateValue twice.
+        if (translator.TryTranslateValue(leafExpression, out var value) && value is MongoSizeExpression size)
+        {
+            result = size;
             return true;
         }
 

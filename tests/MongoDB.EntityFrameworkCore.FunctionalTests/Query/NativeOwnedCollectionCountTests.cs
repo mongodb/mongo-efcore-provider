@@ -123,6 +123,15 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         public int? Length { get; set; }
     }
 
+    // A named DTO, not an anonymous type, so the SAME Expression<Func<Blog, TitleCount>> can be sent to the
+    // server AND compiled for the in-memory oracle. It also exercises NativeProjectionBinder's MemberInit
+    // branch, which the anonymous-type tests do not reach.
+    public class TitleCount
+    {
+        public string Title { get; set; } = "";
+        public int N { get; set; }
+    }
+
     private static readonly Action<ModelBuilder> BlogModel = mb =>
     {
         mb.Entity<Blog>().OwnsMany(b => b.Posts, p => p.OwnsMany(x => x.Comments));
@@ -185,6 +194,27 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             { "_id", ObjectId.GenerateNewId() }, { "Title", title },
             { "Home", new BsonDocument { { "Notes", notes } } },
             { "Posts", new BsonArray() }, { "Tags", new BsonArray() }
+        };
+    }
+
+    // Combines LenRow's Posts-length control with RowWithNotes's Notes-length control on a SINGLE row — neither
+    // helper alone can give one row a non-empty Posts AND a non-empty, DIFFERENT-length Home.Notes, which is
+    // exactly what Count_projection_alongside_sibling_leaves_goes_native needs to make its third leaf
+    // load-bearing. Built from the same element-document shapes those two helpers already use (PostDoc; the
+    // {"Length": i} note literal), not a new document shape.
+    private static BsonDocument LenRowWithNotes(string title, int postLength, int noteCount)
+    {
+        var posts = new BsonArray();
+        for (var i = 0; i < postLength; i++)
+            posts.Add(PostDoc(rank: i, heading: "h" + i));
+        var notes = new BsonArray();
+        for (var i = 0; i < noteCount; i++)
+            notes.Add(new BsonDocument { { "Length", i } });
+        return new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() }, { "Title", title },
+            { "Home", new BsonDocument { { "Notes", notes } } },
+            { "Posts", posts }, { "Tags", new BsonArray() }
         };
     }
 
@@ -422,10 +452,17 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         // the $expr/aggregation dialect here (a $project leaf is not a $match), so the null-safe $size applies
         // and a missing/null array yields 0 rather than aborting the aggregate.
         //
-        // Contrast with the BARE embedded-collection projection, Select(b => b.Posts.Count): that is NOT
-        // "deferred" in the usual sense of falling back to driver-LINQ and working — it hard-fails in EVERY
-        // query mode (ArgumentException, from a MongoProjectionBindingExpressionVisitor gap), and it did so on
-        // main long before the EF-322 native-query work began. Pinned by the companion test below.
+        // Contrast with the BARE embedded-collection projection, Select(b => b.Posts.Count): unlike this
+        // arithmetic leaf, it does NOT go native — a bare-scalar terminal projection never populates
+        // Select.Projection, so Route stays Fallback and the count is folded CLIENT-SIDE instead (over an
+        // aggregate([]) pipeline, no $size). EF-357 used to make it hard-fail in EVERY query mode
+        // (ArgumentException, from a MongoProjectionBindingExpressionVisitor gap) long before the EF-322
+        // native-query work began; that translation-time crash is now fixed, and TRANSLATION now succeeds with
+        // CORRECT values for a document whose array is present — see
+        // Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays below. A missing
+        // or explicitly-null array still throws (now ArgumentNullException, at MATERIALIZATION rather than
+        // translation) — the documented residual, pinned by
+        // Bare_embedded_collection_Count_projection_still_throws_for_a_missing_or_null_array below.
         var collection = SeedLengths(nameof(Arithmetic_projection_leaf_containing_a_count_goes_native));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
@@ -440,23 +477,265 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     }
 
     [Fact]
-    public void Bare_embedded_collection_Count_projection_is_a_known_preexisting_limitation()
+    public void Owned_collection_count_projection_leaf_goes_native()
     {
-        // Select(b => b.Posts.Count) hard-fails in EVERY query mode — it is not a graceful fallback. Measured
-        // to predate the entire EF-322 native-query work stream (reproduced on main), so it is neither caused
-        // nor fixed by the .Count-in-a-predicate slice; this test exists so that if it ever starts working, or
-        // starts failing differently, someone notices and updates the sibling test's comment and
-        // Query/AGENTS.md along with it. Tracked as EF-357.
-        //
-        // The exception TYPE is not part of the provider's contract for an unsupported shape (see the
-        // versioning rubric in AGENTS.md), so treat a type change here as a prompt to re-measure and
-        // re-document, not as a regression in itself.
-        var collection = SeedLengths(nameof(Bare_embedded_collection_Count_projection_is_a_known_preexisting_limitation));
+        // The plain sibling of Arithmetic_projection_leaf_containing_a_count_goes_native above: `Count` on its
+        // own, not wrapped in arithmetic. Before this slice the arithmetic form was native while the plain form
+        // was not — the count reached TranslateOperand only as an operand of something else.
+        var collection = SeedLengths(nameof(Owned_collection_count_projection_leaf_goes_native));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+
+        var rows = db.Entities.AsNoTracking()
+            .Select(b => new { b.Title, N = b.Posts.Count })
+            .ToList().OrderBy(r => r.Title).ToList();
+
+        Assert.Equal(
+            [("len0", 0), ("len1", 1), ("len2", 2), ("len3", 3), ("missing", 0), ("null", 0)],
+            rows.Select(r => (r.Title, r.N)).ToArray());
+    }
+
+    [Fact]
+    public void Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_aborts_on_a_missing_array()
+    {
+        // The THIRD leg of the wrapped count's disposition, which the rest of this file leaves unmeasured: every
+        // other wrapped-count test here runs under NativeOnly (or Native, for the oracle). Two reviewers of this
+        // slice independently measured DriverLinq and found something worth pinning, and it was re-measured here
+        // before this test was written rather than taken on trust.
+        //
+        // Before this slice the wrapped form threw ArgumentException in ALL THREE modes (Task 1 spike Q1), so
+        // DriverLinq had no behaviour to preserve. It has one now, and it is NOT the same as Native's:
+        //
+        //   * present arrays  -> DriverLinq agrees with Native (0,1,2,3).
+        //   * missing / explicitly-null array -> DriverLinq raises MongoCommandException, because the driver's
+        //     LINQ provider renders a BARE server-side $size with no $ifNull, and $size against a missing or null
+        //     value is a hard server error that aborts the whole aggregate. Native renders
+        //     {$size: {$ifNull: ["$Posts", []]}} and answers 0, matching LINQ's whole-entity semantics.
+        //
+        // So for THIS shape, UseQueryMode(DriverLinq) does not restore equivalent RESULTS on ragged data — native
+        // is strictly more correct. That is a divergence worth recording deliberately, not rediscovering: it is
+        // also the rendering that a projection MIXING a count leaf with a binder-declined leaf would fall back to
+        // under the default Native mode.
+        //
+        // This is not a regression introduced by the slice (there was no working DriverLinq behaviour to regress
+        // from), and the exception TYPE is not part of the provider's contract here — the test exists so that a
+        // change in either direction is noticed and re-documented.
+        var wellFormed = SeedWellFormed(
+            nameof(Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_aborts_on_a_missing_array));
+
+        using (var db = CreateContext(wellFormed, MongoQueryMode.DriverLinq, BlogModel))
+        {
+            var rows = db.Entities.AsNoTracking()
+                .Select(b => new { b.Title, N = b.Posts.Count })
+                .ToList().OrderBy(r => r.Title).ToList();
+
+            Assert.Equal(
+                [("len0", 0), ("len1", 1), ("len2", 2), ("len3", 3)],
+                rows.Select(r => (r.Title, r.N)).ToArray());
+        }
+
+        var ragged = SeedLengths(
+            nameof(Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_aborts_on_a_missing_array)
+            + "ragged");
+
+        using (var db = CreateContext(ragged, MongoQueryMode.DriverLinq, BlogModel))
+        {
+            var ex = Assert.Throws<MongoCommandException>(
+                () => db.Entities.AsNoTracking()
+                    .Select(b => new { b.Title, N = b.Posts.Count })
+                    .ToList());
+
+            Assert.Contains("$size", ex.Message);
+        }
+
+        // The contrast leg, on the SAME ragged seed: native answers 0 for both the missing and the explicit-null
+        // row. Without this the test would pin the abort without showing that native does better.
+        using (var db = CreateContext(ragged, MongoQueryMode.Native, BlogModel))
+        {
+            var rows = db.Entities.AsNoTracking()
+                .Select(b => new { b.Title, N = b.Posts.Count })
+                .ToList().OrderBy(r => r.Title).ToList();
+
+            Assert.Equal(
+                [("len0", 0), ("len1", 1), ("len2", 2), ("len3", 3), ("missing", 0), ("null", 0)],
+                rows.Select(r => (r.Title, r.N)).ToArray());
+        }
+    }
+
+    [Theory]
+    [InlineData("constant-5")]
+    [InlineData("constant-0")]
+    [InlineData("constant-false")]
+    [InlineData("captured-parameter")]
+    public void Constant_projection_leaf_is_not_admitted_by_the_count_binder_gate(string leafKind)
+    {
+        // THE MUTATION GUARD for NativeProjectionBinder's node-kind gate — the `value is MongoSizeExpression`
+        // test on the count leaf branch. Before this test, NOTHING protected that line: relaxing the gate to
+        // plain `TryTranslateValue(...)` success left the entire functional Query namespace green, 0 failed
+        // (measured during the branch review, under "Debug EF10"). No pass COUNT is quoted: three counts recorded
+        // at different points in this branch's life were irreconcilable to a later reader, and a subsequent run of
+        // the same filter gave another — see the same note on NativeProjectionBinder's count-leaf branch.
+        //
+        // Why the gate must stay narrow, as MEASURED rather than assumed: under a widened gate a bare constant
+        // leaf renders as a BARE VALUE inside $project, and $project reads a bare value as an inclusion/exclusion
+        // FLAG, not a literal. `X = 5` survives that (junk `X: 5` in the pipeline, values still correct via
+        // Visit's own client-side constant fold), but `X = 0` and `X = false` make the server reject the whole
+        // command: "Invalid $project :: caused by :: Cannot do exclusion on field X in inclusion projection".
+        //
+        // WHAT THIS TEST DISCRIMINATES, and why it asserts routing rather than only values: today these shapes
+        // are NOT native — measured, not expected. NativeOnly throws NativeTranslationNotSupportedException
+        // ("Query projects a non-entity result..."), and Native/DriverLinq return correct values through the
+        // driver-LINQ fallback, which renders a constant safely as {$literal: 5} rather than a bare value. So a
+        // values-only assertion would NOT catch the widening for `X = 5` — the values are correct either way.
+        // The NativeOnly leg is what fails if the gate is widened (the shape starts going native and stops
+        // throwing); the Native leg is what fails for the 0/false rows (the command aborts).
+        var collection = SeedWellFormed(
+            nameof(Constant_projection_leaf_is_not_admitted_by_the_count_binder_gate) + leafKind);
+
+        var captured = 7;
+
+        // Each selector pairs a REAL member leaf with the constant/parameter leaf under test, so the projection
+        // is exactly the "one admissible leaf + one bare-value leaf" shape a widened gate would wrongly accept.
+        Expression<Func<Blog, string>> render = leafKind switch
+        {
+            "constant-5" => b => b.Title + "=" + 5,
+            "constant-0" => b => b.Title + "=" + 0,
+            "constant-false" => b => b.Title + "=" + false,
+            _ => b => b.Title + "=" + 7
+        };
+
+        Func<SingleEntityDbContext<Blog>, List<string>> run = leafKind switch
+        {
+            "constant-5" => db => db.Entities.AsNoTracking().Select(b => new { b.Title, X = 5 })
+                .ToList().Select(r => r.Title + "=" + r.X).OrderBy(v => v).ToList(),
+            "constant-0" => db => db.Entities.AsNoTracking().Select(b => new { b.Title, X = 0 })
+                .ToList().Select(r => r.Title + "=" + r.X).OrderBy(v => v).ToList(),
+            "constant-false" => db => db.Entities.AsNoTracking().Select(b => new { b.Title, X = false })
+                .ToList().Select(r => r.Title + "=" + r.X).OrderBy(v => v).ToList(),
+            _ => db => db.Entities.AsNoTracking().Select(b => new { b.Title, X = captured })
+                .ToList().Select(r => r.Title + "=" + r.X).OrderBy(v => v).ToList()
+        };
+
+        // The oracle is in-memory LINQ over the SAME rendering, so the expected values cannot silently drift.
+        List<string> expected;
+        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        {
+            var compiled = render.Compile();
+            expected = db.Entities.AsNoTracking().ToList().Select(compiled).OrderBy(v => v).ToList();
+        }
+
+        // Native: correct values. Reddens if a widened gate emits a bare 0/false and the server aborts the
+        // command, and reddens if a widened gate ever produced a wrong value.
+        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        {
+            Assert.Equal(expected, run(db));
+        }
+
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        {
+            Assert.Equal(expected, run(db));
+        }
+
+        // NativeOnly: the shape DECLINES. This is the leg that reddens the moment the node-kind gate is widened,
+        // for every row of this theory including `X = 5`.
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() => run(db));
+        }
+    }
+
+    [Fact]
+    public void Owned_collection_count_projection_emits_a_null_safe_size()
+    {
+        // $ifNull is MANDATORY, not defensive: $size against a missing or explicitly-null array is a hard server
+        // error that aborts the whole aggregate, not merely a wrong answer. The "missing" and "null" rows in this
+        // seed are what would abort without it.
+        var collection = SeedLengths(nameof(Owned_collection_count_projection_emits_a_null_safe_size));
+
+        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+
+        _ = db.Entities.AsNoTracking().Select(b => new { b.Title, N = b.Posts.Count }).ToList();
+
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$project", mql);
+        Assert.Contains("$size", mql);
+        Assert.Contains("$ifNull", mql);
+        Assert.Contains("Posts", mql);
+    }
+
+    [Fact]
+    public void Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays()
+    {
+        // EF-357, PARTIALLY closed — see the residual pinned by the companion test below before editing this one.
+        //
+        // This shape used to throw ArgumentException in EVERY query mode — not a graceful fallback, no data at
+        // all — because the projection-binding shaper fold (which runs at TRANSLATION time, before
+        // MongoQueryMode is read) rebuilt Queryable.Count over a CollectionShaperExpression typed List<T> and BCL
+        // expression validation rejected the mismatch. It predates the whole EF-322 native work stream.
+        //
+        // It is deliberately NOT native: a bare-scalar terminal projection never populates Select.Projection — a
+        // pre-existing SP3-wide boundary, not a count-specific one — so Route stays Fallback and NativeOnly still
+        // declines cleanly. Closing EF-357 was about correct results, not about routing.
+        //
+        // MEASURED (Task 1 spike, not assumed): the count is folded CLIENT-SIDE over the fetched document — the
+        // emitted pipeline is aggregate([]), with no $size and no $project. The driver's LINQ provider is never
+        // asked to render the count, because the rebuilt Enumerable.Count runs over an already-materialized
+        // collection shaper. This seed is deliberately SeedWellFormed for the reason the companion test explains.
+        var collection = SeedWellFormed(
+            nameof(Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays));
+
+        using (var db = CreateContextWithLogging(collection, MongoQueryMode.Native, BlogModel, out var spyLogger))
+        {
+            var counts = db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList().OrderBy(n => n).ToList();
+            Assert.Equal(new[] { 0, 1, 2, 3 }, counts);
+
+            // Pins the "client-side, over aggregate([])" claim made above: the emitted pipeline for the
+            // Native-mode run IS aggregate([]) exactly, with no $project and no $size stage anywhere in it.
+            var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+            Assert.Contains("aggregate([])", mql);
+            Assert.DoesNotContain("$project", mql);
+            Assert.DoesNotContain("$size", mql);
+        }
+
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        {
+            var counts = db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList().OrderBy(n => n).ToList();
+            Assert.Equal(new[] { 0, 1, 2, 3 }, counts);
+        }
+
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(
+                () => db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList());
+        }
+    }
+
+    [Fact]
+    public void Bare_embedded_collection_Count_projection_still_throws_for_a_missing_or_null_array()
+    {
+        // THE DOCUMENTED RESIDUAL of EF-357, pinned deliberately rather than left to be rediscovered.
+        //
+        // The fix above resolves the TRANSLATION-time crash. It does not make this shape work for a document
+        // whose embedded array is MISSING or explicitly BSON null: the PROJECTION path's CollectionShaperExpression
+        // materializes null rather than an empty list for those two states, so the client-side fold calls
+        // Enumerable.Count(null) and throws ArgumentNullException.
+        //
+        // The asymmetry is the real finding, and it is NOT count-specific: whole-entity materialization of the
+        // very same documents yields Posts.Count == 0 for all three states (empty / missing / explicit null).
+        // Only the projection path fails to normalize. Normalizing it would change results for collection
+        // projections that work today (Select(b => b.Posts) currently returns null for these rows), so it is
+        // tracked as its own ticket rather than widened into this slice.
+        //
+        // Note the native wrapped form is unaffected and CORRECT for all three states — $ifNull maps a
+        // missing/null array to 0 server-side, never reaching this client-side fold.
+        var collection = SeedLengths(
+            nameof(Bare_embedded_collection_Count_projection_still_throws_for_a_missing_or_null_array));
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
-            Assert.Throws<ArgumentException>(() => db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList());
+            Assert.Throws<ArgumentNullException>(
+                () => db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList());
         }
     }
 
@@ -753,4 +1032,170 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         Row("withComments", new BsonArray { PostWithComments("a", 2) }),
         Row("emptyComments", new BsonArray { PostWithComments("a", 0) }),
     ];
+
+    public static TheoryData<string, Expression<Func<Blog, TitleCount>>> CountProjectionShapes() => new()
+    {
+        { "property", b => new TitleCount { Title = b.Title, N = b.Posts.Count } },
+        { "call", b => new TitleCount { Title = b.Title, N = b.Posts.Count() } },
+        { "arithmetic", b => new TitleCount { Title = b.Title, N = b.Posts.Count * 2 } },
+    };
+
+    [Theory]
+    [MemberData(nameof(CountProjectionShapes))]
+    public void Count_projection_equals_the_in_memory_oracle_for_every_array_length_and_state(
+        string name, Expression<Func<Blog, TitleCount>> selector)
+    {
+        // The differential gate, mirroring Count_result_equals_the_in_memory_oracle_for_every_array_length_and_
+        // state for the predicate half: the SAME Expression object is sent to the server and compiled for
+        // client-side evaluation, so the two sides cannot silently diverge the way two hand-written projections
+        // can. The seed's missing / explicitly-null Posts rows are the ones a bare $size would abort on.
+        var collection = Seed($"projdiff_{name}", DifferentialRows());
+
+        List<(string Title, int N)> expected;
+        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        {
+            var compiled = selector.Compile();
+            expected = db.Entities.AsNoTracking().ToList()
+                .Select(compiled).Select(r => (r.Title, r.N)).OrderBy(r => r.Title).ToList();
+        }
+
+        List<(string Title, int N)> actual;
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            actual = db.Entities.AsNoTracking().Select(selector)
+                .ToList().Select(r => (r.Title, r.N)).OrderBy(r => r.Title).ToList();
+        }
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void LongCount_projection_leaf_goes_native()
+    {
+        var collection = SeedLengths(nameof(LongCount_projection_leaf_goes_native));
+
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+
+        var rows = db.Entities.AsNoTracking()
+            .Select(b => new { b.Title, N = b.Posts.LongCount() })
+            .ToList().OrderBy(r => r.Title).ToList();
+
+        Assert.Equal(
+            [("len0", 0L), ("len1", 1L), ("len2", 2L), ("len3", 3L), ("missing", 0L), ("null", 0L)],
+            rows.Select(r => (r.Title, r.N)).ToArray());
+    }
+
+    [Fact]
+    public void Count_projection_through_an_owned_reference_hop_goes_native()
+    {
+        // b.Home.Notes.Count — TryResolveOwnedCollectionPath walks the owned single-reference hop to reach the
+        // collection, the same breadth the predicate half covers.
+        var collection = Seed(nameof(Count_projection_through_an_owned_reference_hop_goes_native),
+            RowWithNotes("none", 0), RowWithNotes("one", 1), RowWithNotes("three", 3));
+
+        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+
+        var rows = db.Entities.AsNoTracking()
+            .Select(b => new { b.Title, N = b.Home.Notes.Count })
+            .ToList().OrderBy(r => r.Title).ToList();
+
+        Assert.Equal(
+            [("none", 0), ("one", 1), ("three", 3)],
+            rows.Select(r => (r.Title, r.N)).ToArray());
+
+        // MEASURED: the resolved array path is specifically "Home.Notes" — the values-only assertion above
+        // cannot distinguish the correct path from a wrong-but-coincidentally-same-shaped one (e.g. a path
+        // that happens to also be empty/short enough to produce the same counts on this seed).
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("Home.Notes", mql);
+    }
+
+    [Fact]
+    public void Count_projection_alongside_sibling_leaves_goes_native()
+    {
+        // len2 carries a non-empty Home.Notes (3 elements, deliberately DIFFERENT from its own Posts.Count of
+        // 2) so the third leaf, Notes = b.Home.Notes.Count, actually discriminates in both directions: plain
+        // SeedLengths seeds every row's Home.Notes as an empty array, so a Notes leaf that silently clobbered
+        // onto the wrong projection slot (e.g. reading Posts's own size, or always reading 0) would still show
+        // 0 on every row and the assertion below would not catch it.
+        var collection = Seed(nameof(Count_projection_alongside_sibling_leaves_goes_native),
+            LenRow("len0", 0), LenRow("len1", 1), LenRowWithNotes("len2", postLength: 2, noteCount: 3),
+            LenRow("len3", 3), Row("missing", posts: null), Row("null", BsonNull.Value));
+
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+
+        var rows = db.Entities.AsNoTracking()
+            .Select(b => new { b.Title, N = b.Posts.Count, Doubled = b.Posts.Count * 2, Notes = b.Home.Notes.Count })
+            .ToList().OrderBy(r => r.Title).ToList();
+
+        Assert.Equal(
+            [("len0", 0, 0, 0), ("len1", 1, 2, 0), ("len2", 2, 4, 3), ("len3", 3, 6, 0),
+                ("missing", 0, 0, 0), ("null", 0, 0, 0)],
+            rows.Select(r => (r.Title, r.N, r.Doubled, r.Notes)).ToArray());
+    }
+
+    [Fact]
+    public void Bare_and_wrapped_count_projections_take_different_paths_from_the_same_model()
+    {
+        // The (I)/(II) disjointness proof. The two halves of this slice fire on the same LINQ construct in the
+        // same model and must not collide: the WRAPPED form populates Select.Projection (Route == Projection) and
+        // is pushed into $project, so NativeOnly succeeds; the BARE form is a bare-scalar projection that never
+        // populates Projection (Route == Fallback), so NativeOnly declines — and only the EF-357 Enumerable.Count
+        // rebuild applies. The split is disjoint BY CONSTRUCTION: MongoProjectionBindingExpressionVisitor's
+        // Count/LongCount arm returns unconditionally whenever Route == Projection, so the switch arm the
+        // EF-357 rebuild lives in only ever sees Route != Projection. Cited by quoted text rather than line
+        // number, because the last round of line-number citations here rotted when the target block was rewritten:
+        // see the "POSITION, precisely" comment on the count-leaf registration in
+        // MongoProjectionBindingExpressionVisitor.VisitMethodCall, the bullet ending "the two arms are disjoint by
+        // construction, not by luck". This test asserts the observable ROUTING outcome (NativeOnly succeeds for
+        // the wrapped shape, throws for the bare one) — it does not exercise or depend on the relative ORDER of
+        // that visitor's internal blocks, which was measured NOT load-bearing for this split (same comment, the
+        // bullet beginning "It must come AFTER TryBindProjectedCollectionNavigationCount").
+        var collection = SeedLengths(nameof(Bare_and_wrapped_count_projections_take_different_paths_from_the_same_model));
+
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            var wrapped = db.Entities.AsNoTracking()
+                .Select(b => new { N = b.Posts.Count }).ToList().Select(r => r.N).OrderBy(n => n).ToList();
+            Assert.Equal(new[] { 0, 0, 0, 1, 2, 3 }, wrapped);
+
+            Assert.Throws<NativeTranslationNotSupportedException>(
+                () => db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList());
+        }
+    }
+
+    [Fact]
+    public void Filtered_count_projection_is_a_known_preexisting_hard_fail_in_every_mode()
+    {
+        // MEASURED (Task 4 probe, not assumed): Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) })
+        // throws System.InvalidOperationException ("The LINQ expression 'o' could not be translated...")
+        // identically under Native, DriverLinq AND NativeOnly — not a graceful decline, no driver-LINQ oracle,
+        // no correct results in ANY mode. An earlier version of this test (and the design doc it was based on)
+        // assumed the shape was merely "deferred for cost, not impossibility" and would fall back gracefully
+        // like the predicate half's excluded shapes do — that assumption was WRONG. The crash happens inside
+        // MongoProjectionBindingExpressionVisitor.Translate, called unconditionally from
+        // MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect at TRANSLATION time, before
+        // MongoQueryMode is ever read by the compile-time gate — so the query mode has no bearing on whether
+        // it crashes, only (potentially) on incidental message text.
+        //
+        // PRE-EXISTING and unrelated to this slice's work: neither Task 2 nor Task 3 touch predicated-Count
+        // recognition inside a projection, so this shape never reaches either task's code paths.
+        //
+        // The exception TYPE is not part of the provider's contract for an unsupported shape (see the
+        // versioning rubric in AGENTS.md) — a type change here is a prompt to re-measure and re-document, not
+        // a regression in itself. This test exists so that if the filtered form ever starts working, or starts
+        // failing differently, someone notices and updates the follow-on slice's characterization of its own
+        // difficulty.
+        var collection = SeedLengths(
+            nameof(Filtered_count_projection_is_a_known_preexisting_hard_fail_in_every_mode));
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(collection, mode, BlogModel);
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => db.Entities.AsNoTracking()
+                    .Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) }).ToList());
+            Assert.Contains("could not be translated", ex.Message);
+        }
+    }
 }
