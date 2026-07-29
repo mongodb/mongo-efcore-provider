@@ -163,6 +163,25 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, objectArrayProjection.Name!);
                         arrayName = objectArrayProjection.Name!;
                     }
+
+                    // EF-358: normalize a MISSING or explicitly-BSON-null stored array to an EMPTY BsonArray, so the
+                    // shaper below enumerates nothing and PopulateCollection returns an EMPTY collection rather than
+                    // null. Empty-not-null is EF Core's contract for a collection navigation, and without this the
+                    // result depends on the POCO's field initializer (IncludeCollection skips GetOrCreate when the
+                    // related-entity sequence is null). The empty collection is built by PopulateCollection through the
+                    // navigation's OWN IClrCollectionAccessor, so a non-List navigation (HashSet<T>, a custom
+                    // collection) gets the right CLR type for free.
+                    //
+                    // The coalesce MUST stay here, at the point of use, and NOT be folded into either assignment site:
+                    // VisitBinary below hard-casts a BsonDocument/BsonArray assignment's right-hand side to
+                    // UnaryExpression (the Expression.TypeAs that BsonDocumentInjectingExpressionVisitor emits), so a
+                    // Coalesce there throws InvalidCastException for every shaper in every query mode.
+                    //
+                    // Note TypeAs yields null both for an ABSENT element and for a present-but-not-an-array element, so
+                    // this treats the two alike; both produced null before, so that is not a regression. See the design
+                    // doc for the superseded root-cause account this comment used to carry.
+                    bsonArrayExpression = Expression.Coalesce(bsonArrayExpression, Expression.New(typeof(BsonArray)));
+
                     var jObjectParameter = Expression.Parameter(typeof(BsonDocument), arrayName + "Object");
                     var ordinalParameter = Expression.Parameter(typeof(int), arrayName + "Ordinal");
 
@@ -253,6 +272,12 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     string? fieldName = null;
                     var fieldRequired = true;
 
+                    // CONTRACT with BsonDocumentInjectingExpressionVisitor: the right-hand side of a
+                    // BsonDocument/BsonArray variable assignment is always an Expression.TypeAs — a
+                    // UnaryExpression — so this cast is safe. If that visitor ever needs a different node
+                    // shape there (a Coalesce, a New), this cast must be widened in the SAME change, or every
+                    // entity and collection shaper throws InvalidCastException in every query mode. EF-358
+                    // ran into exactly this and put its normalization at the point of use instead.
                     var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
                     if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
                     {

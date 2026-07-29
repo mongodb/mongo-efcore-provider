@@ -59,11 +59,11 @@ SP7 Phase 1:
 | 4 | Owned-collection **`Any`** quantifier predicates → `$elemMatch` | `791037b` |
 | 5 | Owned-collection **`All`** quantifier predicates → negated `$elemMatch`; **closes EF-335** | `b087957` |
 | 6 | Owned-collection **`.Count`** in a predicate — array-index `$exists` (constant tier) / null-safe `$size` inside `$expr` (parameterized/degenerate tier) | `1b4c1d6` |
-| 7 | Owned-collection **`.Count` as a PROJECTION leaf** → `{$size: {$ifNull: […]}}` in `$project`; **partially resolves EF-357** (bare-scalar form no longer fails translation) | `f163392` + `0cb1b1b` (branch not yet squashed) |
+| 7 | Owned-collection **`.Count` as a PROJECTION leaf** → `{$size: {$ifNull: […]}}` in `$project`; **partially resolved EF-357 at the time** (bare-scalar form no longer fails translation) — EF-357 was later **fully** closed by EF-358, see below | `f163392` + `0cb1b1b` (branch not yet squashed) |
 
 No JIRA number was filed for slice 7's native-projection half. Two bugs it *measured* were filed: **EF-358**
-(projection-path null, the residual that keeps EF-357 partial) and **EF-359** (filtered `Count(pred)` in a
-projection hard-fails in every mode). See §6.
+(the projection-path null-collapse gap, whose closure also fully closed EF-357 — see §4 and §6) and **EF-359**
+(filtered `Count(pred)` in a projection hard-fails in every mode). See §6.
 
 Refactor interludes (not user-facing): EF-330 (extract `MongoSelectDefinition`), EF-332 (separate the
 native-translation layer from QMTEV), EF-334 (centralize the is-native gate into `ClassifyNativeDisposition`).
@@ -213,9 +213,9 @@ unsquashed branch on top. Nothing is merged to `main` yet — the whole native s
   translation. It is still not native (bare-scalar projection bodies never populate `Projection`), so it takes
   the fallback path — and there, as measured, the count is folded **client-side**: the emitted pipeline is
   `aggregate([])`, no `$project` and no `$size`, so the whole document including the entire array is fetched
-  and counted in process. Results are **correct for present arrays**; a **missing or explicitly-null** stored
-  array still throws `ArgumentNullException` at materialization (see the standalone fact below). `NativeOnly`
-  declines cleanly.
+  and counted in process. Results are **correct for every array state** — a missing or explicitly-null stored
+  array used to throw `ArgumentNullException` at materialization; the EF-358 fix (2026-07-29, see the standalone
+  fact below) closed that residual, so it now returns `0` like every other path. `NativeOnly` declines cleanly.
 
 **Hard-fails in every mode (no driver-LINQ oracle):** cross-collection SelectMany forms outside the native
 slice, three-level+ nested SelectMany, whole-outer SelectMany, and any operator composed *after* a native
@@ -225,14 +225,28 @@ under `Native`, `DriverLinq` and `NativeOnly`; **EF-359**), and an **interposed 
 `Reverse`/`DefaultIfEmpty`/`Concat`) between an owned-collection `Select` and a terminal operator (duplicate-key
 `ArgumentException` from `_collectionShaperMapping.Add`; recorded as a comment on the EF-322 epic).
 
-**A general property of the projection path, not an owned-count detail — and the thing that limits EF-357's
-closure.** Whole-entity materialization **normalizes** a missing or explicitly-null embedded array to an empty
-list (`Posts.Count == 0`); the **projection path does not** — its `CollectionShaperExpression` materializes
-`null`. Measured side by side on the same three documents (empty array / missing field / explicit `null`).
-Consequences: it is why the bare-scalar count fallback above throws `ArgumentNullException` rather than
-returning 0; it is why EF-357 is only *partially* resolved; and it is the first thing the array-projection
-follow-on will hit, since `Select(b => b.Posts)` returns `null` for those rows today and normalizing changes
-that. The **native** path is unaffected — `$ifNull` maps both states to `[]`. Tracked as **EF-358**.
+**CLOSED (EF-358, 2026-07-29) — and the root cause is corrected here, not just the status.** This paragraph
+used to describe the gap as a whole-entity-vs-projection split: whole-entity materialization normalizes a
+missing/explicitly-null embedded array to an empty list, the projection path does not. **That framing was
+measured false.** Pre-fix, *nothing* normalized on *any* path — `MongoProjectionBindingRemovingExpressionVisitor.
+IncludeCollection` skips its fixup loop entirely when `relatedEntities` is `null`, so a materialized navigation
+kept whatever the CLR class's own field initializer left behind (`null` for a plain `{ get; set; }`, `[]` for one
+written `= []`). The earlier "whole-entity normalizes" reading was that initializer masking, not provider
+behavior — the probe model that produced it happened to declare `Blog.Posts = []`. **Post-fix, behavior is
+uniform and initializer-independent on every path** (whole-entity, `Include`, bare and wrapped projection),
+every query mode, every cardinality: a missing or explicitly-null stored array now materializes as an empty
+collection everywhere. Mechanism: the null-collapse conditional was deleted from
+`BsonDocumentInjectingExpressionVisitor`'s `CollectionShaperExpression` case, and a `Coalesce` to an empty
+`BsonArray` was added at the point of use in `MongoProjectionBindingRemovingExpressionVisitor`'s
+`CollectionShaperExpression` case, feeding `PopulateCollection` through the navigation's own
+`IClrCollectionAccessor` (so a non-`List` navigation is correct for free). The cross-visitor contract — the
+injector's assignment must keep a `UnaryExpression` right-hand side, because `VisitBinary` hard-casts it — is
+why the coalesce sits at the point of use rather than folded into the injector's own assignment; folding it in
+throws `InvalidCastException` for every collection shaper in every mode. Consequences: the bare-scalar count
+fallback now returns `0` instead of throwing `ArgumentNullException`, and **EF-357 is now FULLY closed** (see
+§6). Primitive-collection *properties* are unaffected — that is a property-serializer path, not a
+`CollectionShaperExpression`. See the rewritten note in `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for
+the full mechanism, the parity-claim split (bare vs. wrapped count), and the `TypeAs` conflation.
 
 **Not native at all:** `VectorSearch`; non-TPH `OfType`.
 
@@ -259,7 +273,9 @@ that. The **native** path is unaffected — `$ifNull` maps both states to `[]`. 
      "deferred for cost, not impossibility, expressible as `$size` over `$filter`". The *rendering* claim still
      stands; the *graceful-fallback* assumption was written before the measurement and does not.
   2. **Array projections** (`Select(b => b.Posts)`), blocked on an alias-driven array read-back in the DOM
-     shaper — and, before that is observable-correct, on EF-358 (see §4).
+     shaper (the DOM shaper's collection case hard-casts to `ObjectArrayProjectionExpression`). The EF-358
+     precondition this bullet used to carry no longer applies — EF-358 closed (see §4) — so this is now blocked
+     on the DOM-shaper mechanism alone.
   3. **Bare-scalar projection pushdown** — the SP3-wide boundary that keeps `Select(b => b.Posts.Count)` on the
      fallback path; not count-specific, and lifting it would light up more than counts.
 
@@ -270,7 +286,7 @@ that. The **native** path is unaffected — `$ifNull` maps both states to `[]`. 
 
 ---
 
-## 6. Carried tickets (EF-353…357 filed during EF-347; EF-358/359 during owned-data slice 7; all open)
+## 6. Carried tickets (EF-353…357 filed during EF-347; EF-358/359 during owned-data slice 7; EF-357/EF-358 now closed)
 
 | Ticket | Type | Summary | Severity |
 |---|---|---|---|
@@ -278,12 +294,14 @@ that. The **native** path is unaffected — `$ifNull` maps both states to `[]`. 
 | **EF-354** | Bug | `SelectMany(o => o.Items, (o,i) => o)` (whole-outer, explicit method-call spelling) **crashes** ("Id missing") instead of declining cleanly; query-syntax spelling already declines | Loud crash, not wrong data |
 | **EF-355** | Bug | Filtered reference SelectMany: folded-predicate split in `TrySplitCorrelation` can **silently drop a `!= null` inner filter** → returns all children | Silent wrong data, **latent/unreachable** today (EF emits nested, not folded, shape) |
 | **EF-356** | Bug | Mixed whole-entity + computed-arithmetic projection (`new { c, Total = c.Age * c.Score }`) returns **silently wrong** values (`Score²`) — mixed shaper has no `BinaryExpression` handling | Silent wrong data, **pre-existing**, pinned by a documenting test |
-| **EF-357** | Bug | Bare embedded-collection `.Count` projection (`Select(b => b.Posts.Count)`) threw `ArgumentException` in **every** query mode — a `MongoProjectionBindingExpressionVisitor` gap, not a native decline. **PARTIALLY resolved by owned-data slice 7** (`0cb1b1b`): the translation-time `ArgumentException` is gone and present arrays return correct counts; a **missing or explicitly-null** array still throws `ArgumentNullException` at materialization. Root cause traced (`MatchTypes` passes a `List<T>` shaper straight through for an `IQueryable<T>` target). **Not closed** — resolution is the owner's call | Was: hard fail every mode. Now: correct for present arrays, runtime throw for missing/null |
-| **EF-358** | Bug | The **projection path** materializes `null` for a missing or explicitly-null embedded array; **whole-entity** materialization of the same documents normalizes to an empty list. Measured side by side. General property of the projection path, not a count detail; it is the residual that keeps EF-357 partial, and the first obstacle for array projections. Fixing it **changes results that work today** (`Select(b => b.Posts)` returns `null` for those rows now), so it needs its own verification pass | Runtime throw / inconsistent shape, **pre-existing** |
-| **EF-359** | Bug | Filtered `Count(pred)` in a projection (`Select(b => new { N = b.Posts.Count(p => p.Rank > 0) })`) throws `InvalidOperationException` in **all three** query modes — translation-time crash in `MongoProjectionBindingExpressionVisitor.Translate`, before `MongoQueryMode` is read. Same shape of defect as EF-357; **not** the graceful decline earlier docs assumed. Exception type is not contract | Hard fail every mode, **pre-existing**, pinned by a documenting test |
+| **EF-357** | Bug | **CLOSED** (branch `EF-358`, 2026-07-29). Bare embedded-collection `.Count` projection (`Select(b => b.Posts.Count)`) threw `ArgumentException` in **every** query mode — a `MongoProjectionBindingExpressionVisitor` gap, not a native decline. Owned-data slice 7 (`0cb1b1b`) fixed the translation-time `ArgumentException` and made present arrays return correct counts, leaving a missing/explicitly-null-array `ArgumentNullException` at materialization as a residual (that residual was EF-358). The EF-358 fix closed that residual, so `Select(b => b.Posts.Count)` now returns correct counts for every array state | Was: hard fail every mode. Now: correct for every array state |
+| **EF-358** | Bug | **CLOSED** (branch `EF-358`, 2026-07-29). Root cause corrected during investigation — it is **not** a whole-entity-vs-projection split; pre-fix, nothing normalized a missing/explicitly-null embedded array on *any* path, and the apparent whole-entity normalization was CLR field-initializer masking (`MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` skips its fixup loop when `relatedEntities` is `null`). Fix: delete the null-collapse conditional from `BsonDocumentInjectingExpressionVisitor`'s `CollectionShaperExpression` case; add a `Coalesce` to an empty `BsonArray` at the point of use in `MongoProjectionBindingRemovingExpressionVisitor`'s `CollectionShaperExpression` case. Result is uniform, initializer-independent normalization on every path/mode/cardinality; closes EF-357's residual. See §4 and `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for the full mechanism | Was: runtime throw / inconsistent shape. Now: closed |
+| **EF-359** | Bug | Filtered `Count(pred)` in a projection (`Select(b => new { N = b.Posts.Count(p => p.Rank > 0) })`) throws `InvalidOperationException` in **all three** query modes — translation-time crash in `MongoProjectionBindingExpressionVisitor.Translate`, before `MongoQueryMode` is read. Same shape of defect as EF-357; **not** the graceful decline earlier docs assumed. Exception type is not contract. Untouched by the EF-358 fix | Hard fail every mode, **pre-existing**, pinned by a documenting test |
 
 Of these, **EF-356** (reachable today under `Native`) and **EF-355** (latent) are the two that produce (or
-could produce) *silent* wrong data.
+could produce) *silent* wrong data. Confirmed unaffected by the EF-358 fix: neither EF-356 nor EF-355 touches
+a `CollectionShaperExpression`'s null/missing-array handling — EF-356 is a mixed-shaper arithmetic-leaf gap and
+EF-355 is a predicate-folding gap in `TrySplitCorrelation`, both orthogonal to the two edits EF-358 made.
 
 Also recorded as a **comment on the EF-322 epic** rather than its own ticket (a family of shapes, same
 fall-through root cause as EF-357/EF-359): an interposed `Distinct`/`Take`/`Reverse`/`DefaultIfEmpty`/`Concat`
@@ -446,8 +464,13 @@ predicate, unified with bare `Any()` as one array-cardinality representation.
 
 **The remaining native work is SP7 Phase 2 (streaming breadth: reducer/aggregate, collection-Include arrays,
 reference-Include) plus the parity cutover that retires driver-LINQ.** The nearest owned-data follow-on is now
-embedded-collection projections (the bare form is a separate, pre-existing hard-fail predating this whole work
-stream; an arithmetic projection leaf containing a count already goes native as an incidental widening).
+**array-valued** embedded-collection projections (`Select(b => b.Posts)`), blocked on an alias-driven array
+read-back mechanism in the DOM shaper; an arithmetic projection leaf containing a count already goes native as
+an incidental widening. **This paragraph's parenthetical about the bare-count form is STALE; corrected here.**
+It used to say the bare form "is a separate, pre-existing hard-fail predating this whole work stream" — true
+only before owned-data slice 7. Since slice 7 the bare form (`Select(b => b.Posts.Count)`) no longer fails
+translation; since EF-358 (2026-07-29) it returns correct results for every array state, including missing or
+explicitly-null. See §4 and §6 for the current disposition.
 
 Empirically, 2395 EF10 spec tests still lean on the driver-LINQ fallback — roughly 1744 for correct results
 (real coverage gaps) and ~647 only for the expected exception shape (re-baselined at cutover). That number has

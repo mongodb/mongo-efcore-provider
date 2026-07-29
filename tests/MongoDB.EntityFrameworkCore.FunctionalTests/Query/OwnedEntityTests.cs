@@ -575,11 +575,28 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Empty(actual.children);
     }
 
+    // RENAMED (EF-358) from "..._is_null_when_null" / "..._is_null_when_missing". The old names asserted a
+    // provider CONTRACT that never existed. Verified by measurement (EF-358 task-2-report.md addendum) and
+    // in source: pre-EF-358, the provider computed `null` for a missing or explicitly-null stored array on
+    // EVERY code path and never created a collection for that row at all — not just here. What actually
+    // produced the OLD "null" observed by these four tests was a SEPARATE mechanism, one layer up, in
+    // `MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` — the fixup EF Core's own
+    // auto-included `IncludeExpression` runs for every owned collection navigation (with or without an
+    // explicit `.Include()`). That method only calls `navigation.GetCollectionAccessor()!.GetOrCreate(entity,
+    // forMaterialization: true)` inside "if (relatedEntities != null)". Pre-fix, `relatedEntities` (the
+    // provider's computed value) was that same `null`, so the fixup was skipped ENTIRELY and the property was
+    // left exactly as the CLASS'S OWN field initializer set it — `null` for `SimpleNonNullableCollection` and
+    // `SimpleNullableCollection`, since neither declares `children { get; set; } = [];`. Had either class
+    // been written with that initializer, these tests would have observed "empty" even on the OLD code, for
+    // the IDENTICAL underlying null computation — i.e. the old assertions were pinning their own POCO's
+    // authoring style, not provider semantics. EF-358 removes that dependency: the provider now always
+    // materializes a real (possibly empty) collection, so the `IncludeCollection` fixup always runs and every
+    // class gets the same, uniform answer regardless of whether it wrote a defensive initializer.
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
-    public void OwnedEntity_non_nullable_collection_is_null_when_null(QueryTrackingBehavior queryTrackingBehavior)
+    public void OwnedEntity_non_nullable_collection_is_empty_when_null(QueryTrackingBehavior queryTrackingBehavior)
     {
         var collection = database.CreateCollection<SimpleNonNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([
@@ -590,14 +607,14 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: x => x.UseQueryTrackingBehavior(queryTrackingBehavior));
 
         var actual = db.Entities.First();
-        Assert.Null(actual.children);
+        Assert.Empty(actual.children);
     }
 
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
-    public void OwnedEntity_nullable_collection_is_null_when_null(QueryTrackingBehavior queryTrackingBehavior)
+    public void OwnedEntity_nullable_collection_is_empty_when_null(QueryTrackingBehavior queryTrackingBehavior)
     {
         var collection = database.CreateCollection<SimpleNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([
@@ -608,14 +625,15 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: x => x.UseQueryTrackingBehavior(queryTrackingBehavior));
 
         var actual = db.Entities.First();
-        Assert.Null(actual.children);
+        Assert.NotNull(actual.children);
+        Assert.Empty(actual.children);
     }
 
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
-    public void OwnedEntity_non_nullable_collection_is_null_when_missing(QueryTrackingBehavior queryTrackingBehavior)
+    public void OwnedEntity_non_nullable_collection_is_empty_when_missing(QueryTrackingBehavior queryTrackingBehavior)
     {
         var collection = database.CreateCollection<MissingNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([new MissingNullableCollection()]);
@@ -624,14 +642,14 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: x => x.UseQueryTrackingBehavior(queryTrackingBehavior));
 
         var actual = db.Entities.First();
-        Assert.Null(actual.children);
+        Assert.Empty(actual.children);
     }
 
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
-    public void OwnedEntity_nullable_collection_is_null_when_missing(QueryTrackingBehavior queryTrackingBehavior)
+    public void OwnedEntity_nullable_collection_is_empty_when_missing(QueryTrackingBehavior queryTrackingBehavior)
     {
         var collection = database.CreateCollection<MissingNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([new MissingNullableCollection()]);
@@ -640,7 +658,8 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: x => x.UseQueryTrackingBehavior(queryTrackingBehavior));
 
         var actual = db.Entities.First();
-        Assert.Null(actual.children);
+        Assert.NotNull(actual.children);
+        Assert.Empty(actual.children);
     }
 
     [Fact]
@@ -1186,12 +1205,23 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_can_be_tested_for_null()
     {
+        // The PREDICATE here is unaffected by EF-358: `e.children == null` still translates against the
+        // stored document's own field (missing, for row "1") and still correctly matches it — that part of
+        // this test's name remains true. What changed is the MATERIALIZED value of the matched row's
+        // `children`, from `null` to `[]` (EF-358 — see the comment block above the four renamed
+        // "..._is_empty_when_null/missing" theories for the mechanism). `inserted` is what actually gets
+        // written (children left unset, so the stored document's field stays MISSING, same bytes as before
+        // EF-358); `expected` is the separate comparison value, with `children = []` to match the new
+        // materialized result. They must stay two different objects — setting `children = []` on the
+        // INSERTED object would write an empty array to the document instead of omitting the field, which
+        // would silently change what this test seeds, not just what it asserts.
         var collection = database.CreateCollection<A>();
-        var expected = new A { _id = "1" };
+        var inserted = new A { _id = "1" };
+        var expected = new A { _id = "1", children = [] };
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.AddRange(expected, new A { _id = "2", children = [new B { name = "child1" }, new B { name = "child2" }] });
+            db.Entities.AddRange(inserted, new A { _id = "2", children = [new B { name = "child1" }, new B { name = "child2" }] });
             db.SaveChanges();
         }
 
@@ -1205,12 +1235,17 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_field_can_be_tested_for_null()
     {
+        // Same reasoning as OwnedEntity_collection_can_be_tested_for_null immediately above: the predicate
+        // `e.children == null` is unaffected (still matches row "1" by its missing stored field); only the
+        // MATERIALIZED value flips from `null` to `[]` post-EF-358. `inserted` (children left unset) is what
+        // gets written, unchanged; `expected` (children = []) is the separate comparison value.
         var collection = database.CreateCollection<AField>();
-        var expected = new AField { _id = "1" };
+        var inserted = new AField { _id = "1" };
+        var expected = new AField { _id = "1", children = [] };
 
         {
             using var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<AField>().OwnsMany(f => f.children));
-            db.Entities.AddRange(expected,
+            db.Entities.AddRange(inserted,
                 new AField { _id = "2", children = [new B { name = "child1" }, new B { name = "child2" }] });
             db.SaveChanges();
         }

@@ -1,5 +1,17 @@
 # Native owned-collection count projections + EF-357 — Implementation Plan
 
+> **SUPERSEDED IN PART by EF-358 (2026-07-29).** This is an as-built record of a completed, shipped slice and is
+> left as written below — but every place in this file that describes EF-357 as only "partially" resolved, or
+> that pins the missing/null-array `ArgumentNullException` as an open residual, was closed by the EF-358 branch:
+> the projection path now normalizes a missing or explicitly-null embedded array to an empty collection on every
+> path, so the bare count returns `0` instead of throwing. **The corrected root cause also differs from what this
+> plan assumed** (Task 3's framing, and the design doc it points to, describe the gap as "whole-entity
+> normalizes, projection does not" — that is WRONG; pre-fix nothing normalized on any path, and the apparent
+> whole-entity normalization was a CLR field-initializer artifact, not provider behavior). See
+> `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s rewritten projection-path-normalization note and
+> `docs/native-query-status-EF-322.md` §4/§6 for the corrected, current story. Do not copy this file's residual
+> framing, or the inverted test in Task 3 Step 1 below, into new work.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make an unfiltered owned-collection count leaf inside an anonymous/DTO projection emit a native `$project` (`{$size: {$ifNull: ["$path", []]}}`), and close EF-357 so the bare `Select(b => b.Posts.Count)` form returns correct results instead of throwing in every query mode.
@@ -342,6 +354,14 @@ git commit -m "EF-322: owned-collection count projection leaf goes native"
 > residual, and a new ticket filed for the projection-path null normalization. EF-357 is resolved as
 > **partial**, not closed outright. Do not widen this task to fix the shaper null — that changes results for
 > collection projections that work today and is its own decision.
+>
+> **SUPERSEDED (EF-358, 2026-07-29).** The residual this box describes was closed by a follow-on slice: the
+> missing/explicitly-null-array `ArgumentNullException` is gone, `Select(b => b.Posts.Count)` now returns `0`
+> for those rows, and EF-357 is fully closed. The Step 1 test named
+> `Bare_embedded_collection_Count_projection_still_throws_for_a_missing_or_null_array` below no longer exists —
+> it was renamed to `Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array` and its
+> assertion inverted (`Assert.Throws<ArgumentNullException>` → `Assert.Equal(0, ...)`). Do not resurrect the old
+> test or its throw assertion from the code block below.
 
 **Files:**
 - Modify: `src/MongoDB.EntityFrameworkCore/Query/Visitors/MongoProjectionBindingExpressionVisitor.cs` (the `method.DeclaringType == typeof(Queryable)` switch at `:431-454`)
@@ -721,6 +741,17 @@ Expected: `Native` 4589 passed / 0 failed / 19 skipped; `NativeOnly` 2194 / 2395
 **Check BOTH axes per test, not just the `NativeOnly` pass set.** A test can be `NativeOnly`-failing *and* have a `Native`-mode MQL baseline that a slice changes; an inventory built only from the pass set missed exactly that once (`Select_All`, owned-data slice 5). `Native` failing zero tests is itself the proof no `Native`-mode MQL baseline moved — any baseline that changed shows up as a failure against its checked-in string. If `Native` shows any failure, re-baseline per the `EF_TEST_REWRITE_BASELINES=1` procedure in `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` and report which tests moved and why.
 
 Note also: `Customers.SelectMany(c => c.Orders)`-style reference-collection tests exercise the `Queryable` switch this slice touched. Confirm `NorthwindSelectQueryMongoTest` and `NorthwindIncludeQueryMongoTest` are unchanged.
+
+> **SUPERSEDED (EF-358, 2026-07-29).** Every "EF-357 is partially resolved" / "residual" statement in Steps 3–5
+> below, and in the ticket instructions that follow them, describes the state AS OF THIS SLICE. A follow-on
+> slice (branch `EF-358`) closed that residual: the projection path now normalizes a missing or
+> explicitly-null embedded array to an empty collection, the bare count returns `0` instead of throwing
+> `ArgumentNullException`, and EF-357 is fully closed. It also **corrected the root cause** these steps assumed
+> — "whole-entity materialization normalizes, the projection path does not" (Step 3.3's bullet, Step 8, and the
+> ticket text in Step 5 all say this) is WRONG; nothing normalized on any path pre-fix, and the apparent
+> whole-entity normalization was a CLR field-initializer artifact. See the rewritten note in
+> `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` and `docs/native-query-status-EF-322.md` §4/§6 for the
+> corrected, current text — do not apply Steps 3–5 below as written to any future edit of those files.
 
 - [ ] **Step 3: Extend the `.Count` note in `Query/AGENTS.md`**
 

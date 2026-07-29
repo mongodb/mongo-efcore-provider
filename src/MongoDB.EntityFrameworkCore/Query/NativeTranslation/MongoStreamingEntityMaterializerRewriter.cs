@@ -517,17 +517,19 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 Expression.Break(breakTarget)),
             breakTarget);
 
-        // No required-scalar presence to enforce: the loop is the whole fill.
-        if (plan.RequiredPresence.Count == 0)
+        // Nothing to enforce or normalize after the loop: the loop is the whole fill.
+        if (plan.RequiredPresence.Count == 0 && plan.OwnedCollections.Count == 0)
         {
             return loop;
         }
 
-        // Reset every required-scalar presence flag to false BEFORE this fill pass, then enforce them AFTER.
-        // The reset matters for owned-collection element plans, whose locals/flags are reused across array
-        // iterations: a required scalar present in element N but absent in element N+1 must still throw for
-        // N+1. (For the root/owned-reference once-only cases the reset is redundant with CollectLocals but
-        // harmless.) Each flag still false after the loop ⇒ the required element was MISSING ⇒ throw the same
+        // Reset every required-scalar presence flag to false, and every owned-collection accumulator to null,
+        // BEFORE this fill pass; enforce/normalize them AFTER. The reset matters for owned-collection element
+        // plans, whose locals/flags are reused across array iterations: a required scalar present in element N
+        // but absent in element N+1 must still throw for N+1, and — by the same reuse argument — an array
+        // present in element N but absent in element N+1 must not inherit element N's accumulator. (For the
+        // root/owned-reference once-only cases both resets are redundant with CollectLocals but harmless.)
+        // Each presence flag still false after the loop ⇒ the required element was MISSING ⇒ throw the same
         // InvalidOperationException the DOM / driver-LINQ binding path throws (BsonBinding.GetPropertyValue).
         var body = new List<Expression>();
         foreach (var (_, presenceFlag) in plan.RequiredPresence)
@@ -535,7 +537,33 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             body.Add(Expression.Assign(presenceFlag, Expression.Constant(false)));
         }
 
+        foreach (var collection in plan.OwnedCollections)
+        {
+            body.Add(Expression.Assign(collection.List, Expression.Default(collection.List.Type)));
+        }
+
         body.Add(loop);
+
+        // EF-358: normalize an ABSENT owned collection to an EMPTY accumulator. Two states reach this point
+        // with the accumulator still null — the array element was MISSING (the name-dispatch loop above never
+        // matched its element name, so BuildCollectionLoop never ran at all) or it was an explicit BSON Null
+        // (BuildCollectionLoop consumed the null and left the accumulator alone). Both must materialize as an
+        // EMPTY CLR collection: that is EF Core's contract for a collection navigation (verified against
+        // EF 8/9/10 — empty-not-null regardless of the CLR type's nullability or field initializer), and it is
+        // what the DOM shaper does for the same two states. Leaving the accumulator null instead makes
+        // IncludeCollection skip both its fixup loop AND its GetOrCreate call, so the navigation would retain
+        // whatever the POCO's own field initializer left behind — null for a plain `{ get; set; }`, `[]` for one
+        // written `= []` — making the observable result depend on the user's field initializer. Note the
+        // List<TElement> built here is only the ACCUMULATOR handed to IncludeCollection; the collection actually
+        // assigned to the navigation is still created by the navigation's own IClrCollectionAccessor
+        // (GetOrCreate), so a non-List navigation type such as HashSet<T> still materializes correctly.
+        foreach (var collection in plan.OwnedCollections)
+        {
+            body.Add(
+                Expression.IfThen(
+                    Expression.Equal(collection.List, Expression.Constant(null, collection.List.Type)),
+                    Expression.Assign(collection.List, Expression.New(collection.List.Type))));
+        }
 
         foreach (var (property, presenceFlag) in plan.RequiredPresence)
         {
@@ -554,10 +582,19 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     /// <summary>
     /// Build the array loop for an owned collection. The reader is positioned at the array value (after the
-    /// element name). If the value is BSON Null the collection is left empty (matching the DOM
-    /// <c>bsonArray == null ? null</c> semantics — IncludeCollection still creates an empty CLR collection).
-    /// Otherwise each array element is read into the element plan's locals (reassigned per iteration), the
-    /// 1-based <c>counter</c> supplies the synthesized ordinal key, and the constructed element is appended.
+    /// element name). If the value is BSON Null the null is consumed and the accumulator is left NULL — the
+    /// post-loop normalization in <see cref="BuildFillLoop"/> turns that into an empty accumulator (EF-358),
+    /// which is also what covers a MISSING array element (this method never runs for one). Otherwise each array
+    /// element is read into the element plan's locals (reassigned per iteration), the 1-based <c>counter</c>
+    /// supplies the synthesized ordinal key, and the constructed element is appended.
+    /// <para>
+    /// This comment previously claimed "the collection is left empty … IncludeCollection still creates an empty
+    /// CLR collection". Both halves were FALSE and are corrected here rather than preserved: nothing assigned
+    /// the accumulator on this branch, and <see cref="IncludeCollection{TIncludingEntity,TIncludedEntity}"/>
+    /// skips its <c>GetOrCreate</c> call entirely when the accumulator is null — so a missing or explicitly-null
+    /// stored array streamed back as whatever the POCO's field initializer left, i.e. <c>null</c> for a plain
+    /// auto-property.
+    /// </para>
     /// </summary>
     private Expression BuildCollectionLoop(CollectionPlan collection)
     {
@@ -590,8 +627,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 elementBreak),
             Expression.Call(_reader, ReadEndArrayMethod));
 
-        // A BSON Null array value: consume the null and leave the list null (IncludeCollection's
-        // GetOrCreate still produces an empty CLR collection on the entity).
+        // A BSON Null array value: consume the null and leave the accumulator null. BuildFillLoop's post-loop
+        // normalization then makes it an EMPTY accumulator — the same treatment a MISSING array element gets
+        // (which reaches no branch here at all). Normalizing in ONE post-loop place rather than here is what
+        // makes the two absent states impossible to fix asymmetrically.
         return Expression.IfThenElse(
             Expression.Equal(
                 Expression.Call(_reader, GetCurrentBsonTypeMethod),

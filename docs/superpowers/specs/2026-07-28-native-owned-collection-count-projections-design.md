@@ -12,6 +12,13 @@ native-projection half; the two bugs this slice measured were filed as **EF-358*
 **EF-359** (filtered `Count(pred)` hard-fails in every mode). The pre-existing interposed-operator gap
 (`Distinct`/`Take`/`Reverse`/`DefaultIfEmpty`/`Concat` between an owned-collection `Select` and a terminal
 operator) is recorded as a comment on the **EF-322** epic.*
+*SUPERSEDED IN PART by EF-358 (2026-07-29): this document is left as-built below, but every "PARTIALLY resolved"
+/ "residual" statement about EF-357 in this file is now stale — a follow-on slice closed the missing/null-array
+residual and EF-357 is FULLY closed. That slice also found the root cause this document assumes (see §7's
+bullet below) was WRONG: it is not a whole-entity-vs-projection split; nothing normalized on any
+path pre-fix, and the "whole-entity normalizes" reading was a CLR field-initializer artifact of the measuring
+probe's own model, not provider behavior. See `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s rewritten
+note and `docs/native-query-status-EF-322.md` §4/§6 for the corrected story.*
 
 ---
 
@@ -27,9 +34,13 @@ today by a documenting test that asserts the throw:
 `NativeOwnedCollectionCountTests.Bare_embedded_collection_Count_projection_is_a_known_preexisting_limitation`
 (`tests/…/Query/NativeOwnedCollectionCountTests.cs:442-461`). *(AS BUILT: that test name no longer exists — this
 slice renamed it away, because the shape it documented changed. The name is kept here as written because §1
-describes the PRE-slice state; the post-slice pins are
+describes the PRE-slice state; the post-slice pins were
 `Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays` and
 `..._still_throws_for_a_missing_or_null_array`.)*
+*SUPERSEDED (EF-358, 2026-07-29): `..._still_throws_for_a_missing_or_null_array` no longer exists either — a
+follow-on slice renamed and inverted it to
+`Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array`, asserting `0` rather than
+`Assert.Throws<ArgumentNullException>`. Do not copy the old name or its throw assertion into new work.*
 
 **(b) A count leaf inside a projection is not natively representable.**
 `ctx.Blogs.Select(b => new { b.Title, N = b.Posts.Count })` does not emit a native `$project`. This is the
@@ -310,6 +321,15 @@ inventory missed a flip (`Select_All`) that had a changed `Native`-mode MQL base
 - **The projection path's missing/null-array normalization gap** (added as-built, filed as **EF-358**): the
   projection path materializes `null` where whole-entity materialization normalizes to an empty list. This is
   the residual that keeps EF-357 only partially resolved, and it blocks array-valued projections below.
+  **SUPERSEDED (EF-358, 2026-07-29):** closed by a follow-on slice, and the root cause stated here is WRONG —
+  it is not a whole-entity-vs-projection split. Nothing normalized a missing/explicitly-null embedded array on
+  *any* path pre-fix; the apparent whole-entity normalization was a CLR field-initializer artifact
+  (`MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` skips its fixup loop when
+  `relatedEntities` is `null`, so a materialized navigation kept whatever the CLR class's own initializer left).
+  Post-fix, normalization is uniform and initializer-independent on every path/mode/cardinality, and EF-357 is
+  now fully closed. It does **not** unblock array-valued projections below — those remain blocked on the
+  unrelated DOM-shaper mechanism named there. See `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s rewritten
+  note for the full corrected mechanism.
 - **The `MatchTypes` root-cause repair** (`MongoProjectionBindingExpressionVisitor.cs:711-718`), which would
   unblock `First`/`Any`/`Sum`/… over a collection shaper alongside `Count`.
 - **Array-valued projections**, blocked on an alias-driven array read-back mechanism in the DOM shaper.

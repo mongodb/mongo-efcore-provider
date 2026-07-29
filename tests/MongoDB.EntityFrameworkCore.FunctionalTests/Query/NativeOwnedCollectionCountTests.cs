@@ -459,10 +459,11 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         // (ArgumentException, from a MongoProjectionBindingExpressionVisitor gap) long before the EF-322
         // native-query work began; that translation-time crash is now fixed, and TRANSLATION now succeeds with
         // CORRECT values for a document whose array is present — see
-        // Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays below. A missing
-        // or explicitly-null array still throws (now ArgumentNullException, at MATERIALIZATION rather than
-        // translation) — the documented residual, pinned by
-        // Bare_embedded_collection_Count_projection_still_throws_for_a_missing_or_null_array below.
+        // Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays below. EF-357 is
+        // now FULLY closed: a missing or explicitly-null array used to throw ArgumentNullException at
+        // MATERIALIZATION (Enumerable.Count(null)) — EF-358 fixed that by normalizing the projection path's
+        // missing/null array to an empty collection — see
+        // Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array below.
         var collection = SeedLengths(nameof(Arithmetic_projection_leaf_containing_a_count_goes_native));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
@@ -666,7 +667,9 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays()
     {
-        // EF-357, PARTIALLY closed — see the residual pinned by the companion test below before editing this one.
+        // EF-357 is now FULLY closed — see
+        // Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array below, which pins
+        // the second half of that closure (EF-358's materialization-time fix).
         //
         // This shape used to throw ArgumentException in EVERY query mode — not a graceful fallback, no data at
         // all — because the projection-binding shaper fold (which runs at TRANSLATION time, before
@@ -711,31 +714,35 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     }
 
     [Fact]
-    public void Bare_embedded_collection_Count_projection_still_throws_for_a_missing_or_null_array()
+    public void Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array()
     {
-        // THE DOCUMENTED RESIDUAL of EF-357, pinned deliberately rather than left to be rediscovered.
+        // EF-357 is now FULLY closed, and this test records the second half of that closure. Owned-data slice 7
+        // removed the TRANSLATION-time ArgumentException; EF-358 removed the MATERIALIZATION-time
+        // ArgumentNullException this test used to assert, by making EVERY path — projection included —
+        // normalize a missing or explicitly-null stored array to an empty collection. NOT "matching whole-entity,
+        // which always did" — measured false: pre-fix nothing normalized on any path, including whole-entity;
+        // see ProjectedCollectionNormalizationTests' class doc comment and the src/ EF-358 comments for the
+        // corrected mechanism (a CLR field-initializer artifact, not a provider guarantee, was what made
+        // whole-entity APPEAR to already normalize in some fixtures).
         //
-        // The fix above resolves the TRANSLATION-time crash. It does not make this shape work for a document
-        // whose embedded array is MISSING or explicitly BSON null: the PROJECTION path's CollectionShaperExpression
-        // materializes null rather than an empty list for those two states, so the client-side fold calls
-        // Enumerable.Count(null) and throws ArgumentNullException.
+        // The shape is still NOT native: a bare-scalar projection body never populates Select.Projection, which
+        // is the SP3-wide bare-scalar boundary rather than anything count-specific, so the count is still folded
+        // client-side over aggregate([]) — see
+        // Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays, which pins that
+        // MQL. What changed is only that the client-side fold now receives an empty collection instead of null.
         //
-        // The asymmetry is the real finding, and it is NOT count-specific: whole-entity materialization of the
-        // very same documents yields Posts.Count == 0 for all three states (empty / missing / explicit null).
-        // Only the projection path fails to normalize. Normalizing it would change results for collection
-        // projections that work today (Select(b => b.Posts) currently returns null for these rows), so it is
-        // tracked as its own ticket rather than widened into this slice.
-        //
-        // Note the native wrapped form is unaffected and CORRECT for all three states — $ifNull maps a
-        // missing/null array to 0 server-side, never reaching this client-side fold.
+        // The native WRAPPED form was always correct for all three states via $ifNull and is unaffected.
         var collection = SeedLengths(
-            nameof(Bare_embedded_collection_Count_projection_still_throws_for_a_missing_or_null_array));
+            nameof(Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array));
 
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
-            Assert.Throws<ArgumentNullException>(
-                () => db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList());
+
+            var counts = db.Entities.AsNoTracking()
+                .Select(b => b.Posts.Count).ToList().OrderBy(n => n).ToList();
+
+            Assert.Equal([0, 0, 0, 1, 2, 3], counts);
         }
     }
 

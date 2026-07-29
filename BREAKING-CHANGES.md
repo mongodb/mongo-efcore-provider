@@ -6,6 +6,61 @@ In order to evolve the provider as we introduce new features, we will be using t
 
 ## Breaking changes in 8.5.0 / 9.2.0 / 10.1.0
 
+### A missing or `null` embedded array now materializes as an empty collection, not `null`
+
+#### Old behavior
+
+When a stored document had no field at all for an embedded (owned) collection, or had that field explicitly set to BSON `null`, the provider created no collection for the navigation. What you observed then depended on your own class: a navigation declared as a plain `public List<Post> Posts { get; set; }` read back as `null`, while one declared `public List<Post> Posts { get; set; } = []` read back as an empty collection, because the field initializer had already supplied one.
+
+Projecting the collection directly made the `null` unambiguous and usable, since no field initializer was involved: `Select(b => b.Posts)` returned `null` for those documents, so `posts is null` was a reliable test for "the stored array was absent or `null`", as distinct from "the stored array was present but empty".
+
+#### New behavior
+
+A missing or explicitly-`null` embedded array now materializes as an **empty** collection on every read path — whole-entity queries, `Include`, and projections alike — regardless of how the navigation property is declared. The collection is created through the navigation's own collection accessor, so a `HashSet<T>` or custom collection navigation gets its declared type.
+
+The distinction between "the stored array was absent or `null`" and "the stored array was present but empty" is therefore no longer observable through a materialized collection navigation.
+
+Nullable primitive collection *properties* (for example `List<string>? Tags`) are unaffected and still read back as `null`, because they map through a property serializer with its own nullability semantics rather than as a collection navigation.
+
+**This can change stored documents, through a read-modify-write cycle.** The write path itself is unchanged: assigning `null` to a collection navigation and saving still persists `null`. But if you load an entity, change anything about it, and call `SaveChanges`, what gets written back for the collection navigation is now the empty collection that materialization produced, where it used to be the `null` that materialization produced. Measured, for a tracked load of one document, an edit to an unrelated scalar property, and `SaveChanges` — identical in both query modes:
+
+| Stored `Posts` before the cycle | Written back, previous versions | Written back, this version |
+|---|---|---|
+| field absent | `"Posts": null` | `"Posts": []` |
+| `"Posts": null` | `"Posts": null` | `"Posts": []` |
+| `"Posts": []` | `"Posts": []` | `"Posts": []` |
+
+So loading, mutating and saving entities whose embedded arrays are ragged will normalize those arrays **in the database**. Note this is not new *document-rewriting* behavior — the previous versions already replaced an absent field with `"Posts": null` on the same cycle; what changed is the value written. It follows from the read change described above, and nothing about how a collection is serialized changed.
+
+#### Why
+
+Empty-not-null is Entity Framework Core's contract for a collection navigation, independent of the CLR type's nullability or its field initializer. The previous behavior made the materialized result depend on the application's field initializer, which meant two models over the same documents disagreed, and different read paths over the same document could disagree with each other. It also made a projected count of such a collection throw `ArgumentNullException` instead of returning `0`.
+
+#### Mitigations
+
+If you need to tell an absent or `null` stored array apart from a present-but-empty one, ask the database rather than the materialized collection. A LINQ predicate cannot express it (`!b.Posts.Any()` is true for all three states), so query the documents through the driver, where the stored shape is visible:
+
+```c#
+var collection = client.GetDatabase("mydb").GetCollection<BsonDocument>("Blogs");
+var absentOrNull = collection.Find(
+        Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Exists("Posts", false),
+            Builders<BsonDocument>.Filter.Eq("Posts", BsonNull.Value)))
+    .ToList();
+```
+
+Use the same `IMongoClient` your `DbContext` is configured with, or a new `MongoClient` against the same connection string. If you were relying on `Select(b => b.Posts)` returning `null`, replace that test with the above.
+
+Do that check **before** the documents pass through a read-modify-write cycle, because that cycle normalizes them (see *New behavior*). If you need the ragged stored shape preserved, avoid round-tripping those entities through the change tracker: update only the fields you actually want to change, either with `ExecuteUpdate` (whose setter API differs between EF Core versions — see the EF Core docs for the form your version takes) or with a driver update, which leaves the array field untouched:
+
+```c#
+collection.UpdateOne(
+    Builders<BsonDocument>.Filter.Eq("_id", id),
+    Builders<BsonDocument>.Update.Set("Title", "New title"));
+```
+
+Otherwise, treat the normalization as a one-time migration of the documents you save, and take whatever record of the distinction you need — a backup, or an audit query using the `Find` above — before saving.
+
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 
 #### Old behavior
