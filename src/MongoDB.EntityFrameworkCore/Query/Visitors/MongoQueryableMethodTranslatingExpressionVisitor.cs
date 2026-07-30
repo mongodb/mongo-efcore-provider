@@ -1747,9 +1747,32 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // ($unwind), cross-collection lookups (Include), join, or a lifted-out VectorSearch. The projected analogue
     // of IsPlainWholeEntitySelect (EF-347 slice C1). Note this checks UnwindSource == null, which the
     // whole-entity sibling currently omits (a documented latent gap) — the new predicate is deliberately stricter.
+    //
+    // EF-322 owned-data slice 8, Task 7 adds the HasArrayProjectionLeaf conjunct: an owned entity-COLLECTION array leaf
+    // (Select(b => new { b.Title, b.Posts })) is DECLINED as a set-op OPERAND. This is a CORRECTNESS guard on the
+    // set operation's own semantics, MEASURED rather than inferred, and it is about the owner key the array leaf
+    // drags along, not about arrays as such. An array leaf forces NativeProjectionBinder to emit the root key into
+    // the projected document (a shadow-key element materializes its owner's key out of the row it is handed — see
+    // NativeProjectionBinder.TryPopulateNativeProjection's owner-key block), and a PROJECTED-OPERAND set op is
+    // exactly the shape whose dedup ($group{_id:"$$ROOT"}) / source-tagging ($group{_id:"$_doc"}) compares that
+    // WHOLE projected document by value. So the leaked _id joins the comparison key and turns the established C1
+    // contract — dedup over the PROJECTED VALUES, pinned by
+    // NativeSetOpsTests.Projected_operand_union_dedups_over_projected_values_not_whole_entities — into dedup by
+    // document IDENTITY. Measured over two documents with IDENTICAL projected values (differing only in an
+    // UNPROJECTED field), with an otherwise-identical no-array-leaf control: Union 1 row -> 2 rows, and worse,
+    // Intersect 1 row -> 0 rows and Except 0 rows -> 1 row. Intersect/Except have NO driver-LINQ oracle at all
+    // (the driver's LINQ v3 provider throws for a cross-view Intersect/Except), so those flipped answers would be
+    // the ONLY answers available in any mode. Declining here restores exactly the pre-slice-8 disposition for this
+    // shape: Union/Concat fall back gracefully to driver-LINQ (which dedups over the projected values, the
+    // documented semantics), Intersect/Except hard-fail in every mode via TryTranslateSetOperation's null return.
+    //
+    // This does NOT touch the slice-C2 TRAILING projection (Union(A,B).Select(b => new { b.Title, b.Posts })),
+    // which is measured sound and stays native: that path never consults this predicate, and its dedup runs over
+    // whole entities BEFORE the trailing $project, so neither the array nor the owner key reaches the comparison.
     private static bool IsPlainProjectedSelect(MongoQueryExpression mongo)
         => mongo.Select.Route == NativeRoute.Projection
            && mongo.Select.Projection.Count > 0
+           && !mongo.Select.HasArrayProjectionLeaf
            && mongo.Select.SetOperation == null
            && !mongo.Select.IsSetOp
            && mongo.Select.Grouping == null

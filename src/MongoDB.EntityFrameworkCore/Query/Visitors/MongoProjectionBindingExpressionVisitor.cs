@@ -28,6 +28,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -210,6 +211,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 }
 
             case MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression:
+                if (TryBindNativeArrayProjection(materializeCollectionNavigationExpression, out var arrayShaper))
+                {
+                    return arrayShaper;
+                }
+
                 return materializeCollectionNavigationExpression.Navigation is INavigation embeddableNavigation
                        && embeddableNavigation.IsEmbedded()
                     ? base.Visit(materializeCollectionNavigationExpression.Subquery)
@@ -812,6 +818,101 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// <inheritdoc />
     protected override Expression VisitNewArray(NewArrayExpression newArrayExpression)
         => newArrayExpression.Update(newArrayExpression.Expressions.Select(e => MatchTypes(Visit(e), e.Type)));
+
+    /// <summary>
+    /// EF-322 owned-data slice 8: binds an owned entity-COLLECTION projection leaf
+    /// (<c>Select(b =&gt; new { b.Title, b.Posts })</c>) on the fully-native projection route, where the array is
+    /// read back from the <c>$project</c> OUTPUT ALIAS rather than from the navigation's own document path.
+    /// Registers the array as ONE projection member and returns a <see cref="CollectionShaperExpression"/> over
+    /// an <see cref="ArrayAliasProjectionExpression"/>; returns <see langword="false"/> for every other shape,
+    /// which then binds exactly as it did before this slice.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The alias is never carried on the node.</b> It is derived by the post-processor
+    /// (<c>MongoQueryExpression.ApplyProjection</c>) from this <see cref="ProjectionMember"/> — the same
+    /// mechanism every scalar leaf uses, and the same name <c>NativeProjectionBinder</c> derived from the same
+    /// member on the emit side — so the emit-side and shaper-side alias spaces agree by construction.
+    /// </para>
+    /// <para>
+    /// <b>Why this runs HERE, at the top of the <c>MaterializeCollectionNavigationExpression</c> visit, and not
+    /// in <see cref="VisitMember"/>'s <c>navigationProjection</c> switch</b> — measured, not assumed. Reaching
+    /// that switch requires first visiting the OWNER shaper (<c>Visit(memberExpression.Expression)</c>), whose
+    /// <see cref="StructuralTypeShaperExpression"/> case calls <c>MongoQueryExpression.AddToProjection</c>. That
+    /// leaves an entry in <c>Projection</c>, and <c>ApplyProjection</c> RETURNS EARLY when
+    /// <c>Projection.Any()</c> — so no projection member is ever rewritten to its <c>Constant(index)</c> form
+    /// and every sibling leaf's binding then dies in
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.GetProjectionIndex</c>
+    /// (<c>InvalidOperationException</c> from <c>GetConstantValue&lt;int&gt;</c>, at shaper-compile time, in
+    /// every query mode). Registering BEFORE descending is exactly what the count leaf does at the top of
+    /// <see cref="VisitMethodCall"/> and what the arithmetic leaf does in <see cref="Visit"/>; this is the same
+    /// invariant, not a new one.
+    /// </para>
+    /// <para>
+    /// <b>The <c>Route == Projection</c> guard is load-bearing</b>, for the same reason it is on the count and
+    /// arithmetic cases: <c>NativeProjectionBinder</c> sets <c>Route = Projection</c> only when EVERY leaf is
+    /// natively representable. A mixed or fallback shape still fetches whole documents, so its array must keep
+    /// being read at the navigation's document path — i.e. it must fall through to the
+    /// <c>ObjectArrayProjectionExpression</c> arm in <see cref="VisitMember"/> and be shaped client-side by the
+    /// mixed shaper exactly as before this slice.
+    /// </para>
+    /// <para>
+    /// <b>Admissibility is NOT decided here.</b> It is the shared
+    /// <see cref="NativeTranslation.NativeProjectionBinder.IsNativeArrayProjectionLeaf"/>, called by the emit side
+    /// too — the two sides MUST admit the same set, because the failure mode when they disagree is silent wrong
+    /// data rather than a decline. That method's own remarks carry the full rationale, including why the shape is
+    /// restricted to a root-declared navigation whose alias equals its document element name (the shaper built
+    /// here is alias-addressed but may still be handed an UN-projected document by a late fallback, so the two
+    /// reads have to coincide). Whatever narrows or widens this shape belongs there, in one place.
+    /// </para>
+    /// <para>
+    /// The <see cref="RootReferenceExpression"/> is constructed fresh rather than lifted off the root
+    /// <see cref="EntityProjectionExpression"/>; that is safe because <see cref="EntityTypedExpression"/>
+    /// equality/hashing is by <see cref="IEntityType"/>, so it is interchangeable as a
+    /// <c>_projectionBindings</c>/<c>_ownerMappings</c> key with the instance the query expression built.
+    /// </para>
+    /// </remarks>
+    private bool TryBindNativeArrayProjection(
+        MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression,
+        out Expression arrayShaper)
+    {
+        arrayShaper = null;
+
+        // The alias comes from the SAME ProjectionMember the post-processor will derive the $project alias from,
+        // so this side and the emit side cannot disagree about it.
+        var arrayProjectionMember = GetCurrentProjectionMember();
+
+        if (_queryExpression.Select.Route != NativeRoute.Projection
+            || !NativeProjectionBinder.IsNativeArrayProjectionLeaf(
+                materializeCollectionNavigationExpression.Navigation as INavigation,
+                _queryExpression.CollectionExpression.EntityType,
+                arrayProjectionMember.Last?.Name))
+        {
+            return false;
+        }
+
+        var navigation = (INavigation)materializeCollectionNavigationExpression.Navigation!;
+        var aliasedArray = new ArrayAliasProjectionExpression(
+            navigation,
+            new RootReferenceExpression(navigation.DeclaringEntityType));
+
+        _projectionMapping[arrayProjectionMember] = aliasedArray;
+
+        var innerShaper = new StructuralTypeShaperExpression(
+            navigation.TargetEntityType,
+            Expression.Convert(
+                Expression.Convert(aliasedArray.InnerProjection, typeof(object)),
+                typeof(ValueBuffer)),
+            nullable: true);
+
+        arrayShaper = new CollectionShaperExpression(
+            new ProjectionBindingExpression(_queryExpression, arrayProjectionMember, aliasedArray.Type),
+            innerShaper,
+            navigation,
+            innerShaper.StructuralType.ClrType);
+
+        return true;
+    }
 
     private ProjectionMember GetCurrentProjectionMember()
         => _projectionMembers.Peek();

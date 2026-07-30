@@ -277,6 +277,23 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool IsSetOp { get; set; }
 
+    /// <summary>
+    /// <see langword="true"/> when <see cref="Projection"/> contains an owned entity-COLLECTION array leaf
+    /// (EF-322 owned-data slice 8 — <c>Select(b =&gt; new { b.Title, b.Posts })</c>). Provenance only: it records what the
+    /// projection CONTAINS, and nothing on the ordinary projection path reads it.
+    /// </summary>
+    /// <remarks>
+    /// It exists for one consumer — the projected-set-op-OPERAND scope gate
+    /// (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsPlainProjectedSelect</c>, EF-347 slice C1) — which
+    /// must DECLINE such a projection as a set-op operand. See that predicate's remarks for the measured reason:
+    /// an array leaf forces the owner key into the projected document, and a projected-operand set op dedups /
+    /// source-tags over that whole projected document by value, so the leaked <c>_id</c> silently changes the set
+    /// operation's own semantics from value-based to identity-based. A TRAILING projection after a whole-entity
+    /// set op (slice C2) is unaffected and stays native — its dedup runs over whole entities BEFORE the
+    /// <c>$project</c>, so neither the array nor the owner key ever reaches the value comparison.
+    /// </remarks>
+    internal bool HasArrayProjectionLeaf { get; set; }
+
     private readonly List<MongoUnwindSource> _unwindSources = [];
 
     /// <summary>

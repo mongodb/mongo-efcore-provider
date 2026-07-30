@@ -1,7 +1,9 @@
 # Native LINQ Translation (EF-322) — Status Report
 
-*Generated 2026-07-26 · last updated 2026-07-28 · `NativeQueryOngoing` tip `1b4c1d6` (stacked on `main`,
-unmerged), plus owned-data slice 7 on the still-unsquashed branch `EF-322-owned-collection-count-projection`.*
+*Generated 2026-07-26 · last updated 2026-07-30 · `NativeQueryOngoing` tip `1b4c1d6` (stacked on `main`,
+unmerged), plus owned-data slice 7 on the still-unsquashed branch `EF-322-owned-collection-count-projection`,
+plus owned-data slice 8 squashed onto the unmerged branch `EF-360` (its SHA is deliberately not cited here — a
+commit cannot cite itself; record it when the branch lands on `NativeQueryOngoing`).*
 *Header-hash correction: this line previously read "branch tip `b087957`" and §7 previously cited `7532b15`.
 Verified with `git log`: `b087957` is owned-data slice 5 (`All` predicates), two slices behind; `7532b15` is
 not in the shipped history at all — it exists only on the pre-squash safety branch
@@ -48,7 +50,7 @@ Query modes:
 | SP7 | Materializer perf — one-pass stream → POCO | — | 🟡 **Phase 1 done** (one-pass materializer, `e38587f`); Phase 2 (streaming breadth) not started |
 
 Beyond the seven planned sub-projects, an **owned-data (embedded-document) work stream** has since landed as
-seven further stacked slices — these were not a planned SP, but they are where native coverage grew most after
+eight further stacked slices — these were not a planned SP, but they are where native coverage grew most after
 SP7 Phase 1:
 
 | Slice | Scope | Commit |
@@ -60,6 +62,7 @@ SP7 Phase 1:
 | 5 | Owned-collection **`All`** quantifier predicates → negated `$elemMatch`; **closes EF-335** | `b087957` |
 | 6 | Owned-collection **`.Count`** in a predicate — array-index `$exists` (constant tier) / null-safe `$size` inside `$expr` (parameterized/degenerate tier) | `1b4c1d6` |
 | 7 | Owned-collection **`.Count` as a PROJECTION leaf** → `{$size: {$ifNull: […]}}` in `$project`; **partially resolved EF-357 at the time** (bare-scalar form no longer fails translation) — EF-357 was later **fully** closed by EF-358, see below | `f163392` + `0cb1b1b` (branch not yet squashed) |
+| 8 | Owned-collection **ARRAY leaf as a PROJECTION leaf** → the array projected by alias inside `$project` (`Select(b => new { b.Title, b.Posts })`); carries **EF-360** (re-characterised) and files **EF-362** | branch `EF-360` (not yet squashed) |
 
 No JIRA number was filed for slice 7's native-projection half. Two bugs it *measured* were filed: **EF-358**
 (the projection-path null-collapse gap, whose closure also fully closed EF-357 — see §4 and §6) and **EF-359**
@@ -179,6 +182,32 @@ unsquashed branch on top. Nothing is merged to `main` yet — the whole native s
   answers 0. Before this slice both modes threw, so nothing regressed — but `UseQueryMode(DriverLinq)` is not an
   equivalent-results escape hatch here, and driver-LINQ is also where a projection mixing a count leaf with a
   binder-declined leaf lands under the default `Native` mode.
+- **Owned-collection ARRAY leaf as a PROJECTION leaf (owned-data slice 8, branch `EF-360`).** An owned
+  entity-COLLECTION navigation appearing as a *leaf* inside a terminal anonymous-type or DTO projection —
+  `Select(b => new { b.Title, b.Posts })` — now emits a server-side `$project`
+  (`{ $project: { Title: "$Title", Posts: "$Posts", _id: "$_id" } }`) and reads the array back from the
+  projection **alias**, instead of falling back to `aggregate([])` and folding the projection client-side over
+  whole documents. **Results are unchanged** — a bandwidth and allocation win, not a correctness fix. Two new
+  `internal` types (`ArrayAliasProjectionExpression` and a shared `IArrayProjectionExpression`, the latter also
+  implemented by the pre-existing `ObjectArrayProjectionExpression`); **no new array-source code was needed** on
+  the read-back side, contrary to what the design predicted. Admissibility turns on two rules, both
+  found by MEASUREMENT rather than reasoned ahead — though not by the same kind of bug: rule (1) via a measured
+  **silent** wrong-data bug, rule (2) via a measured **throw** whose silent variant is mechanism-derived (not
+  executed) and pinned by the colliding-alias test: **alias agreement** (the leaf's alias must equal the
+  navigation target's containing element name, and the navigation must be declared on the query root) and
+  **sibling readability** (when an array leaf is present every non-array sibling must also be readable off a
+  whole, un-projected document). Both exist because the shaper is alias-addressed from *translation* time while
+  native-vs-fallback is decided *later*, so a fallback hands that shaper a whole document. Declined and still
+  fallback: the bare spelling (§5), an `OwnsOne` hop (**EF-362**), a renamed alias or element, a
+  non-whole-document-readable sibling (which, as the final review named explicitly, ALWAYS includes a
+  primary-key sibling — a root PK's element name is always `_id` while its alias is the CLR name, so no
+  ORDINARY naming choice can satisfy the rule; a `_id = b.Id` alias spelling *would* satisfy it — read, not
+  executed — and is an untested admitted case for a future slice), a reference (non-owned) collection, an element type carrying its own
+  **eager-loaded** navigation (**EF-360** — narrowed at the final review from "any navigation", which also
+  over-declined an ordinary `WithOwner` lazy inverse back-reference), and a projected set-op operand. Zero spec
+  delta on both axes; three-version sweep 0 failures. *This entry is a summary only* — the full as-built mechanism, every guard with the bug that
+  motivated it, the measured set-op flips, and the coverage gaps live in
+  `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s array-valued-projections note.
 
 ---
 
@@ -262,9 +291,9 @@ the full mechanism, the parity-claim split (bare vs. wrapped count), and the `Ty
 - **Parity cutover.** Once native reaches parity: retire the driver-LINQ fallback and delete the delegation code.
 - **Minor SelectMany follow-ons (EF-347 leftovers):** cross-scope computed leaf (`o.Discount * i.Price`),
   the inner-`Select`-form computed-leaf binder.
-- **Owned-collection follow-ons (EF-322), as they stand after slices 4–7 — in the order they are actually
+- **Owned-collection follow-ons (EF-322), as they stand after slices 4–8 — in the order they are actually
   nearest.** "Embedded-collection projections" is no longer the nearest one; slice 7 took the count leaf
-  natively. What is nearest now:
+  natively and slice 8 took the wrapped ARRAY leaf. What is nearest now:
   1. **Filtered `Count(pred)` in a projection (EF-359).** Characterize this correctly before scheduling it: it
      is *not* a fallback→native widening. Measured under all three modes, `Select(b => new { N = b.Posts.Count(p => p.Rank > 0) })`
      throws `InvalidOperationException` at translation time, inside `MongoProjectionBindingExpressionVisitor.Translate`,
@@ -272,12 +301,30 @@ the full mechanism, the parity-claim split (bare vs. wrapped count), and the `Ty
      be fixed or routed around before any native rendering can be reached. The design doc framed it as
      "deferred for cost, not impossibility, expressible as `$size` over `$filter`". The *rendering* claim still
      stands; the *graceful-fallback* assumption was written before the measurement and does not.
-  2. **Array projections** (`Select(b => b.Posts)`), blocked on an alias-driven array read-back in the DOM
-     shaper (the DOM shaper's collection case hard-casts to `ObjectArrayProjectionExpression`). The EF-358
-     precondition this bullet used to carry no longer applies — EF-358 closed (see §4) — so this is now blocked
-     on the DOM-shaper mechanism alone.
-  3. **Bare-scalar projection pushdown** — the SP3-wide boundary that keeps `Select(b => b.Posts.Count)` on the
-     fallback path; not count-specific, and lifting it would light up more than counts.
+  2. **Array projections — the WRAPPED spelling is DONE** (owned-data slice 8, branch `EF-360`, 2026-07-30).
+     `Select(b => new { b.Title, b.Posts })` and the DTO equivalent now emit a server-side `$project` and read
+     the array back from the projection alias. **This bullet used to say array projections were "blocked on the
+     DOM-shaper mechanism alone" — that was correct for the wrapped spelling (now done) and was NEVER correct
+     for the bare spelling**, which carries a second, independent block; the two are separated below. It also
+     named the `ObjectArrayProjectionExpression` hard cast as the blocker, which was wrong on its own terms: the
+     cast did need widening, but the mixed/fallback path never reached that arm (it takes the inline
+     `ObjectArrayProjectionExpression` arm), so nothing was failing there. See
+     `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for the as-built mechanism, the two admissibility rules
+     (alias agreement and sibling readability, each found via a live silent-wrong-data bug), and the declines.
+  3. **Bare array projection** (`Select(b => b.Posts)`) — still fallback, and **not** for an array-specific
+     reason: a bare (non-`new {...}`) selector body never populates `Projection` at all, which is the SP3-wide
+     bare-projection boundary, the same one that keeps `Select(b => b.Posts.Count)` on the fallback path. It
+     returns correct results there (`aggregate([])`, projection folded client-side). Lifting the boundary is one
+     piece of work covering bare scalars, bare entities and bare arrays alike — see the next bullet.
+  4. **Bare-scalar projection pushdown** — the SP3-wide boundary just described; not count- or array-specific,
+     and lifting it would light up more than counts.
+  5. **`OwnsOne`-hop array leaf (EF-362).** `Select(b => new { b.Title, b.Home.Notes })` is a clean decline,
+     pinned by a tripwire test. It needs a *second* mechanism, not a relaxation: for a hop the `$project` alias
+     is necessarily FLAT (`"Notes"`) while the document path is NESTED (`"Home.Notes"`), so slice 8's
+     alias-agreement invariant ("the alias read and the document-path read resolve to the same place") cannot
+     hold — a path-preserving `$project` emitting `{"Home.Notes": "$Home.Notes"}` (which MongoDB renders as
+     nested output) plus keeping the document-path read, rather than switching to alias-addressed, is what it
+     would take.
 
   A **correlated** element predicate needs more than a two-scope translator: `$elemMatch` cannot reference the enclosing
   document, so it would have to render as a top-level `$expr` over `$filter`/`$allElementsTrue`. Relativizing
@@ -286,7 +333,7 @@ the full mechanism, the parity-claim split (bare vs. wrapped count), and the `Ty
 
 ---
 
-## 6. Carried tickets (EF-353…357 filed during EF-347; EF-358/359 during owned-data slice 7; EF-357/EF-358 now closed)
+## 6. Carried tickets (EF-353…357 filed during EF-347; EF-358/359 during owned-data slice 7; EF-360/362 carried by owned-data slice 8; EF-357/EF-358 now closed)
 
 | Ticket | Type | Summary | Severity |
 |---|---|---|---|
@@ -297,6 +344,8 @@ the full mechanism, the parity-claim split (bare vs. wrapped count), and the `Ty
 | **EF-357** | Bug | **CLOSED** (branch `EF-358`, 2026-07-29). Bare embedded-collection `.Count` projection (`Select(b => b.Posts.Count)`) threw `ArgumentException` in **every** query mode — a `MongoProjectionBindingExpressionVisitor` gap, not a native decline. Owned-data slice 7 (`0cb1b1b`) fixed the translation-time `ArgumentException` and made present arrays return correct counts, leaving a missing/explicitly-null-array `ArgumentNullException` at materialization as a residual (that residual was EF-358). The EF-358 fix closed that residual, so `Select(b => b.Posts.Count)` now returns correct counts for every array state | Was: hard fail every mode. Now: correct for every array state |
 | **EF-358** | Bug | **CLOSED** (branch `EF-358`, 2026-07-29). Root cause corrected during investigation — it is **not** a whole-entity-vs-projection split; pre-fix, nothing normalized a missing/explicitly-null embedded array on *any* path, and the apparent whole-entity normalization was CLR field-initializer masking (`MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` skips its fixup loop when `relatedEntities` is `null`). Fix: delete the null-collapse conditional from `BsonDocumentInjectingExpressionVisitor`'s `CollectionShaperExpression` case; add a `Coalesce` to an empty `BsonArray` at the point of use in `MongoProjectionBindingRemovingExpressionVisitor`'s `CollectionShaperExpression` case. Result is uniform, initializer-independent normalization on every path/mode/cardinality; closes EF-357's residual. See §4 and `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for the full mechanism | Was: runtime throw / inconsistent shape. Now: closed |
 | **EF-359** | Bug | Filtered `Count(pred)` in a projection (`Select(b => new { N = b.Posts.Count(p => p.Rank > 0) })`) throws `InvalidOperationException` in **all three** query modes — translation-time crash in `MongoProjectionBindingExpressionVisitor.Translate`, before `MongoQueryMode` is read. Same shape of defect as EF-357; **not** the graceful decline earlier docs assumed. Exception type is not contract. Untouched by the EF-358 fix | Hard fail every mode, **pre-existing**, pinned by a documenting test |
+| **EF-360** | Bug | **STILL OPEN, and RE-CHARACTERISED here — it is *not* "an anonymous projection with an entity-collection leaf throws".** That framing was disproved by owned-data slice 8, which made exactly that shape native. The actual defect: an anonymous **or** DTO projection whose collection leaf's **ELEMENT TYPE has a navigation of its own** throws `ArgumentException` ("does not match the corresponding member type") in **every** query mode, in `MongoProjectionBindingExpressionVisitor.VisitNew`, via the `Queryable.Select`-rebuild → `MatchTypes` short-circuit (`MatchTypes` returns the `List<T>`-typed shaper untouched for an `IQueryable<T>` target, so BCL validation throws at the `newExpression.Update(newArguments)` call). **Cited by METHOD, not by line:** earlier docs quoted `MongoProjectionBindingExpressionVisitor.cs:661`, which this slice's own additions to that file made stale — `:661` is now `return null!;`. It reproduces for a nested owned **collection** and a nested owned **single reference** alike, and the **bare** spelling of the same query on the same model works. It fires at shaper-BUILD time, before `MongoQueryMode` is read, so the mode is irrelevant. Slice 8 declines the shape explicitly (`IsNativeArrayProjectionLeaf`'s element-navigation conjunct) and keeps the failure **byte-identical**, verified by an A-B probe; that conjunct is currently defence-in-depth over a pre-existing structural decline in `TryResolveOwnedCollectionPath` (positive-control-verified) and is documented as such in `Query/AGENTS.md` so it is not deleted as dead code. Same fall-through root cause as EF-357/EF-359 | Hard fail every mode, **pre-existing**, pinned by documenting tests |
+| **EF-362** | Task | **Newly filed by owned-data slice 8.** `OwnsOne`-hop array leaf: `Select(b => new { b.Title, b.Home.Notes })` stays a clean decline (falls back, correct results; throws only under `NativeOnly`), pinned by a mutation-verified tripwire test. It is **not** a relaxation of slice 8's rules — for a hop the `$project` alias is necessarily FLAT (`"Notes"`) while the document path is NESTED (`"Home.Notes"`), so the alias-agreement invariant *cannot* hold and lifting the conjunct alone would return a silently EMPTY collection on any fallback path. Needs a path-preserving `$project` (`{"Home.Notes": "$Home.Notes"}`, which MongoDB renders as nested output) plus retaining the document-path read instead of switching to alias-addressed | Feature gap, clean decline |
 
 Of these, **EF-356** (reachable today under `Native`) and **EF-355** (latent) are the two that produce (or
 could produce) *silent* wrong data. Confirmed unaffected by the EF-358 fix: neither EF-356 nor EF-355 touches
@@ -457,17 +506,27 @@ silently fall back throws instead.
 
 SP1–SP4 are complete; SP5–SP6 are substantially complete with a well-characterized fallback set; the
 SelectMany tail (SP6) is finished. **SP7 Phase 1 (the one-pass materializer) has landed**, cutting native
-allocation 54–72% to roughly the raw-driver floor. Since then, a six-slice **owned-data work stream** has made
-embedded documents largely native: whole-entity (single-ref and collection), single-ref sub-property dotted
-paths, both `Any` and `All` quantifier predicates — the latter closing **EF-335** — and `.Count` used in a
-predicate, unified with bare `Any()` as one array-cardinality representation.
+allocation 54–72% to roughly the raw-driver floor. Since then, an **eight-slice owned-data work stream** has
+made embedded documents largely native: whole-entity (single-ref and collection), single-ref sub-property dotted
+paths, both `Any` and `All` quantifier predicates — the latter closing **EF-335** — `.Count` used in a
+predicate, unified with bare `Any()` as one array-cardinality representation, `.Count` as a projection leaf, and
+an owned entity-**collection** (array) leaf inside a terminal anonymous/DTO projection. (This paragraph said
+"six-slice" until owned-data slice 8; corrected here along with the follow-on claim below.)
 
 **The remaining native work is SP7 Phase 2 (streaming breadth: reducer/aggregate, collection-Include arrays,
-reference-Include) plus the parity cutover that retires driver-LINQ.** The nearest owned-data follow-on is now
-**array-valued** embedded-collection projections (`Select(b => b.Posts)`), blocked on an alias-driven array
-read-back mechanism in the DOM shaper; an arithmetic projection leaf containing a count already goes native as
-an incidental widening. **This paragraph's parenthetical about the bare-count form is STALE; corrected here.**
-It used to say the bare form "is a separate, pre-existing hard-fail predating this whole work stream" — true
+reference-Include) plus the parity cutover that retires driver-LINQ.**
+
+**CORRECTED at owned-data slice 8 — this paragraph previously named the nearest owned-data follow-on as
+"array-valued embedded-collection projections (`Select(b => b.Posts)`), blocked on an alias-driven array
+read-back mechanism in the DOM shaper". That is now wrong twice over.** First, the alias-driven read-back
+mechanism EXISTS: slice 8 made the **wrapped** spelling (`Select(b => new { b.Title, b.Posts })`) native.
+Second, the **bare** spelling was never blocked on that mechanism at all — its blocker is the SP3-wide
+bare-projection boundary (a bare selector body never populates `Projection`), exactly as §5 bullet 3 now states;
+it falls back and returns correct results. So: the nearest owned-data follow-on is now **EF-359** (filtered
+`Count(pred)` in a projection), which per §5 bullet 1 is a translation-time hard fail in all three modes and
+therefore a bug fix rather than a fallback→native widening. An arithmetic projection leaf containing a count
+already goes native as an incidental widening. **This paragraph's parenthetical about the bare-count form was
+also STALE; corrected here.** It used to say the bare form "is a separate, pre-existing hard-fail predating this whole work stream" — true
 only before owned-data slice 7. Since slice 7 the bare form (`Select(b => b.Posts.Count)`) no longer fails
 translation; since EF-358 (2026-07-29) it returns correct results for every array state, including missing or
 explicitly-null. See §4 and §6 for the current disposition.

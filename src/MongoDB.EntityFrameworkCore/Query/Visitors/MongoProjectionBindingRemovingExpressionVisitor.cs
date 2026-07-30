@@ -133,15 +133,26 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
             case CollectionShaperExpression collectionShaperExpression:
                 {
-                    ObjectArrayProjectionExpression objectArrayProjection;
+                    IArrayProjectionExpression arrayProjection;
                     switch (collectionShaperExpression.Projection)
                     {
                         case ProjectionBindingExpression projectionBindingExpression:
                             var projection = GetProjection(projectionBindingExpression);
-                            objectArrayProjection = (ObjectArrayProjectionExpression)projection.Expression;
+                            // Both array-projection node kinds are admissible: a navigation-driven
+                            // ObjectArrayProjectionExpression (a projected reference collection) and an
+                            // ArrayAliasProjectionExpression (a native $project alias, EF-322 slice 8).
+                            // This USED TO BE an unchecked cast to ObjectArrayProjectionExpression, which
+                            // would throw InvalidCastException rather than declining. Anything that is not an
+                            // array projection is a translation failure.
+                            if (projection.Expression is not IArrayProjectionExpression fromProjection)
+                            {
+                                throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
+                            }
+
+                            arrayProjection = fromProjection;
                             break;
-                        case ObjectArrayProjectionExpression objectArrayProjectionExpression:
-                            objectArrayProjection = objectArrayProjectionExpression;
+                        case IArrayProjectionExpression inlineArrayProjection:
+                            arrayProjection = inlineArrayProjection;
                             break;
                         default:
                             throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
@@ -149,7 +160,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                     Expression bsonArrayExpression;
                     string arrayName;
-                    if (_projectionBindings.TryGetValue(objectArrayProjection, out var bsonArrayVar))
+                    if (_projectionBindings.TryGetValue((Expression)arrayProjection, out var bsonArrayVar))
                     {
                         bsonArrayExpression = bsonArrayVar;
                         arrayName = bsonArrayVar.Name!;
@@ -157,11 +168,31 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     else
                     {
                         // Nested collection inside a parent collection item (ThenInclude on
-                        // collection-then-collection). Read the BsonArray from the parent document.
-                        var parentAccess = objectArrayProjection.AccessExpression;
+                        // collection-then-collection). Read the BsonArray from the parent document by its
+                        // DOCUMENT-PATH field name.
+                        //
+                        // An ALIAS-addressed array (ArrayAliasProjectionExpression) has no document-path field
+                        // name at all — its ArrayFieldName is always null — so it must never reach here. It
+                        // cannot: this branch is reached only when VisitBinary did NOT register a bsonArrayN
+                        // variable for the node, i.e. when BsonDocumentInjectingExpressionVisitor never emitted
+                        // an assignment for this collection shaper, which happens only for a shaper NESTED
+                        // inside another collection shaper's InnerShaper (that visitor's
+                        // CollectionShaperExpression case returns without visiting children). An alias-addressed
+                        // array is created only for a TOP-LEVEL leaf of a terminal native projection, never
+                        // nested. The `?? throw` makes a future violation LOUD rather than a silent null field
+                        // name, which would read the wrong array with no exception at all.
+                        //
+                        // It resolves BEFORE the _projectionBindings lookup below, deliberately: on the native
+                        // projection route the root RootReferenceExpression is NOT registered there, so an
+                        // alias-addressed array reaching this branch would otherwise die in that indexer with a
+                        // bare KeyNotFoundException — losing this diagnostic entirely.
+                        var arrayFieldName = arrayProjection.ArrayFieldName
+                                             ?? throw new InvalidOperationException(
+                                                 CoreStrings.TranslationFailed(extensionExpression.Print()));
+                        var parentAccess = arrayProjection.AccessExpression;
                         var parentDoc = _projectionBindings[parentAccess];
-                        bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, objectArrayProjection.Name!);
-                        arrayName = objectArrayProjection.Name!;
+                        bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, arrayFieldName);
+                        arrayName = arrayFieldName;
                     }
 
                     // EF-358: normalize a MISSING or explicitly-BSON-null stored array to an EMPTY BsonArray, so the
@@ -185,10 +216,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     var jObjectParameter = Expression.Parameter(typeof(BsonDocument), arrayName + "Object");
                     var ordinalParameter = Expression.Parameter(typeof(int), arrayName + "Ordinal");
 
-                    var accessExpression = objectArrayProjection.InnerProjection.ParentAccessExpression;
+                    var accessExpression = arrayProjection.InnerProjection.ParentAccessExpression;
                     _projectionBindings[accessExpression] = jObjectParameter;
-                    _ownerMappings[accessExpression] = (objectArrayProjection.Navigation.DeclaringEntityType, objectArrayProjection.AccessExpression);
-                    _ownerMappings[jObjectParameter] = (objectArrayProjection.Navigation.DeclaringEntityType, objectArrayProjection.AccessExpression);
+                    _ownerMappings[accessExpression] = (arrayProjection.Navigation.DeclaringEntityType, arrayProjection.AccessExpression);
+                    _ownerMappings[jObjectParameter] = (arrayProjection.Navigation.DeclaringEntityType, arrayProjection.AccessExpression);
                     _ordinalMappings[accessExpression] = Expression.Add(ordinalParameter, Expression.Constant(1, typeof(int)));
                     var innerShaper = (BlockExpression)Visit(collectionShaperExpression.InnerShaper);
 
@@ -292,11 +323,28 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     }
 
                     Expression innerAccessExpression;
-                    if (projectionExpression is ObjectArrayProjectionExpression objectArrayProjectionExpression)
+                    if (projectionExpression is IArrayProjectionExpression arrayProjectionExpression)
                     {
-                        innerAccessExpression = objectArrayProjectionExpression.AccessExpression;
-                        _projectionBindings[objectArrayProjectionExpression] = parameterExpression;
-                        fieldName ??= objectArrayProjectionExpression.Name;
+                        innerAccessExpression = arrayProjectionExpression.AccessExpression;
+                        _projectionBindings[projectionExpression] = parameterExpression;
+
+                        // ArrayFieldName is null for an alias-addressed array, in which case fieldName was
+                        // already set from projection.Alias above (the ProjectionBindingExpression branch) —
+                        // that IS the alias, and it is the same name the emit side derived from the same
+                        // ProjectionMember.
+                        //
+                        // NEITHER implementation of IArrayProjectionExpression can currently reach this throw,
+                        // and that is worth stating so nobody reads it as a live failure mode:
+                        // ObjectArrayProjectionExpression's constructor already `?? throw`s when Name would be
+                        // null, so its ArrayFieldName is non-null by construction; and ArrayAliasProjectionExpression
+                        // (whose ArrayFieldName is ALWAYS null) is only ever reached through the
+                        // ProjectionBindingExpression branch above, which has already set fieldName from
+                        // projection.Alias. The guard is kept anyway because it is free and fails LOUD: a future
+                        // node kind, or a future route to this one that skips the alias resolution, would
+                        // otherwise silently read the wrong array rather than say so.
+                        fieldName ??= arrayProjectionExpression.ArrayFieldName
+                                      ?? throw new InvalidOperationException(
+                                          CoreStrings.TranslationFailed(binaryExpression.Print()));
                     }
                     else
                     {

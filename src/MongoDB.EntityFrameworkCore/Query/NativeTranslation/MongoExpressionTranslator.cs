@@ -151,6 +151,52 @@ internal sealed class MongoExpressionTranslator
         return true;
     }
 
+    /// <summary>
+    /// Resolves a rooted member-access chain whose final hop is an embedded COLLECTION navigation into a raw
+    /// element reference for the array ITSELF (e.g. <c>b.Posts</c> → <c>Posts</c>,
+    /// <c>b.Home.Notes</c> → <c>Home.Notes</c>), for use as a native projection leaf — the array is emitted by
+    /// <c>$project</c> as-is, rather than being reduced to a <c>$size</c> the way
+    /// <see cref="TryMatchCountExpression"/>'s callers do.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Delegates to <see cref="TryResolveOwnedCollectionPath"/>, so it inherits that resolver's guards: the chain
+    /// must be rooted at a <see cref="ParameterExpression"/> with at least one hop, every non-final hop must be an
+    /// embedded single-reference navigation, and the FINAL hop must be an embedded collection NAVIGATION. That last
+    /// requirement is the structural protection against a mapped scalar property that happens to share a
+    /// navigation's name — a scalar's receiver is an entity, never a collection. Two-scope (cross-scope
+    /// <c>SelectMany</c>) mode is declined outright by the same resolver.
+    /// </para>
+    /// <para>
+    /// The <c>AsQueryable()</c> layer EF's nav-expansion wraps the navigation in is stripped here, exactly as the
+    /// quantifier and count entry points do — the resolver itself walks only member / <c>EF.Property</c> hops.
+    /// </para>
+    /// <para>
+    /// This is the ONLY caller of <see cref="TryResolveOwnedCollectionPath"/> that is reached from a
+    /// PROJECTION rather than a predicate, so it inherits the by-name-retarget invariant recorded on
+    /// <see cref="TranslateOperand"/>'s count branch: this translator is built by
+    /// <see cref="NativeProjectionBinder"/> on the query root, where the only parameter in scope IS the query
+    /// parameter, so there is no enclosing scope for a member access to be silently retargeted from.
+    /// </para>
+    /// </remarks>
+    public bool TryTranslateOwnedCollectionArray(
+        Expression expression,
+        [NotNullWhen(true)] out MongoElementRefExpression? result)
+    {
+        var source = UnwrapAsQueryable(expression);
+        if (TryResolveOwnedCollectionPath(source, out var arrayPath, out _))
+        {
+            // The UNWRAPPED source's type (the navigation's own collection type) — not the AsQueryable()
+            // wrapper's IQueryable<T>. Nothing renders from it (an element ref emits "$" + Path), but a node
+            // that misreports its own CLR type is a trap for a future reader.
+            result = new MongoElementRefExpression(arrayPath, source.Type);
+            return true;
+        }
+
+        result = null;
+        return false;
+    }
+
     // The C# compiler's own implicit numeric conversion table (C# language spec §10.2.1) — exactly the set
     // of numeric widenings the compiler inserts automatically for mixed-numeric-type arithmetic (and that a
     // user could equally write explicitly). MongoDB's arithmetic operators need no explicit cast to reproduce

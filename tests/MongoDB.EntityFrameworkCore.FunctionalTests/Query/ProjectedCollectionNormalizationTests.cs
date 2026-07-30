@@ -336,9 +336,25 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
         // array projection, and count all answering identically on the same documents. Do not "simplify" the
         // expected leg into a projection query: that would be asserting the fix against itself.
         //
-        // The actual leg uses the BARE Select(b => b.Posts) shape, not Select(b => new { b.Title, b.Posts }):
-        // that anonymous-projection shape with an entity-collection leaf is an ArgumentException in every mode
-        // and every array state, independently of EF-358 (confirmed by direct probe, not assumed).
+        // The actual leg uses the BARE Select(b => b.Posts) shape, not Select(b => new { b.Title, b.Posts }).
+        //
+        // CORRECTED IN PLACE (EF-322 owned-data slice 8 doc sweep, 2026-07-30). This comment USED TO SAY that the anonymous shape
+        // "is an ArgumentException in every mode and every array state, independently of EF-358 (confirmed by
+        // direct probe, not assumed)". The probe was real; the CONCLUSION DRAWN FROM IT WAS TOO BROAD, and it
+        // was over-broad because of THIS FIXTURE — a masked-fixture error, exactly the class of mistake the
+        // EF-358 comments elsewhere in this file warn about. This class's `Post` declares its own
+        // `List<Comment> Comments` navigation (see the model above, `OwnsMany(b => b.Posts, p =>
+        // p.OwnsMany(x => x.Comments))`), and THE ELEMENT NAVIGATION WAS THE TRIGGER, not the anonymous
+        // projection: an element type carrying a navigation of its own makes EF's nav-expansion emit the
+        // auto-include as an inner Queryable.Select, which the MatchTypes short-circuit then rejects at
+        // shaper-BUILD time (ArgumentException, "does not match the corresponding member type") — that is
+        // ticket EF-360, and it is still open.
+        //
+        // On a model whose element carries NO navigation, Select(b => new { b.Title, b.Posts }) now goes
+        // NATIVE (EF-322 owned-data slice 8; see NativeArrayProjectionTests and Query/AGENTS.md). So the bare
+        // shape is still the right choice HERE — it is the shape this class exists to cover, and the anonymous
+        // shape genuinely still throws on THIS fixture's model — but the reason is the element navigation, not
+        // the anonymous projection, and the claim must not be restated as a blanket one.
         var collection = Seed(nameof(Projected_collection_equals_the_whole_entity_oracle_for_every_array_state));
 
         // Both legs order by Title first, so comparing the two Count lists positionally is equivalent to
