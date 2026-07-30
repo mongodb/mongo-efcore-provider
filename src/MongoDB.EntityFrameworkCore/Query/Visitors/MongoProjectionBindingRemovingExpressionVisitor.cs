@@ -653,10 +653,36 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         // When a projection lambda does `new { o.Prop }`, EF stores MemberExpr(STS_root, "Prop")
         // in the projection mapping. Recognise the root entity's shaper here so we can resolve
         // the property and use its own BSON element name instead of the projected alias.
-        if (expression is StructuralTypeShaperExpression { StructuralType: IEntityType shaperEntityType }
-            && shaperEntityType == _rootEntityType)
+        if (expression is StructuralTypeShaperExpression { StructuralType: IEntityType shaperEntityType })
         {
-            return (shaperEntityType, DocParameter);
+            if (shaperEntityType == _rootEntityType)
+            {
+                return (shaperEntityType, DocParameter);
+            }
+
+            // A non-root entity shaper in a join query is the inner side of the join — e.g. reading a
+            // scalar or shadow property off the joined entity via `o.Prop` or `EF.Property(o, "Prop")`
+            // in a mixed projection. Resolve the read against the joined sub-document rather than the
+            // query root (which has no such top-level field and would otherwise materialise the value
+            // as null — EF-352). Which sub-document depends on the emitted join shape:
+            //   * driver-native join   -> the lone joined reference is nested under "_inner";
+            //   * flat $lookup+$unwind -> each join lands in its own root-level "_lookup_<Navigation>".
+            if (_queryExpression.IsJoinQuery)
+            {
+                if (_queryExpression.UsesDriverJoinFields)
+                {
+                    var innerDocument = CreateGetValueExpression(DocParameter, "_inner", false, typeof(BsonDocument));
+                    return (shaperEntityType, innerDocument);
+                }
+
+                var joinField = _queryExpression.GetPendingLookups()
+                    .FirstOrDefault(l => l.Navigation.TargetEntityType == shaperEntityType)?.As;
+                if (joinField != null)
+                {
+                    var lookupDocument = CreateGetValueExpression(DocParameter, joinField, false, typeof(BsonDocument));
+                    return (shaperEntityType, lookupDocument);
+                }
+            }
         }
 
         if (expression is ParameterExpression parameterExpression)

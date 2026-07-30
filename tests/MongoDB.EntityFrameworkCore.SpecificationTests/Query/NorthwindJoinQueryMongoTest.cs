@@ -161,10 +161,15 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
     public override async Task Join_customers_orders_with_subquery_with_take(bool async)
         => await base.Join_customers_orders_with_subquery_with_take(async);
 
-    [ConditionalTheory(Skip = "EF-352: shadow property read via EF.Property in a client-side join projection materialises as null")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task Join_customers_orders_with_subquery_anonymous_property_method(bool async)
-        => await base.Join_customers_orders_with_subquery_anonymous_property_method(async);
+    {
+        await base.Join_customers_orders_with_subquery_anonymous_property_method(async);
+
+        AssertMql(
+            """
+Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner.CustomerID" : "ALFKI" } }
+""");
+    }
 
     [ConditionalTheory(Skip = "CSHARP-6017: driver 3.10 folds an uncorrelated Take/subquery join inner into the correlated $lookup sub-pipeline, returning wrong results")]
     [MemberData(nameof(IsAsyncData))]
