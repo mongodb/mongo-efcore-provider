@@ -638,9 +638,10 @@ badly understates it.** §9 (new) enumerates what parity actually requires, and 
 remaining work is dominated by three things this sentence did not name: **joins** (no native form at all),
 **reference `Include`**, and the **computed/client-eval projection long tail** — together the bulk of the 1742
 spec tests that still need driver-LINQ for correct results. SP7 Phase 2 is real but is **performance, not
-parity**, and does not gate the cutover. Two further items are not in any plan yet: the EF9+ bulk
-`ExecuteUpdate`/`ExecuteDelete` path shares the driver-LINQ bridge (§9.2), and **EF-317 is concurrently
-investing in the driver-LINQ join path this epic wants to replace** (§9.2).
+parity**, and does not gate the cutover. One further item is in no plan yet: the EF9+ bulk
+`ExecuteUpdate`/`ExecuteDelete` path shares the driver-LINQ bridge (§9.2). **The next work is joins, beginning
+with reference `Include` — see §9.8 for the settled execution order, and §9.2 for the EF-317 ruling that
+unblocked it.**
 
 **CORRECTED at owned-data slice 8 — this paragraph previously named the nearest owned-data follow-on as
 "array-valued embedded-collection projections (`Select(b => b.Posts)`), blocked on an alias-driven array
@@ -748,16 +749,25 @@ retire the bridge.** Either the bulk filter/update translation is rewritten onto
 `MongoExpressionTranslator`/`MongoQueryLanguageRenderer` first, or the bridge survives cutover as bulk-only
 infrastructure. That is a real sub-project, and it is not currently on the SP scoreboard in §2.
 
-**And a second coordination problem, in the opposite direction — EF-317.** Four `TODO(EF-317)` markers sit in
-exactly the code this epic wants to delete (`MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs:37`,
+**A second coordination question existed here — EF-317 — and it is now SETTLED. Owner ruling, 2026-07-31.**
+Four `TODO(EF-317)` markers sit in exactly the code this epic wants to delete
+(`MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs:37`,
 `MongoProjectionBindingExpressionVisitor.Lookup.cs:34`, `MongoQueryExpression.Lookup.cs:23`). EF-317 is
-**`In Progress`** and is titled *"Use native driver LeftJoin to replace the cross-collection `$lookup`
-workaround"* — i.e. it is investing in the **driver-LINQ** join path, which is the same ground EF-322 needs to
-take natively (§9.1 items 2 and 3). The driver 3.10.0 upgrade this stack is one commit behind
-(`58e05a0`, §9.6) is EF-317 landing its prerequisite. **These two epics are converging on the same code from
-opposite directions and that needs an explicit decision** — whether EF-317's LeftJoin work is throwaway once
-native joins land, or whether native joins are deferred and EF-317's path is what ships. Nothing in the current
-plan records which.
+`In Progress` and titled *"Use native driver LeftJoin to replace the cross-collection `$lookup` workaround"* —
+i.e. it invests in the **driver-LINQ** join path, the same ground EF-322 must take natively (§9.1 items 2
+and 3). This document previously recorded that as an open decision blocking the join family.
+
+**The ruling: EF-317 is essentially THROWAWAY. None of its code needs to carry over to the native
+implementation unless doing so happens to make sense. Build what joins need and do not design around EF-317.**
+Coverage parity — every case EF-317 handles also being handled natively — is a **nice-to-have, not a
+constraint**; EF-317 has not been merged long enough for its coverage to be worth protecting. Do not re-open
+this as a blocker.
+
+**One distinction the ruling does NOT collapse, and it matters:** "EF-317 is throwaway" applies to its
+**`LeftJoin` partial** (`…LeftJoin.cs`, ~726 lines). The **main bridge file**
+(`MongoEFToLinqTranslatingExpressionVisitor.cs`, ~1050 lines) is a *different* dependency — the EF9+ bulk path
+above uses it, and that is unaffected by anything decided about EF-317. Retiring EF-317's join work does not
+retire the bridge.
 
 ### 9.3 Test-suite work at cutover — 651 re-baselines, and 10 that cannot be re-baselined
 
@@ -849,6 +859,31 @@ Ranked by what actually gates the cutover:
 5. **Non-native `GroupBy` shapes**, then the small renderer/regex/`Contains`/composite-PK items.
 6. **Test re-baselining and the public-API decisions** — not hard, but 651 tests and ~8 API members do not
    happen in an afternoon.
+
+### 9.8 Execution order (settled 2026-07-31 — and NOT the same as §9.7)
+
+§9.7 ranks by what **gates** the cutover. It is not an execution order and must not be read as one: it ignores
+dependencies, and it was written while the EF-317 question was still open. With that question settled (§9.2 —
+EF-317 is throwaway, build what joins need), the agreed order is:
+
+1. **Joins, as one work stream — starting with reference `Include` as its FIRST SLICE, not as a detour.**
+   Reference `Include` and joins are the *same* `$lookup` machinery; reference `Include` is the constrained
+   case (FK-correlated, single-level, left-join semantics) and is the one where the lowerer already carries
+   built-but-dormant code behind a single gate site. Build it, then generalize. Starting at the general join
+   is the higher-risk path for no compensating benefit.
+2. **`VectorSearch`** — 106 tests, architecturally isolated, good parallel or follow-on work. *(It was ranked
+   FIRST in the pre-ruling order for a reason that has since evaporated: it was the thing that could proceed
+   while the EF-317 decision was pending. There is no longer a decision to wait on.)* Still worth a Task-0
+   spike before committing — `$vectorSearch` must be the first pipeline stage, which cuts against the
+   lowerer's canonical stage ordering.
+3. **Projection long tail**, anchored on the **bare-scalar projection boundary** — one structural change
+   unblocking bare scalars, bare entities and bare arrays together, rather than 873 individual fixes.
+4. **The bulk-path bridge** (§9.2) — scope early, execute late.
+5. **Test re-baselining + public-API decisions** — last.
+
+**The owned-data work stream is not on this list.** Nine slices landed and it is *not* on the cutover critical
+path — five consecutive tips of zero spec delta, structurally, because Northwind has no owned collections. Do
+not default back to it because the machinery is warm.
 
 **Where each of these is actually gated, by decline site** — recorded so the next slice does not have to
 re-derive it. Ordered by leverage (how much of the fallback set one site's removal would unblock), which is
