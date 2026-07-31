@@ -44,6 +44,18 @@ internal static class EnumerableMethods
             nameof(Enumerable.LongCount), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
 
+        // The PREDICATED overloads (EF-359) — needed so a hand-built or Enumerable-spelled
+        // Count(source, predicate)/LongCount(source, predicate) tree can be matched by canonical MethodInfo,
+        // mirroring QueryableMethods.CountWithPredicate/LongCountWithPredicate (EF Core's own port already
+        // exposes those; this file only needed the Enumerable-side pair added).
+        CountWithPredicate = GetMethod(
+            nameof(Enumerable.Count), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))]);
+
+        LongCountWithPredicate = GetMethod(
+            nameof(Enumerable.LongCount), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))]);
+
         // The fully-generic (TSource, TResult) selector overloads of Min/Max — used when the selected
         // type is not one of the fixed numeric overloads below.
         MaxWithSelector = GetMethod(
@@ -104,6 +116,8 @@ internal static class EnumerableMethods
 
     public static MethodInfo CountWithoutPredicate { get; }
     public static MethodInfo LongCountWithoutPredicate { get; }
+    public static MethodInfo CountWithPredicate { get; }
+    public static MethodInfo LongCountWithPredicate { get; }
     public static MethodInfo MinWithSelector { get; }
     public static MethodInfo MaxWithSelector { get; }
 

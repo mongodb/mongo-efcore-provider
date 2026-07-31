@@ -182,6 +182,8 @@ did this reliably pre-fix; they did not, uniformly, for the reason in §1.1.)
   `ObjectArrayProjectionExpression`, which is navigation-driven and entity-only. That is the next slice; EF-358
   is its precondition, because array projections are not observable-correct until ragged rows normalize.
 - **EF-359** (filtered `Count(pred)` in a projection). Independent translation-time crash, unrelated mechanism.
+  *(Dated record: EF-359 was CLOSED on 2026-07-30 by owned-data slice 9, branch `EF-359` — the shape is now
+  native. The "independent, unrelated mechanism" reading held up: nothing in this slice touched it.)*
 
 ---
 

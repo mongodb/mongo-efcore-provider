@@ -19,6 +19,13 @@ bullet below) was WRONG: it is not a whole-entity-vs-projection split; nothing n
 path pre-fix, and the "whole-entity normalizes" reading was a CLR field-initializer artifact of the measuring
 probe's own model, not provider behavior. See `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s rewritten
 note and `docs/native-query-status-EF-322.md` §4/§6 for the corrected story.*
+*ALSO SUPERSEDED, in the EF-359 direction (2026-07-30): **EF-359 is now CLOSED** — owned-data slice 9 (branch
+`EF-359`) made the filtered `Count(pred)` projection NATIVE, so every statement in this file describing EF-359 as
+an open, unfixed hard-fail (notably §7's bullet) is a dated record, not the current disposition. This file's
+characterization of the crash and its `$size`-over-`$filter` rendering prediction both held up. The test named
+here as pinning the crash, `NativeOwnedCollectionCountTests.Filtered_count_projection_is_a_known_preexisting_hard_fail_in_every_mode`,
+is now `Filtered_count_projection_now_goes_native_EF359`. See `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s
+"EF-359 AS BUILT" note and `docs/native-query-status-EF-322.md` §3/§4/§6.*
 
 ---
 

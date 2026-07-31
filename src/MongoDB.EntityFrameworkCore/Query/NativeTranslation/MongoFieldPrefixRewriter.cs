@@ -47,6 +47,10 @@ internal static class MongoFieldPrefixRewriter
             // count inside one (SelectMany(b => b.Posts.Where(p => p.Comments.Count > 1), …)) would otherwise
             // hit the throw below — turning a clean decline into a crash inside pre-existing code.
             MongoSizeExpression s => new MongoSizeExpression(prefix + "." + s.FieldName, s.Type, s.NullSafe),
+            // Prefix the ARRAY path only, for the same reason as MongoElemMatchExpression above: the element predicate's
+            // field paths are ELEMENT-relative (that is what the $filter variable addresses), so rewriting them would
+            // mis-address every field inside the $filter.
+            MongoFilteredSizeExpression f => new MongoFilteredSizeExpression(prefix + "." + f.ArrayPath, f.ElementPredicate, f.Type),
             MongoConstantExpression or MongoParameterExpression => expr,
             _ => throw new NativeTranslationNotSupportedException(
                 $"Cannot prefix-rewrite MongoExpression node '{expr.GetType().Name}'.")

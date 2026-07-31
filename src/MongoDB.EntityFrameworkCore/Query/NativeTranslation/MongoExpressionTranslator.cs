@@ -22,6 +22,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure; // IsEFPropertyMethod()
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;           // QueryableMethods
 using MongoDB.EntityFrameworkCore.Extensions;        // GetDocumentPath(), IsEmbedded()
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -624,10 +625,89 @@ internal sealed class MongoExpressionTranslator
         // caller that builds a non-root single-scope translator WITHOUT such a guard reopens a by-name retarget
         // (an enclosing member resolved against the inner scope because the two types share a property name),
         // which is a wrong-rows failure, not a decline.
-        if (TryMatchCountExpression(node, out var countSource)
-            && TryResolveOwnedCollectionPath(countSource, out var arrayPath, out _))
+        if (TryMatchCountExpression(node, out var countSource, out var countPredicate)
+            && TryResolveOwnedCollectionPath(countSource, out var arrayPath, out var countElementType))
         {
-            return new MongoSizeExpression(arrayPath, node.Type, nullSafe: true);
+            if (countPredicate is null)
+                return new MongoSizeExpression(arrayPath, node.Type, nullSafe: true);
+
+            // A FILTERED count (EF-359). The element predicate is translated exactly as a quantifier's is — same
+            // correlated-scope guard, same element-scoped child translator — so it inherits both invariants rather
+            // than re-deriving them.
+            //
+            // The correlated guard is LOAD-BEARING, not defensive: single-scope TryResolveMember resolves a member
+            // by NAME with no parameter-identity check, so an enclosing-scoped access whose name also exists on the
+            // element would be silently retargeted AT THE ELEMENT — wrong rows under the default Native mode, where
+            // the pre-slice fallback was correct. Note a $filter cond CAN legally reference the enclosing document
+            // (unlike $elemMatch, which cannot at all), so correlated support is a deferrable capability here rather
+            // than an impossibility — it needs a two-scope element translator.
+            if (ReferencesEnclosingScope(countPredicate.Body, countPredicate.Parameters[0]))
+                return null;
+
+            var countElementTranslator = new MongoExpressionTranslator(countElementType);
+            if (!countElementTranslator.TryTranslate(countPredicate.Body, out var elementPredicate))
+                return null;
+
+            // Decline at TRANSLATE time for anything the aggregation renderer cannot express. As measured (fix
+            // round 1 of this task), this check is DEFENCE-IN-DEPTH rather than the thing that currently changes
+            // observable behaviour for the PREDICATE spelling this method builds: MongoAggregationExpressionRenderer
+            // .Render already has its own catch-all that throws the SAME NativeTranslationNotSupportedException for
+            // a node kind CanRender declines, and MongoShapedQueryCompilingExpressionVisitor.TryBuildPipeline's
+            // TYPED catch (NativeTranslationNotSupportedException) when (mode != NativeOnly) — wrapping
+            // MongoSelectLowerer.Lower + MongoPipelineFactory.Create — already converts that render-time throw into
+            // a graceful driver-LINQ fallback under Native. (Corrected citation, fix round 1: this used to say
+            // "MongoShapedQueryCompilingExpressionVisitor's broad catch (Exception) ... around native-pipeline
+            // construction" — wrong on two counts. The ONLY broad catch (Exception) in that visitor wraps
+            // STREAMING-shaper construction only, and on catching falls back to the native DOM shaper, not to
+            // driver-LINQ; it has no bearing here. The catch that actually matters is the TYPED one in
+            // TryBuildPipeline, cited above.) So removing this check does not
+            // flip Element_predicate_outside_the_renderable_set_declines (the functional decline test), mutation-
+            // verified. What removing it DOES break is a translator-level unit assertion with no such safety net:
+            // TryTranslateBlogPredicate(b => b.Posts.Count(p => p.Heading!.StartsWith("h")) > 0) returns a
+            // MongoBinaryExpression instead of null (MongoExpressionTranslatorTests
+            // .Element_predicate_outside_the_renderable_set_declines_at_translate_time) — CanRender is what keeps
+            // TryTranslate's own contract (null for an unsupported shape) intact independent of what a particular
+            // caller's exception-handling happens to paper over.
+            //
+            // SETTLED (EF-359 fix round 2 — the repo owner has ruled; this replaces the fix-round-1 neutral
+            // placeholder, which itself replaced an earlier claim that a follow-up re-measurement had
+            // contradicted). This check has NO CORRECTNESS role: the one place a wrong admission would be
+            // dangerous — a filtered count's element predicate reaching $expr while nested inside $elemMatch (a
+            // hard server error there) — is independently prevented by
+            // MongoQueryLanguageRenderer.IsQueryDialectRenderable, not by this check (see "the nested-in-
+            // quantifier row" in MongoFilteredSizeExpression's own remarks). On the PREDICATE spelling this method
+            // also builds, both routes (check present vs. removed) end in a graceful driver-LINQ fallback — see
+            // the paragraph above — so only the PROJECTION spelling (Task 3, reusing this exact code path via
+            // NativeProjectionBinder's TryTranslateValue call) is materially affected by whether this check exists.
+            //
+            // MEASURED, precisely: with this check PRESENT (shipped), an element predicate with no aggregation-
+            // dialect rendering reaching a projection leaf — e.g.
+            // Select(b => new { b.Title, N = b.Posts.Count(p => p.Heading!.StartsWith("h")) }) — throws the
+            // pre-existing EF-359 InvalidOperationException ("could not be translated") identically under Native,
+            // DriverLinq AND NativeOnly. With the check REMOVED, the same query returns the correct value under
+            // Native and DriverLinq, and declines cleanly (NativeTranslationNotSupportedException) under
+            // NativeOnly — because the driver's own LINQ rendering of the fallback emits the SAME alias the
+            // shaper reads, so the fallback genuinely works for this shape; it does not "fall back onto the
+            // pre-existing crash" the way the design doc's original justification assumed for this check.
+            // THAT JUSTIFICATION IS MEASURED FALSE and must not be repeated as a reason to keep this check.
+            //
+            // The check is kept anyway, DELIBERATELY, per the owner's explicit ruling, on SCOPE grounds rather
+            // than correctness ones: EF-359 fixes the renderable filtered-count cases; widening admissibility
+            // further by deleting a guard is exactly the direction that produced two live silent-wrong-data bugs
+            // in the owned array-valued projection slice (EF-322 owned-data slice 8 — see the "GOVERNING HAZARD"
+            // and "alias-agreement rule" notes in Query/AGENTS.md). The improvement this leaves on the table is
+            // filed as EF-365 ("A non-renderable element predicate in a filtered Count(pred) projection hard-
+            // fails where a graceful fallback is available") — its description carries the two measurement
+            // tables and this mechanism, and records the scope of the eventual fix (delete this call site, then
+            // delete the now-callerless CanRender classifier and its unit tests, and re-baseline the StartsWith
+            // residual-decline test). EF-365 also records the breadth that still needs verifying before that fix
+            // ships: only StartsWith was measured here — regex-family predicates (Contains → $in), unary Not, a
+            // bare nullable bool, and a MIXED projection (a declining leaf alongside an admitted one) are
+            // UNVERIFIED and must be checked, not assumed to behave the same way.
+            if (!MongoAggregationExpressionRenderer.CanRender(elementPredicate))
+                return null;
+
+            return new MongoFilteredSizeExpression(arrayPath, elementPredicate, node.Type);
         }
 
         // Restrict to numeric operand types: ExpressionType.Add on strings is compiler-generated
@@ -910,14 +990,16 @@ internal sealed class MongoExpressionTranslator
 
     /// <summary>
     /// Matches an element-count expression over a collection — the <c>Count</c> property on the collection
-    /// itself, or a PARAMETERLESS <c>Count()</c>/<c>LongCount()</c> call — and yields the collection SOURCE
-    /// with any <c>AsQueryable()</c> wrapper stripped.
+    /// itself, a PARAMETERLESS <c>Count()</c>/<c>LongCount()</c> call, or a PREDICATED
+    /// <c>Count(predicate)</c>/<c>LongCount(predicate)</c> call (EF-359) — and yields the collection SOURCE with
+    /// any <c>AsQueryable()</c> wrapper stripped, plus the predicate lambda (<see langword="null"/> for the
+    /// predicate-less forms).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Both shapes are live, for different callers</b> (Task 1 spike, measured on EF8/EF9/EF10): EF's own
-    /// preprocessing normalizes a <c>.Count</c> PROPERTY access into the method-call form before the native
-    /// translator ever sees it, so every real query arrives as
+    /// <b>Both no-predicate shapes are live, for different callers</b> (Task 1 spike, measured on EF8/EF9/EF10):
+    /// EF's own preprocessing normalizes a <c>.Count</c> PROPERTY access into the method-call form before the
+    /// native translator ever sees it, so every real query arrives as
     /// <c>Queryable.Count(EF.Property(b, "Posts").AsQueryable())</c> — the <c>Count</c> property and
     /// <c>Count()</c> call are byte-identical trees by then. The <see cref="MemberExpression"/> arm is
     /// nonetheless required, because a HAND-BUILT expression tree (a unit test calling
@@ -927,9 +1009,11 @@ internal sealed class MongoExpressionTranslator
     /// <see cref="Queryable"/>: so a hand-built tree translates identically to an EF-produced one.
     /// </para>
     /// <para>
-    /// A PREDICATED <c>Count(source, predicate)</c> is deliberately NOT matched: it has no array-index form and
-    /// would need <c>$expr</c> over <c>$filter</c>, which is a separate slice. Rejecting it here keeps it on the
-    /// driver-LINQ path, which translates it correctly.
+    /// <b>The PREDICATED overloads (EF-359)</b> are matched by canonical <see cref="MethodInfo"/> via
+    /// <see cref="IsCanonicalCountWithPredicate"/> rather than by name — unlike the no-predicate arms above,
+    /// which are left exactly as they were so no previously-shipped path's behavior moves. <see cref="TranslateOperand"/>'s
+    /// caller decides what a predicated match means (a <see cref="MongoFilteredSizeExpression"/>, filtered by the
+    /// element predicate) — this matcher only recognizes the shape and hands back the lambda unevaluated.
     /// </para>
     /// <para>
     /// This matcher is PURE and must stay that way: the spike observed
@@ -937,19 +1021,25 @@ internal sealed class MongoExpressionTranslator
     /// idempotent.
     /// </para>
     /// <para>
-    /// <b>This matcher is name-based and therefore not sufficient on its own</b> — an entity may legitimately have
-    /// a mapped scalar property called <c>Count</c>. What makes that safe is <b>structural</b>, not the call-site
-    /// ordering: every match is gated on <see cref="TryResolveOwnedCollectionPath"/>, which requires the source
-    /// chain to be rooted at the query parameter with at least one hop and its FINAL hop to be an embedded
-    /// collection navigation. A mapped scalar's receiver is an entity, never a collection, so a same-named scalar
-    /// cannot resolve to an array path. The call site in <see cref="TranslateOperand"/> additionally runs this
-    /// after <see cref="TryResolveMember"/>, which is worth keeping as defence-in-depth and to avoid the work,
-    /// but it is not what prevents the collision.
+    /// <b>This matcher is name-based (for the no-predicate arms) and therefore not sufficient on its own</b> — an
+    /// entity may legitimately have a mapped scalar property called <c>Count</c>. What makes that safe is
+    /// <b>structural</b>, not the call-site ordering: every match is gated on
+    /// <see cref="TryResolveOwnedCollectionPath"/>, which requires the source chain to be rooted at the query
+    /// parameter with at least one hop and its FINAL hop to be an embedded collection navigation. A mapped
+    /// scalar's receiver is an entity, never a collection, so a same-named scalar cannot resolve to an array path.
+    /// The call site in <see cref="TranslateOperand"/> additionally runs this after <see cref="TryResolveMember"/>,
+    /// which is worth keeping as defence-in-depth and to avoid the work, but it is not what prevents the
+    /// collision. The predicated arm is matched by canonical <see cref="MethodInfo"/>, so it needs no equivalent
+    /// name-collision argument — a same-named scalar property has no 2-argument overload to collide with.
     /// </para>
     /// </remarks>
-    private static bool TryMatchCountExpression(Expression node, [NotNullWhen(true)] out Expression? source)
+    private static bool TryMatchCountExpression(
+        Expression node,
+        [NotNullWhen(true)] out Expression? source,
+        out LambdaExpression? predicate)
     {
         source = null;
+        predicate = null;
 
         // Only int/long-valued nodes can be a count; this cheaply excludes unrelated members named "Count".
         if (node.Type != typeof(int) && node.Type != typeof(long))
@@ -972,9 +1062,31 @@ internal sealed class MongoExpressionTranslator
                 source = UnwrapAsQueryable(call.Arguments[0]);
                 return true;
 
+            // The PREDICATED overloads (EF-359). Matched by canonical MethodInfo rather than by name — unlike the
+            // arm above, which is left exactly as it was so no shipped path's behaviour moves. Generic methods are
+            // compared as DEFINITIONS: an open definition and a constructed instantiation are never reference-equal.
+            case MethodCallExpression { Arguments.Count: 2 } call when IsCanonicalCountWithPredicate(call.Method):
+                source = UnwrapAsQueryable(call.Arguments[0]);
+                predicate = call.Arguments[1].UnwrapLambdaFromQuote();
+                return true;
+
             default:
                 return false;
         }
+    }
+
+    // The Queryable spelling quotes its lambda and the Enumerable spelling does not; UnwrapLambdaFromQuote above
+    // handles both, so both declaring types are admitted here.
+    private static bool IsCanonicalCountWithPredicate(MethodInfo method)
+    {
+        if (!method.IsGenericMethod)
+            return false;
+
+        var definition = method.GetGenericMethodDefinition();
+        return definition == QueryableMethods.CountWithPredicate
+            || definition == QueryableMethods.LongCountWithPredicate
+            || definition == EnumerableMethods.CountWithPredicate
+            || definition == EnumerableMethods.LongCountWithPredicate;
     }
 
     /// <summary>

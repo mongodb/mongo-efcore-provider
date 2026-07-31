@@ -284,9 +284,20 @@ internal static class NativeProjectionBinder
         // MongoBinaryExpression, fails the `is MongoSizeExpression` test, and reaches the arithmetic branch
         // regardless of order. What decides the binding is the node-kind test. The order only avoids calling
         // TryTranslateValue twice.
-        if (translator.TryTranslateValue(leafExpression, out var value) && value is MongoSizeExpression size)
+        //
+        // EF-359 widens the admitted node kind to ALSO accept MongoFilteredSizeExpression — a predicated owned-
+        // collection count leaf, `new { N = b.Posts.Count(p => p.Rank > 0) }`. It is admitted here for the SAME
+        // reason a plain MongoSizeExpression is: it renders as a DOCUMENT ({$size: {$filter: ...}}), so $project
+        // cannot misread it as an inclusion/exclusion flag the way it would a bare value. It is a SEPARATE node
+        // kind from MongoSizeExpression, never a flag on it, precisely so this gate, the query-dialect Tier-1
+        // renderer (TryRenderSizeComparison), the dialect classifier (IsQueryDialectRenderable) and the negator
+        // (MongoExpressionNegator) all keep failing CLOSED for it by construction — see MongoFilteredSizeExpression's
+        // own remarks for the full "sibling, not a flag" argument. This is still a node-kind gate, not "translation
+        // succeeded": that is what keeps a bare constant/parameter leaf out (see the measurement above).
+        if (translator.TryTranslateValue(leafExpression, out var value)
+            && value is MongoSizeExpression or MongoFilteredSizeExpression)
         {
-            result = size;
+            result = value;
             return true;
         }
 

@@ -859,15 +859,29 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     }
 
     [Fact]
-    public void A_predicated_Count_declines_and_falls_back_to_correct_rows()
+    public void A_predicated_Count_now_goes_native()
     {
-        // Count(pred) has no array-index form; it needs $expr over $filter — a separate slice.
-        var collection = SeedWellFormed(nameof(A_predicated_Count_declines_and_falls_back_to_correct_rows));
+        // USED TO PIN a decline: "Count(pred) has no array-index form; it needs $expr over $filter — a separate
+        // slice." EF-359 Task 2 is that separate slice — the PREDICATE spelling (this shape) now goes native via
+        // $expr over a null-safe $size of a $filter (MongoFilteredSizeExpression, from EF-359 Task 1). Results are
+        // unchanged; only the routing flipped from fallback to native. See
+        // NativeOwnedCollectionFilteredCountTests for the full breadth (thresholds, MQL shape, correlated/regex/
+        // primitive-collection/nested-quantifier declines). The PROJECTION spelling (shape A,
+        // Filtered_count_projection_is_a_known_preexisting_hard_fail_in_every_mode below) is untouched by this
+        // task and still hard-fails in every mode.
+        //
+        // PARITY (fix round 1): this is the ONE task in the EF-359 slice where translated results could actually
+        // change (a wrong $filter/$size composition returns wrong rows, not a decline), so AssertNativeAndParity —
+        // NativeOnly succeeds AND agrees with DriverLinq — replaces the routing-only AssertNativeOnlyMatches the
+        // original flip used. The seed is SeedLengths, not SeedWellFormed, so parity is asserted across the
+        // RAGGED matrix too (missing/explicitly-null Posts), not just well-formed arrays: the Task 0 spike measured
+        // the driver-LINQ fallback for this shape ($sum over $map) tolerates a missing/null array exactly like the
+        // native $ifNull-wrapped form does, so there is no ragged-row caveat to restrict the seed for.
+        var collection = SeedLengths(nameof(A_predicated_Count_now_goes_native));
 
-        var titles = AssertDeclinesCleanly(
-            collection, q => q.Where(b => b.Posts.Count(p => p.Rank > 0) > 1));
+        var titles = AssertNativeAndParity(collection, q => q.Where(b => b.Posts.Count(p => p.Rank > 0) > 1));
 
-        // len2 has ranks {0,1} → one passes; len3 has {0,1,2} → two pass.
+        // len2 has ranks {0,1} → one passes; len3 has {0,1,2} → two pass; missing/null have zero elements → 0 matches.
         Assert.Equal(new[] { "len3" }, titles);
     }
 
@@ -1172,37 +1186,33 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     }
 
     [Fact]
-    public void Filtered_count_projection_is_a_known_preexisting_hard_fail_in_every_mode()
+    public void Filtered_count_projection_now_goes_native_EF359()
     {
-        // MEASURED (Task 4 probe, not assumed): Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) })
-        // throws System.InvalidOperationException ("The LINQ expression 'o' could not be translated...")
-        // identically under Native, DriverLinq AND NativeOnly — not a graceful decline, no driver-LINQ oracle,
-        // no correct results in ANY mode. An earlier version of this test (and the design doc it was based on)
-        // assumed the shape was merely "deferred for cost, not impossibility" and would fall back gracefully
-        // like the predicate half's excluded shapes do — that assumption was WRONG. The crash happens inside
-        // MongoProjectionBindingExpressionVisitor.Translate, called unconditionally from
-        // MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect at TRANSLATION time, before
-        // MongoQueryMode is ever read by the compile-time gate — so the query mode has no bearing on whether
-        // it crashes, only (potentially) on incidental message text.
+        // This test USED TO PIN the EF-359 bug: Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) })
+        // threw System.InvalidOperationException ("The LINQ expression 'o' could not be translated...")
+        // identically under Native, DriverLinq AND NativeOnly — a translation-time crash inside
+        // MongoProjectionBindingExpressionVisitor.Translate, reached unconditionally from
+        // MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect before MongoQueryMode was ever read
+        // by the compile-time gate, so the mode had no bearing on whether it crashed. EF-359 Task 3 fixed it by
+        // widening NativeProjectionBinder's node-kind gate (MongoSizeExpression -> also MongoFilteredSizeExpression)
+        // and MongoProjectionBindingExpressionVisitor's IsCanonicalCount (both arities, both Queryable/Enumerable)
+        // in lockstep. The shape now emits { $project: { ..., N: { $size: { $filter: ... } } } } and returns
+        // correct values in every mode. Full breadth (LongCount, named-DTO, sibling leaves, owned-reference hop,
+        // arithmetic wrapping) lives in NativeOwnedCollectionFilteredCountTests; this case stays HERE, under its
+        // original name's ticket, so the file that documented the bug also records its closure.
         //
-        // PRE-EXISTING and unrelated to this slice's work: neither Task 2 nor Task 3 touch predicated-Count
-        // recognition inside a projection, so this shape never reaches either task's code paths.
-        //
-        // The exception TYPE is not part of the provider's contract for an unsupported shape (see the
-        // versioning rubric in AGENTS.md) — a type change here is a prompt to re-measure and re-document, not
-        // a regression in itself. This test exists so that if the filtered form ever starts working, or starts
-        // failing differently, someone notices and updates the follow-on slice's characterization of its own
-        // difficulty.
-        var collection = SeedLengths(
-            nameof(Filtered_count_projection_is_a_known_preexisting_hard_fail_in_every_mode));
+        // SeedLengths' LenRow gives element ranks 0..n-1, so "Rank > 0" counts (length - 1) elements for a
+        // non-empty row (rank 0 never matches): len0 -> 0, len1 -> 0 (only rank 0 present), len2 -> 1 (rank 1),
+        // len3 -> 2 (ranks 1, 2); missing/null rows have no Posts array at all -> 0.
+        var collection = SeedLengths(nameof(Filtered_count_projection_now_goes_native_EF359));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
-        {
-            using var db = CreateContext(collection, mode, BlogModel);
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => db.Entities.AsNoTracking()
-                    .Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) }).ToList());
-            Assert.Contains("could not be translated", ex.Message);
-        }
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        var rows = db.Entities.AsNoTracking()
+            .Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) })
+            .OrderBy(r => r.Title).ToList();
+
+        Assert.Equal(
+            [("len0", 0), ("len1", 0), ("len2", 1), ("len3", 2), ("missing", 0), ("null", 0)],
+            rows.Select(r => (r.Title, r.N)).ToList());
     }
 }

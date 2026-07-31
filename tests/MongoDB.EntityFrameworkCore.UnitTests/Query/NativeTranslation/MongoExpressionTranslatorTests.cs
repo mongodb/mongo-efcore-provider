@@ -1634,9 +1634,36 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void A_predicated_Count_declines()
-        // Count(pred) has no array-index form and needs $expr over $filter — a separate slice.
-        => Assert.Null(TryTranslateBlogPredicate(b => b.Posts.Count(p => p.Rank > 1) > 2));
+    public void A_predicated_Count_now_translates_to_a_filtered_size_comparison()
+    {
+        // USED TO PIN a decline: "Count(pred) has no array-index form and needs $expr over $filter — a separate
+        // slice." EF-359 Task 2 is that separate slice: TryMatchCountExpression now recognizes the predicated
+        // overload and TranslateOperand builds a MongoFilteredSizeExpression instead of returning null.
+        var comparison = Assert.IsType<MongoBinaryExpression>(
+            TryTranslateBlogPredicate(b => b.Posts.Count(p => p.Rank > 1) > 2));
+
+        Assert.Equal(MongoBinaryOperator.GreaterThan, comparison.Operator);
+        var filtered = Assert.IsType<MongoFilteredSizeExpression>(comparison.Left);
+        Assert.Equal("Posts", filtered.ArrayPath);
+        var elementPredicate = Assert.IsType<MongoBinaryExpression>(filtered.ElementPredicate);
+        Assert.Equal("Rank", Assert.IsType<MongoFieldExpression>(elementPredicate.Left).ElementName);
+    }
+
+    [Fact]
+    public void Element_predicate_outside_the_renderable_set_declines_at_translate_time()
+    {
+        // THE non-vacuous pin for MongoAggregationExpressionRenderer.CanRender's decline in TranslateOperand's
+        // filtered-count branch (EF-359 fix round 1). A regex predicate has no aggregation-dialect rendering, so
+        // CanRender declines it — and at THIS layer (the bare translator, with no query-mode gate and no
+        // MongoShapedQueryCompilingExpressionVisitor catch-and-fallback wrapped around it) that is the only thing
+        // standing between a clean null and a MongoBinaryExpression whose Left is a MongoFilteredSizeExpression
+        // wrapping an unrenderable MongoRegexExpression. Mutation-verified: deleting the CanRender check turns
+        // this test red (TryTranslateBlogPredicate returns non-null); it does NOT turn the sibling functional test
+        // (NativeOwnedCollectionFilteredCountTests.Element_predicate_outside_the_renderable_set_declines) red,
+        // because that test only checks NativeOnly's exception TYPE, which stays the same NativeTranslationNotSupportedException
+        // either way (translate-time decline vs. Render's own catch-all) — see the remarks on the CanRender call site.
+        Assert.Null(TryTranslateBlogPredicate(b => b.Posts.Count(p => p.Heading.StartsWith("h")) > 0));
+    }
 
     [Fact]
     public void A_primitive_collection_Count_declines()

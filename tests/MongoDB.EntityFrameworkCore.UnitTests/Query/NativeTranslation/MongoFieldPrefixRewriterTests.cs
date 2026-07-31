@@ -107,4 +107,21 @@ public class MongoFieldPrefixRewriterTests
         Assert.Equal("Name", childField.ElementName);
         Assert.False(rewritten.Negated);
     }
+
+    [Fact]
+    public void Filtered_size_prefixes_the_array_path_only()
+    {
+        var node = new MongoFilteredSizeExpression(
+            "Comments",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.GreaterThan,
+                new MongoElementRefExpression("Age", typeof(int)),
+                new MongoConstantExpression(0, forSerialization: null)),
+            typeof(int));
+
+        var rewritten = Assert.IsType<MongoFilteredSizeExpression>(MongoFieldPrefixRewriter.Rewrite(node, "Posts"));
+
+        Assert.Equal("Posts.Comments", rewritten.ArrayPath);
+        Assert.Same(node.ElementPredicate, rewritten.ElementPredicate);
+    }
 }

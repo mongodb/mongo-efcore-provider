@@ -44,6 +44,14 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
     private MongoQueryExpression _queryExpression;
 
+    // EF-359 Task 4: the top-level expression handed to THIS Translate() call — i.e. the (post-shaper-replace)
+    // selector body as a whole. Used by the bare filtered-count rebuild arm below to distinguish the BARE
+    // selector-body spelling (Select(b => b.Posts.Count(pred)), where the Count call itself IS this root) from
+    // the SAME Count call reached as one leaf of a WRAPPED anonymous/DTO projection that separately declined to
+    // Fallback (a correlated/non-renderable/primitive-collection/differently-shaped element predicate) — see
+    // that arm's own comment for why the distinction is load-bearing.
+    private Expression _translatedRootExpression;
+
     /// <summary>
     /// Perform translation of the <paramref name="expression" /> that belongs to the
     /// supplied <paramref name="queryExpression"/>.
@@ -57,12 +65,14 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     {
         _queryExpression = queryExpression;
         _projectionMembers.Push(new ProjectionMember());
+        _translatedRootExpression = expression;
 
         var result = Visit(expression);
 
         _queryExpression.ReplaceProjectionMapping(_projectionMapping);
         _projectionMapping.Clear();
         _queryExpression = null;
+        _translatedRootExpression = null;
 
         _projectionMembers.Clear();
 
@@ -333,8 +343,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         }
 
         // An OWNED (embedded) collection-navigation count leaf in a native projection (EF-322):
-        // `select new { ..., N = b.Posts.Count }`. Register the whole Count/LongCount call as ONE projection
-        // member, exactly like the arithmetic case in Visit above.
+        // `select new { ..., N = b.Posts.Count }` — AND, since EF-359 Task 3 widened `IsCanonicalCount` to admit
+        // the predicated overloads too, the FILTERED spelling `select new { ..., N = b.Posts.Count(pred) }`.
+        // Register the whole Count/LongCount call (predicate-less or predicated) as ONE projection member,
+        // exactly like the arithmetic case in Visit above.
         //
         // WHY THIS BLOCK IS LOAD-BEARING — corrected, because the original wording here named the wrong
         // counterfactual and the docs it was copied into inherited the error. It used to say: "Without this, the
@@ -367,10 +379,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         //    what averts an ArgumentException.
         //  * The switch's own Count/LongCount arm never runs for a NATIVE-route count: this block returns first,
         //    unconditionally, whenever BOTH of its two conjuncts hold — Route == Projection and
-        //    IsCanonicalCountWithoutPredicate(Method). (Arity is not a separate conjunct: it is implied by the
-        //    canonical constants, since both the QueryableMethods and EnumerableMethods predicate-less
-        //    Count/LongCount definitions take exactly one parameter. An earlier version of this comment listed
-        //    "a single argument" as a third conjunct; that check was deleted.) So
+        //    IsCanonicalCount(Method). (EF-359 REWRITES this parenthetical: it used to say arity needed no
+        //    separate conjunct because BOTH the QueryableMethods and EnumerableMethods predicate-less Count/
+        //    LongCount definitions take exactly one parameter — true then, but IsCanonicalCount now ALSO admits
+        //    the two-argument predicated overloads, so "exactly one parameter" is no longer true of the admitted
+        //    set as a whole. Arity STILL needs no separate conjunct, for a different reason: matching is by
+        //    reference equality against eight specific, fixed-arity canonical MethodInfo definitions, and each of
+        //    those definitions already pins its own arity — there is no way for a call of some other arity to
+        //    spuriously satisfy an equality check against a definition it isn't. An earlier version of this
+        //    comment listed "a single argument" as a third conjunct; that check was deleted.) So
         //    the switch's arm only ever sees a NON-PROJECTION-route shape (Route != Projection — which includes
         //    Fallback, but also WholeEntity/ScalarAggregate/GroupBy) — the two arms are disjoint by construction,
         //    not by luck.
@@ -404,7 +421,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         // sibling EF-357 arm in the Queryable switch below already does. Generic methods must be compared as
         // definitions: an open definition and a constructed instantiation are never reference-equal.
         if (_queryExpression.Select.Route == NativeRoute.Projection
-            && IsCanonicalCountWithoutPredicate(methodCallExpression.Method))
+            && IsCanonicalCount(methodCallExpression.Method))
         {
             var countProjectionMember = GetCurrentProjectionMember();
             _projectionMapping[countProjectionMember] = methodCallExpression;
@@ -600,6 +617,104 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                             : EnumerableMethods.LongCountWithoutPredicate)
                         .MakeGenericMethod(method.GetGenericArguments()),
                         countShaper);
+
+                // EF-359 Task 4: the same rebuild as the EF-357 arm immediately above, for the PREDICATED
+                // Count/LongCount overloads — this is what delivers shape C (the BARE filtered-count projection,
+                // `Select(b => b.Posts.Count(p => ...))`), and only shape C. A NATIVE filtered-count projection
+                // never reaches here: the Route == NativeRoute.Projection registration earlier in
+                // VisitMethodCall (gated by IsCanonicalCount, which admits both arities since EF-359 Task 3)
+                // already claims the predicated overloads and pushes the count into $project instead — so this
+                // arm only ever sees a shape that is NOT going native, which the SP3-wide bare-projection
+                // boundary keeps off the native path regardless of this widening.
+                //
+                // "Bare spelling" here means a bare selector BODY, not merely a bare TOP node — narrower than the
+                // EF-357 arm above it. `Select(b => b.Posts.Count * 2)` folds client-side (the unfiltered EF-357
+                // arm has no `_translatedRootExpression` identity check), but the filtered analogue,
+                // `Select(b => b.Posts.Count(p => ...) * 2)`, still hard-fails in every mode: the Count call is an
+                // OPERAND of the top-level `*`, not the selector body itself, so identity fails and this arm
+                // declines. Widening to "the Count call appears anywhere reachable from the root, with no
+                // interposed shaper reference" is a follow-on, not something this task claims.
+                //
+                // The Enumerable overload takes a Func<,>, not an Expression<Func<,>>, so the predicate lambda
+                // must be UNQUOTED — UnwrapLambdaFromQuote (used the same way by the adjacent Select case above)
+                // handles the Queryable spelling's Quote and passes an already-bare lambda through unchanged.
+                //
+                // The predicate lambda is deliberately NOT re-Visited (contrast the adjacent Select case, which
+                // DOES visit its lambda body): the rebuilt Enumerable.Count runs CLIENT-SIDE over MATERIALIZED
+                // Post elements, so the predicate must stay ordinary CLR code operating on a real Post instance.
+                // Visiting it would rewrite its member accesses into shaper reads against a document the fold no
+                // longer has — there is no BsonDocument here, only the List<Post> the countShaper already
+                // materialized.
+                //
+                // The DECLINE branch is `break`, never `return null`, for the identical reason the EF-357 arm's
+                // comment gives above: `return null` would fold through MatchTypes(null, typeof(int)) ->
+                // Expression.Default(int) and silently return 0 for a bare-scalar filtered-count projection body.
+                //
+                // A CAPTURED LOCAL declines here too, measured rather than assumed (EF-359 Task 4 step 2): EF Core
+                // parameterizes a captured local into an EF query-parameter node (a typed `QueryParameterExpression`
+                // on EF10, a specially-named `ParameterExpression` on EF8/EF9 — see
+                // NativeQueryParameter.TryGetQueryParameterName), and since the predicate lambda above is NOT
+                // re-Visited that node survives into the rebuilt `Enumerable.Count` call unresolved. Compiling it
+                // as ordinary CLR code then throws `ArgumentException: must be reducible node` from
+                // `Expression.ReduceAndCheck()` deep in the LambdaCompiler — a DIFFERENT, worse failure than the
+                // clean pre-existing crash this task otherwise fixes. `ContainsQueryParameter` declines the whole
+                // leaf before that call is built, so this one spelling keeps failing with the SAME
+                // InvalidOperationException("could not be translated") every other declined shape in this file
+                // already fails with, rather than trading it for a confusing `ArgumentException`.
+                //
+                // MUST BE THE BARE SELECTOR BODY ITSELF, not a leaf nested inside a WRAPPED anonymous/DTO
+                // projection — measured, not assumed (fix round 1: two pinned residual-decline tests broke
+                // without this check). A WRAPPED projection's element predicate can decline to Fallback for
+                // reasons unrelated to this task (correlated-beyond-element, a non-renderable predicate like
+                // `StartsWith`, a primitive-element collection, or the structurally distinct `Where(pred).Count()`
+                // shape) — see NativeOwnedCollectionFilteredCountTests' pinned `..._still_hard_fail(s)_in_every_mode`
+                // tests. Those shapes reach this SAME switch arm too (Route == Fallback for a DIFFERENT reason
+                // than a bare selector body), and `visitedSource` is STILL a genuine CollectionShaperExpression
+                // for them (visiting a real owned-collection navigation produces one regardless of Route) — so
+                // the shaper-type check alone does not distinguish "this task's bare spelling" from "an unrelated
+                // decline residual". Reference-equality against `_translatedRootExpression` (the top-level
+                // expression this Translate() call started with — see its own doc comment) does: it is true only
+                // when this Count call IS the entire selector body, which is exactly the SP3-wide bare-projection
+                // boundary this task targets. For a WRAPPED shape the Count call is nested inside a
+                // NewExpression/MemberInit, so identity fails and this arm declines exactly as it did before this
+                // task.
+                //
+                // NOT REDUNDANT WITH `ContainsShaperReference` BELOW — the two guards protect DIFFERENT residual
+                // shapes, and this was checked by measurement rather than assumed (fix round 1). The identity
+                // guard alone does NOT restore the WRAPPED CORRELATED residual
+                // (`Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode`'s
+                // first row) — a proxy for "does this predicate reference the enclosing shaper", not that
+                // property itself; see `ContainsShaperReference`'s own doc comment for why a BARE correlated
+                // predicate slips past identity but is caught by the structural check. Conversely,
+                // `ContainsShaperReference` alone does NOT restore the WRAPPED NON-RENDERABLE residual
+                // (`Non_renderable_element_predicate_filtered_projection_still_hard_fails_in_every_mode`, the
+                // `StartsWith` case): that predicate references only its own element parameter `p` — no shaper
+                // node, no query parameter — so nothing about it is structurally distinguishable from the bare
+                // spelling except that the Count call is nested inside a `new {...}` rather than being the whole
+                // selector body. Only the identity check catches THAT one. Both guards stay.
+                case nameof(Queryable.Count)
+                    when genericMethod == QueryableMethods.CountWithPredicate:
+                case nameof(Queryable.LongCount)
+                    when genericMethod == QueryableMethods.LongCountWithPredicate:
+                    if (visitedSource is not CollectionShaperExpression filteredCountShaper
+                        || !ReferenceEquals(methodCallExpression, _translatedRootExpression))
+                    {
+                        break;
+                    }
+
+                    var filteredCountLambda = methodCallExpression.Arguments[1].UnwrapLambdaFromQuote();
+                    if (ContainsQueryParameter(filteredCountLambda.Body) || ContainsShaperReference(filteredCountLambda.Body))
+                    {
+                        break;
+                    }
+
+                    return Expression.Call(
+                        (method.Name == nameof(Queryable.Count)
+                            ? EnumerableMethods.CountWithPredicate
+                            : EnumerableMethods.LongCountWithPredicate)
+                        .MakeGenericMethod(method.GetGenericArguments()),
+                        filteredCountShaper,
+                        filteredCountLambda);
             }
         }
 
@@ -924,9 +1039,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         => _projectionMembers.Pop();
 
     /// <summary>
-    /// Checks whether <paramref name="method"/> is one of the four canonical predicate-less
-    /// <c>Count</c>/<c>LongCount</c> methods — the <see cref="Queryable"/> pair from EF Core's
-    /// <c>QueryableMethods</c> and the <see cref="Enumerable"/> pair from this provider's own
+    /// Checks whether <paramref name="method"/> is one of the eight canonical <c>Count</c>/<c>LongCount</c>
+    /// methods — predicate-less AND predicated (EF-359), the <see cref="Queryable"/> four from EF Core's
+    /// <c>QueryableMethods</c> and the <see cref="Enumerable"/> four from this provider's own
     /// <c>EnumerableMethods</c> port — by reference equality on the generic method DEFINITION.
     /// </summary>
     /// <remarks>
@@ -934,9 +1049,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// <c>VisitMethodCall</c> for why a false positive there is consequential. Comparing definitions
     /// rather than the passed-in <see cref="MethodInfo"/> is required because a constructed generic
     /// method is never reference-equal to its open definition. A non-generic method cannot be any of
-    /// the four, so it declines before <c>GetGenericMethodDefinition</c> is called (which would throw).
+    /// the eight, so it declines before <c>GetGenericMethodDefinition</c> is called (which would throw).
+    /// Renamed from <c>IsCanonicalCountWithoutPredicate</c> when EF-359 widened the admitted set to include
+    /// the predicated overloads — the old name would now be inaccurate for half of what it matches.
     /// </remarks>
-    private static bool IsCanonicalCountWithoutPredicate(MethodInfo method)
+    private static bool IsCanonicalCount(MethodInfo method)
     {
         if (!method.IsGenericMethod)
         {
@@ -947,8 +1064,104 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         return definition == QueryableMethods.CountWithoutPredicate
             || definition == QueryableMethods.LongCountWithoutPredicate
+            || definition == QueryableMethods.CountWithPredicate
+            || definition == QueryableMethods.LongCountWithPredicate
             || definition == EnumerableMethods.CountWithoutPredicate
-            || definition == EnumerableMethods.LongCountWithoutPredicate;
+            || definition == EnumerableMethods.LongCountWithoutPredicate
+            || definition == EnumerableMethods.CountWithPredicate
+            || definition == EnumerableMethods.LongCountWithPredicate;
+    }
+
+    /// <summary>
+    /// EF-359 Task 4: reports whether <paramref name="expression"/> contains an EF Core query-parameter node
+    /// anywhere in its tree (see <see cref="NativeQueryParameter.TryGetQueryParameterName"/>), so a captured value
+    /// in the BARE filtered-count projection's element predicate (e.g. <c>b.Posts.Count(p => p.Rank > threshold)</c>,
+    /// <c>threshold</c> a captured local) can be declined BEFORE the predicate lambda is rebuilt against the
+    /// client-side <see cref="EnumerableMethods.CountWithPredicate"/>/<see cref="EnumerableMethods.LongCountWithPredicate"/>
+    /// call. That rebuild deliberately does not re-Visit the lambda body (see the call site's comment), so an
+    /// EF query-parameter node reaching it would survive unresolved into ordinary CLR code and throw
+    /// <c>ArgumentException: must be reducible node</c> when the lambda compiler tries to compile it — a worse,
+    /// confusing failure than the clean decline this check produces instead.
+    /// </summary>
+    private static bool ContainsQueryParameter(Expression expression)
+    {
+        var detector = new QueryParameterDetector();
+        detector.Visit(expression);
+        return detector.Found;
+    }
+
+    /// <summary>
+    /// Stops descending the moment an EF query-parameter node is found — this only needs to answer "is one
+    /// present anywhere", not enumerate all of them.
+    /// </summary>
+    private sealed class QueryParameterDetector : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        public override Expression Visit(Expression node)
+        {
+            if (Found || node is null)
+            {
+                return node;
+            }
+
+            if (NativeQueryParameter.TryGetQueryParameterName(node, out _))
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.Visit(node);
+        }
+    }
+
+    /// <summary>
+    /// EF-359 Task 4 (fix round 1): reports whether <paramref name="expression"/> contains a provider/EF Core
+    /// SHAPER node anywhere in its tree — <see cref="StructuralTypeShaperExpression"/>,
+    /// <see cref="ProjectionBindingExpression"/>, or <see cref="EntityProjectionExpression"/>. This is the
+    /// STRUCTURAL property the bare filtered-count rebuild arm actually needs to guard against, which the
+    /// top-level-identity check (<c>ReferenceEquals(methodCallExpression, _translatedRootExpression)</c>) was
+    /// only ever a PROXY for: that check protects the WRAPPED residual-decline shapes (the Count call is nested
+    /// inside a NewExpression/MemberInit, so identity fails), but a BARE correlated predicate — e.g.
+    /// <c>Select(b => b.Posts.Count(p => p.Title == b.Title))</c> — has this Count call AS its top-level
+    /// selector body, so identity holds and the arm would otherwise proceed. By the time this visitor runs,
+    /// <c>ReplacingExpressionVisitor</c> has already rewritten every occurrence of the outer <c>b</c> — INCLUDING
+    /// the one inside the predicate lambda — to the query root's entity shaper (a <see cref="StructuralTypeShaperExpression"/>).
+    /// Since the predicate is deliberately not re-Visited (see the call site's comment), that unresolved shaper
+    /// reference would otherwise survive into the rebuilt client-side <see cref="EnumerableMethods.CountWithPredicate"/>
+    /// call and crash downstream at shaper-compile time with a confusing <c>KeyNotFoundException</c>
+    /// ("...'EmptyProjectionMember'...") instead of the clean, pre-existing <c>InvalidOperationException</c>
+    /// ("could not be translated") every other declined shape in this file gets — measured directly (fix round 1).
+    /// </summary>
+    private static bool ContainsShaperReference(Expression expression)
+    {
+        var detector = new ShaperReferenceDetector();
+        detector.Visit(expression);
+        return detector.Found;
+    }
+
+    /// <summary>
+    /// Stops descending the moment a shaper node is found — this only needs to answer "is one present anywhere".
+    /// </summary>
+    private sealed class ShaperReferenceDetector : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        public override Expression Visit(Expression node)
+        {
+            if (Found || node is null)
+            {
+                return node;
+            }
+
+            if (node is StructuralTypeShaperExpression or ProjectionBindingExpression or EntityProjectionExpression)
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.Visit(node);
+        }
     }
 
     /// <summary>

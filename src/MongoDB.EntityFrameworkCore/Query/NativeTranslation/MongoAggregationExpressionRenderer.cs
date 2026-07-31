@@ -35,35 +35,112 @@ internal static class MongoAggregationExpressionRenderer
     /// Receives one entry per <see cref="MongoParameterExpression"/> encountered.
     /// Each entry's corresponding sentinel is embedded in the returned <see cref="BsonValue"/>.
     /// </param>
+    /// <param name="elementVariable">
+    /// The <c>$filter</c>/<c>$map</c> <c>as</c> variable name currently in scope, or <see langword="null"/> at
+    /// the document root. When non-null, a field reference renders as <c>"$$" + elementVariable + "." + path</c>
+    /// instead of <c>"$" + path</c> — the enclosing document is no longer addressable as <c>$path</c> once a
+    /// <see cref="MongoFilteredSizeExpression"/>'s <c>$filter</c> has bound the element to a variable. Every
+    /// pre-existing call site omits this (it defaults to <see langword="null"/>), which is what keeps their
+    /// emitted MQL byte-identical.
+    /// </param>
     /// <returns>
     /// A <see cref="BsonValue"/> representing the aggregation-expression body.
     /// </returns>
     /// <exception cref="NativeTranslationNotSupportedException">
     /// Thrown for any node type or operator not handled by this renderer.
     /// </exception>
-    public static BsonValue Render(MongoExpression node, PlaceholderTable placeholders)
+    public static BsonValue Render(MongoExpression node, PlaceholderTable placeholders, string? elementVariable = null)
         => node switch
         {
-            MongoFieldExpression field => "$" + field.ElementName,
-            MongoElementRefExpression elementRef => "$" + elementRef.Path,
+            MongoFieldExpression field => FieldRef(field.ElementName, elementVariable),
+            MongoElementRefExpression elementRef => FieldRef(elementRef.Path, elementVariable),
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
-            MongoBinaryExpression binary => RenderBinary(binary, placeholders),
-            MongoSizeExpression size => RenderSize(size),
+            MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
+            MongoSizeExpression size => RenderSize(size, elementVariable),
+            MongoFilteredSizeExpression filtered => RenderFilteredSize(filtered, placeholders, elementVariable),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
+
+    /// <summary>
+    /// Returns whether <see cref="Render"/> would render <paramref name="node"/> without throwing.
+    /// </summary>
+    /// <remarks>
+    /// <b>This method and <see cref="Render"/> must be changed together.</b> It is the aggregation-dialect
+    /// counterpart of <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>, and it exists for the same
+    /// reason: a caller that builds a node the renderer cannot express turns a clean translate-time DECLINE into a
+    /// render-time throw. For a filtered count that matters specifically — the shapes this gates
+    /// (<c>Select(b =&gt; new { N = b.Posts.Count(pred) })</c> and its bare spelling) have NO working fallback to
+    /// land on, so a render-time throw makes the query fail DIFFERENTLY from how it fails today rather than
+    /// identically, which is the disposition this slice is obliged to preserve for anything it does not fix.
+    /// </remarks>
+    public static bool CanRender(MongoExpression node)
+        => node switch
+        {
+            MongoFieldExpression or MongoElementRefExpression => true,
+            MongoConstantExpression or MongoParameterExpression => true,
+            MongoBinaryExpression binary
+                => IsRenderableOperator(binary.Operator) && CanRender(binary.Left) && CanRender(binary.Right),
+            MongoSizeExpression => true,
+            MongoFilteredSizeExpression filtered => CanRender(filtered.ElementPredicate),
+            _ => false
+        };
+
+    // Exactly the operators RenderBinary's own switch maps below — every MongoBinaryOperator member, as it
+    // happens (RenderBinary has no unmapped member today), but this must be re-checked against RenderBinary's
+    // switch whenever either changes, not assumed to track the enum automatically.
+    private static bool IsRenderableOperator(MongoBinaryOperator op)
+        => op is MongoBinaryOperator.Equal
+            or MongoBinaryOperator.NotEqual
+            or MongoBinaryOperator.LessThan
+            or MongoBinaryOperator.LessThanOrEqual
+            or MongoBinaryOperator.GreaterThan
+            or MongoBinaryOperator.GreaterThanOrEqual
+            or MongoBinaryOperator.AndAlso
+            or MongoBinaryOperator.OrElse
+            or MongoBinaryOperator.Add
+            or MongoBinaryOperator.Subtract
+            or MongoBinaryOperator.Multiply
+            or MongoBinaryOperator.Divide
+            or MongoBinaryOperator.Modulo;
+
+    // Inside a $filter's cond the enclosing document is no longer addressable as "$path" — the element is bound to
+    // a variable, so a field of it is "$$<var>.<path>". elementVariable is null everywhere else, which is what
+    // keeps every pre-existing call site's emitted MQL byte-identical.
+    private static BsonValue FieldRef(string path, string? elementVariable)
+        => elementVariable is null ? "$" + path : "$$" + elementVariable + "." + path;
 
     // A missing or explicitly-null array makes $size a hard server error that aborts the whole aggregate, so an
     // EMBEDDED array path is wrapped in $ifNull (count 0 — what LINQ answers for a missing embedded array). A
     // $lookup output alias is always an array, so that path keeps the plain form and its committed spec
     // baselines stay byte-identical. See MongoSizeExpression's remarks.
-    private static BsonValue RenderSize(MongoSizeExpression size)
+    private static BsonValue RenderSize(MongoSizeExpression size, string? elementVariable)
         => size.NullSafe
             ? new BsonDocument("$size",
-                new BsonDocument("$ifNull", new BsonArray { "$" + size.FieldName, new BsonArray() }))
-            : new BsonDocument("$size", "$" + size.FieldName);
+                new BsonDocument("$ifNull", new BsonArray { FieldRef(size.FieldName, elementVariable), new BsonArray() }))
+            : new BsonDocument("$size", FieldRef(size.FieldName, elementVariable));
 
-    private static BsonValue RenderBinary(MongoBinaryExpression binary, PlaceholderTable placeholders)
+    private static BsonValue RenderFilteredSize(
+        MongoFilteredSizeExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        // Each nesting level needs its own variable name. Deriving it from the enclosing one ("e", "ee", "eee")
+        // keeps them distinct without threading a counter, and keeps every name lowercase-initial, which is what
+        // the server requires of an $filter `as` name (Task 0 step 3).
+        var variable = elementVariable is null ? "e" : elementVariable + "e";
+
+        return new BsonDocument("$size",
+            new BsonDocument("$filter", new BsonDocument
+            {
+                // $ifNull is MANDATORY: $filter over a missing or explicitly-null array is a hard server error
+                // that aborts the whole aggregate command. [] yields 0, which is what LINQ answers for a missing
+                // array.
+                { "input", new BsonDocument("$ifNull", new BsonArray { FieldRef(node.ArrayPath, elementVariable), new BsonArray() }) },
+                { "as", variable },
+                { "cond", Render(node.ElementPredicate, placeholders, variable) }
+            }));
+    }
+
+    private static BsonValue RenderBinary(MongoBinaryExpression binary, PlaceholderTable placeholders, string? elementVariable)
     {
         var op = binary.Operator switch
         {
@@ -84,8 +161,8 @@ internal static class MongoAggregationExpressionRenderer
                 $"Unsupported aggregation operator '{binary.Operator}'.")
         };
 
-        var left = Render(binary.Left, placeholders);
-        var right = Render(binary.Right, placeholders);
+        var left = Render(binary.Left, placeholders, elementVariable);
+        var right = Render(binary.Right, placeholders, elementVariable);
         return new BsonDocument(op, new BsonArray { left, right });
     }
 }
