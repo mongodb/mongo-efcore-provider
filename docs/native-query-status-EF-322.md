@@ -1,18 +1,21 @@
 # Native LINQ Translation (EF-322) — Status Report
 
-*Generated 2026-07-26 · last updated 2026-07-30 · `NativeQueryOngoing` tip `1b4c1d6` (stacked on `main`,
-unmerged), plus owned-data slice 7 on the still-unsquashed branch `EF-322-owned-collection-count-projection`,
-plus owned-data slice 8 squashed onto the unmerged branch `EF-360` (its SHA is deliberately not cited here — a
-commit cannot cite itself; record it when the branch lands on `NativeQueryOngoing`).*
-*Header-hash correction: this line previously read "branch tip `b087957`" and §7 previously cited `7532b15`.
-Verified with `git log`: `b087957` is owned-data slice 5 (`All` predicates), two slices behind; `7532b15` is
-not in the shipped history at all — it exists only on the pre-squash safety branch
-`EF-322-owned-collection-count-native-presquash`, and the squashed slice-6 commit is `1b4c1d6`. Both are
-corrected to `1b4c1d6`.*
-*Test measurements below are point-in-time against the **EF10 specification suite**. The §7 two-sweep totals
-were **re-measured on slice 7** (`ab886fa`); the §7.1/§7.2 breakdowns are still the `1dd7862` measurement,
-adjusted only for the two tests that have since flipped (see the note in §7) — the §7.1 per-class breakdown was
-re-derived from the slice-7 `nativeonly.trx` and matched it row for row.*
+*Generated 2026-07-26 · last updated 2026-07-31 · `NativeQueryOngoing` tip `229294f` (= `origin/NativeQueryOngoing`,
+working tree clean, stacked on `main`, unmerged).*
+*Hash bookkeeping, corrected at this revision: the previous header cited tip `1b4c1d6` with slices 7–9 sitting
+on unsquashed side branches. **All three have since been squashed onto `NativeQueryOngoing`**, so they now have
+real, citable SHAs and the §2 slice table records them: slice 7 = `cfe873e` (was `f163392` + `0cb1b1b`),
+slice 8 = `33fdc58` (was "branch `EF-360`"), slice 9 = `229294f` (was "branch `EF-359`"). The EF-358 fix,
+which is a bug fix rather than a slice and which the old table did not list at all, is `7c199e4`, and sits
+between slices 7 and 8. Earlier corrections retained for the record: `b087957` is slice 5 (`All` predicates),
+and `7532b15` was never in the shipped history — it exists only on the pre-squash safety branch
+`EF-322-owned-collection-count-native-presquash`.*
+*Test measurements below are point-in-time against the **EF10 specification suite**. §7 was **fully
+re-measured at this tip (`229294f`) on 2026-07-31** — both sweeps re-run from scratch, and §7.1 *and* §7.2
+re-derived from the fresh `nativeonly.trx` rather than carried forward. The totals and the entire per-class
+table reproduced the slice-7 figures exactly; §7.2's buckets shifted slightly and are re-stated there.*
+*Branch position: 43 commits ahead of `upstream/main` and **1 behind** — `58e05a0` (EF-317, C# driver 3.10.0)
+landed upstream after this stack's base. A rebase onto it is outstanding.*
 
 ---
 
@@ -61,9 +64,10 @@ SP7 Phase 1. (This paragraph read "eight" until slice 9 landed.)
 | 4 | Owned-collection **`Any`** quantifier predicates → `$elemMatch` | `791037b` |
 | 5 | Owned-collection **`All`** quantifier predicates → negated `$elemMatch`; **closes EF-335** | `b087957` |
 | 6 | Owned-collection **`.Count`** in a predicate — array-index `$exists` (constant tier) / null-safe `$size` inside `$expr` (parameterized/degenerate tier) | `1b4c1d6` |
-| 7 | Owned-collection **`.Count` as a PROJECTION leaf** → `{$size: {$ifNull: […]}}` in `$project`; **partially resolved EF-357 at the time** (bare-scalar form no longer fails translation) — EF-357 was later **fully** closed by EF-358, see below | `f163392` + `0cb1b1b` (branch not yet squashed) |
-| 8 | Owned-collection **ARRAY leaf as a PROJECTION leaf** → the array projected by alias inside `$project` (`Select(b => new { b.Title, b.Posts })`); carries **EF-360** (re-characterised) and files **EF-362** | branch `EF-360` (not yet squashed) |
-| 9 | Owned-collection **FILTERED `.Count(pred)`** → `{$size: {$filter: {input: {$ifNull: […]}, as: "e", cond: …}}}`, native both in a predicate (`$expr` tier only) and as a `$project` leaf; **closes EF-359**; files **EF-365** | branch `EF-359` (not yet squashed) |
+| 7 | Owned-collection **`.Count` as a PROJECTION leaf** → `{$size: {$ifNull: […]}}` in `$project`; **partially resolved EF-357 at the time** (bare-scalar form no longer fails translation) — EF-357 was later **fully** closed by EF-358, see below | `cfe873e` |
+| — | *(not a slice — the EF-358 bug fix)* A missing or explicitly-null embedded array materializes as an **empty collection** on every path, mode and cardinality; closes EF-357's residual | `7c199e4` |
+| 8 | Owned-collection **ARRAY leaf as a PROJECTION leaf** → the array projected by alias inside `$project` (`Select(b => new { b.Title, b.Posts })`); carries **EF-360** (re-characterised) and files **EF-362** | `33fdc58` |
+| 9 | Owned-collection **FILTERED `.Count(pred)`** → `{$size: {$filter: {input: {$ifNull: […]}, as: "e", cond: …}}}`, native both in a predicate (`$expr` tier only) and as a `$project` leaf; **closes EF-359**; files **EF-365** | `229294f` |
 
 No JIRA number was filed for slice 7's native-projection half. Two bugs it *measured* were filed: **EF-358**
 (the projection-path null-collapse gap, whose closure also fully closed EF-357 — see §4 and §6) and **EF-359**
@@ -75,8 +79,10 @@ native-translation layer from QMTEV), EF-334 (centralize the is-native gate into
 
 **Delivery mechanics.** Native sub-projects ship as stacked branches on `NativeQueryOngoing`, one squashed
 commit each: SP1 → SP2 → SP3 → SP4 → SP5 → SP6 (GroupBy / set-ops / Distinct / OfType) → EF-347 SelectMany
-slices → `1dd7862` → SP7 Phase 1 (`e38587f`) → owned-data slices 1–6 above → tip `1b4c1d6`, with slice 7 on an
-unsquashed branch on top. Nothing is merged to `main` yet — the whole native stack lands at parity/cutover.
+slices → `1dd7862` → SP7 Phase 1 (`e38587f`) → owned-data slices 1–6 → `1b4c1d6` → slice 7 (`cfe873e`) →
+EF-358 fix (`7c199e4`) → slice 8 (`33fdc58`) → slice 9 (`229294f`, the current tip). **As of 2026-07-31 there
+is no unsquashed work in flight** — every slice is on the branch and pushed. Nothing is merged to `main` yet —
+the whole native stack lands at parity/cutover.
 
 ---
 
@@ -184,7 +190,7 @@ unsquashed branch on top. Nothing is merged to `main` yet — the whole native s
   answers 0. Before this slice both modes threw, so nothing regressed — but `UseQueryMode(DriverLinq)` is not an
   equivalent-results escape hatch here, and driver-LINQ is also where a projection mixing a count leaf with a
   binder-declined leaf lands under the default `Native` mode.
-- **Owned-collection ARRAY leaf as a PROJECTION leaf (owned-data slice 8, branch `EF-360`).** An owned
+- **Owned-collection ARRAY leaf as a PROJECTION leaf (owned-data slice 8, `33fdc58`).** An owned
   entity-COLLECTION navigation appearing as a *leaf* inside a terminal anonymous-type or DTO projection —
   `Select(b => new { b.Title, b.Posts })` — now emits a server-side `$project`
   (`{ $project: { Title: "$Title", Posts: "$Posts", _id: "$_id" } }`) and reads the array back from the
@@ -210,7 +216,7 @@ unsquashed branch on top. Nothing is merged to `main` yet — the whole native s
   delta on both axes; three-version sweep 0 failures. *This entry is a summary only* — the full as-built mechanism, every guard with the bug that
   motivated it, the measured set-op flips, and the coverage gaps live in
   `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s array-valued-projections note.
-- **Owned-collection FILTERED `.Count(pred)` (owned-data slice 9, branch `EF-359`).** A *predicated* count over
+- **Owned-collection FILTERED `.Count(pred)` (owned-data slice 9, `229294f`).** A *predicated* count over
   an owned collection is now native in two positions: in a **predicate**
   (`Where(b => b.Posts.Count(p => p.Rank > 0) > 2)`, all six comparison operators, either operand order,
   constant or parameterized threshold, through owned single-reference hops) and as a **projection leaf**
@@ -285,7 +291,7 @@ EF-322 epic).
 annotated beside its stale text.** It used to read: a filtered count in a projection
 (`Select(b => new { N = b.Posts.Count(p => p.Rank > 0) })`) throws `InvalidOperationException` identically under
 `Native`, `DriverLinq` and `NativeOnly` (**EF-359**). That was accurate when slice 7 measured it and is no
-longer: owned-data slice 9 (branch `EF-359`) made that shape **native**, and closed EF-359 — see §3 and §6. The
+longer: owned-data slice 9 (`229294f`) made that shape **native**, and closed EF-359 — see §3 and §6. The
 precise disposition of what is left of the family, all of it NARROWER than the shape that moved:
 
 - **Native:** the wrapped projection leaf (`new { N = b.Posts.Count(pred) })`, `LongCount`, the named-DTO
@@ -350,7 +356,7 @@ the full mechanism, the parity-claim split (bare vs. wrapped count), and the `Ty
   written before the measurement and does not [stand]". Both the crash characterization and the `$size`-over-
   `$filter` rendering prediction held up; the shape is now native and EF-359 is closed — see §3, §4 and §6).
   What is nearest now:
-  1. **Array projections — the WRAPPED spelling is DONE** (owned-data slice 8, branch `EF-360`, 2026-07-30).
+  1. **Array projections — the WRAPPED spelling is DONE** (owned-data slice 8, `33fdc58`, 2026-07-30).
      `Select(b => new { b.Title, b.Posts })` and the DTO equivalent now emit a server-side `$project` and read
      the array back from the projection alias. **This bullet used to say array projections were "blocked on the
      DOM-shaper mechanism alone" — that was correct for the wrapped spelling (now done) and was NEVER correct
@@ -395,15 +401,45 @@ the full mechanism, the parity-claim split (bare vs. wrapped count), and the `Ty
 
 ## 6. Carried tickets (EF-353…357 filed during EF-347; EF-358/359 during owned-data slice 7; EF-360/362 carried by owned-data slice 8; EF-365 filed by owned-data slice 9; EF-357/EF-358/EF-359 now closed)
 
+**JIRA STATE — reconciled 2026-07-31.** JIRA and this document had drifted apart; the sweep below has been
+done, so the two now agree. Current state:
+
+| Ticket | JIRA status | Why |
+|---|---|---|
+| EF-335, EF-357, EF-358, EF-359 | **`In Code Review`** | Fixed in code and reviewed, but on the **unmerged** stack |
+| EF-360, EF-362, EF-365 | `Backlog` / `Needs Triage` | Genuinely still open |
+| EF-322 (epic) | `In Progress` | — |
+| EF-247 | `Blocked` | Check what it is blocked on before scheduling (§9.1 item 4) |
+
+**`In Code Review`, deliberately, not `Closed`.** None of these fixes has shipped — the whole native stack is
+unmerged — so closing them would assert something untrue and leave a `Closed` ticket with no fix version.
+**They should be moved to `Closed` when the stack merges**; that step stays on the cutover checklist. Each
+carries a comment recording the fixing commit, the mechanism, and explicitly why it is not closed yet.
+
+**Two summaries were CORRECTED, because they stated root causes that were subsequently measured false** — this
+matters beyond tidiness, since a reader who goes to JIRA first would otherwise be misled by the ticket title
+itself:
+
+- **EF-360** was *"Anonymous projection with an entity-collection leaf throws `ArgumentException` in every
+  query mode"*. Slice 8 made exactly that shape native. Now: *"Projection with a collection leaf whose
+  ELEMENT TYPE has its own eager-loaded navigation…"*, matching the row below.
+- **EF-358** was *"Projection path materializes null…; whole-entity materialization normalizes to an empty
+  list"*. There is no such split — nothing normalized on any path pre-fix, and the apparent normalization was
+  CLR field-initializer masking. Now: *"A missing or explicitly-null embedded array materializes as null
+  instead of an empty collection"*.
+
+*Both tickets' original **descriptions** are left intact as the historical bug report; the correction lives in
+a comment on each, which is where a reader will look for it.*
+
 | Ticket | Type | Summary | Severity |
 |---|---|---|---|
 | **EF-353** | Task | Native bare owned-element SelectMany can't materialize **nested owned members** — currently a clean decline (`GetNavigations().Any()` guard); lifting it needs a re-rooted projection mapping | Feature gap, clean decline |
 | **EF-354** | Bug | `SelectMany(o => o.Items, (o,i) => o)` (whole-outer, explicit method-call spelling) **crashes** ("Id missing") instead of declining cleanly; query-syntax spelling already declines | Loud crash, not wrong data |
 | **EF-355** | Bug | Filtered reference SelectMany: folded-predicate split in `TrySplitCorrelation` can **silently drop a `!= null` inner filter** → returns all children | Silent wrong data, **latent/unreachable** today (EF emits nested, not folded, shape) |
 | **EF-356** | Bug | Mixed whole-entity + computed-arithmetic projection (`new { c, Total = c.Age * c.Score }`) returns **silently wrong** values (`Score²`) — mixed shaper has no `BinaryExpression` handling | Silent wrong data, **pre-existing**, pinned by a documenting test |
-| **EF-357** | Bug | **CLOSED** (branch `EF-358`, 2026-07-29). Bare embedded-collection `.Count` projection (`Select(b => b.Posts.Count)`) threw `ArgumentException` in **every** query mode — a `MongoProjectionBindingExpressionVisitor` gap, not a native decline. Owned-data slice 7 (`0cb1b1b`) fixed the translation-time `ArgumentException` and made present arrays return correct counts, leaving a missing/explicitly-null-array `ArgumentNullException` at materialization as a residual (that residual was EF-358). The EF-358 fix closed that residual, so `Select(b => b.Posts.Count)` now returns correct counts for every array state | Was: hard fail every mode. Now: correct for every array state |
-| **EF-358** | Bug | **CLOSED** (branch `EF-358`, 2026-07-29). Root cause corrected during investigation — it is **not** a whole-entity-vs-projection split; pre-fix, nothing normalized a missing/explicitly-null embedded array on *any* path, and the apparent whole-entity normalization was CLR field-initializer masking (`MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` skips its fixup loop when `relatedEntities` is `null`). Fix: delete the null-collapse conditional from `BsonDocumentInjectingExpressionVisitor`'s `CollectionShaperExpression` case; add a `Coalesce` to an empty `BsonArray` at the point of use in `MongoProjectionBindingRemovingExpressionVisitor`'s `CollectionShaperExpression` case. Result is uniform, initializer-independent normalization on every path/mode/cardinality; closes EF-357's residual. See §4 and `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for the full mechanism | Was: runtime throw / inconsistent shape. Now: closed |
-| **EF-359** | Bug | **CLOSED** (branch `EF-359`, owned-data slice 9, 2026-07-30). Filtered `Count(pred)` in a projection (`Select(b => new { N = b.Posts.Count(p => p.Rank > 0) })`) threw `InvalidOperationException` in **all three** query modes — a translation-time crash in `MongoProjectionBindingExpressionVisitor.Translate`, before `MongoQueryMode` is read; same shape of defect as EF-357, **not** the graceful decline earlier docs assumed. Mechanism of the fix, in one line: recognize the predicated `Count`/`LongCount` overloads by canonical `MethodInfo` at both the translator and the projection-binding sites, represent the result as a new sealed sibling node `MongoFilteredSizeExpression` (never a flag on `MongoSizeExpression`, so the Tier-1 array-index renderer, the query-dialect classifier and the negator all fail closed), and render `{$size: {$filter: {input: {$ifNull: […]}, as: "e", cond: …}}}`. The predicate spelling went native too; the bare spelling now folds client-side with correct values instead of crashing. Narrower residuals remain (§4), one of them filed as EF-365 | Was: hard fail every mode. Now: native, closed |
+| **EF-357** | Bug | **CLOSED** (`7c199e4`, 2026-07-29). Bare embedded-collection `.Count` projection (`Select(b => b.Posts.Count)`) threw `ArgumentException` in **every** query mode — a `MongoProjectionBindingExpressionVisitor` gap, not a native decline. Owned-data slice 7 (`0cb1b1b`) fixed the translation-time `ArgumentException` and made present arrays return correct counts, leaving a missing/explicitly-null-array `ArgumentNullException` at materialization as a residual (that residual was EF-358). The EF-358 fix closed that residual, so `Select(b => b.Posts.Count)` now returns correct counts for every array state | Was: hard fail every mode. Now: correct for every array state |
+| **EF-358** | Bug | **CLOSED** (`7c199e4`, 2026-07-29). Root cause corrected during investigation — it is **not** a whole-entity-vs-projection split; pre-fix, nothing normalized a missing/explicitly-null embedded array on *any* path, and the apparent whole-entity normalization was CLR field-initializer masking (`MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` skips its fixup loop when `relatedEntities` is `null`). Fix: delete the null-collapse conditional from `BsonDocumentInjectingExpressionVisitor`'s `CollectionShaperExpression` case; add a `Coalesce` to an empty `BsonArray` at the point of use in `MongoProjectionBindingRemovingExpressionVisitor`'s `CollectionShaperExpression` case. Result is uniform, initializer-independent normalization on every path/mode/cardinality; closes EF-357's residual. See §4 and `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for the full mechanism | Was: runtime throw / inconsistent shape. Now: closed |
+| **EF-359** | Bug | **CLOSED** (`229294f`, owned-data slice 9, 2026-07-30). Filtered `Count(pred)` in a projection (`Select(b => new { N = b.Posts.Count(p => p.Rank > 0) })`) threw `InvalidOperationException` in **all three** query modes — a translation-time crash in `MongoProjectionBindingExpressionVisitor.Translate`, before `MongoQueryMode` is read; same shape of defect as EF-357, **not** the graceful decline earlier docs assumed. Mechanism of the fix, in one line: recognize the predicated `Count`/`LongCount` overloads by canonical `MethodInfo` at both the translator and the projection-binding sites, represent the result as a new sealed sibling node `MongoFilteredSizeExpression` (never a flag on `MongoSizeExpression`, so the Tier-1 array-index renderer, the query-dialect classifier and the negator all fail closed), and render `{$size: {$filter: {input: {$ifNull: […]}, as: "e", cond: …}}}`. The predicate spelling went native too; the bare spelling now folds client-side with correct values instead of crashing. Narrower residuals remain (§4), one of them filed as EF-365 | Was: hard fail every mode. Now: native, closed |
 | **EF-365** | Bug | **Newly filed by owned-data slice 9.** A **non-renderable element predicate** in a filtered `Count(pred)` *projection* — e.g. `Select(b => new { N = b.Posts.Count(p => p.Heading.StartsWith("h")) })` — hard-fails with `InvalidOperationException` in all three modes, where a graceful fallback is demonstrably available. MEASURED: with `MongoAggregationExpressionRenderer.CanRender` gating the branch (as shipped) the query crashes in every mode; with the check removed, `Native` and `DriverLinq` return the **correct** value and `NativeOnly` declines cleanly. So the guard *preserves* a pre-existing crash — it has **no correctness role** (the `$expr`-inside-`$elemMatch` hazard is `IsQueryDialectRenderable`'s job) and the design doc's justification for it is measured false. It was retained in EF-359 on scope grounds only. Fix = delete the call site, then the now-callerless classifier and its unit tests, and re-baseline the pinned residual-decline test. **Breadth still to verify before that ships:** only `StartsWith` was measured — `Contains`/`$in`, unary `Not`, a bare nullable bool, and a MIXED projection (a declining leaf beside an admitted one, where the driver may not emit the alias the shaper reads) are UNVERIFIED | Hard fail every mode, **pre-existing**, pinned by a documenting test |
 | **EF-360** | Bug | **STILL OPEN, and RE-CHARACTERISED here — it is *not* "an anonymous projection with an entity-collection leaf throws".** That framing was disproved by owned-data slice 8, which made exactly that shape native. The actual defect: an anonymous **or** DTO projection whose collection leaf's **ELEMENT TYPE has a navigation of its own** throws `ArgumentException` ("does not match the corresponding member type") in **every** query mode, in `MongoProjectionBindingExpressionVisitor.VisitNew`, via the `Queryable.Select`-rebuild → `MatchTypes` short-circuit (`MatchTypes` returns the `List<T>`-typed shaper untouched for an `IQueryable<T>` target, so BCL validation throws at the `newExpression.Update(newArguments)` call). **Cited by METHOD, not by line:** earlier docs quoted `MongoProjectionBindingExpressionVisitor.cs:661`, which this slice's own additions to that file made stale — `:661` is now `return null!;`. It reproduces for a nested owned **collection** and a nested owned **single reference** alike, and the **bare** spelling of the same query on the same model works. It fires at shaper-BUILD time, before `MongoQueryMode` is read, so the mode is irrelevant. Slice 8 declines the shape explicitly (`IsNativeArrayProjectionLeaf`'s element-navigation conjunct) and keeps the failure **byte-identical**, verified by an A-B probe; that conjunct is currently defence-in-depth over a pre-existing structural decline in `TryResolveOwnedCollectionPath` (positive-control-verified) and is documented as such in `Query/AGENTS.md` so it is not deleted as dead code. Same fall-through root cause as EF-357/EF-359 | Hard fail every mode, **pre-existing**, pinned by documenting tests |
 | **EF-362** | Task | **Newly filed by owned-data slice 8.** `OwnsOne`-hop array leaf: `Select(b => new { b.Title, b.Home.Notes })` stays a clean decline (falls back, correct results; throws only under `NativeOnly`), pinned by a mutation-verified tripwire test. It is **not** a relaxation of slice 8's rules — for a hop the `$project` alias is necessarily FLAT (`"Notes"`) while the document path is NESTED (`"Home.Notes"`), so the alias-agreement invariant *cannot* hold and lifting the conjunct alone would return a silently EMPTY collection on any fallback path. Needs a path-preserving `$project` (`{"Home.Notes": "$Home.Notes"}`, which MongoDB renders as nested output) plus retaining the document-path read instead of switching to alias-addressed | Feature gap, clean decline |
@@ -423,12 +459,13 @@ slice 7.
 
 ## 7. Which tests require driver-LINQ to pass — empirical measurement
 
-Measured by the two-sweep subtraction on the **EF10 specification suite**, most recently re-measured on
-owned-data slice 7 (`ab886fa`, the count-PROJECTION slice) with **zero further delta** — see the note below the
-table. (The previous revision of this section cited `7532b15` for the `.Count`-in-a-predicate slice. That hash
-is not in the shipped history: it exists only on the pre-squash safety branch
-`EF-322-owned-collection-count-native-presquash`. The squashed slice-6 commit is `1b4c1d6`, and the figures
-below reproduced exactly at both `1b4c1d6` and slice 7.)
+Measured by the two-sweep subtraction on the **EF10 specification suite**. **Fully re-measured at the current
+tip `229294f` on 2026-07-31** — both sweeps re-run from scratch after slices 8 and 9 landed, with §7.1 and §7.2
+re-derived from the fresh `nativeonly.trx` (previous revisions carried §7.2 forward from `1dd7862`). The
+totals and every row of §7.1 reproduced the slice-7 figures **exactly**; §7.2 is restated below from the fresh
+data. (Historical note retained: an earlier revision cited `7532b15` for the `.Count`-in-a-predicate slice;
+that hash is not in the shipped history — it exists only on the pre-squash safety branch
+`EF-322-owned-collection-count-native-presquash`, and the squashed slice-6 commit is `1b4c1d6`.)
 
 > `{ tests requiring driver-LINQ } = { pass under Native } − { pass under NativeOnly }`
 
@@ -442,24 +479,25 @@ Because `Native` fails **zero** tests, every `NativeOnly` failure was a `Native`
 > **2395 spec tests currently require the driver-LINQ fallback to pass.** They go green under `Native`
 > only by silently falling back; remove the fallback and they throw `NativeTranslationNotSupportedException`.
 
-**Delta since the `1dd7862` measurement: 2 tests** (`NativeOnly` 2192 → 2194 passing, 2397 → 2395 failing).
-Both are `NorthwindAggregateOperatorsQueryMongoTest.Select_All` (`async: True`/`False`), which went native via
-the EF-335 negator in owned-data slice 5. Its `Native`-mode MQL baseline was also re-baselined in that slice:
-the driver fallback's trailing `{ "$project" : { "_id" : 0, "_v" : null } }` stage disappears, which is the
-signature of native routing. Results were unchanged.
+**Delta since the last measurement (slice 7, `ab886fa`): ZERO.** Slices 8 and 9 moved neither total, and the
+per-class table is unchanged row for row. Before that, the only movement in the whole owned-data stream was
+**2 tests** at slice 5 (`NativeOnly` 2192 → 2194 passing, 2397 → 2395 failing): both
+`NorthwindAggregateOperatorsQueryMongoTest.Select_All` (`async: True`/`False`), which went native via the
+EF-335 negator. Its `Native`-mode MQL baseline was re-baselined in that slice too — the driver fallback's
+trailing `{ "$project" : { "_id" : 0, "_v" : null } }` stage disappears, which is the signature of native
+routing. Results were unchanged.
 
-Everything else measured identical across the two tips — notably, the four owned-data slices *before* slice 5
-produced **zero** spec delta, because Northwind has no owned collections or owned sub-property coverage. The
-`.Count`-in-a-predicate slice (owned-data slice 6, `1b4c1d6`) measured the **same story a third time**, and the
-count-PROJECTION slice (owned-data slice 7, `ab886fa`) a **fourth**: `Native` 4589/0/19 and `NativeOnly`
-2194/2395/19 at both, exact match to the `b087957` figures above. Expected, since Northwind has no owned
-collections for the count machinery to touch. **Both axes were checked per test on the slice-7 sweep, not just
-the aggregate:** `Native` produced an empty failure list (so no `Native`-mode MQL baseline moved — a baseline
-that had changed would show up as a failure against its checked-in string), the two runs covered an identical
-4608-test name set, and the per-class `NativeOnly` failure breakdown was re-derived from `nativeonly.trx` and
-matched every one of the 24 rows in §7.1 exactly, `NorthwindSelectQueryMongoTest` (198) and
-`NorthwindIncludeQueryMongoTest` (132) among them — the two classes whose `Customers.SelectMany(c => c.Orders)`
--style tests exercise the `Queryable` switch slice 7 touched. Two cautions for whoever re-measures next:
+So the figures above have now reproduced identically at **five consecutive tips** — `b087957` (slice 5),
+`1b4c1d6` (slice 6), `ab886fa` (slice 7), and now `229294f` (slices 8 + 9 inclusive). Expected, and the reason
+is structural rather than a coincidence to be re-investigated each time: **Northwind has no owned collections
+or owned sub-property coverage**, so nothing in the owned-data work stream can touch these tests. See the
+closing caution in §8 — a flat spec number here does not mean a slice achieved nothing.
+
+**Both axes were checked per test on this sweep, not just the aggregate:** `Native` produced an **empty**
+failure list (so no `Native`-mode MQL baseline moved — a baseline that had changed would surface as a failure
+against its checked-in string), the two runs covered an identical 4608-test name set, and the per-class
+`NativeOnly` breakdown in §7.1 was re-derived from the fresh `nativeonly.trx` and matched all 24 rows. Two
+cautions for whoever re-measures next:
 
 - **A total of 4608 is correct.** One intermediate measurement during slice 5 reported 4601 (7 low) and was
   wrong; the figure here reproduced exactly on a fresh base-vs-branch run and again on the final three-version
@@ -473,10 +511,8 @@ they don't count here; unit tests don't touch a database.
 
 ### 7.1 By test class (24 classes)
 
-*Counts originated as the `1dd7862` measurement with one change applied: `NorthwindAggregateOperatorsQueryMongoTest`
-236 → 234 for the two `Select_All` tests that went native. That per-class attribution was not re-derived at
-`b087957` — only the totals were. It **has** now been re-derived, from the owned-data slice 7 `nativeonly.trx`
-(`ab886fa`), and every one of the 24 rows below matched the figure already in the table, summing to 2395.*
+*Re-derived from the fresh `229294f` `nativeonly.trx` (2026-07-31). Every one of the 24 rows below matched the
+figure already in the table, summing to 2395 — this table is now confirmed at slice 7 and again at slice 9.*
 
 | Count | Class |
 |---:|---|
@@ -507,32 +543,51 @@ they don't count here; unit tests don't touch a database.
 
 ### 7.2 By *why* they fall back (failure-message buckets)
 
-*As measured at `1dd7862`. Not re-derived at `b087957`; the 2-test delta above came out of this set, but which
-bucket it left was not re-attributed. Note the "Predicate renderer gap (`Not` over unsupported subtree)" bucket
-did **not** empty: owned-data slice 5 taught `RenderUnary` to render `Not` over a query-native comparison, but
-a `Not` whose operand is a conjunction or a nested `Not` still declines by design.*
+**Re-derived from the fresh `229294f` sweep (2026-07-31), replacing the carried-forward `1dd7862` figures.**
+The three *data* buckets (873 / 794 / 54) and the regex bucket (13) are **unchanged**; the rest shifted, and
+the reconciliation is stated below the table rather than left as an apparent contradiction.
 
 | Count | Cause |
 |---:|---|
 | 873 | **Non-entity projection not natively representable** — computed / scalar / client-eval projection long tail (`Select` shapes, casts, client methods) |
 | 794 | **Query not natively representable** — joins, cross-collection navigation, non-native GroupBy shapes, misc operators |
-| 54 | **Reference-nav `$lookup` not supported** — reference `Include` / navigation lookups |
-| 13 | Non-constant regex pattern (EF-247) |
-| 10 | Predicate renderer gap (`Not` over unsupported subtree) |
-| 507 | `Assert.Throws` **exception-type mismatch** — feature unsupported in *every* mode; test pins the *driver-LINQ* exception type, native throws `NativeTranslationNotSupportedException` instead |
-| 74 | `Assert.Contains` — expected *error-message text* differs between the two throws |
+| 559 | `Assert.Throws` **exception-type mismatch** — feature unsupported in *every* mode; test pins the *driver-LINQ* exception type, native throws `NativeTranslationNotSupportedException` instead |
 | 66 | `ArgumentOutOfRangeException` (index) — a materialization / shaper gap surfaced only under `NativeOnly` |
+| 54 | **Reference-nav `$lookup` not supported** — reference `Include` / navigation lookups |
+| 26 | `Assert.Contains` — expected *error-message text* differs between the two throws |
+| 13 | Non-constant regex pattern (EF-247) |
+| 8 | Predicate renderer gap (`Not` over unsupported subtree) |
+| 2 | `Throws_on_concurrent_query_first` — an MQL-string assertion (`"Customers."` vs `"Customers.{ "$limit" : 1 }"`), not a translation gap at all |
+| **2395** | **total** |
+
+Reconciling with the previous revision's numbers, so the differences are not mistaken for regressions:
+
+- **`Assert.Throws` 507 → 559 and `Assert.Contains` 74 → 26** is almost certainly a *classification* difference,
+  not a behavior change: this sweep's script buckets on `Assert.Throws` **first**, so a failure whose message
+  contains both markers now lands in the `Assert.Throws` row. The pair sums 581 → 585, and the 4-test
+  difference is accounted for by the 2 newly-separated `Throws_on_concurrent_query_first` rows plus the 2-test
+  `Not`-renderer drop. Treat the *pair* as stable, not each row.
+- **`Not` renderer 10 → 8** is real and is the expected direction: owned-data slice 5 taught `RenderUnary` to
+  render `Not` over a query-native comparison. The bucket did **not** empty, by design — a `Not` whose operand
+  is a conjunction or a nested `Not` still declines.
+- The 2 `Throws_on_concurrent_query_first` rows were previously absorbed into an assertion bucket and are
+  broken out here because they are categorically different: nothing about them is a coverage gap.
 
 ### 7.3 The fallback set splits into two meaningfully different kinds
 
-- **~1744 need driver-LINQ for correct *results*** (the `NativeTranslationNotSupportedException` data
-  buckets: 873 + 794 + 54, plus the small regex/renderer ones). These are the genuine coverage gaps —
-  remove the fallback and the user gets an exception instead of data.
-- **~647 differ only in *failure shape*** (507 exception-type + 74 message + 66 index). These features are
+*Figures below are the fresh `229294f` counts (previously stated as "~1744 / ~647" from the `1dd7862` sweep).*
+
+- **1742 need driver-LINQ for correct *results*** (the `NativeTranslationNotSupportedException` data buckets:
+  873 + 794 + 54 + 13 + 8). These are the genuine coverage gaps — remove the fallback and the user gets an
+  exception instead of data. **This is the number that has to reach zero, or a deliberately accepted
+  remainder, before driver-LINQ can be retired without regression** — see §9.
+- **651 differ only in *failure shape*** (559 exception-type + 26 message + 66 index). These features are
   unsupported in *every* mode (no correct data is produced either way); the tests pass under `Native` only
   because the override pins the *driver-LINQ* exception type/message. Strictly they "require driver-LINQ to
   pass as written," but they aren't lost functionality — at parity cutover these overrides get re-baselined
-  to assert the native exception.
+  to assert the native exception. **This is bookkeeping at cutover, not coverage work**, but at 651 tests it
+  is large enough to schedule deliberately rather than discover.
+- **2 are neither** — the `Throws_on_concurrent_query_first` MQL-string assertions.
 
 Representative examples: `All_client`, `Client_method_in_projection_requiring_materialization_1`,
 `Cast_on_top_level_projection_brings_explicit_Cast` (projection long tail); `All_after_GroupBy_aggregate`,
@@ -576,8 +631,16 @@ an owned entity-**collection** (array) leaf inside a terminal anonymous/DTO proj
 "six-slice" until slice 8 and "eight-slice" until slice 9; corrected here each time, along with the follow-on
 claim below.)
 
-**The remaining native work is SP7 Phase 2 (streaming breadth: reducer/aggregate, collection-Include arrays,
-reference-Include) plus the parity cutover that retires driver-LINQ.**
+**CORRECTED at this revision — this paragraph used to read "The remaining native work is SP7 Phase 2
+(streaming breadth: reducer/aggregate, collection-Include arrays, reference-Include) plus the parity cutover
+that retires driver-LINQ." That is true only if "the parity cutover" is read as a single line item, which
+badly understates it.** §9 (new) enumerates what parity actually requires, and the headline is that the
+remaining work is dominated by three things this sentence did not name: **joins** (no native form at all),
+**reference `Include`**, and the **computed/client-eval projection long tail** — together the bulk of the 1742
+spec tests that still need driver-LINQ for correct results. SP7 Phase 2 is real but is **performance, not
+parity**, and does not gate the cutover. Two further items are not in any plan yet: the EF9+ bulk
+`ExecuteUpdate`/`ExecuteDelete` path shares the driver-LINQ bridge (§9.2), and **EF-317 is concurrently
+investing in the driver-LINQ join path this epic wants to replace** (§9.2).
 
 **CORRECTED at owned-data slice 8 — this paragraph previously named the nearest owned-data follow-on as
 "array-valued embedded-collection projections (`Select(b => b.Posts)`), blocked on an alias-driven array
@@ -599,8 +662,215 @@ only before owned-data slice 7. Since slice 7 the bare form (`Select(b => b.Post
 translation; since EF-358 (2026-07-29) it returns correct results for every array state, including missing or
 explicitly-null. See §4 and §6 for the current disposition.
 
-Empirically, 2395 EF10 spec tests still lean on the driver-LINQ fallback — roughly 1744 for correct results
-(real coverage gaps) and ~647 only for the expected exception shape (re-baselined at cutover). That number has
-barely moved across the owned-data stream, and for a good reason worth remembering: **Northwind has no owned
-collections**, so this work stream's coverage gains are proven by the functional `Native*` suites, not by the
-spec scoreboard. A flat spec number does not mean a slice achieved nothing.
+Empirically, 2395 EF10 spec tests still lean on the driver-LINQ fallback — **1742** for correct results (real
+coverage gaps) and **651** only for the expected exception shape (re-baselined at cutover), plus 2 that are
+neither. *(These were "roughly 1744 / ~647" from the `1dd7862` sweep; the figures here are the fresh
+`229294f` re-measurement — see §7.2's reconciliation, and note the shift is almost entirely bucket
+classification, not behavior.)* That number has **not** moved at all across slices 5–9, and for a good reason
+worth remembering: **Northwind has no owned collections**, so this work stream's coverage gains are proven by
+the functional `Native*` suites, not by the spec scoreboard. A flat spec number does not mean a slice achieved
+nothing — but, per §9, it does mean the owned-data stream is not on the cutover's critical path.
+
+---
+
+## 9. What must be done before driver-LINQ can be retired without regression
+
+*Added 2026-07-31, grounded in the fresh `229294f` two-sweep measurement (§7) and a source sweep of the
+delegation surface. This section is the answer to "what is left", and it is deliberately separate from §5
+("deferred items"): §5 lists what the epic still wants; §9 lists what **blocks deleting the fallback**. The two
+are not the same set — several §5 items are optional at cutover, and several §9 items appear nowhere in §5.*
+
+**The one-line answer.** Native cannot replace driver-LINQ today, and the binding constraint is **not** the
+owned-data long tail that the last nine slices worked on. It is four things the native translator cannot
+express at all — **joins, client-evaluated projections, reference `Include`, and `VectorSearch`** — plus one
+structural dependency nobody has had to think about yet: **the EF9+ bulk `ExecuteUpdate`/`ExecuteDelete` path
+uses the driver-LINQ bridge**, so "delete the fallback" does not currently mean "delete the bridge".
+
+### 9.1 Coverage — the 1742 tests that need driver-LINQ for correct *results*
+
+Ordered by size. Each is a genuine "remove the fallback and the user gets an exception instead of data".
+
+| # | Gap | Spec tests | Notes |
+|---|---|---:|---|
+| 1 | **Non-entity projection long tail** | 873 | String transforms (`ToUpper`/`Substring`), date-part extraction, `Math.*`, type-changing casts, integer-result `Divide` (Guard A), **client-evaluated projections**, and the SP3-wide **bare-scalar projection boundary**. The single largest bucket, and the one with the most internal variety — it is not one feature. |
+| 2 | **Query not natively representable** | 794 | Dominated by **`Join`/`GroupJoin`/`LeftJoin`, which have no native form whatsoever** (`TranslateJoin*` declines unconditionally); plus cross-collection navigation, the non-native `GroupBy` shapes (computed keys, computed accumulator operands, bare `GroupBy` terminating on `IGrouping`, user `resultSelector`, post-group HAVING/paging, correlated keys), and misc operators (`Contains`/`ElementAt`/`Last`). |
+| 3 | **Reference `Include`** | 54 | The `$lookup`/`$unwind` machinery is **built but dormant** — it nav-expands to a `LeftJoin` the gate treats as non-native. Also blocks SP7 Phase 2's reference-Include streaming. Nested/transitive `ThenInclude`, filtered `Include` and collection-of-collection `Include` sit behind it. |
+| 4 | **Non-constant regex** | 13 | **EF-247**, and note its JIRA status is `Blocked`, not merely open — check what it is blocked on before scheduling. |
+| 5 | **`Not` over an unsupported subtree** | 8 | `RenderUnary` handles `Not` over a query-native comparison (slice 5); a `Not` whose operand is a conjunction or a nested `Not` still declines by design. Smallest and most self-contained item on this list. |
+
+**`VectorSearch` is a large, concrete slice of the two big buckets — measured, not estimated, and this
+corrects a claim made in the first draft of this section.** That draft said VectorSearch's 112 tests "land in
+the exception-shape bucket rather than the data buckets", which would have made them cutover bookkeeping. The
+opposite is true. Attributing the 112 `VectorSearchMongoTest` + `VectorSearchExactMongoTest` failures by
+message:
+
+| Bucket | VectorSearch tests |
+|---|---:|
+| "Query not natively representable" (row 2 above) | 82 |
+| "Non-entity projection" (row 1 above) | 24 |
+| `Assert.Throws` exception-shape | 6 |
+| **total** | **112** |
+
+So **106 of the 112 are inside the 1742**, and VectorSearch alone accounts for roughly **10% of row 2** and
+**3% of row 1**. It is the largest single *named feature* in the coverage gap, and it is architecturally
+distinctive: `VectorSearch(...)` is lifted out of the tree by the preprocessor *before* nav-expansion, so it
+never reaches slot population at all — the gate declines it via `ContainsVectorSearch` over the captured
+expression. Making it native means getting the lifted call back down to the lowerer as a `$vectorSearch` stage.
+
+**Not in the table at all, because Northwind does not cover it — genuinely invisible to the counts above:**
+
+- **Non-TPH `OfType`.**
+- **The owned-data residuals in §5** (bare array projection, `OwnsOne`-hop array leaf/EF-362, correlated
+  element predicates, two-scope owned quantifiers, owned-collection intermediate hops in dotted paths).
+  Individually small; collectively the tail that the last nine slices have been eating.
+- **Composite-PK member access is not native at all** — `MongoExpressionTranslator.TryResolveMember` and
+  `TryResolveOwnedFieldPath` both decline a property that is a component of a composite primary key, because it
+  is stored nested under `_id` and is not addressable by its own top-level element name. Resolving `_id.<name>`
+  dotted paths is the fix. This is a documented strict-spike-parity decision from SP1, not an oversight — but
+  it is a coverage gap that must be closed or consciously accepted before the fallback goes.
+- **`Contains`, `ElementAt`/`ElementAtOrDefault`, `Last`/`LastOrDefault` have no binder at all** — they reach
+  `NativeSlotPopulator`'s catch-all. Small, self-contained, and easy to overlook precisely because they decline
+  so cleanly.
+- **A set operation combined with an `Include` declines** — `IsPlainWholeEntitySelect` and
+  `IsPlainProjectedSelect` both require **zero lookups**, so any `Union`/`Concat`/`Intersect`/`Except` over a
+  source carrying an `Include` falls back (Union/Concat) or hard-fails (Intersect/Except).
+
+### 9.2 The structural blocker nobody has scheduled: the bulk path shares the bridge
+
+`MongoEFToLinqTranslatingExpressionVisitor` — the EF→driver-LINQ bridge, ~1050 lines plus a ~726-line
+`LeftJoin` partial — is **not** used only by the query fallback. On **EF9 and EF10** it is also used by the
+bulk `ExecuteUpdate`/`ExecuteDelete` translation, inside the `#if !EF8` region of
+`MongoShapedQueryCompilingExpressionVisitor.cs`: `BuildIdDocumentQuery` (:1028), `BuildFilter` (:1049) and
+`RenderSelfReferencingValue` (:1166) each construct one to lower a predicate body into `Mql.Field` form.
+
+Consequence, stated plainly because it changes the shape of the cutover: **retiring the query fallback does not
+retire the bridge.** Either the bulk filter/update translation is rewritten onto the native
+`MongoExpressionTranslator`/`MongoQueryLanguageRenderer` first, or the bridge survives cutover as bulk-only
+infrastructure. That is a real sub-project, and it is not currently on the SP scoreboard in §2.
+
+**And a second coordination problem, in the opposite direction — EF-317.** Four `TODO(EF-317)` markers sit in
+exactly the code this epic wants to delete (`MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs:37`,
+`MongoProjectionBindingExpressionVisitor.Lookup.cs:34`, `MongoQueryExpression.Lookup.cs:23`). EF-317 is
+**`In Progress`** and is titled *"Use native driver LeftJoin to replace the cross-collection `$lookup`
+workaround"* — i.e. it is investing in the **driver-LINQ** join path, which is the same ground EF-322 needs to
+take natively (§9.1 items 2 and 3). The driver 3.10.0 upgrade this stack is one commit behind
+(`58e05a0`, §9.6) is EF-317 landing its prerequisite. **These two epics are converging on the same code from
+opposite directions and that needs an explicit decision** — whether EF-317's LeftJoin work is throwaway once
+native joins land, or whether native joins are deferred and EF-317's path is what ships. Nothing in the current
+plan records which.
+
+### 9.3 Test-suite work at cutover — 651 re-baselines, and 10 that cannot be re-baselined
+
+- **651 tests differ only in failure shape** (559 exception-type + 26 message + 66 `ArgumentOutOfRangeException`).
+  These features are unsupported in *every* mode; the tests pass under `Native` only because the override pins
+  the *driver-LINQ* exception type or message. At cutover each gets re-pointed at the native exception. This is
+  mechanical but large — schedule it, don't discover it.
+- **The 66 `ArgumentOutOfRangeException` rows deserve a second look before being filed as bookkeeping.** They
+  are described as a materialization/shaper gap surfaced only under `NativeOnly`. If any of them is really a
+  native shaper bug rather than an expected decline, it belongs in §9.1, not here. Not re-investigated at this
+  revision.
+- **10 spec cases (5 classes) cannot be re-baselined by the usual instrument.** They assert EF Core's *upstream*
+  `AssertTranslationFailed`, which requires an `InvalidOperationException` carrying "could not be translated" —
+  an exception type currently produced *by the driver-LINQ fallback failing*. `EF_TEST_REWRITE_BASELINES`
+  rewrites MQL baselines, not exception assertions. Two of the ten are EF8/EF9-only
+  (`NorthwindFunctionsQueryMongoTest` is wholly `#if EF8 || EF9`), so **eight** exist on the EF10 axes. This
+  constraint is already recorded as a hard constraint in `Query/AGENTS.md`'s array-valued-projections note; it
+  is repeated here because it is a *cutover* constraint, not a slice-8 one.
+- **The mode axis itself disappears.** `MONGODB_EF_NATIVE_ONLY=1` (`MongoTestStore.AddProviderOptions`) becomes
+  vacuous, and ~24 functional `Native*` test files that self-parametrize over `MongoQueryMode` lose their
+  `Native == DriverLinq` parity leg — which is, today, the primary oracle for a large amount of this work. **What
+  replaces that oracle needs deciding before the fallback goes, not after.** The in-memory differential oracle
+  (used by the `All`, `.Count` and filtered-count slices, where no driver oracle existed) is the obvious
+  candidate and is already proven in this codebase.
+
+### 9.4 Public API decisions to make (each is a breaking-change judgement)
+
+Retiring the fallback makes the following public surface meaningless. Per `AGENTS.md`, breaks are measured
+against the latest *released* assembly, so each needs a deliberate call — **note this cuts both ways: several
+of these were added during this unreleased cycle and can simply be removed, but that must be verified per
+member against the release tag, not assumed.**
+
+- `public enum MongoQueryMode` (`Infrastructure/MongoQueryMode.cs`) — `DriverLinq` becomes meaningless and
+  `NativeOnly` becomes a no-op. Removing the enum or a member is a source+binary break.
+- `MongoDbContextOptionsBuilder.UseQueryMode(MongoQueryMode)` — `virtual`, so also a subclassing break.
+- `MongoOptionsExtension.QueryMode` / `WithQueryMode(...)`, and the observable output of
+  `GetServiceProviderHashCode`, `ShouldUseSameServiceProvider`, `PopulateDebugInfo`'s `"Mongo:QueryMode"` key,
+  and `LogFragment`'s `QueryMode=…`.
+- `MongoQueryCompilationContext`'s mode-bearing primary constructor and its `QueryMode` property; the
+  `MongoQueryCompilationContextFactory` 2-arg constructor. **Precedent worth heeding:** that factory's 1-arg
+  constructor already carries an explicit "do not delete, v10.0.2 compat" remark — this repo has already
+  treated constructor removal here as breaking.
+- `public record MongoExecutableQuery` — the one public type whose *shape* is driver-LINQ: its `Query`
+  (a driver-LINQ expression) and `Provider` (`MongoDB.Driver.Linq.IMongoQueryProvider`) members become dead,
+  while every live member (`NativePipeline`, `Session`, `Streaming`, `OutputSerializer`) is `internal`.
+  Changing the positional record parameters breaks anyone constructing or deconstructing it. It is also the
+  **only** place `MongoDB.Driver.Linq` leaks into public API.
+
+`NativeTranslationNotSupportedException` is `internal sealed`, so the exception users would start seeing is
+*not* currently public — decide whether it should be before it becomes the only failure mode.
+
+### 9.5 Correctness debt that should not survive cutover
+
+Cutover removes the safety net that currently makes some of these benign, so they change priority:
+
+- **EF-356** — mixed whole-entity + computed-arithmetic projection returns **silently wrong** values
+  (`Score²`). Reachable today under default `Native`. Silent wrong data is the worst category here.
+- **EF-355** — filtered reference SelectMany can silently drop a `!= null` inner filter. Latent today (EF emits
+  the nested, not folded, shape), but it is a silent-wrong-data mechanism sitting in code the cutover makes
+  load-bearing.
+- **EF-354** — whole-outer `SelectMany` crashes instead of declining cleanly.
+- **EF-360, EF-365** — hard-fail in every mode where a graceful path is available. EF-365 in particular is
+  *measured* to become a working fallback if one guard is deleted; after cutover there is no fallback to become.
+- **The interposed-operator family** (`Distinct`/`Take`/`Reverse`/`DefaultIfEmpty`/`Concat` between an
+  owned-collection `Select` and a terminal operator) — recorded as a comment on the EF-322 epic rather than its
+  own ticket. Hard-fails in every mode today.
+
+### 9.6 Housekeeping that is cheap now and annoying later
+
+- **JIRA is now reconciled** (done 2026-07-31 — see the top of §6), but **one step is deferred to merge**:
+  EF-335/EF-357/EF-358/EF-359 sit at `In Code Review` and must be moved to `Closed` when the stack lands.
+- **The stack is 1 commit behind `upstream/main`** — `58e05a0` (EF-317, C# driver 3.10.0). Rebase before the
+  stack grows further.
+- **SP7 Phase 2** (§5) — reducer/aggregate streaming, collection-Include array streaming, reference-Include
+  streaming (blocked on 9.1 item 3), and deleting the now-unreachable `RawBsonDocument` branch + `BsonRowReader`.
+  This is performance, not correctness: it does **not** block cutover, and should not be allowed to.
+
+### 9.7 The honest summary
+
+Ranked by what actually gates the cutover:
+
+1. **Joins** (no native form at all) and **reference `Include`** — the two largest structural absences.
+2. **The computed/client-eval projection long tail** — the largest bucket by test count, and the least
+   unified: it is many small features, not one.
+3. **`VectorSearch`** — **106 tests, promoted here on measurement.** It was ranked below `GroupBy` in this
+   list's first draft on the assumption its tests were exception-shape bookkeeping; they are not, and it is the
+   largest single named feature in the coverage gap.
+4. **The bulk-path bridge dependency** (§9.2) — small in code, but currently unscheduled and easy to miss.
+5. **Non-native `GroupBy` shapes**, then the small renderer/regex/`Contains`/composite-PK items.
+6. **Test re-baselining and the public-API decisions** — not hard, but 651 tests and ~8 API members do not
+   happen in an afternoon.
+
+**Where each of these is actually gated, by decline site** — recorded so the next slice does not have to
+re-derive it. Ordered by leverage (how much of the fallback set one site's removal would unblock), which is
+*not* the same order as the ranking above:
+
+| # | Gap | The gate |
+|---|---|---|
+| 1 | Reference `Include` / `ThenInclude` / filtered / collection-of-collection | `MongoSelectLowerer.cs` catch-all lookup arm — a **single** site; the `$lookup`/`$unwind` machinery is already built |
+| 2 | Bare-scalar, entity-ref and mixed projections | `NativeProjectionBinder.TryPopulateNativeProjection`'s selector-body shape check, plus the gate's "projects a non-entity result" throw |
+| 3 | Computed long tail | `MongoExpressionTranslator.TranslateNode`'s final `return null`, `TranslateOperand`'s cast guard, and `NativeProjectionBinder.TryTranslateLeaf`'s final `return null` |
+| 4 | Joins | `NativeSlotPopulator`'s catch-all + `MongoSelectLowerer`'s join-coverage guard; **GroupBy+Join is the one *hard* decline** (throws under `Native` too, because the driver fallback returns silently-empty joins) |
+| 5 | `VectorSearch` | `ClassifyNativeDisposition`'s `ContainsVectorSearch` branch — needs the preprocessor-lifted call to reach the lowerer as a stage |
+| 6 | GroupBy breadth | five separate sites: computed keys and computed accumulator operands in `NativeGroupByBinder`, element/result selectors in `TranslateGroupBy`, bare `IGrouping`, and the post-group guards |
+| 7 | `Contains` / `ElementAt` / `Last` | no binder at all — `NativeSlotPopulator` catch-all |
+| 8 | Composite-PK member access | `MongoExpressionTranslator.TryResolveMember` / `TryResolveOwnedFieldPath` |
+| 9 | Parameterized `StartsWith`/`EndsWith`/`Contains` | `MongoQueryLanguageRenderer`'s constant-only regex term (EF-247); also unblocks `!(Count > @param)` via the negator |
+| 10 | Correlated element predicates in `Any`/`All`/`Count(pred)` | `ReferencesEnclosingScope`; needs `$expr`+`$filter`/`$anyElementTrue` for the quantifiers, a two-scope element translator for the count |
+
+**One caution about reading that table.** Every row is a *decline site*, not a *feature estimate* — item 1 being
+"a single site" means the gate is in one place, not that reference `Include` is a small job. The table is for
+locating the work, not for sizing it.
+
+The owned-data work stream that has occupied the last nine slices is **not** on this critical path — which is
+exactly what §7's flat spec number has been saying all along, and is worth stating plainly rather than
+re-deriving each slice.
