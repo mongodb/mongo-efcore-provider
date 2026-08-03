@@ -1190,7 +1190,14 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     public override async Task Include_collection_with_client_filter(bool async)
     {
         // Fails: Throws with Mongo-specific message rather than the generic EF message. EF-X010
-        await AssertTranslationFailed(() => base.Include_collection_with_client_filter(async));
+        // The base test's own Assert.ThrowsAsync<InvalidOperationException>/Assert.Contains fails because the
+        // provider throws the driver's ExpressionNotSupportedException instead, so what escapes base is an
+        // Xunit.Sdk.ThrowsException wrapping that driver exception. Pin both: the wrapper type and the driver
+        // exception name in its message, so this flips if the provider's behaviour changes in either direction.
+        Assert.Contains(
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Include_collection_with_client_filter(async)))
+            .Message);
         AssertMql(
             """
 Customers.
@@ -1199,18 +1206,7 @@ Customers.
 
 
     protected new static async Task AssertTranslationFailed(Func<Task> query)
-    {
-        try
-        {
-            await query();
-        }
-        catch
-        {
-            return;
-        }
-
-        throw new Xunit.Sdk.XunitException("Expected query to fail but it succeeded.");
-    }
+        => await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
