@@ -74,6 +74,22 @@ internal static class NativeSlotPopulator
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
             && IsPostGroupSlotOperator(methodDefinition))
         {
+            // TODO(CSHARP-6017): delete this MarkSawUnrecordedPaging call with the rest of the paging guard.
+            // This return happens BEFORE the AppendSkip/AppendLimit arms below, so a Skip/Take reaching here is
+            // never recorded as an op and MongoSelectDefinition.HasPagingAnywhere would not see it — yet the
+            // Skip/Take IS still in the captured method chain the driver-LINQ fallback executes, so CSHARP-6017
+            // still folds it into the correlated $lookup sub-pipeline if this sequence is used as a join inner.
+            // MEASURED (EF-366): Orders.Join(Regions.Select(r => new {r.Country}).Distinct().Take(1), ...) —
+            // TryBindDistinctFromProjection sets IsDistinct, so HasTerminalOperator is true here and the Take(1)
+            // was swallowed — returned all 5 orders where at most 2 is correct, silently, under DEFAULT Native
+            // as well as explicit DriverLinq, with the inner's $group/$replaceRoot/$limit:1 visibly folded into
+            // the $lookup's own pipeline. Recording the fact here is exact: it says only "a Skip/Take was seen
+            // and not lowered", which is precisely the condition under which the fold applies.
+            if (methodDefinition == QueryableMethods.Skip || methodDefinition == QueryableMethods.Take)
+            {
+                mongoQ.Select.MarkSawUnrecordedPaging();
+            }
+
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
         }
@@ -116,7 +132,16 @@ internal static class NativeSlotPopulator
             // Skip appends a $skip op at its arrival position, and the lowerer emits ops verbatim.
             var count = TranslateCountExpression(call.Arguments[1]);
             if (count is null)
+            {
+                // TODO(CSHARP-6017): delete MarkSawUnrecordedPaging with the rest of the paging guard. Same
+                // reasoning as the post-terminal early return above — the Skip is declined rather than recorded,
+                // but it stays in the captured chain the fallback executes. Unlike that path this one has not
+                // been shown reachable from ordinary LINQ (EF parameterizes a captured/computed count, so
+                // TranslateCountExpression essentially always succeeds), so it is defence-in-depth against a
+                // silent-wrong-data hole, not a measured bug — see the design spec §2.9.
+                mongoQ.Select.MarkSawUnrecordedPaging();
                 mongoQ.Select.MarkNotNativelyRepresentable();
+            }
             else
                 mongoQ.Select.AppendSkip(count);
         }
@@ -125,7 +150,12 @@ internal static class NativeSlotPopulator
             // Same as Skip above (EF-347 Task 2): repeated / non-canonical-order Take is representable.
             var count = TranslateCountExpression(call.Arguments[1]);
             if (count is null)
+            {
+                // TODO(CSHARP-6017): same as the Skip arm immediately above — declined, not recorded, but still
+                // in the captured chain. Defence-in-depth; not shown reachable from ordinary LINQ.
+                mongoQ.Select.MarkSawUnrecordedPaging();
                 mongoQ.Select.MarkNotNativelyRepresentable();
+            }
             else
                 mongoQ.Select.AppendLimit(count);
         }

@@ -119,6 +119,106 @@ public class MongoSelectDefinitionTests
     }
 
     [Fact]
+    public void HasPagingAnywhere_is_false_with_no_paging()
+        => Assert.False(new MongoSelectDefinition().HasPagingAnywhere);
+
+    [Fact]
+    public void HasPagingAnywhere_sees_pipeline_ops()
+    {
+        var s = new MongoSelectDefinition();
+        s.AppendSkip(Const(5));
+
+        Assert.True(s.HasPagingAnywhere);
+    }
+
+    [Fact]
+    public void HasPagingAnywhere_sees_trailing_ops_after_a_set_op()
+    {
+        // A Take composed AFTER a set operation records into _trailingOps, which HasPaging deliberately does
+        // not scan (its consumer gates a PRE-terminal GroupBy). The CSHARP-6017 join guard must still see it.
+        var s = new MongoSelectDefinition();
+        s.SetOperation = new MongoSetOperation(
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "OtherCollection");
+        s.AppendLimit(Const(3));
+
+        Assert.Empty(s.PipelineOps);
+        Assert.False(s.HasPaging);
+        Assert.True(s.HasPagingAnywhere);
+    }
+
+    [Fact]
+    public void HasPagingAnywhere_sees_declined_unrecorded_paging()
+    {
+        // TODO(CSHARP-6017): delete with the rest of the paging guard (this test AND the two HasPagingAnywhere_*
+        // tests above; keep the Fallback_wrong_data_* / PropagateFallbackWrongDataFrom_* tests below, which pin
+        // the permanent EF-344 mechanism).
+        // A Skip/Take composed after a NON-set-op terminal (e.g. a natively-bound projected Distinct) is DECLINED
+        // by NativeSlotPopulator's post-terminal early return rather than recorded, so it lands in NEITHER op
+        // list — yet it is still in the captured method chain the driver-LINQ fallback executes, where the driver
+        // folds it into the correlated $lookup sub-pipeline. HasPagingAnywhere must therefore see it too; without
+        // this, EF-366's join guard missed the shape and it returned silently wrong rows under default Native.
+        var s = new MongoSelectDefinition();
+        s.MarkSawUnrecordedPaging();
+
+        Assert.Empty(s.PipelineOps);
+        Assert.Empty(s.TrailingOps);
+        Assert.False(s.HasPaging);
+        Assert.True(s.HasPagingAnywhere);
+    }
+
+    [Fact]
+    public void Fallback_wrong_data_is_false_by_default()
+    {
+        var s = new MongoSelectDefinition();
+
+        Assert.False(s.IsFallbackWrongData);
+        Assert.False(s.IsGroupByFallbackUnsafe);
+        Assert.False(s.IsPagedJoinInnerFallbackUnsafe);
+    }
+
+    [Fact]
+    public void MarkPagedJoinInnerFallbackUnsafe_sets_the_flag_and_forces_fallback_route()
+    {
+        var s = new MongoSelectDefinition();
+        s.MarkPagedJoinInnerFallbackUnsafe();
+
+        Assert.True(s.IsPagedJoinInnerFallbackUnsafe);
+        Assert.True(s.IsFallbackWrongData);
+        Assert.False(s.IsGroupByFallbackUnsafe);
+        Assert.Equal(NativeRoute.Fallback, s.Route);
+    }
+
+    [Fact]
+    public void PropagateFallbackWrongDataFrom_copies_both_provenances_independently()
+    {
+        var groupByInner = new MongoSelectDefinition();
+        groupByInner.MarkGroupByFallbackUnsafe();
+        var outer1 = new MongoSelectDefinition();
+        outer1.PropagateFallbackWrongDataFrom(groupByInner);
+
+        Assert.True(outer1.IsGroupByFallbackUnsafe);
+        Assert.False(outer1.IsPagedJoinInnerFallbackUnsafe);
+
+        var pagedInner = new MongoSelectDefinition();
+        pagedInner.MarkPagedJoinInnerFallbackUnsafe();
+        var outer2 = new MongoSelectDefinition();
+        outer2.PropagateFallbackWrongDataFrom(pagedInner);
+
+        Assert.True(outer2.IsPagedJoinInnerFallbackUnsafe);
+        Assert.False(outer2.IsGroupByFallbackUnsafe);
+    }
+
+    [Fact]
+    public void PropagateFallbackWrongDataFrom_a_clean_inner_is_a_no_op()
+    {
+        var outer = new MongoSelectDefinition();
+        outer.PropagateFallbackWrongDataFrom(new MongoSelectDefinition());
+
+        Assert.False(outer.IsFallbackWrongData);
+        Assert.Equal(NativeRoute.WholeEntity, outer.Route);
+    }
+
+    [Fact]
     public void Route_defaults_to_whole_entity()
         => Assert.Equal(NativeRoute.WholeEntity, TestSelect().Route);
 

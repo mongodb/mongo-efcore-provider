@@ -22,13 +22,20 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 public class NativeDispositionTests
 {
+    // TODO(CSHARP-6017): part of the removal checklist in
+    // docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §2.6. Collapsing
+    // MongoSelectDefinition.IsFallbackWrongData back to IsGroupByFallbackUnsafe when the paging guard is deleted
+    // means renaming this helper's `isFallbackWrongData` parameter back to `isGroupByFallbackUnsafe` and renaming
+    // the four tests below that use it (Fallback_wrong_data_* / the DriverLinq and vector-search cases). The
+    // BEHAVIOUR of those four is permanent — the GroupBy+Join half of the union survives the driver fix — so this
+    // is a rename, NOT a deletion.
     private static NativeDisposition Classify(
         NativeRoute route,
-        bool isGroupByFallbackUnsafe = false,
+        bool isFallbackWrongData = false,
         bool containsVectorSearch = false,
         MongoQueryMode mode = MongoQueryMode.Native)
         => MongoShapedQueryCompilingExpressionVisitor.ClassifyNativeDisposition(
-            route, isGroupByFallbackUnsafe, containsVectorSearch, mode);
+            route, isFallbackWrongData, containsVectorSearch, mode);
 
     [Fact]
     public void WholeEntity_is_native()
@@ -61,27 +68,27 @@ public class NativeDispositionTests
         => Assert.Equal(NativeDisposition.Fallback, Classify(NativeRoute.WholeEntity, containsVectorSearch: true));
 
     [Fact]
-    public void GroupBy_unsafe_is_hard_decline_under_native()
+    public void Fallback_wrong_data_is_hard_decline_under_native()
         => Assert.Equal(
             NativeDisposition.HardDecline,
-            Classify(NativeRoute.Fallback, isGroupByFallbackUnsafe: true, mode: MongoQueryMode.Native));
+            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryMode.Native));
 
     [Fact]
-    public void GroupBy_unsafe_is_hard_decline_under_native_only()
+    public void Fallback_wrong_data_is_hard_decline_under_native_only()
         => Assert.Equal(
             NativeDisposition.HardDecline,
-            Classify(NativeRoute.Fallback, isGroupByFallbackUnsafe: true, mode: MongoQueryMode.NativeOnly));
+            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryMode.NativeOnly));
 
     [Fact]
-    public void GroupBy_unsafe_is_fallback_under_driver_linq()
+    public void Fallback_wrong_data_is_fallback_under_driver_linq()
         => Assert.Equal(
             NativeDisposition.Fallback,
-            Classify(NativeRoute.Fallback, isGroupByFallbackUnsafe: true, mode: MongoQueryMode.DriverLinq));
+            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryMode.DriverLinq));
 
     [Fact]
     public void Hard_decline_takes_precedence_over_vector_search()
         => Assert.Equal(
             NativeDisposition.HardDecline,
-            Classify(NativeRoute.Fallback, isGroupByFallbackUnsafe: true, containsVectorSearch: true,
+            Classify(NativeRoute.Fallback, isFallbackWrongData: true, containsVectorSearch: true,
                 mode: MongoQueryMode.Native));
 }
