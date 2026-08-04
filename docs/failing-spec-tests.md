@@ -13,6 +13,16 @@ comment. This document enumerates every ticket referenced by such comments
 together with a one-line description, plus a section listing failure modes
 that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrameworkCore.SpecificationTests/**/*.cs`.
 
+> **Counting basis — read before trusting a number in the `Count` column.** Where a row is restated it
+> means: the number of distinct overridden test methods carrying a `// Fails: … <ticket>` tag in
+> `tests/MongoDB.EntityFrameworkCore.SpecificationTests/**/*.cs` (a method split across `#if` arms counts
+> once). Most figures in the column predate that rule and **do not reconcile with it**: measured at
+> `58e05a0`, EF-216 read 265 where the rule yields 217, EF-X020 read 168 against 171, EF-149 246 against
+> 292, and EF-X002's 46-against-45 discrepancy was recorded earlier and never explained. No rule tried
+> (raw tag lines, per-method, per-method-name, whole-`tests/`-tree) reproduces the older figures, so their
+> basis is unknown. Rows touched from 2026-08-03 onwards state the rule's figure; the rest are left as
+> they stand rather than silently re-derived.
+
 > If you fix one of these bugs, search for the ticket id in the spec-tests
 > project — the corresponding overrides need to be updated (drop the
 > `AssertTranslationFailed` wrapper or the throws-asserting `Assert.Contains`,
@@ -29,7 +39,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-153](https://jira.mongodb.org/browse/EF-153) | `TagWith EF-153` | `TagWith(...)` content is silently dropped — does not appear in the emitted MQL. | 9 |
 | [EF-164](https://jira.mongodb.org/browse/EF-164) | `Missing property values issue EF-164` / `Projections issue EF-164` | BSON documents that omit a required scalar (or required navigation) throw on materialization — `Project_root_with_missing_scalars`, `Project_root_entity_with_missing_required_navigation`, etc. | 3 |
 | [EF-202](https://jira.mongodb.org/browse/EF-202) | `Entity equality issue EF-202` | Comparing two entities (`entity1 == entity2` / `Contains(entity)`) is not lowered to a key-equality comparison. | 4 |
-| [EF-216](https://jira.mongodb.org/browse/EF-216) | `Cross-document navigation access issue EF-216` / `Navigations issue EF-216` | Navigations that cross collection boundaries cannot be translated; surfaces as `Unsupported cross-DbSet query between ...`. Documented at the helper `AssertNoMultiCollectionQuerySupport`. | 264 |
+| [EF-216](https://jira.mongodb.org/browse/EF-216) | `Cross-document navigation access issue EF-216` / `Navigations issue EF-216` | Navigations that cross collection boundaries cannot be translated; surfaces as `Unsupported cross-DbSet query between ...`. Documented at the helper `AssertNoMultiCollectionQuerySupport`. | 264 <!-- EF-370 port: total not reconciled, see EF-368 design §7.1 --> |
 | [EF-217](https://jira.mongodb.org/browse/EF-217) | `Call ToString on DateTimeOffset EF-217` | `DateTimeOffset.ToString()` cannot be translated. | 2 |
 | [EF-218](https://jira.mongodb.org/browse/EF-218) | `Projecting DateTimeOffset members EF-218` | Projecting individual members of a `DateTimeOffset` (e.g. `.Year`, `.Hour`) is not supported. | 2 |
 | [EF-220](https://jira.mongodb.org/browse/EF-220) | `Multiple query roots issue EF-220` | Queries that reference more than one `DbSet<>` (Cartesian product / cross-join) are not translatable. Includes `SelectMany` across DbSets and tautology-predicate cross-joins. | 10 |
@@ -56,6 +66,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-252](https://jira.mongodb.org/browse/EF-252) | `Concurrency detector tests broken EF-252` | `Throws_on_concurrent_query_first/list` — the concurrency detector does not fire as the EF base test expects. | 2 |
 | [EF-253](https://jira.mongodb.org/browse/EF-253) | `Multiple ordering issue EF-253` | `OrderBy(x).ThenBy(x)` on the same column with different directions does not emit the expected MQL. | 1 |
 | [EF-254](https://jira.mongodb.org/browse/EF-254) | `Take zero EF-254` | `.Skip(0).Take(0)` with a parameter does not produce the expected empty result. | 1 |
+| [EF-371](https://jira.mongodb.org/browse/EF-371) | `returns wrong data (0 rows instead of 6) EF-371` | A self-referencing two-hop reference navigation (`e.Manager.Manager`) collapses to a single join and hop 2 degrades to an inner `$unwind`, so the query returns 0 rows instead of 6. Baselined green on EF10 by asserting the wrong-data failure; the EF8/EF9 arm is a translation failure tagged EF-X020. | 1 |
 
 ## MongoDB C# Driver tickets — `CSHARP-NNNN`
 
@@ -99,7 +110,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X017 | Join shapes not translated | 5 |
 | EF-X018 | RightJoin not supported | 1 |
 | EF-X019 | Include on keyless entity not supported (no primary key for $lookup join) | 2 |
-| EF-X020 | Cross-collection Include/join/navigation not translated on EF8/EF9 (works on EF10) | 168 |
+| EF-X020 | Cross-collection Include/join/navigation not translated on EF8/EF9 (works on EF10) | 176 |
 | EF-X021 | Filtered Include / query filter on cross-collection target not translated | 0 |
 | EF-X016 | Bulk `ExecuteUpdate`/`ExecuteDelete` source restricted to a single collection scoped by `Where` | 47 |
 
@@ -213,30 +224,56 @@ Affected: 2 tests (`NorthwindKeylessEntitiesQueryMongoTest.KeylessEntity_with_in
 ### EF-X020 — Cross-collection Include/join/navigation not translated on EF8/EF9
 Comment pattern: `// Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020`.
 Test-body pattern: the override is wrapped in `#if EF8 || EF9` / `#else`. The `#if EF8 || EF9` branch asserts the translation failure (`AssertTranslationFailed(() => base.X(...))`); the `#else` branch keeps the working EF10 baseline (the real `base` call plus its `AssertMql(...)`).
-Affected: 168 tests across `NorthwindEFPropertyIncludeQueryMongoTest`, `NorthwindStringIncludeQueryMongoTest`, `NorthwindIncludeQueryMongoTest`, `NorthwindIncludeNoTrackingQueryMongoTest`, `NorthwindNavigationsQueryMongoTest`, `NorthwindMiscellaneousQueryMongoTest`, `NorthwindJoinQueryMongoTest`, `NorthwindAggregateOperatorsQueryMongoTest`, `NorthwindAsNoTrackingQueryMongoTest`, `NorthwindKeylessEntitiesQueryMongoTest`, `NorthwindSelectQueryMongoTest`, `NorthwindSetOperationsQueryMongoTest`, `NorthwindWhereQueryMongoTest`, and `BuiltInDataTypesMongoTest`. These are the cross-collection Include/`ThenInclude`/join/navigation shapes implemented for the EF10-targeted query pipeline. On EF8/EF9 the upstream nav-expansion / query pipeline produces a different expression shape (e.g. an extra `.OrderBy(o => o.OrderID)` injected during navigation expansion) that the EF10-targeted translator does not handle, so translation fails with EF Core's `InvalidOperationException` "could not be translated" (a few also throw the provider's `ExpressionNotSupportedException`); the same query translates and runs on EF10. The provider's local `AssertTranslationFailed` helper swallows whichever exception is thrown, so both shapes are covered. Four `Include_reference_dependent_already_tracked` overrides (in the four Include suites) emit MQL from a first principal query *before* the Include sub-query fails to translate, so their `#if EF8 || EF9` branch asserts only the translation failure and omits the empty `AssertMql()`. `BuiltInDataTypesMongoTest.Can_read_back_bool_mapped_as_int_through_navigation` is split three ways (a nested `#if EF9` inside the file's `#if !EF8` branch, plus the `#else` EF8 branch) because that file uses async signatures on EF9/EF10 and sync `void` signatures on EF8.
+Affected: 176 tests across `NorthwindEFPropertyIncludeQueryMongoTest`, `NorthwindStringIncludeQueryMongoTest`, `NorthwindIncludeQueryMongoTest`, `NorthwindIncludeNoTrackingQueryMongoTest`, `NorthwindNavigationsQueryMongoTest`, `NorthwindMiscellaneousQueryMongoTest`, `NorthwindJoinQueryMongoTest`, `NorthwindAggregateOperatorsQueryMongoTest`, `NorthwindAsNoTrackingQueryMongoTest`, `NorthwindKeylessEntitiesQueryMongoTest`, `NorthwindSelectQueryMongoTest`, `NorthwindSetOperationsQueryMongoTest`, `NorthwindWhereQueryMongoTest`, and `BuiltInDataTypesMongoTest`. These are the cross-collection Include/`ThenInclude`/join/navigation shapes implemented for the EF10-targeted query pipeline. On EF8/EF9 the upstream nav-expansion / query pipeline produces a different expression shape (e.g. an extra `.OrderBy(o => o.OrderID)` injected during navigation expansion) that the EF10-targeted translator does not handle, so translation fails with EF Core's `InvalidOperationException` "could not be translated" (a few also throw the provider's `ExpressionNotSupportedException`); the same query translates and runs on EF10. The provider's local `AssertTranslationFailed` helper swallows whichever exception is thrown, so both shapes are covered. Four `Include_reference_dependent_already_tracked` overrides (in the four Include suites) emit MQL from a first principal query *before* the Include sub-query fails to translate, so their `#if EF8 || EF9` branch asserts only the translation failure and omits the empty `AssertMql()`. `BuiltInDataTypesMongoTest.Can_read_back_bool_mapped_as_int_through_navigation` is split three ways (a nested `#if EF9` inside the file's `#if !EF8` branch, plus the `#else` EF8 branch) because that file uses async signatures on EF9/EF10 and sync `void` signatures on EF8.
 
-### EF-216 — wrong-data on EF10 (cross-collection navigation), unsupported on EF8/EF9
+### EF-371 — self-referencing two-hop reference navigation collapses to one join
 
-Five `NorthwindNavigationsQueryMongoTest` methods exercise **multi-hop** cross-collection navigation
-(multiple optional navigations, nested `Contains`-over-navigation, deep 2-hop null filters). On EF10
-the query **translates and runs but returns the wrong result set** (e.g. 2155 rows instead of 112 —
-the join/`Contains` filter is not applied; or 0 instead of 6 for the deep null case) — a genuine
-cross-collection navigation lowering bug, not a translation gap. On EF8/EF9 the same shapes simply
-fail to translate. Because the wrong-data variant cannot be asserted green by a test-only baseline
-(the base test asserts the *correct* data), these five are marked
-`[ConditionalTheory(Skip = "EF-216: multi-hop cross-collection navigation returns wrong data")]`
-uniformly across EF8/EF9/EF10 and carry a `// Fails: ... EF-216` comment. They need a provider
-query-pipeline fix for compound multi-hop navigation lowering:
+**History (kept deliberately — the original diagnosis was wrong).** This entry replaces
+"EF-216 — wrong-data on EF10 (cross-collection navigation), unsupported on EF8/EF9", which covered
+**five** `NorthwindNavigationsQueryMongoTest` methods skipped with
+`[ConditionalTheory(Skip = "EF-216: multi-hop cross-collection navigation returns wrong data")]`:
+`Include_with_multiple_optional_navigations`, `Multiple_include_with_multiple_optional_navigations`,
+`Navigation_from_join_clause_inside_contains`, `Navigation_inside_contains_nested` and
+`Select_Where_Navigation_Null_Deep`. They were believed to share one root cause — "compound multi-hop
+navigation lowering". They did not.
 
-- `Include_with_multiple_optional_navigations`
-- `Multiple_include_with_multiple_optional_navigations`
-- `Navigation_from_join_clause_inside_contains`
-- `Navigation_inside_contains_nested`
-- `Select_Where_Navigation_Null_Deep`
+**Four of the five are fixed** (EF-369 / EF-370, see
+`docs/superpowers/specs/2026-08-03-required-nav-unwind-semantics-design.md`): the composed predicate /
+`Contains` filter was being *discarded* when a multi-join Include chain was flattened to root-level
+`_lookup_<Nav>` fields, so the query returned every row (2155 against 112 / 112 / 352 / 40 expected).
+Those four are now un-skipped, run on EF10 with real `AssertMql` baselines, and take the standard
+`#if EF8 || EF9` **EF-X020** arm (their navigations are optional, so EF lowers them to `Queryable.LeftJoin`,
+whose dispatch case does not exist before EF10).
 
-With these skipped, the full spec suite is **green on all three EF versions** (EF8/EF9/EF10:
-0 failures). They are the only known-incorrect query shapes remaining; un-skip them once the
-multi-hop navigation lowering is fixed.
+**The fifth is a different defect**, tracked as EF-371. It is **baselined green, not skipped** — a skip
+stops the shape being exercised at all, so neither a regression nor an accidental fix would be noticed.
+The `#else` (EF10) arm asserts the wrong data with the loose form the repo uses for a wrong-*data* failure
+(as opposed to the exact-type form reserved for a wrong exception *type*), plus the real `AssertMql`
+baseline, which pins the defective pipeline including the bare hop-2 `$unwind` diagnosed below:
+
+```csharp
+// Fails: returns wrong data (0 rows instead of 6) EF-371
+await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => base.Select_Where_Navigation_Null_Deep(async));
+```
+
+On EF8/EF9 the same shape fails at *translation* instead, so that arm is the standard **EF-X020**
+`AssertTranslationFailed` + empty `AssertMql()`. `Select_Where_Navigation_Null_Deep`
+filters on `e.Manager.Manager == null` over the self-referencing `Employee.Manager` navigation and returns
+**0 rows where 6 are correct**. Two causes, both independent of the discarded-operator bug:
+
+1. `MongoQueryExpression._innerCollections` is keyed by `IEntityType`, so a self-referencing two-hop
+   navigation registers only **one** inner collection. `InnerCollections.Count > 1` stays false, no
+   forced-unwind lookups are registered, and the query never reaches the flat `_lookup_*` path — it stays
+   on the chained driver-native join path.
+2. On that path `RewriteJoinNode`'s guard `if (isLeftJoin && shapedPath && outerType == oldOuterType)`
+   builds the preserving pipeline only for the **first** hop; at hop 2 the outer type is already a
+   `LeftJoinResult`, so it falls through to `Queryable.Join` and the driver emits a bare `$unwind` — an
+   **inner** join. Rows whose grandparent is absent are dropped, so `== null` can never match.
+
+With this one test baselined, the full spec suite is **green on all three EF versions** (0 failures) and
+carries **no skips for this work**. It is the only known-incorrect query shape remaining; when
+self-referencing multi-hop reference navigation is fixed, the EF10 arm flips red at the `ThrowsAnyAsync`
+and is replaced by a plain `await base.…` plus a refreshed baseline.
 
 ---
 

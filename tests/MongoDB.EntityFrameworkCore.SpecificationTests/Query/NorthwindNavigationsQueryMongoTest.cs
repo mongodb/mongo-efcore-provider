@@ -76,11 +76,11 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
         AssertMql(
         );
 #else
-        await Assert.ThrowsAnyAsync<Exception>(() => base.Select_Where_Navigation_Deep(async));
+        await base.Select_Where_Navigation_Deep(async);
 
         AssertMql(
             """
-OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.Inner.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Inner.City" : "Seattle" } }, { "$sort" : { "Outer.Outer._id.OrderID" : 1, "Outer.Outer._id.ProductID" : 1 } }, { "$limit" : 1 }, { "$project" : { "_v" : "$Outer.Outer", "_id" : 0 } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "Seattle" } }, { "$sort" : { "_id.OrderID" : 1, "_id.ProductID" : 1 } }, { "$limit" : 1 }
 """);
 #endif
     }
@@ -163,11 +163,20 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 #endif
     }
 
-    [ConditionalTheory(Skip = "EF-216: multi-hop cross-collection navigation returns wrong data")]
-    [MemberData(nameof(IsAsyncData))]
-    // Fails: returns wrong data (multi-hop cross-collection navigation) EF-216
     public override async Task Include_with_multiple_optional_navigations(bool async)
-        => await base.Include_with_multiple_optional_navigations(async);
+    {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Include_with_multiple_optional_navigations(async));
+        AssertMql();
+#else
+        await base.Include_with_multiple_optional_navigations(async);
+        AssertMql(
+            """
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "London" } }
+""");
+#endif
+    }
 
     public override async Task Select_Navigation(bool async)
     {
@@ -302,11 +311,21 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 #endif
     }
 
-    [ConditionalTheory(Skip = "EF-216: multi-hop cross-collection navigation returns wrong data")]
-    [MemberData(nameof(IsAsyncData))]
-    // Fails: returns wrong data (multi-hop cross-collection navigation) EF-216
     public override async Task Select_Where_Navigation_Null_Deep(bool async)
-        => await base.Select_Where_Navigation_Null_Deep(async);
+    {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Select_Where_Navigation_Null_Deep(async));
+        AssertMql();
+#else
+        // Fails: returns wrong data (0 rows instead of 6) EF-371
+        await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => base.Select_Where_Navigation_Null_Deep(async));
+        AssertMql(
+            """
+Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer.ReportsTo", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer._inner.ReportsTo", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner" : null } }
+""");
+#endif
+    }
 
     public override async Task Select_Where_Navigation_Null_Reverse(bool async)
     {
@@ -571,17 +590,35 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 #endif
     }
 
-    [ConditionalTheory(Skip = "EF-216: multi-hop cross-collection navigation returns wrong data")]
-    [MemberData(nameof(IsAsyncData))]
-    // Fails: returns wrong data (multi-hop cross-collection navigation) EF-216
     public override async Task Navigation_inside_contains_nested(bool async)
-        => await base.Navigation_inside_contains_nested(async);
+    {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Navigation_inside_contains_nested(async));
+        AssertMql();
+#else
+        await base.Navigation_inside_contains_nested(async);
+        AssertMql(
+            """
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : { "$in" : ["Novigrad", "Seattle"] } } }
+""");
+#endif
+    }
 
-    [ConditionalTheory(Skip = "EF-216: multi-hop cross-collection navigation returns wrong data")]
-    [MemberData(nameof(IsAsyncData))]
-    // Fails: returns wrong data (multi-hop cross-collection navigation) EF-216
     public override async Task Navigation_from_join_clause_inside_contains(bool async)
-        => await base.Navigation_from_join_clause_inside_contains(async);
+    {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Navigation_from_join_clause_inside_contains(async));
+        AssertMql();
+#else
+        await base.Navigation_from_join_clause_inside_contains(async);
+        AssertMql(
+            """
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.Country" : { "$in" : ["USA", "Redania"] } } }
+""");
+#endif
+    }
 
     public override async Task Where_subquery_on_navigation(bool async)
     {
@@ -712,11 +749,20 @@ Orders.
 #endif
     }
 
-    [ConditionalTheory(Skip = "EF-216: multi-hop cross-collection navigation returns wrong data")]
-    [MemberData(nameof(IsAsyncData))]
-    // Fails: returns wrong data (multi-hop cross-collection navigation) EF-216
     public override async Task Multiple_include_with_multiple_optional_navigations(bool async)
-        => await base.Multiple_include_with_multiple_optional_navigations(async);
+    {
+#if EF8 || EF9
+        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        await AssertTranslationFailed(() => base.Multiple_include_with_multiple_optional_navigations(async));
+        AssertMql();
+#else
+        await base.Multiple_include_with_multiple_optional_navigations(async);
+        AssertMql(
+            """
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : false } }, { "$match" : { "_lookup_Customer.City" : "London" } }
+""");
+#endif
+    }
 
     public override async Task Navigation_in_subquery_referencing_outer_query_with_client_side_result_operator_and_count(bool async)
     {
