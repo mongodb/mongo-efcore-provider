@@ -125,6 +125,27 @@ internal sealed class LookupExpression
     public bool ForceUnwind { get; }
 
     /// <summary>
+    /// Whether the <c>$unwind</c> that follows this <c>$lookup</c> uses
+    /// <c>preserveNullAndEmptyArrays: true</c> — i.e. whether the join is LEFT-OUTER (the principal
+    /// document survives when nothing matched) or INNER (it is dropped).
+    /// <para>
+    /// Defaults to <see langword="true"/>: an <c>Include</c> must never drop principals, which is the
+    /// semantics every non-join registration site wants, so a site that does not think about this flag
+    /// gets the conservative behaviour. The join-translation path overrides it from the LINQ operator EF
+    /// actually produced — <c>LeftJoin</c>/<c>GroupJoin</c> are left-outer, a plain <c>Join</c> is inner.
+    /// That covers both an explicit user <c>Join</c> and EF navigation expansion of a REQUIRED reference
+    /// navigation (which EF lowers to an inner <c>Queryable.Join</c>, not a <c>LeftJoin</c>), so the
+    /// emitted pipeline matches the row set the query asked for. MongoDB enforces no referential
+    /// integrity, so a dangling foreign key is an ordinary data state and the distinction is observable.
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// <see langword="init"/>-only: this is compile-time state on an object reused across executions, so it
+    /// must be written exactly once, at registration.
+    /// </remarks>
+    public bool PreserveNullAndEmptyArrays { get; init; } = true;
+
+    /// <summary>
     /// Whether this $lookup must be injected right after the root collection source (before the user's
     /// downstream pipeline stages) rather than tail-appended. Used for projected collection-navigation
     /// counts (<c>select new { ..., c.Orders.Count }</c>) where a later <c>$match</c>/<c>$project</c>

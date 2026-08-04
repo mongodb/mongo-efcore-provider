@@ -584,14 +584,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector);
+        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: true);
 
     protected override ShapedQueryExpression? TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2)
         => null;
 
     protected override ShapedQueryExpression? TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector);
+        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: true);
 
 #if !EF8 && !EF9
     protected override ShapedQueryExpression? TranslateRightJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
@@ -601,11 +601,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector);
+        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: false);
 
+    // isLeftOuter carries the LINQ operator's own join semantics down to the $lookup/$unwind emitted for it:
+    // Join is inner, LeftJoin/GroupJoin are left-outer. EF navigation expansion lowers a REQUIRED reference
+    // navigation to Queryable.Join and an OPTIONAL one to Queryable.LeftJoin, so this is also what makes a
+    // required navigation drop principals with a dangling foreign key, as relational EF Core does.
     private static ShapedQueryExpression? TranslateJoinCore(
         ShapedQueryExpression outer, ShapedQueryExpression inner,
-        LambdaExpression outerKeySelector, LambdaExpression resultSelector)
+        LambdaExpression outerKeySelector, LambdaExpression resultSelector, bool isLeftOuter)
     {
         var outerQueryExpression = (MongoQueryExpression)outer.QueryExpression;
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
@@ -617,7 +621,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // We need to migrate that projection to the outer query expression so the entity path
         // shaper can read inner entity properties from the $lookup result field.
         var reboundInnerShaper = RebindInnerShaperToOuterQuery(
-            inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector);
+            inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, isLeftOuter);
 
         var newResultSelector = ReplacingExpressionVisitor.Replace(
             resultSelector.Parameters[0], outer.ShaperExpression,
@@ -632,7 +636,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         Expression innerShaper,
         MongoQueryExpression innerQueryExpression,
         MongoQueryExpression outerQueryExpression,
-        LambdaExpression outerKeySelector)
+        LambdaExpression outerKeySelector,
+        bool isLeftOuter)
     {
         if (innerShaper is not StructuralTypeShaperExpression structuralShaper
             || structuralShaper.ValueBufferExpression is not ProjectionBindingExpression innerBinding)
@@ -715,7 +720,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // Flatten: register a forced-unwind $lookup for THIS join...
             if (navigation != null)
             {
-                var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true);
+                var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true)
+                {
+                    PreserveNullAndEmptyArrays = isLeftOuter
+                };
                 if (throughNavigation != null)
                 {
                     // Transitive join: match against the already-unwound intermediate document.
@@ -737,7 +745,34 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
                 if (priorNavigation != null)
                 {
-                    outerQueryExpression.AddLookup(new Expressions.LookupExpression(priorNavigation, forceUnwind: true));
+                    // A prior join's own left/inner-ness was decided when IT was translated, and AddLookup
+                    // de-duplicates on As, so a lookup already registered by its own join keeps that join's
+                    // flag. This call only ever supplies one for a prior join that was rendered
+                    // driver-natively (a single reference) and is now being flattened, by which point the
+                    // LINQ operator is no longer in hand. Fall back to the model: a REQUIRED foreign key can
+                    // never be unmatched in the model's intent, which is exactly the inner-join case; an
+                    // optional one must preserve the principal.
+                    //
+                    // priorNavigation may be a COLLECTION navigation - GetNavigations picks whichever
+                    // navigation targets the prior inner entity type, and for a join written over a
+                    // one-to-many that is the collection side. It is tempting to exclude those, on the
+                    // grounds that ForeignKey.IsRequired then describes the dependent's foreign key rather
+                    // than whether a principal must have children, so an inner $unwind would drop childless
+                    // principals. Measured, that reasoning does not survive contact with the two shapes that
+                    // actually arrive here:
+                    //   * A collection INCLUDE never reaches this site at all - its $lookup is registered by
+                    //     MongoProjectionBindingExpressionVisitor, which does not consult this fallback - so
+                    //     there are no Include principals to protect.
+                    //   * The one shape that does arrive with a collection navigation is a user-authored
+                    //     inner Join over a one-to-many, where dropping a principal with no children is the
+                    //     CORRECT answer, and preserving it emits a spurious row.
+                    // So the rule stays keyed on the foreign key for collection and reference navigations
+                    // alike. Both cases are pinned by tests in RequiredNavigationUnwindTests.
+                    outerQueryExpression.AddLookup(
+                        new Expressions.LookupExpression(priorNavigation, forceUnwind: true)
+                        {
+                            PreserveNullAndEmptyArrays = !priorNavigation.ForeignKey.IsRequired
+                        });
                 }
             }
         }

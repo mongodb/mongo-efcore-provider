@@ -655,6 +655,14 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             { "foreignField", refLookup.ForeignField },
             { "as", refLookup.As }
         }));
+        // preserveNullAndEmptyArrays stays unconditionally true here, DELIBERATELY inconsistent with the
+        // flat-lookup path (EmitLookupStages), which follows the LINQ operator via
+        // LookupExpression.PreserveNullAndEmptyArrays and so emits an inner $unwind for a required
+        // reference navigation. This $unwind runs INSIDE the parent collection lookup's sub-pipeline, so a
+        // non-preserving one would drop collection ELEMENTS, not principals - and an Include must never
+        // change the result set of the query it decorates. See the EF-370 design doc, section 7.1
+        // (docs/superpowers/specs/2026-08-03-required-nav-unwind-semantics-design.md), where this was
+        // ruled on explicitly; making the two sites agree is not the fix.
         parentLookup.PipelineStages.Add(new BsonDocument("$unwind", new BsonDocument
         {
             { "path", $"${refLookup.As}" },

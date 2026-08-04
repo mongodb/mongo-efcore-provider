@@ -57,6 +57,37 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     // Set false in that case so AppendLookupStages skips them. Defaults true (lookups are appended).
     private bool _appendForceUnwindLookups = true;
 
+    // Lookups this EXECUTION must emit immediately above the join chain's base source, because
+    // StripJoinForLookup reattached user-composed operators that read their output fields. Held here, not
+    // written back onto the shared (compile-time) LookupExpression objects. See IsInjectedEarly.
+    private readonly HashSet<LookupExpression> _injectAfterBaseSourceLookups = [];
+
+    // The base-source node those lookups are emitted above: the expression the innermost join was applied
+    // to, i.e. everything the user composed BELOW the joins. One-shot - cleared when Visit reaches it.
+    private Expression? _injectAfterBaseSource;
+
+    /// <summary>
+    /// Verifies that <see cref="_injectAfterBaseSource"/> was actually reached during the translation walk.
+    /// </summary>
+    /// <remarks>
+    /// If it was not, the lookups recorded in <see cref="_injectAfterBaseSourceLookups"/> were never emitted
+    /// — and because <c>IsInjectedEarly</c> also excludes them from <c>AppendLookupStages</c>, the join's
+    /// <c>$lookup</c>/<c>$unwind</c> pair would vanish from the pipeline entirely and the query would
+    /// silently return unjoined rows. That should be unreachable: the node is captured from the tree this
+    /// same visitor is about to walk. This is cheap insurance that the failure is loud if it ever is
+    /// reachable, since the symptom would otherwise be wrong data rather than an error.
+    /// </remarks>
+    private void AssertBaseSourceInjectionFired()
+    {
+        if (_injectAfterBaseSource != null)
+        {
+            throw new InvalidOperationException(
+                "The join base source recorded for early $lookup injection was never reached while "
+                + "translating the query. This is an internal error in the MongoDB EF Core provider; "
+                + "please report it with the query that produced it.");
+        }
+    }
+
     internal MongoEFToLinqTranslatingExpressionVisitor(
         QueryContext queryContext,
         Expression source,
@@ -108,6 +139,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         var query = Visit(expressionToTranslate)!;
+        AssertBaseSourceInjectionFired();
         return AppendLookupStages(query);
     }
 
@@ -141,6 +173,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         var query = (MethodCallExpression)Visit(expressionToTranslate)!;
+        AssertBaseSourceInjectionFired();
 
         if (resultCardinality == ResultCardinality.Enumerable)
         {
@@ -178,6 +211,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     public override Expression? Visit(Expression? expression)
     {
+        // The join-replacing $lookup/$unwind stages go here: directly above the base source the innermost
+        // join was applied to. Anything the user composed BELOW the joins (notably Skip/Take/Distinct,
+        // whose result depends on how many rows reach them) therefore still runs first, while the
+        // operators StripJoinForLookup reattached ABOVE the joins see the flattened lookup fields.
+        if (_injectAfterBaseSource != null && ReferenceEquals(expression, _injectAfterBaseSource))
+        {
+            _injectAfterBaseSource = null; // One-shot: stops the recursive Visit below re-entering here.
+            var translatedBaseSource = Visit(expression)!;
+            return EmitLookupStages(translatedBaseSource, _pendingLookups.Where(_injectAfterBaseSourceLookups.Contains));
+        }
+
         switch (expression)
         {
             // Replace materialization collection expression with the actual nav property in order for Mql.Exists etc. to work.
