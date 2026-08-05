@@ -1599,11 +1599,22 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // one — must first undo, or stop performing, the mutations above.
         //
         // The decline is null — EF Core's own translation-failure path — NOT the graceful
-        // MarkNotNativelyRepresentable(), because there is no working driver-LINQ path to land on: a
-        // transitive hop is always a SECOND-OR-LATER join (it needs a prior inner collection to be
-        // transitive through), so the document has to be flattened to root-level _lookup_<Nav> fields and
-        // BOTH paths are committed to the flat shape this join could not be scoped into. That is the same
-        // rule reference SelectMany and Intersect/Except follow — see Query/AGENTS.md. MEASURED, not
+        // MarkNotNativelyRepresentable(), because there is no working driver-LINQ path to land on. State the
+        // reason STRUCTURALLY: the only way RebindInnerShaperToOuterQuery returns null is
+        // TryResolveIntermediateLookupPrefix failing, and that is reached only AFTER the transitive scan has
+        // FOUND a prior inner collection carrying a matching navigation — so there genuinely IS an earlier
+        // join here, its $lookup is already registered, and the document is already committed on BOTH paths
+        // to the root-level flat _lookup_<Nav> shape this join could not be scoped into.
+        //
+        // Do NOT restate that as "a transitive hop is always a second-or-later join", which is what this
+        // comment used to say. That is FALSE — a transparent identifier is not produced only by a prior
+        // JOIN, an owned SelectMany produces one too, so a TransitiveHop can occur at the FIRST join (see
+        // ClassifyJoinHop's remarks below and Ef379RootNavigationMisroutingTests
+        // .Owned_SelectMany_then_join_off_the_unwound_element_still_works) — and it is precisely the premise
+        // a withdrawn EF-379 decline was built on. The conclusion above survives its removal because it
+        // never needed it; the structural reach argument is the one that holds.
+        //
+        // That is the same rule reference SelectMany and Intersect/Except follow — see Query/AGENTS.md. MEASURED, not
         // assumed: a graceful mark instead lets the un-rebound inner shaper reach materialization and
         // crashes with "Document element is missing for required non-nullable property", in Native and
         // explicit DriverLinq alike, which is strictly worse than declining.
@@ -1678,15 +1689,27 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var fkPropertyName = outerKeySelector.Body.TryGetSimplePropertyName();
         INavigation? navigation = null;
 
-        if (fkPropertyName != null)
-        {
-            navigation = outerEntityType.GetNavigations()
-                .FirstOrDefault(n => n.TargetEntityType == innerEntityType
-                                     && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
-        }
+        // EF-379. Decide WHICH SCOPE the hop reads its foreign key from BEFORE looking at the root's
+        // navigations at all. Both root tiers below select on the FK NAME / TARGET TYPE only and drop the
+        // RECEIVER of the FK access, so without this classification a hop that reaches its target THROUGH a
+        // previously-joined intermediate could match a ROOT navigation, be treated as root-level, emit an
+        // UNPREFIXED localField naming the ROOT's own field, and never reach the transitive branch (hence
+        // never EF-372's prefix-or-decline guarantee). See ClassifyJoinHop for the rule and why depth and the
+        // receiver's CLR type are both wrong discriminators.
+        var hopKind = ClassifyJoinHop(outerKeySelector);
 
-        navigation ??= outerEntityType.GetNavigations()
-            .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+        if (hopKind != JoinHopKind.TransitiveHop)
+        {
+            if (fkPropertyName != null)
+            {
+                navigation = outerEntityType.GetNavigations()
+                    .FirstOrDefault(n => n.TargetEntityType == innerEntityType
+                                         && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
+            }
+
+            navigation ??= outerEntityType.GetNavigations()
+                .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+        }
 
         // Transitive join: the inner entity is reached not directly from the root but THROUGH a
         // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
@@ -1723,6 +1746,25 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     break;
                 }
             }
+
+            // EF-379 fix round 1. There USED to be a decline here — "a TransitiveHop that resolved no
+            // navigation returns null" — and it was a MEASURED REGRESSION, removed. The premise was that a
+            // transparent identifier can only have been produced by a prior JOIN, so a `ti.Inner` receiver at
+            // the FIRST TranslateJoinCore call was impossible. It is not: an owned/reference SelectMany
+            // produces one too. `from o in Orders from t in o.Tags join p in Products on t.ProductId equals
+            // p.Id` classifies as TransitiveHop at the very first join, finds no candidate (the scan above
+            // skips priorInnerEntityType == innerEntityType, and there is no prior inner collection at all),
+            // and hard-failed a query that works at this branch's base in BOTH Native and DriverLinq. Eleven
+            // firings across four distinct shapes were found in the EF10 functional suite alone, every one at
+            // InnerCollections.Count == 1, so no count-based gate rescues it either.
+            //
+            // Falling through instead is what the pre-EF-379 tree did for exactly these shapes: both root
+            // tiers missed, the transitive scan found nothing, navigation stayed null, no $lookup was
+            // registered, and the query fell back to driver-LINQ. The CLASSIFICATION is innocent here — it
+            // changes which tiers are CONSULTED, and for a hop whose tiers would all have missed anyway the
+            // outcome is byte-identical. Consequence, accepted deliberately: a self-referencing two-hop chain
+            // goes back to its pre-existing loud materialization failure rather than a clean decline (pinned
+            // by Ef379RootNavigationMisroutingTests.Self_referencing_two_hop_chain_fails_loudly_as_at_base).
         }
 
         // Document-shape decision (single source of truth): the driver's native LeftJoin
@@ -1817,6 +1859,170 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
+    }
+
+    /// <summary>
+    /// EF-379. Which SCOPE a join's outer key selector reads its foreign key from: the query ROOT, or an
+    /// INTERMEDIATE introduced earlier in the query (a transitive hop).
+    /// </summary>
+    private enum JoinHopKind
+    {
+        /// <summary>The foreign key is read from the query root, so the join's navigation lives on the root.</summary>
+        RootHop,
+
+        /// <summary>
+        /// The foreign key is read from an intermediate a preceding scope-introducing operator produced, so
+        /// the navigation lives on that intermediate and the <c>$lookup</c>'s <c>localField</c> must be scoped
+        /// under the intermediate's unwound sub-document. <b>Usually, but NOT necessarily, a prior JOIN</b> —
+        /// an owned <c>SelectMany</c> produces a transparent identifier too, so this kind is reachable at the
+        /// FIRST join; see <see cref="ClassifyJoinHop"/>'s remarks.
+        /// </summary>
+        TransitiveHop,
+
+        /// <summary>
+        /// The receiver could not be resolved to either scope (a composite key selector, or any shape whose
+        /// access chain does not peel back to the key selector's own parameter).
+        /// </summary>
+        Unclassifiable
+    }
+
+    /// <summary>
+    /// EF-379. Classifies a join's hop as ROOT-scoped or TRANSITIVE from <paramref name="outerKeySelector"/>
+    /// alone, by the MEMBER NAMES of the receiver's transparent-identifier access chain.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The body is one of exactly two shapes — <c>EF.Property(receiver, "&lt;Fk&gt;")</c> (a nav-expanded
+    /// <c>Include</c>/<c>ThenInclude</c>) or <c>Convert(receiver.&lt;Fk&gt;, object)</c> over a plain member
+    /// access (a user-authored <c>Join</c>) — and the receiver is either the key selector's own
+    /// <see cref="ParameterExpression"/> or a chain of <see cref="MemberExpression"/>s named
+    /// <c>"Outer"</c>/<c>"Inner"</c> rooted on it. A chain of only <c>"Outer"</c>
+    /// hops — or an empty one — resolves to the query root; a chain containing ANY <c>"Inner"</c> hop resolves
+    /// to an entity produced by an earlier SCOPE-INTRODUCING operator.
+    /// </para>
+    /// <para>
+    /// <b>Receiver shape says which SCOPE, never which join ORDINAL — do not re-add the labels this remark
+    /// used to carry</b> ("a bare <c>ParameterExpression</c> (the FIRST join)", "…rooted on it (the second and
+    /// later joins)"). Those were FALSE, and they were the premise behind a decline the EF-379 slice shipped
+    /// and then WITHDREW as a measured regression. A transparent identifier is not produced only by a prior
+    /// JOIN — an owned <c>SelectMany</c> produces one too, so a <c>ti.Inner</c> receiver, and hence a
+    /// <see cref="JoinHopKind.TransitiveHop"/>, occurs at the VERY FIRST join for
+    /// <c>from o in Orders from t in o.Tags join p in Products on t.ProductId equals p.Id …</c> where
+    /// <c>Tag</c> is an owned element carrying a bare FK property and no navigation. Pinned by
+    /// <c>Ef379RootNavigationMisroutingTests.Owned_SelectMany_then_join_off_the_unwound_element_still_works</c>.
+    /// The nine probed spike scenarios were all <c>Include</c>/<c>Join</c> shapes, which is the one population
+    /// in which the ordinal labels look true.
+    /// </para>
+    /// <para>
+    /// <b>DEPTH IS NOT THE DISCRIMINATOR.</b> <c>s.Outer.Outer</c> (three sibling root reference
+    /// <c>Include</c>s, or a three-level user-authored <c>Join</c> keyed entirely off the root) is a genuine
+    /// ROOT hop, and <c>j.Outer.Inner</c> (two <c>ThenInclude</c>s off the SAME intermediate) is TRANSITIVE at
+    /// exactly the same nesting depth. Keying on chain LENGTH gets both wrong.
+    /// </para>
+    /// <para>
+    /// <b>THE RECEIVER'S CLR TYPE IS NOT THE DISCRIMINATOR EITHER.</b> In a self-referencing model the
+    /// intermediate and the root share a CLR type (<c>f.Inner</c> typed <c>FNode</c> under a root of
+    /// <c>FNode</c>), so a <c>receiver.Type == rootEntityType.ClrType</c> test misclassifies a transitive hop
+    /// as a root one.
+    /// </para>
+    /// <para>
+    /// The classification says WHICH SCOPE, not which navigation: within the root scope the FK-NAME tier is
+    /// still what separates two navigations onto the same target type (<c>Doc.Author</c> vs
+    /// <c>Doc.Editor</c>, both targeting <c>Buyer</c>), so this gates WHEN the root tiers run and does not
+    /// replace them.
+    /// </para>
+    /// <para>
+    /// Hardcoding the member names <c>"Outer"</c>/<c>"Inner"</c> follows existing convention rather than
+    /// introducing a new liberty — this file, <c>MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs</c> and
+    /// <c>NativeSelectManyBinder</c> all already resolve transparent-identifier structure by those literal
+    /// names. <b>The two CLOSEST precedents — both member-name matches, in
+    /// <c>MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs</c>'s
+    /// <c>TransparentIdentifierToLeftJoinResultRewriter.VisitMember</c> and its
+    /// <c>TransparentIdentifierToLookupFieldRewriter.Rewriter.VisitMember</c> — additionally require the
+    /// member's DECLARING TYPE to be a <c>TransparentIdentifier&lt;,&gt;</c> construction</b>, so this peel
+    /// loop does the same, through the one shared
+    /// <see cref="ExpressionExtensionMethods.IsTransparentIdentifierType"/> those precedents also call — a
+    /// declaring-type check is only version-safer than a bare string literal while every consumer agrees on
+    /// it, so there is deliberately one definition rather than a copy per call site. The earlier version of this remark
+    /// claimed name-only matching "follows existing convention"; that was inaccurate about those two
+    /// precedents and is corrected here. (The name-only matches this file already had —
+    /// <see cref="IsTransparentIdentifierSelector"/> and friends — test a LAMBDA PARAMETER's own type name,
+    /// which is a different and self-anchoring check.)
+    /// </para>
+    /// <para>
+    /// <b><see cref="JoinHopKind.Unclassifiable"/> falls through to the ROOT tiers</b>, i.e. byte-identical to
+    /// the pre-EF-379 behaviour, rather than declining: declining would risk turning an unmeasured shape into
+    /// a hard failure. <b>It is REACHABLE — MEASURED, not assumed</b>, by instrumenting every
+    /// <see cref="JoinHopKind.Unclassifiable"/> return across the whole EF10 functional (8 hits, 2 distinct
+    /// shapes, both in <c>NativeReferenceIncludeTests</c>) and specification (28 hits, 7 distinct shapes)
+    /// suites. Two families arrive here, and the fall-through is right for both:
+    /// <list type="number">
+    /// <item>
+    /// A key selector that is not a single member access at all — a COMPOSITE key
+    /// (<c>new[] { Convert(Property(c, "OrderKey1"), object), … }</c>), a constant (<c>Convert(1, object)</c>),
+    /// a computed boolean (<c>Convert(c.CustomerID != null, object)</c>), an anonymous/DTO key, or a
+    /// whole-entity key (a bare <c>ParameterExpression</c>). Every one of these observed is rooted on the
+    /// query root, so the ROOT tiers are the correct destination.
+    /// </item>
+    /// <item>
+    /// A receiver that is itself an <c>EF.Property</c> hop rather than a transparent-identifier member —
+    /// observed exactly once, as <c>Property(Property(o.Inner, "Address"), "RegionId")</c>, a real
+    /// <c>ThenInclude</c> nested underneath an OWNED (embedded) hop. That hop IS transitive. <b>This item used
+    /// to say it "declines for an unrelated, pre-existing reason", citing
+    /// <c>NativeReferenceIncludeTests.A_real_ThenInclude_nested_underneath_an_embedded_hop_still_declines</c>;
+    /// that is MEASURABLY FALSE and is corrected here</b> — that test only asserts <c>NativeOnly</c>. Measured
+    /// for <c>Orders.Include(o =&gt; o.Buyer).ThenInclude(b =&gt; b.Address).ThenInclude(a =&gt; a.Region)</c>:
+    /// <c>Native</c> and <c>DriverLinq</c> both return a row with the deep navigation SILENTLY NULL (and the
+    /// owned hop's own scalars correct), and only <c>NativeOnly</c> throws. So this is a SURVIVING instance of
+    /// the very symptom EF-379 was filed for, left open by that fix rather than closed by it. It is NOT a
+    /// regression — base and HEAD are identical — and classifying this family would be a WIDENING, deliberately
+    /// out of scope here; the fall-through preserves the (wrong) pre-existing disposition exactly.
+    /// </item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    private static JoinHopKind ClassifyJoinHop(LambdaExpression outerKeySelector)
+    {
+        if (outerKeySelector.Parameters.Count != 1)
+        {
+            return JoinHopKind.Unclassifiable;
+        }
+
+        var receiver = outerKeySelector.Body.RemoveConvert() switch
+        {
+            MemberExpression member => member.Expression,
+            MethodCallExpression methodCall
+                when methodCall.Method.IsEFPropertyMethod() && methodCall.Arguments.Count == 2
+                => methodCall.Arguments[0],
+            _ => null
+        };
+
+        if (receiver == null)
+        {
+            return JoinHopKind.Unclassifiable;
+        }
+
+        var sawInner = false;
+        var node = receiver;
+        while (node is MemberExpression { Member.Name: "Outer" or "Inner" } transparentIdentifierAccess
+               && transparentIdentifierAccess.Member.DeclaringType.IsTransparentIdentifierType())
+        {
+            sawInner |= transparentIdentifierAccess.Member.Name == "Inner";
+            node = transparentIdentifierAccess.Expression;
+            if (node == null)
+            {
+                return JoinHopKind.Unclassifiable;
+            }
+        }
+
+        // Reference equality, deliberately: the chain must peel back to THIS key selector's own parameter,
+        // not merely to some parameter of the same type.
+        if (!ReferenceEquals(node, outerKeySelector.Parameters[0]))
+        {
+            return JoinHopKind.Unclassifiable;
+        }
+
+        return sawInner ? JoinHopKind.TransitiveHop : JoinHopKind.RootHop;
     }
 
     /// <summary>

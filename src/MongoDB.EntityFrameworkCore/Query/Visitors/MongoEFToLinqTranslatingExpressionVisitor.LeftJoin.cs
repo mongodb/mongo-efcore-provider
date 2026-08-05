@@ -1045,9 +1045,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // LeftJoin — a shape the shaper (already committed to the flat _lookup_<Nav> layout by
         // MongoQueryExpression.UsesDriverJoinFields, decided BEFORE this rewrite ever runs) cannot read,
         // corrupting rather than merely missing an optimization. Gating on
-        // IsTransparentIdentifier(oldSourceItemType) restores the check's actual intent — decline only when
+        // IsTransparentIdentifierType(oldSourceItemType) restores the check's actual intent — decline only when
         // a TI-shaped generic argument genuinely could not be eliminated by the substitution above.
-        if (IsTransparentIdentifier(oldSourceItemType)
+        if (oldSourceItemType.IsTransparentIdentifierType()
             && (genericArgs.Contains(oldSourceItemType) || genericArgs.Any(a => ContainsType(a, oldSourceItemType))))
         {
             // A generic argument still mentions the (now non-existent) TransparentIdentifier type.
@@ -1100,7 +1100,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             || call.Arguments.Count < 2
             || call.Arguments[1] is not UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression selector }
             || selector.Parameters.Count != 1
-            || !IsTransparentIdentifier(selector.Parameters[0].Type))
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType())
         {
             return false;
         }
@@ -1114,7 +1114,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     body = include.EntityExpression;
                     continue;
                 case MemberExpression { Member.Name: "Outer" } member
-                    when IsTransparentIdentifier(member.Member.DeclaringType):
+                    when member.Member.DeclaringType.IsTransparentIdentifierType():
                     body = member.Expression!;
                     continue;
                 case ParameterExpression parameter:
@@ -1124,9 +1124,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             }
         }
     }
-
-    private static bool IsTransparentIdentifier(Type? type)
-        => type is { IsGenericType: true } && type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
 
     /// <summary>
     /// Rewrites a lambda written against a join's TransparentIdentifier element type so it reads from the
@@ -1193,7 +1190,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             protected override Expression VisitMember(MemberExpression node)
             {
                 if (node.Member.Name is "Outer" or "Inner"
-                    && IsTransparentIdentifier(node.Member.DeclaringType)
+                    && node.Member.DeclaringType.IsTransparentIdentifierType()
                     && TryGetDepth(node.Expression, out var depth))
                 {
                     if (node.Member.Name == "Outer")
@@ -1249,7 +1246,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         case ParameterExpression p when p == oldParam:
                             return depth >= 0;
                         case MemberExpression { Member.Name: "Outer" } m
-                            when IsTransparentIdentifier(m.Member.DeclaringType):
+                            when m.Member.DeclaringType.IsTransparentIdentifierType():
                             depth--;
                             expression = m.Expression;
                             continue;
@@ -1270,7 +1267,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
             /// <summary>Number of nested TransparentIdentifier levels in a join element type.</summary>
             private static int NestingDepth(Type type)
-                => IsTransparentIdentifier(type) ? 1 + NestingDepth(type.GetGenericArguments()[0]) : 0;
+                => type.IsTransparentIdentifierType() ? 1 + NestingDepth(type.GetGenericArguments()[0]) : 0;
         }
     }
 

@@ -103,9 +103,13 @@ Two design facts from these slices that are expensive to re-derive:
   returns `null` (EF Core's own translation-failure path), which fails in *every* `MongoQueryMode` including
   explicit `DriverLinq` — `UseQueryMode` is not an escape hatch. A graceful `MarkNotNativelyRepresentable()`
   was tried and **measured strictly worse**: the un-rebound inner shaper reaches materialization and throws in
-  both modes, because a transitive hop is always a second-or-later join and its lookups are registered at
-  translation time, before `MongoQueryMode` is read. This matches how reference `SelectMany` and
-  `Intersect`/`Except` already decline.
+  both modes, because the decline is only ever reached once an EARLIER join's `$lookup` has already been
+  registered — at translation time, before `MongoQueryMode` is read — so both paths are already committed to
+  the flat shape. (This used to read "because a transitive hop is always a second-or-later join". That is
+  FALSE — an owned `SelectMany` produces a transparent identifier too, so a `TransitiveHop` can occur at the
+  FIRST join — and it was the premise behind a decline EF-379 shipped and then withdrew as a measured
+  regression; see the EF-379 note in `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`.) This matches how
+  reference `SelectMany` and `Intersect`/`Except` already decline.
 - **A pure `$sort` relocation has no observable effect on results.** `$sort` and a fan-out `$unwind` commute
   with respect to key order (`$unwind` preserves input order and expands each document into an adjacent
   equal-key run), so only an **MQL stage-order pin** discriminates EF-373's fix — a row-order assertion cannot.

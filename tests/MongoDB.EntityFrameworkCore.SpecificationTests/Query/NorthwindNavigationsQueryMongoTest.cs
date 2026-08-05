@@ -319,6 +319,13 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         AssertMql();
 #else
         // Fails: returns wrong data (0 rows instead of 6) EF-371
+        //
+        // EF-379 briefly re-baselined this arm to AssertTranslationFailed + an empty AssertMql(), on the
+        // strength of a new "a TransitiveHop that resolves no navigation declines" rule. That rule was a
+        // MEASURED REGRESSION for an unrelated shape (an owned SelectMany followed by a join off the unwound
+        // element — see Ef379RootNavigationMisroutingTests) and was removed in EF-379 fix round 1, so this
+        // shape is back to its pre-existing wrong-data disposition and this arm is back to the base baseline.
+        // EF-371 stays open, and is still a known-INCORRECT-DATA shape rather than a known-unsupported one.
         await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => base.Select_Where_Navigation_Null_Deep(async));
         AssertMql(
             """

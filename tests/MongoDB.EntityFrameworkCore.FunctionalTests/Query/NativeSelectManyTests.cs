@@ -3867,9 +3867,23 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // `else { MarkNotNativelyRepresentable(); }` branch, NOT the dedicated translation-time
         // NotSupportedException throw. The "graceful" fallback attempt this triggers then fails for the SAME
         // reason every other reference-SelectMany fallback does — no driver-LINQ baseline exists for a cross-
-        // collection SelectMany — so Native/DriverLinq both throw the identical "Unsupported cross-DbSet query"
-        // InvalidOperationException, and NativeOnly (which forbids the fallback attempt) throws its own,
-        // different NativeTranslationNotSupportedException first. The end-to-end safety invariant this Task set
+        // collection SelectMany — so Native/DriverLinq both throw the identical InvalidOperationException, and
+        // NativeOnly (which forbids the fallback attempt) throws its own,
+        // different NativeTranslationNotSupportedException first.
+        //
+        // CORRECTION (EF-379 fix round 1). This paragraph used to name that InvalidOperationException as the
+        // provider's own "Unsupported cross-DbSet query". MEASURED — by capturing the message here, at this
+        // branch's base commit AND at HEAD, byte-identical in both — it is EF Core's plain
+        // TranslationFailed ("... could not be translated. Either rewrite the query ..."), with no provider
+        // detail sentence at all. The "Unsupported cross-DbSet query" string does exist
+        // (MongoEFToLinqTranslatingExpressionVisitor), but this shape never reaches it. The stale attribution
+        // was pre-existing, not something EF-379 introduced, and the structural diagnosis above is confirmed
+        // by the printed tree (`.Select(ti => Include(Entity: ti.Outer.Inner, Navigation: Detail, ti.Inner))`
+        // over a doubly-nested TransparentIdentifier). NOTE for anyone re-reading this test as an EF-379
+        // control: its hop-2 key selector IS `ti => EF.Property(ti.Inner, "DetailId")`, i.e. a TransitiveHop
+        // at the FIRST TranslateJoinCore call — this is one of the shapes the withdrawn "TransitiveHop with
+        // no candidate declines" rule hard-failed, and the bare Assert.Throws<InvalidOperationException>
+        // below could not tell the two mechanisms apart. The end-to-end safety invariant this Task set
         // out to prove — an eager-loaded reference nav declines cleanly in every mode, never silently wrong data
         // — DOES hold; it just holds via the ordinary computed-leaf-style decline, not the dedicated
         // IsWholeElementRepresentable guard. This is a real, valid decline case in its own right — kept as-is —

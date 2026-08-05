@@ -233,7 +233,7 @@ Affected: 2 tests (`NorthwindKeylessEntitiesQueryMongoTest.KeylessEntity_with_in
 
 ### EF-X020 — Cross-collection Include/join/navigation not translated on EF8/EF9
 Comment pattern: `// Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020`.
-Test-body pattern: the override is wrapped in `#if EF8 || EF9` / `#else`. The `#if EF8 || EF9` branch asserts the translation failure (`AssertTranslationFailed(() => base.X(...))`); the `#else` branch keeps the working EF10 baseline (the real `base` call plus its `AssertMql(...)`).
+Test-body pattern: the override is wrapped in `#if EF8 || EF9` / `#else`. The `#if EF8 || EF9` branch asserts the translation failure (`AssertTranslationFailed(() => base.X(...))`); the `#else` branch keeps the working EF10 baseline (the real `base` call plus its `AssertMql(...)`). **Five** overrides, in **two groups**, are exceptions to that pattern, and they are exceptions to **different arms** — enumerated below. The four `Include_reference_dependent_already_tracked` overrides are exceptions to the **`#if`** arm: their `#if EF8 || EF9` branch omits the empty `AssertMql()`. `NorthwindNavigationsQueryMongoTest.Select_Where_Navigation_Null_Deep` is the one exception to the **`#else`** half: its `#else` arm is **not** a working EF10 baseline — it asserts the wrong data of the separate, still-open **EF-371** defect (see that section below), so this one test carries two different tickets, one per arm.
 Affected: 176 tests across `NorthwindEFPropertyIncludeQueryMongoTest`, `NorthwindStringIncludeQueryMongoTest`, `NorthwindIncludeQueryMongoTest`, `NorthwindIncludeNoTrackingQueryMongoTest`, `NorthwindNavigationsQueryMongoTest`, `NorthwindMiscellaneousQueryMongoTest`, `NorthwindJoinQueryMongoTest`, `NorthwindAggregateOperatorsQueryMongoTest`, `NorthwindAsNoTrackingQueryMongoTest`, `NorthwindKeylessEntitiesQueryMongoTest`, `NorthwindSelectQueryMongoTest`, `NorthwindSetOperationsQueryMongoTest`, `NorthwindWhereQueryMongoTest`, and `BuiltInDataTypesMongoTest`. These are the cross-collection Include/`ThenInclude`/join/navigation shapes implemented for the EF10-targeted query pipeline. On EF8/EF9 the upstream nav-expansion / query pipeline produces a different expression shape (e.g. an extra `.OrderBy(o => o.OrderID)` injected during navigation expansion) that the EF10-targeted translator does not handle, so translation fails with EF Core's `InvalidOperationException` "could not be translated" (a few also throw the provider's `ExpressionNotSupportedException`); the same query translates and runs on EF10. The provider's local `AssertTranslationFailed` helper swallows whichever exception is thrown, so both shapes are covered. Four `Include_reference_dependent_already_tracked` overrides (in the four Include suites) emit MQL from a first principal query *before* the Include sub-query fails to translate, so their `#if EF8 || EF9` branch asserts only the translation failure and omits the empty `AssertMql()`. `BuiltInDataTypesMongoTest.Can_read_back_bool_mapped_as_int_through_navigation` is split three ways (a nested `#if EF9` inside the file's `#if !EF8` branch, plus the `#else` EF8 branch) because that file uses async signatures on EF9/EF10 and sync `void` signatures on EF8.
 
 ### EF-371 — self-referencing two-hop reference navigation collapses to one join
@@ -257,6 +257,7 @@ whose dispatch case does not exist before EF10).
 
 **The fifth is a different defect**, tracked as EF-371. It is **baselined green, not skipped** — a skip
 stops the shape being exercised at all, so neither a regression nor an accidental fix would be noticed.
+
 The `#else` (EF10) arm asserts the wrong data with the loose form the repo uses for a wrong-*data* failure
 (as opposed to the exact-type form reserved for a wrong exception *type*), plus the real `AssertMql`
 baseline, which pins the defective pipeline including the bare hop-2 `$unwind` diagnosed below:
@@ -265,6 +266,16 @@ baseline, which pins the defective pipeline including the bare hop-2 `$unwind` d
 // Fails: returns wrong data (0 rows instead of 6) EF-371
 await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => base.Select_Where_Navigation_Null_Deep(async));
 ```
+
+**EF-379 briefly re-baselined that arm to `AssertTranslationFailed` + an empty `AssertMql()`, and then put
+it back — recorded here so the flip-flop is not re-attempted blind.** EF-379's root-vs-transitive hop
+classification came with a new decline ("a `TransitiveHop` that resolves no navigation returns `null`"),
+which turned this shape into a clean translation failure. That decline was a MEASURED REGRESSION for an
+unrelated shape — an owned `SelectMany` also produces a transparent identifier, so a join off the unwound
+element classified as `TransitiveHop` at the FIRST join and hard-failed a query that works in `Native` and
+`DriverLinq` alike — and it was removed in EF-379 fix round 1. The *classification* stays (it is what fixes
+the root-navigation misrouting EF-379 was filed for); only the decline is gone, so this shape is back to
+its pre-existing disposition and the baseline above is the base one, unchanged.
 
 On EF8/EF9 the same shape fails at *translation* instead, so that arm is the standard **EF-X020**
 `AssertTranslationFailed` + empty `AssertMql()`. `Select_Where_Navigation_Null_Deep`
@@ -284,6 +295,13 @@ With this one test baselined, the full spec suite is **green on all three EF ver
 carries **no skips for this work**. It is the only known-incorrect query shape remaining; when
 self-referencing multi-hop reference navigation is fixed, the EF10 arm flips red at the `ThrowsAnyAsync`
 and is replaced by a plain `await base.…` plus a refreshed baseline.
+
+Functional coverage: `Ef379RootNavigationMisroutingTests.Self_referencing_two_hop_chain_fails_loudly_as_at_base`
+and `.Self_referencing_single_hop_still_works` pin the same self-referencing shape outside the spec suite —
+the two-hop chain's loud `InvalidOperationException` ("Document element is missing for required non-nullable
+property 'Id'") in `Native` and `DriverLinq` and its `NativeTranslationNotSupportedException` under
+`NativeOnly`, alongside the single-hop control that must keep working. Those are the pins to update when
+EF-371 is actually fixed.
 
 ---
 
