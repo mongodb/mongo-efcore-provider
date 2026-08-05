@@ -1,7 +1,20 @@
 # Native LINQ Translation (EF-322) — Status Report
 
-*Generated 2026-07-26 · last updated 2026-07-31 · `NativeQueryOngoing` tip `229294f` (= `origin/NativeQueryOngoing`,
+*Generated 2026-07-26 · last updated 2026-08-05 · `NativeQueryOngoing` tip `9dd6fc15` (= `origin/NativeQueryOngoing`,
 working tree clean, stacked on `main`, unmerged).*
+
+> **⚠ READ THIS BEFORE TRUSTING ANY SHA BELOW (added 2026-08-05).** The stack was rebased onto
+> `upstream/main` = `58e05a0e` after most of this document was written, so **every SHA cited in §2 and in the
+> hash-bookkeeping note below is a pre-rebase hash.** Those objects still exist — the safety branch
+> `NativeQueryOngoing-prerebase` keeps them alive — but **none of them is on the current branch**, so
+> `git merge-base --is-ancestor <sha> HEAD` fails for all of them. The commit *subjects* are unchanged, so map
+> old → new with `git log --oneline upstream/main..HEAD` and match on subject. Four mappings already
+> established: slice 7 `cfe873e`→`9b641549`, EF-358 fix `7c199e4`→`46e5a3f8`, slice 8 `33fdc58`→`d63659fc`,
+> slice 9 `229294f`→`3483fc60`. The remaining rows have not been re-derived.
+>
+> **Also stale: §7's measurements.** They were taken at pre-rebase tip `229294f`; six slices have landed
+> since (§2's joins table). Treat §7's numbers as a floor of unknown tightness, not as current, and re-measure
+> per §7.4 before relying on them.
 *Hash bookkeeping, corrected at this revision: the previous header cited tip `1b4c1d6` with slices 7–9 sitting
 on unsquashed side branches. **All three have since been squashed onto `NativeQueryOngoing`**, so they now have
 real, citable SHAs and the §2 slice table records them: slice 7 = `cfe873e` (was `f163392` + `0cb1b1b`),
@@ -14,8 +27,9 @@ and `7532b15` was never in the shipped history — it exists only on the pre-squ
 re-measured at this tip (`229294f`) on 2026-07-31** — both sweeps re-run from scratch, and §7.1 *and* §7.2
 re-derived from the fresh `nativeonly.trx` rather than carried forward. The totals and the entire per-class
 table reproduced the slice-7 figures exactly; §7.2's buckets shifted slightly and are re-stated there.*
-*Branch position: 43 commits ahead of `upstream/main` and **1 behind** — `58e05a0` (EF-317, C# driver 3.10.0)
-landed upstream after this stack's base. A rebase onto it is outstanding.*
+*Branch position (2026-08-05): **51 commits ahead of `upstream/main` and 0 behind**. The rebase onto `58e05a0e`
+(EF-317, C# driver 3.10.0) that the previous revision listed as outstanding **has been done** — `upstream/main`
+is now an ancestor of the tip.*
 
 ---
 
@@ -68,6 +82,38 @@ SP7 Phase 1. (This paragraph read "eight" until slice 9 landed.)
 | — | *(not a slice — the EF-358 bug fix)* A missing or explicitly-null embedded array materializes as an **empty collection** on every path, mode and cardinality; closes EF-357's residual | `7c199e4` |
 | 8 | Owned-collection **ARRAY leaf as a PROJECTION leaf** → the array projected by alias inside `$project` (`Select(b => new { b.Title, b.Posts })`); carries **EF-360** (re-characterised) and files **EF-362** | `33fdc58` |
 | 9 | Owned-collection **FILTERED `.Count(pred)`** → `{$size: {$filter: {input: {$ifNull: […]}, as: "e", cond: …}}}`, native both in a predicate (`$expr` tier only) and as a `$project` leaf; **closes EF-359**; files **EF-365** | `229294f` |
+
+### The joins / reference-`Include` work stream (§9.8 step 1) — six slices, 2026-08-03…05
+
+This is the *execution order's* step 1 and it is now substantially delivered. All SHAs in this table are
+post-rebase and **are** on the current branch.
+
+| Slice | Scope | Commit |
+|---|---|---|
+| — | **EF-366** — decline a join whose inner sequence is paged (CSHARP-6017). A fix wave found a **second doorway** via `Distinct`; the guard belongs at the shared site, not per entry point | `0162b737` |
+| — | **EF-367** — make the four `Include` spec suites fail on wrong data. Filed on a premise ("~40 masked failures") that **measured false — the real answer was zero**; kept because the suites genuinely could not detect wrong data | `5dfb1653` |
+| — | **EF-370** — correct required-navigation `$unwind` semantics and stop dropping composed operators (ported) | `7af4190b` |
+| 1 | **EF-368** — single-level reference `Include` goes native. The first joins slice | `34a02067` |
+| 2 | **EF-372** — scope a transitive join's `$lookup.localField` at any depth, **or decline**. Fixes silent 0 rows at hop 3+ | `6a7a5f3c` |
+| 3 | **EF-373** — emit a join's `$lookup` on the correct side of an interleaved operator. Fixes a silently wrong page when `Skip`/`Take` sits *between* two joins | `9dd6fc15` |
+
+Two design facts from these slices that are expensive to re-derive:
+
+- **"Decline" on the transitive-join path is a HARD translation failure, not a graceful fallback.** EF-372
+  returns `null` (EF Core's own translation-failure path), which fails in *every* `MongoQueryMode` including
+  explicit `DriverLinq` — `UseQueryMode` is not an escape hatch. A graceful `MarkNotNativelyRepresentable()`
+  was tried and **measured strictly worse**: the un-rebound inner shaper reaches materialization and throws in
+  both modes, because a transitive hop is always a second-or-later join and its lookups are registered at
+  translation time, before `MongoQueryMode` is read. This matches how reference `SelectMany` and
+  `Intersect`/`Except` already decline.
+- **A pure `$sort` relocation has no observable effect on results.** `$sort` and a fan-out `$unwind` commute
+  with respect to key order (`$unwind` preserves input order and expands each document into an adjacent
+  equal-key run), so only an **MQL stage-order pin** discriminates EF-373's fix — a row-order assertion cannot.
+  Measured: reverting to the pre-EF-373 contiguous group turns the stage-order pin red while the ordered data
+  assertion still passes.
+
+These slices filed five defects, all in the same neighbourhood and all unreleased — **EF-375, EF-376, EF-377,
+EF-378, EF-379**. See §6 and §9.5; the ordering consequences are in §9.8.
 
 No JIRA number was filed for slice 7's native-projection half. Two bugs it *measured* were filed: **EF-358**
 (the projection-path null-collapse gap, whose closure also fully closed EF-357 — see §4 and §6) and **EF-359**
@@ -408,6 +454,8 @@ done, so the two now agree. Current state:
 |---|---|---|
 | EF-335, EF-357, EF-358, EF-359 | **`In Code Review`** | Fixed in code and reviewed, but on the **unmerged** stack |
 | EF-360, EF-362, EF-365 | `Backlog` / `Needs Triage` | Genuinely still open |
+| EF-375, EF-376, EF-377, EF-379 | `Needs Triage` (filed 2026-08-05) | Genuinely still open — filed by the joins slices, see below |
+| EF-378 | `Needs Triage` — **should be closed as a duplicate of EF-375** | Measured to be the same defect; the transition has not been done |
 | EF-322 (epic) | `In Progress` | — |
 | EF-247 | `Blocked` | Check what it is blocked on before scheduling (§9.1 item 4) |
 
@@ -427,6 +475,41 @@ itself:
   list"*. There is no such split — nothing normalized on any path pre-fix, and the apparent normalization was
   CLR field-initializer masking. Now: *"A missing or explicitly-null embedded array materializes as null
   instead of an empty collection"*.
+
+**The five tickets filed by the joins slices (2026-08-05).** All are on the unreleased native join path — at
+`v10.0.2`/`v9.1.2`/`v8.4.2` any cross-collection `Include`/`Join` throws, `TranslateJoin` is `=> null`, and
+`LookupExpression`/`_lookup_` do not exist in `src/` — so none is a breaking change and none needs a
+`BREAKING-CHANGES.md` entry.
+
+| Ticket | Defect | Symptom today |
+|---|---|---|
+| **EF-375** | Two joins onto the **same target entity type** collapse to one `_innerCollections` entry (`IEntityType`-keyed), so flattening never fires | Throws; **or silently wrong** — see §9.5 |
+| **EF-376** | Lookup aliases are **navigation-name-only** and `AddLookup` de-dups on `As`, so sibling `ThenInclude`s collapse into one `$lookup` | Declines cleanly |
+| **EF-377** | A chained `Join` whose first hop has **no model navigation** has no identity to scope the second hop under | Declines cleanly (was silently 0 rows pre-EF-372) |
+| **EF-378** | **Duplicate of EF-375.** Filed as "two sibling reference `Include`s without `ThenInclude`" | See EF-375 |
+| **EF-379** | A root navigation to a transitive hop's **target type** misroutes the hop into the root-level branch | **Silently wrong data** — see §9.5 |
+
+A measured spike on 2026-08-05 **refuted** the natural hypothesis that these share one root cause. Seven
+decision sites are involved and the tickets do not map one-to-one onto them; EF-375, EF-376 and EF-379 are
+mutually independent, proved by instrumentation. "Key by navigation path" is a coherent *direction* but a
+fiction as one fix, because **nothing in the IR records a path** — a `NavigationObjectAccessExpression` has
+`parent = RootReferenceExpression` even for a hop-3 navigation — and path identity is reachable at every
+*write* site and at no *read* site (`GetLookupAlias` is re-derived at ~10 read sites plus both bridge
+resolvers). EF-377 is not in the family at all: it has *no* key, not a weak one.
+
+Three ticket-level corrections worth knowing before picking any of them up, each measured:
+
+- **EF-378 as filed is false.** Sibling reference `Include`s onto *different* target types work correctly. The
+  precondition is the *same* target type; the absence of `ThenInclude` is incidental.
+- **EF-379's stated fix direction is wrong.** The FK-*name* match tier misfires too on a name collision, so
+  "prefer the FK-name match" is not the fix. The discriminator must be the FK's **receiver** — and not its
+  member-chain depth either, since a genuine root hop was measured arriving as `Property(d.Outer.Outer, …)`.
+- **All five tickets' line numbers are stale**, written against pre-rebase `34a02067`. The JIRA comments name
+  sites by method instead.
+
+This is the **third** time in this area that a separately-filed symptom turned out to be another doorway into
+one defect — EF-366 via `GroupBy` and `Distinct`, EF-372 via `ThenInclude` and chained `Join`, and now EF-378
+into EF-375. Worth assuming next time rather than discovering.
 
 *Both tickets' original **descriptions** are left intact as the historical bug report; the correction lives in
 a comment on each, which is where a reader will look for it.*
@@ -829,6 +912,21 @@ Cutover removes the safety net that currently makes some of these benign, so the
   the nested, not folded, shape), but it is a silent-wrong-data mechanism sitting in code the cutover makes
   load-bearing.
 - **EF-354** — whole-outer `SelectMany` crashes instead of declining cleanly.
+- **EF-379** — a root navigation to a transitive hop's target type misroutes the hop, returning a **silently
+  null navigation** where real data is correct. Reachable today under default `Native` *and* under explicit
+  `DriverLinq`. **Row count does not discriminate it** — both the correct and the broken pipeline return the
+  same number of rows; only the navigation *value* differs, so any regression test must assert the value. The
+  trigger is an ordinary model shape: a root with a direct navigation to some type plus a longer chain that
+  also reaches that type. **Recommended as the next slice** (§9.8).
+- **EF-375** — two joins onto the same target entity type. Three symptom classes from three different sites: a
+  throw (bare same-typed pair), a **silently null navigation** (add any third distinct-typed join and
+  flattening fires, but the retroactive registration picks a navigation by target type alone — the pipeline
+  then contains a `$lookup` for a navigation the query never mentions), and **silently wrong values** (a double
+  join projecting both entities returns `TARGET-B|TARGET-B` for `TARGET-A|TARGET-B`, because
+  `UsesDriverJoinFields ? "_inner" : …` discards the navigation and both projections read the same field).
+  A fix addressing only the first site converts a throw into silent wrong data. Frequency is higher than it
+  looks: `Employee.Include(Manager).Include(Mentor)` is enough, and **same-typed siblings are guaranteed by
+  construction on any self-referencing model**.
 - **EF-360, EF-365** — hard-fail in every mode where a graceful path is available. EF-365 in particular is
   *measured* to become a working fallback if one guard is deleted; after cutover there is no fallback to become.
 - **The interposed-operator family** (`Distinct`/`Take`/`Reverse`/`DefaultIfEmpty`/`Concat` between an
@@ -839,8 +937,11 @@ Cutover removes the safety net that currently makes some of these benign, so the
 
 - **JIRA is now reconciled** (done 2026-07-31 — see the top of §6), but **one step is deferred to merge**:
   EF-335/EF-357/EF-358/EF-359 sit at `In Code Review` and must be moved to `Closed` when the stack lands.
-- **The stack is 1 commit behind `upstream/main`** — `58e05a0` (EF-317, C# driver 3.10.0). Rebase before the
-  stack grows further.
+- ~~**The stack is 1 commit behind `upstream/main`**~~ — **done.** Rebased onto `58e05a0e`; `upstream/main` is
+  now an ancestor of the tip. Note the rebase invalidated every SHA cited in §2 — see the warning in the header.
+- **EF-378 should be transitioned to `Closed`/duplicate of EF-375**, and EF-377 retitled toward "a
+  navigation-less join hop has no identity to scope under" so its distinction from EF-375/376/379 is visible
+  from the issue list. Both are recorded as JIRA comments; neither transition has been done.
 - **SP7 Phase 2** (§5) — reducer/aggregate streaming, collection-Include array streaming, reference-Include
   streaming (blocked on 9.1 item 3), and deleting the now-unreachable `RawBsonDocument` branch + `BsonRowReader`.
   This is performance, not correctness: it does **not** block cutover, and should not be allowed to.
@@ -849,7 +950,12 @@ Cutover removes the safety net that currently makes some of these benign, so the
 
 Ranked by what actually gates the cutover:
 
-1. **Joins** (no native form at all) and **reference `Include`** — the two largest structural absences.
+1. ~~**Joins** (no native form at all) and **reference `Include`** — the two largest structural absences.~~
+   **Partly closed as of 2026-08-05** — single-level reference `Include` is native (EF-368) and transitive-hop
+   scoping and interleaved-operator positioning are fixed (EF-372, EF-373). What remains of this item:
+   `ThenInclude` breadth, filtered `Include`, collection-of-collection, the general join, and the five defects
+   in §6. This ranking was written when the answer was "nothing"; it is now "partial", so re-rank against
+   item 2 before treating it as still first.
 2. **The computed/client-eval projection long tail** — the largest bucket by test count, and the least
    unified: it is many small features, not one.
 3. **`VectorSearch`** — **106 tests, promoted here on measurement.** It was ranked below `GroupBy` in this
@@ -862,11 +968,39 @@ Ranked by what actually gates the cutover:
 
 ### 9.8 Execution order (settled 2026-07-31 — and NOT the same as §9.7)
 
+**STATUS 2026-08-05 — step 1 is substantially delivered, and there is an OPEN QUESTION before step 2.**
+
+Step 1 has shipped six slices (§2's joins table), through EF-373. What it also produced is five defects in the
+same area (§6), of which **EF-379 is silent wrong data reachable from an ordinary model**. A measured spike
+recommends inserting **EF-379 as a small standalone slice ahead of step 2 (`VectorSearch`)**, on these grounds:
+it is the only one of the five that is silent wrong data *with a correct answer already reachable* (the same
+query with the decoy navigation unmapped takes the transitive branch and returns correct rows, so the
+destination path already works); it needs **no new IR**, unlike EF-375/EF-376; it has the smallest blast radius
+of the five (one method plus one threaded argument — no alias changes, no shaper read sites, no bridge changes);
+and it makes EF-375 easier by routing more hops through the resolver that declines rather than guesses.
+
+**This insertion has been recommended but NOT ruled on by the owner.** Do not treat it as agreed — and do not
+silently follow the un-amended order below either. Surface the question.
+
+The recommended order *within* the five, if they are taken up: **EF-379**, then **EF-375** (all three of its
+sites; this also closes EF-378, and it must **delete the agreement check** in
+`TryResolveIntermediateLookupPrefix` — that check carries a `TODO(EF-375)` and exists only to paper over the
+same imprecision, so its removal also requires re-baselining
+`Two_same_typed_navigations_second_branch_only_declines_cleanly`, a test that currently pins a *decline* for a
+query that should return correct rows), then **EF-376** — and EF-376 only *after* EF-373's shared lookup
+resolver, since that resolver is the seam a path-scoped alias scheme has to change in lockstep. **EF-377 is
+de-linked** from the group: it has no key rather than a weak one, and its clean decline is a reasonable resting
+state.
+
+---
+
 §9.7 ranks by what **gates** the cutover. It is not an execution order and must not be read as one: it ignores
 dependencies, and it was written while the EF-317 question was still open. With that question settled (§9.2 —
 EF-317 is throwaway, build what joins need), the agreed order is:
 
-1. **Joins, as one work stream — starting with reference `Include` as its FIRST SLICE, not as a detour.**
+1. ✅ **Joins, as one work stream — starting with reference `Include` as its FIRST SLICE, not as a detour.**
+   *(Substantially delivered 2026-08-03…05: EF-366, EF-367, EF-370, EF-368, EF-372, EF-373 — see §2. Behind it
+   still sit `ThenInclude` breadth, filtered `Include`, collection-of-collection, and the five filed defects.)*
    Reference `Include` and joins are the *same* `$lookup` machinery; reference `Include` is the constrained
    case (FK-correlated, single-level, left-join semantics) and is the one where the lowerer already carries
    built-but-dormant code behind a single gate site. Build it, then generalize. Starting at the general join
