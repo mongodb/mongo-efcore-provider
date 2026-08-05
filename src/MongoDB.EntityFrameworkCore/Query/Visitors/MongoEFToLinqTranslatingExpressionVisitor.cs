@@ -57,32 +57,40 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     // Set false in that case so AppendLookupStages skips them. Defaults true (lookups are appended).
     private bool _appendForceUnwindLookups = true;
 
-    // Lookups this EXECUTION must emit immediately above the join chain's base source, because
-    // StripJoinForLookup reattached user-composed operators that read their output fields. Held here, not
-    // written back onto the shared (compile-time) LookupExpression objects. See IsInjectedEarly.
-    private readonly HashSet<LookupExpression> _injectAfterBaseSourceLookups = [];
+    // Lookups this EXECUTION must emit somewhere BELOW the tail of the pipeline, because
+    // StripJoinForLookup reattached user-composed operators above them that read their output fields. Held
+    // here, not written back onto the shared (compile-time) LookupExpression objects. See IsInjectedEarly.
+    private readonly HashSet<LookupExpression> _injectedEarlyLookups = [];
 
-    // The base-source node those lookups are emitted above: the expression the innermost join was applied
-    // to, i.e. everything the user composed BELOW the joins. One-shot - cleared when Visit reaches it.
-    private Expression? _injectAfterBaseSource;
+    // Where each of those groups is emitted, keyed by REFERENCE on the node it is emitted immediately
+    // ABOVE. Each entry is one-shot: Visit removes it before recursing, so it cannot re-enter itself.
+    //
+    // Usually there is a single entry, keyed on the join chain's base source - the expression the innermost
+    // join was applied to, i.e. everything the user composed BELOW the joins. When an operator is
+    // INTERLEAVED BETWEEN two joins (EF-373) there is one entry per reattachment boundary instead, so a
+    // Skip/Take written between two joins is emitted between their two $lookup stages rather than above
+    // both of them.
+    private readonly Dictionary<Expression, List<LookupExpression>> _injectAboveNodeLookups =
+        new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
-    /// Verifies that <see cref="_injectAfterBaseSource"/> was actually reached during the translation walk.
+    /// Verifies that every node recorded in <see cref="_injectAboveNodeLookups"/> was actually reached
+    /// during the translation walk.
     /// </summary>
     /// <remarks>
-    /// If it was not, the lookups recorded in <see cref="_injectAfterBaseSourceLookups"/> were never emitted
-    /// — and because <c>IsInjectedEarly</c> also excludes them from <c>AppendLookupStages</c>, the join's
+    /// If one was not, the lookups recorded against it were never emitted — and because
+    /// <c>IsInjectedEarly</c> also excludes them from <c>AppendLookupStages</c>, the join's
     /// <c>$lookup</c>/<c>$unwind</c> pair would vanish from the pipeline entirely and the query would
-    /// silently return unjoined rows. That should be unreachable: the node is captured from the tree this
+    /// silently return unjoined rows. That should be unreachable: the nodes are captured from the tree this
     /// same visitor is about to walk. This is cheap insurance that the failure is loud if it ever is
     /// reachable, since the symptom would otherwise be wrong data rather than an error.
     /// </remarks>
-    private void AssertBaseSourceInjectionFired()
+    private void AssertAllEarlyLookupInjectionsFired()
     {
-        if (_injectAfterBaseSource != null)
+        if (_injectAboveNodeLookups.Count > 0)
         {
             throw new InvalidOperationException(
-                "The join base source recorded for early $lookup injection was never reached while "
+                "A join node recorded for early $lookup injection was never reached while "
                 + "translating the query. This is an internal error in the MongoDB EF Core provider; "
                 + "please report it with the query that produced it.");
         }
@@ -160,7 +168,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         var query = Visit(expressionToTranslate)!;
-        AssertBaseSourceInjectionFired();
+        AssertAllEarlyLookupInjectionsFired();
         return AppendLookupStages(query);
     }
 
@@ -212,7 +220,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         var query = (MethodCallExpression)Visit(expressionToTranslate)!;
-        AssertBaseSourceInjectionFired();
+        AssertAllEarlyLookupInjectionsFired();
 
         if (resultCardinality == ResultCardinality.Enumerable)
         {
@@ -250,15 +258,18 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     public override Expression? Visit(Expression? expression)
     {
-        // The join-replacing $lookup/$unwind stages go here: directly above the base source the innermost
-        // join was applied to. Anything the user composed BELOW the joins (notably Skip/Take/Distinct,
-        // whose result depends on how many rows reach them) therefore still runs first, while the
-        // operators StripJoinForLookup reattached ABOVE the joins see the flattened lookup fields.
-        if (_injectAfterBaseSource != null && ReferenceEquals(expression, _injectAfterBaseSource))
+        // The join-replacing $lookup/$unwind stages go here: directly above the node StripJoinForLookup
+        // recorded them against. That is the base source the innermost join was applied to, so anything the
+        // user composed BELOW the joins (notably Skip/Take/Distinct, whose result depends on how many rows
+        // reach them) still runs first, while the operators StripJoinForLookup reattached ABOVE the joins
+        // see the flattened lookup fields. When an operator is INTERLEAVED BETWEEN two joins (EF-373) there
+        // is one recorded node per reattachment boundary, so each join's lookup lands on the correct side of
+        // the interleaved operator.
+        if (expression != null && _injectAboveNodeLookups.Remove(expression, out var lookupsHere))
         {
-            _injectAfterBaseSource = null; // One-shot: stops the recursive Visit below re-entering here.
-            var translatedBaseSource = Visit(expression)!;
-            return EmitLookupStages(translatedBaseSource, _pendingLookups.Where(_injectAfterBaseSourceLookups.Contains));
+            // The entry was removed above, so the recursive Visit cannot re-enter here (one-shot).
+            var translatedNode = Visit(expression)!;
+            return EmitLookupStages(translatedNode, lookupsHere);
         }
 
         switch (expression)

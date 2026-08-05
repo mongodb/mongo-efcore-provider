@@ -1502,7 +1502,7 @@ Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$sort" : { "_id" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_lookup_Orders._id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$unwind" : { "path" : "$_lookup_OrderDetails", "preserveNullAndEmptyArrays" : false } }, { "$sort" : { "_id" : 1 } }
+Customers.{ "$match" : { "_id" : { "$ne" : "ALFKI" } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_lookup_Orders._id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$unwind" : { "path" : "$_lookup_OrderDetails", "preserveNullAndEmptyArrays" : false } }
 """);
     }
 
