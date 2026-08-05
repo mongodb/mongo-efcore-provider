@@ -1482,7 +1482,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // Join is inner, LeftJoin/GroupJoin are left-outer. EF navigation expansion lowers a REQUIRED reference
     // navigation to Queryable.Join and an OPTIONAL one to Queryable.LeftJoin, so this is also what makes a
     // required navigation drop principals with a dangling foreign key, as relational EF Core does.
-    private static ShapedQueryExpression? TranslateJoinCore(
+    // Not static: the transitive-hop decline below reports through AddTranslationErrorDetails, an instance
+    // member of the base visitor.
+    private ShapedQueryExpression? TranslateJoinCore(
         ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression resultSelector, bool isLeftOuter)
     {
@@ -1581,6 +1583,43 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var reboundInnerShaper = RebindInnerShaperToOuterQuery(
             inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, isLeftOuter);
 
+        // EF-372. The transitive hop could not be scoped under an intermediate's unwound sub-document —
+        // TryResolveIntermediateLookupPrefix found no candidate, or more than one. Emitting the $lookup
+        // root-relative anyway names a field that does not exist on the document, so the inner $unwind
+        // matches nothing and EVERY row is dropped, silently, in every MongoQueryMode. So decline instead.
+        //
+        // NOTE the outer MongoSelectDefinition IS left dirty by the time we get here, and deliberately so:
+        // AddInnerCollection, PropagateFallbackWrongDataFrom, and possibly MarkSawNonBareJoinInner /
+        // MarkPagedJoinInnerFallbackUnsafe have all already run above for a join that is now declining. That
+        // dirty state is UNOBSERVABLE only because every Translate{Join,GroupJoin,LeftJoin} call site is
+        // wrapped in EF Core's CheckTranslated, which throws on a null immediately, so this
+        // MongoQueryExpression is never read again. RebindInnerShaperToOuterQuery itself registers nothing on
+        // a decline (no $lookup, no projection), but that is the smaller half of the story. Anything that
+        // makes a decline RECOVERABLE — a retry on another path, or reusing the outer query expression after
+        // one — must first undo, or stop performing, the mutations above.
+        //
+        // The decline is null — EF Core's own translation-failure path — NOT the graceful
+        // MarkNotNativelyRepresentable(), because there is no working driver-LINQ path to land on: a
+        // transitive hop is always a SECOND-OR-LATER join (it needs a prior inner collection to be
+        // transitive through), so the document has to be flattened to root-level _lookup_<Nav> fields and
+        // BOTH paths are committed to the flat shape this join could not be scoped into. That is the same
+        // rule reference SelectMany and Intersect/Except follow — see Query/AGENTS.md. MEASURED, not
+        // assumed: a graceful mark instead lets the un-rebound inner shaper reach materialization and
+        // crashes with "Document element is missing for required non-nullable property", in Native and
+        // explicit DriverLinq alike, which is strictly worse than declining.
+        if (reboundInnerShaper == null)
+        {
+            var declinedForeignKey = outerKeySelector.Body.TryGetSimplePropertyName();
+            AddTranslationErrorDetails(
+                $"The join onto entity type '{innerQueryExpression.CollectionExpression.EntityType.DisplayName()}'"
+                + (declinedForeignKey == null ? null : $" over foreign key '{declinedForeignKey}'")
+                + " reaches it THROUGH a previously-joined entity type, and the intermediate document that"
+                + " join's '$lookup' would have to be scoped under could not be identified - no single"
+                + " previously-joined navigation is known to write a document at that path. Query a single"
+                + " chain of reference navigations, or load the deeper level with a separate query.");
+            return null;
+        }
+
         var newResultSelector = ReplacingExpressionVisitor.Replace(
             resultSelector.Parameters[0], outer.ShaperExpression,
             ReplacingExpressionVisitor.Replace(
@@ -1590,7 +1629,24 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return outer.UpdateShaperExpression(newResultSelector);
     }
 
-    private static Expression RebindInnerShaperToOuterQuery(
+    /// <summary>
+    /// Migrates the inner entity's projection onto the outer <see cref="MongoQueryExpression"/> and registers
+    /// the <c>$lookup</c>(s) that stand in for the join.
+    /// </summary>
+    /// <param name="innerShaper">The inner side's shaper, bound to <paramref name="innerQueryExpression"/>.</param>
+    /// <param name="innerQueryExpression">The join's inner query expression.</param>
+    /// <param name="outerQueryExpression">The join's outer query expression, which the projection moves onto.</param>
+    /// <param name="outerKeySelector">The join's outer key selector, used to identify the navigation.</param>
+    /// <param name="isLeftOuter">Whether the LINQ operator was a left-outer join.</param>
+    /// <returns>
+    /// The rebound shaper, or <see langword="null"/> when this join CANNOT be represented: a TRANSITIVE hop
+    /// whose intermediate sub-document could not be identified (see
+    /// <see cref="TryResolveIntermediateLookupPrefix"/>). Nothing has been registered on
+    /// <paramref name="outerQueryExpression"/> by this method in that case. A decline is signalled by the
+    /// return value rather than an <c>out bool</c> beside a non-null-but-unusable shaper, so that a caller
+    /// CANNOT go on to use an un-rebound shaper by simply not reading the flag.
+    /// </returns>
+    private static Expression? RebindInnerShaperToOuterQuery(
         Expression innerShaper,
         MongoQueryExpression innerQueryExpression,
         MongoQueryExpression outerQueryExpression,
@@ -1635,9 +1691,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Transitive join: the inner entity is reached not directly from the root but THROUGH a
         // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
         // selector is "o.Inner.CustomerID"). When no direct navigation exists, resolve the navigation
-        // on a prior inner collection and remember the intermediate so the $lookup's localField can be
-        // prefixed with that intermediate's "_lookup_<Intermediate>" path.
-        INavigation? throughNavigation = null;
+        // on a prior inner collection and remember the PATH of the intermediate's unwound sub-document,
+        // so the $lookup's localField can be scoped under it. See TryResolveIntermediateLookupPrefix — that
+        // resolution is EF-372's fix site, and resolving it from the ROOT entity type alone (as this used
+        // to) silently omitted the prefix from the THIRD hop onwards and dropped every row. When it cannot
+        // identify the intermediate at all it DECLINES (never "no prefix"): root-relative is wrong for
+        // every transitive hop by construction, since the foreign key it matches lives on the intermediate's
+        // document rather than the root's.
+        string? throughPrefix = null;
         if (navigation == null && fkPropertyName != null)
         {
             foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
@@ -1652,9 +1713,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                                          && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
                 if (candidate != null)
                 {
+                    if (!TryResolveIntermediateLookupPrefix(
+                            outerQueryExpression, outerEntityType, priorInnerEntityType, out throughPrefix))
+                    {
+                        return null;
+                    }
+
                     navigation = candidate;
-                    throughNavigation = outerEntityType.GetNavigations()
-                        .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
                     break;
                 }
             }
@@ -1682,10 +1747,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 {
                     PreserveNullAndEmptyArrays = isLeftOuter
                 };
-                if (throughNavigation != null)
+                if (throughPrefix != null)
                 {
                     // Transitive join: match against the already-unwound intermediate document.
-                    lookup.LocalField = $"{Expressions.LookupExpression.GetLookupAlias(throughNavigation)}.{lookup.LocalField}";
+                    lookup.LocalField = $"{throughPrefix}.{lookup.LocalField}";
                 }
 
                 outerQueryExpression.AddLookup(lookup);
@@ -1752,6 +1817,144 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
+    }
+
+    /// <summary>
+    /// EF-372. Resolves <paramref name="prefix"/> to the document path of the already-unwound intermediate
+    /// sub-document that a TRANSITIVE join's <c>$lookup</c> must match its <c>localField</c> against, or
+    /// returns <see langword="false"/> when no single intermediate can be identified — in which case the
+    /// caller DECLINES the join (it must not fall back to a root-relative <c>localField</c>; see the
+    /// remarks).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This used to be resolved as <c>outerEntityType.GetNavigations().FirstOrDefault(n =&gt;
+    /// n.TargetEntityType == intermediateEntityType)</c> — i.e. ONLY as a navigation off the ROOT entity
+    /// type. That is right for a two-hop chain (<c>Root.Mid</c> IS a root navigation) but comes back null
+    /// from hop THREE onwards, because the intermediate (<c>Leaf</c> in <c>Root.Mid.Leaf.Tip</c>) is not
+    /// reachable by any navigation off the root. The prefix was then silently omitted, the emitted
+    /// <c>localField</c> named a field that does not exist on the joined document, and the inner
+    /// <c>$unwind</c> dropped EVERY row — silent wrong data (0 rows where 3 were correct), in every
+    /// <c>MongoQueryMode</c>, through both doorways (a nav-expanded reference <c>ThenInclude</c> and a
+    /// user-authored chained <c>Join</c>).
+    /// </para>
+    /// <para>
+    /// The depth-correct source of truth is the <c>$lookup</c> already registered for the intermediate:
+    /// its <see cref="LookupExpression.As"/> is the path that intermediate's unwound document actually
+    /// lives at, whatever the depth, so following the registered lookups is correct at ANY depth rather
+    /// than at depth two only. (For a reference lookup that <c>As</c> is today always the flat
+    /// <c>_lookup_&lt;Nav&gt;</c> alias — nesting is only ever applied to COLLECTION lookups — so reading
+    /// <c>As</c> rather than re-deriving the alias from the navigation is not currently observable; it is
+    /// read because it is the write site's own answer, not a second derivation of it.)
+    /// This mirrors <c>MongoProjectionBindingExpressionVisitor</c>'s flat-multi-lookup branch, which solves
+    /// the same problem the same way — scan the pending lookups for one whose navigation targets the type in
+    /// hand. The logic is deliberately duplicated rather than shared: the two sites hold different state (a
+    /// <see cref="LookupExpression"/> under construction here, an <c>IncludeExpression</c> being rewritten
+    /// there) and reach the decision from different tiers. It does NOT mirror that site's ambiguity THROW —
+    /// see below.
+    /// </para>
+    /// <para>
+    /// A SECOND tier is needed because the FIRST transitive hop is reached before any lookup has been
+    /// registered: <c>TranslateJoinCore</c> only begins registering forced-unwind lookups once a SECOND join
+    /// appears, so at hop two there is nothing yet to scan. That tier reads the navigation a PRIOR JOIN
+    /// recorded in the outer query's own <c>Projection</c> (a <see cref="NavigationObjectAccessExpression"/>
+    /// registered by this method's own tail) — again the write site's own answer, not a re-derivation from the
+    /// model. Resolving it from the MODEL instead (any root navigation targeting the intermediate) is what a
+    /// first pass did, and it broke an ordinary two-same-typed-navigations model: the model is ambiguous even
+    /// where the QUERY is not.
+    /// </para>
+    /// <para>
+    /// The result is deliberately TWO-valued — a resolved prefix, or DECLINE — and NOT three-valued with a
+    /// "no prefix needed" outcome. Root-relative is right only for a NON-transitive hop, which never reaches
+    /// this method at all (the caller resolved a navigation off the root and left the prefix null). Every hop
+    /// that DOES reach here matches a foreign key living on the intermediate's document, so an unprefixed
+    /// <c>localField</c> is wrong by construction — that conflation is exactly what made EF-372 silent.
+    /// </para>
+    /// <para>
+    /// Three failure modes therefore return <see langword="false"/>: NO candidate; MORE THAN ONE candidate
+    /// (genuinely ambiguous — sibling <c>ThenInclude</c>s down two same-typed navigations, the case a first
+    /// pass made THROW); and a candidate whose lookup would not be emitted at the resolved path (the
+    /// agreement check below). Throwing was wrong on both counts: it is the caller's decision, not this
+    /// resolver's, and a provider-authored throw leaves no escape hatch in any <c>MongoQueryMode</c>,
+    /// explicit <c>DriverLinq</c> included. Picking a candidate arbitrarily is worse still — it prefixes the
+    /// <c>$lookup</c> with the wrong path and silently returns wrong rows, which is what this branch's base
+    /// did. <c>TranslateJoinCore</c> turns a decline into <see langword="null"/>, EF Core's own
+    /// translation-failure path.
+    /// </para>
+    /// <para>
+    /// NOTE, for anyone widening this: for a sibling-<c>ThenInclude</c> ambiguity
+    /// (<c>Include(a).ThenInclude(x)</c> + <c>Include(b).ThenInclude(x)</c>) a resolved prefix would NOT be
+    /// enough to make the query work. Both hops' lookups derive the SAME alias from the same navigation
+    /// (<see cref="LookupExpression.GetLookupAlias"/> is navigation-name-only) and
+    /// <c>MongoQueryExpression.AddLookup</c> de-duplicates on <c>As</c>, so only one of the two would ever be
+    /// emitted whatever prefix it carried. Representing that shape needs a path-scoped alias scheme, not a
+    /// better prefix resolution.
+    /// </para>
+    /// </remarks>
+    private static bool TryResolveIntermediateLookupPrefix(
+        MongoQueryExpression outerQueryExpression,
+        IEntityType outerEntityType,
+        IEntityType intermediateEntityType,
+        out string? prefix)
+    {
+        prefix = null;
+
+        var lookupMatches = outerQueryExpression.GetPendingLookups()
+            .Where(l => l.IsReference
+                        && l.ForceUnwind
+                        && l.Navigation.TargetEntityType == intermediateEntityType)
+            .ToList();
+
+        if (lookupMatches.Count == 1)
+        {
+            prefix = lookupMatches[0].As;
+            return true;
+        }
+
+        if (lookupMatches.Count > 1)
+        {
+            return false;
+        }
+
+        // Tier 2: the navigation a PRIOR join already recorded for this intermediate, read back off the
+        // projections that join registered on the outer query. Reading the recorded navigation rather than
+        // re-deriving one from the model is what keeps an ordinary two-same-typed-navigations model working
+        // (Order.Buyer and Order.Approver both targeting Person): only the navigation this query actually
+        // joined is in there, so a model that merely HAS a same-typed sibling is not ambiguous here.
+        var priorJoinedNavigations = outerQueryExpression.Projection
+            .Select(p => p.Expression)
+            .OfType<EntityProjectionExpression>()
+            .Where(e => e.EntityType == intermediateEntityType)
+            .Select(e => e.ParentAccessExpression as NavigationObjectAccessExpression)
+            .Where(a => a != null)
+            .Select(a => a!.Navigation)
+            .Distinct()
+            .ToList();
+
+        if (priorJoinedNavigations.Count != 1)
+        {
+            return false;
+        }
+
+        // ...and it is only usable once we know a $lookup will actually WRITE a document at that path.
+        // A prior single-reference join registers no lookup of its own (it was rendered driver-natively);
+        // the lookup that flattens it is the retroactive one the caller registers just below, and THAT site
+        // picks its navigation by target entity type alone (FirstOrDefault). Where the two disagree, the
+        // emitted lookup would land at a different alias than the prefix names — measured silently wrong
+        // rows at this branch's base for exactly that shape — and where the retroactive site finds no root
+        // navigation at all, nothing is emitted for the intermediate and the prefix dangles. Both are
+        // declines, not guesses. (TODO(EF-375): the retroactive site's by-entity-type navigation lookup is
+        // the underlying imprecision; a path-keyed join registry would let this agreement check go.)
+        var retroactiveNavigation = outerEntityType.GetNavigations()
+            .FirstOrDefault(n => n.TargetEntityType == intermediateEntityType);
+
+        if (retroactiveNavigation == null || retroactiveNavigation != priorJoinedNavigations[0])
+        {
+            return false;
+        }
+
+        prefix = Expressions.LookupExpression.GetLookupAlias(retroactiveNavigation);
+        return true;
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,

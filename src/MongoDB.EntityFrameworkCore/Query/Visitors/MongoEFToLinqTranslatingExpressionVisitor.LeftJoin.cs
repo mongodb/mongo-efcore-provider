@@ -688,9 +688,24 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 // a transitive lookup's localField points into an earlier lookup's unwound output (e.g.
                 // "_lookup_Customer.region_id"), so splitting them across the reattached stages would
                 // break that chain — and any tail-appended remainder would also be appended after a
-                // scalar terminal such as Count. NB that prefixing chain is itself only correct to depth
-                // two today: a third hop emits an unprefixed localField and drops every row —
-                // TODO(EF-372).
+                // scalar terminal such as Count. That prefixing chain now holds at ANY depth (EF-372 fixed
+                // the third-and-deeper hop, which used to emit an unprefixed localField and drop every
+                // row), so this contiguous-group reasoning applies to a chain of any length. The narrow claim
+                // EF-372 actually established is about the hops that reach its resolver: a hop that ENTERS
+                // the transitive resolution either gets a scoped prefix or DECLINES translation outright — it
+                // is never emitted with a silently-missing prefix.
+                //
+                // That is NOT the same as "every chain reaching here is fully scoped", and the difference was
+                // MEASURED: a hop is only routed into the transitive resolution once no navigation off the
+                // ROOT matches, and that root match (see MongoQueryableMethodTranslatingExpressionVisitor,
+                // RebindInnerShaperToOuterQuery) selects by FK-property name / target entity type, so a root
+                // that carries its own navigation to the hop's target type is treated as a ROOT-level hop and
+                // emits an unprefixed localField against the root's own field. See TODO(EF-379).
+                //
+                // Grouping is still correct for that case, which is why it is not a caveat on this reasoning:
+                // an unprefixed localField reads a root field and so depends on no earlier lookup at all, and
+                // the group is a conservative SUPERSET of the dependency chain — it only ever keeps together
+                // lookups that could depend on one another.
                 foreach (var lookup in _pendingLookups.Where(l => l.ForceUnwind))
                 {
                     _injectAfterBaseSourceLookups.Add(lookup);
