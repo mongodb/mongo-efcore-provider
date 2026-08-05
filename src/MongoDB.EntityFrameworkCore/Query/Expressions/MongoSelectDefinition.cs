@@ -465,6 +465,111 @@ internal sealed class MongoSelectDefinition
     internal void MarkNotNativelyRepresentable()
         => _hasUnsupportedOperator = true;
 
+    // ── Reference-Include candidate join (EF-368) ──────────────────────────────────
+    //
+    // PopulateNativeSlots visits the JOIN node before the trailing Select that identifies a reference
+    // Include, so the gate has to decide on the join before the IncludeExpression has been seen. Because
+    // _hasUnsupportedOperator is never unset (by design), "mark non-native at the join then un-mark at the
+    // Select" is not available. Instead the two signals below are recorded and Route COMPUTES the decision,
+    // the same way UsesDriverJoinFields computes the document shape rather than tracking it as mutable state.
+    //
+    // This is DEFAULT-DENY: a user join with no trailing Include, or one whose Include fails any recognizer
+    // conjunct, is never confirmed and therefore routes to Fallback.
+    //
+    // COUNTS, NOT FLAT BOOLEANS (fix round 1 finding): a query can have MULTIPLE candidate joins — e.g. a
+    // multi-hop chain, or two independent single-level reference Includes on the same query. A flat
+    // "confirmed" boolean cannot distinguish "every candidate confirmed" from "one of several confirmed" —
+    // it would go true the moment ANY join confirms, wrongly treating an untouched sibling candidate as
+    // admitted too and defeating default-deny. Counting is what lets HasUnconfirmedCandidateJoin ask "are
+    // there exactly as many confirmations as candidates?" rather than "has at least one confirmed?".
+    //
+    // This is NOT closed by InnerCollections.Count elsewhere in the gate: that dictionary is keyed by
+    // IEntityType (MongoQueryExpression.Lookup.cs's AddInnerCollection is TryGetValue-keyed on the target
+    // entity type), so two joins against the SAME entity type collapse to ONE entry and Count stays 1 — a
+    // shape like Orders.Include(o => o.Buyer).Join(db.Buyers, ...) slips past that guard too. The counts
+    // here are the only place that actually distinguishes "one candidate" from "more than one".
+
+    private int _candidateReferenceIncludeJoins;
+    private int _confirmedReferenceIncludes;
+
+    /// <summary>
+    /// Records that a <c>Join</c>/<c>LeftJoin</c>/<c>GroupJoin</c> was seen which MIGHT be EF's
+    /// nav-expansion of a single-level reference <c>Include</c>. Does not admit anything on its own.
+    /// </summary>
+    internal void MarkSawCandidateReferenceIncludeJoin()
+        => _candidateReferenceIncludeJoins++;
+
+    /// <summary>
+    /// Records that a trailing <c>Select</c> was recognized as a single-level reference <c>Include</c>
+    /// (see <c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleLevelReferenceIncludeSelector</c>),
+    /// confirming ONE of the candidate joins recorded by <see cref="MarkSawCandidateReferenceIncludeJoin"/>.
+    /// </summary>
+    internal void MarkReferenceIncludeConfirmed()
+        => _confirmedReferenceIncludes++;
+
+    /// <summary>
+    /// A candidate join that no trailing Include confirmed — the query must fall back. Strict inequality
+    /// (<c>!=</c>, not <c>&gt;</c>): if confirmations ever exceeded candidates that would itself mean a
+    /// confirmation arrived without a matching candidate join, a broken invariant that must also fail
+    /// closed (force <see cref="NativeRoute.Fallback"/>) rather than be silently read as "all confirmed".
+    /// </summary>
+    internal bool HasUnconfirmedCandidateJoin
+        => _candidateReferenceIncludeJoins != _confirmedReferenceIncludes;
+
+    private bool _sawNonBareJoinInner;
+
+    /// <summary>
+    /// Records that some <c>Join</c>/<c>LeftJoin</c>/<c>GroupJoin</c> on this query had an INNER side that is
+    /// not a bare collection scan — i.e. its own <see cref="MongoSelectDefinition"/> carried at least one
+    /// recorded operation (a <c>$match</c>/<c>$sort</c>/<c>$skip</c>/<c>$limit</c> op, a projection, a
+    /// terminal, a cardinality, or an operator that was declined outright). Set by the QMTEV's
+    /// <c>TranslateJoinCore</c>, read by <c>TryConfirmReferenceInclude</c>.
+    /// <para>
+    /// EF-368 final fix wave, replacing a metadata guard that consulted only
+    /// <c>navigation.TargetEntityType.GetQueryFilter()</c>. That test was incomplete in two measured ways —
+    /// a filter declared on the ROOT of a TPH hierarchy is not returned by <c>GetQueryFilter()</c> on a
+    /// DERIVED target (all three majors), and an EF10 <em>named</em> query filter lives in
+    /// <c>GetDeclaredQueryFilters()</c> instead — and each gap admitted a reference <c>Include</c> whose
+    /// filtered target the flat <c>$lookup</c> cannot filter, returning silently wrong rows in EVERY query
+    /// mode (the <c>ForceUnwind</c> lookup is registered at translation time, so <c>StripJoinForLookup</c>
+    /// strips the filter's own <c>Where</c> along with the <c>Join</c> on the driver-LINQ path too — there
+    /// is no escape hatch). Keying the decline on the INNER SELECT'S OWN SHAPE closes query filters in all
+    /// three spellings (anonymous, TPH-root-inherited, and EF10 named) by construction rather than by
+    /// enumerating metadata shapes. It does NOT close TPH discriminator narrowing: a TPH derived-type
+    /// Include target is currently admitted natively (measured — <c>NativeOnly</c> succeeds, no decline
+    /// — because EF does not record a discriminator predicate on the join's inner select for this shape),
+    /// which produces no measured wrong data and is not new to this branch.
+    /// </para>
+    /// </summary>
+    internal void MarkSawNonBareJoinInner() => _sawNonBareJoinInner = true;
+
+    /// <summary>See <see cref="MarkSawNonBareJoinInner"/>.</summary>
+    internal bool SawNonBareJoinInner => _sawNonBareJoinInner;
+
+    /// <summary>
+    /// Whether this select is a bare collection scan — nothing at all recorded on it. Used as the
+    /// admissibility signal for a candidate reference-<c>Include</c> join's INNER side (see
+    /// <see cref="MarkSawNonBareJoinInner"/>): the flat <c>$lookup</c> the reference-Include path emits can
+    /// carry NO sub-pipeline, so the inner side must be the whole target collection and nothing else.
+    /// Deliberately includes <c>_hasUnsupportedOperator</c>: an inner operator that was declined rather than
+    /// lowered records no op at all, yet is exactly as disqualifying as one that did.
+    /// </summary>
+    internal bool IsBareCollectionScan
+        => !_hasUnsupportedOperator
+           && _pipelineOps.Count == 0
+           && _trailingOps.Count == 0
+           && _projections.Count == 0
+           && Cardinality == null
+           && Grouping == null
+           && PendingGroupKey == null
+           && SetOperation == null
+           && !IsGroupBy
+           && !IsDistinct
+           && !IsSetOp
+           && _unwindSources.Count == 0
+           && _candidateReferenceIncludeJoins == 0
+           && !_sawNonBareJoinInner;
+
     /// <summary>
     /// The single authoritative native-execution decision for this query, computed from the populated
     /// slots. <see cref="NativeRoute.Fallback"/> when any unsupported operator was seen; otherwise
@@ -473,10 +578,11 @@ internal sealed class MongoSelectDefinition
     /// the full is-native decision is the gate's <c>ClassifyNativeDisposition</c> (EF-334), which layers vector
     /// search (<c>ContainsVectorSearch</c> over the captured chain — not on <see cref="MongoSelectDefinition"/>)
     /// and the GroupBy+Join hard-decline (<see cref="IsGroupByFallbackUnsafe"/>) onto this route. <c>$lookup</c>
-    /// streamability is a separate axis (streaming-vs-DOM), not an is-native signal.
+    /// streamability is a separate axis (streaming-vs-DOM), not an is-native signal. An unconfirmed
+    /// reference-Include candidate join (EF-368) also forces Fallback — see <see cref="HasUnconfirmedCandidateJoin"/>.
     /// </summary>
     internal NativeRoute Route
-        => _hasUnsupportedOperator ? NativeRoute.Fallback
+        => _hasUnsupportedOperator || HasUnconfirmedCandidateJoin ? NativeRoute.Fallback
             // A GroupBy key was bound but no aggregate Select finalized the grouping (e.g. a bare GroupBy(key)
             // that terminates on the IGrouping sequence, or a group followed by an unsupported operator): the
             // native path cannot represent this, so fall back rather than silently emit an ungrouped scan.

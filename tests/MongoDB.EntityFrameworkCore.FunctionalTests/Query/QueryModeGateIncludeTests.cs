@@ -30,14 +30,25 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Tests covering <c>Include</c> behavior under the EF-323 query-mode gate. Reference Includes are EF9+/EF10
-/// only, so this class is compiled out under EF8.
+/// Tests covering <c>Include</c> behavior under the EF-323 query-mode gate.
+/// <para>
+/// EF-368 final fix wave, Finding 8: this summary used to claim "Reference Includes are EF9+/EF10 only, so
+/// this class is compiled out under EF8". Both halves were false — the class is not gated at all, and a
+/// REQUIRED reference <c>Include</c> lowers to <c>Queryable.Join</c>, which dispatches on all three majors
+/// (only an OPTIONAL one lowers to <c>Queryable.LeftJoin</c>, which is EF10-only). The class is deliberately
+/// left UNGATED; equivalent ungated coverage also exists in <c>NativeReferenceIncludeTests</c> and
+/// <c>RequiredNavigationUnwindTests</c>.
+/// </para>
 /// </summary>
 /// <remarks>
-/// NOTE: Single-level reference Include is NOT yet native — native reference-Include is deferred to the
-/// Includes sub-project. Under <see cref="MongoQueryMode.Native"/> the provider falls back to the driver-LINQ
-/// LeftJoin path, which emits the characteristic <c>_outer</c> / <c>$$ROOT</c> / <c>_inner</c> pipeline shape
-/// rather than a native <c>_lookup_&lt;NavigationName&gt;</c> alias.
+/// NOTE: as of EF-368 Task 5, a single-level reference Include recognized by
+/// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleLevelReferenceIncludeSelector</c> now goes
+/// NATIVE under <see cref="MongoQueryMode.Native"/> — see
+/// <see cref="Reference_include_goes_native_under_Native_mode"/> below, which asserts the native
+/// <c>_lookup_&lt;NavigationName&gt;</c> alias rather than the driver-LINQ LeftJoin path's characteristic
+/// <c>_outer</c> / <c>$$ROOT</c> / <c>_inner</c> shape. A shape the recognizer declines (composite key,
+/// a second reference Include, a `ThenInclude` reaching past the looked-up document, post-terminal
+/// composition, …) still falls back to that driver-LINQ LeftJoin path exactly as before Task 5.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
@@ -108,14 +119,15 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Reference_include_falls_back_to_driver_linq_under_Native_mode()
+    public void Reference_include_goes_native_under_Native_mode()
     {
-        // Single-level reference Include is NOT yet native — native reference-Include is deferred to the
-        // Includes sub-project. Under MongoQueryMode.Native the provider falls back to the driver-LINQ
-        // LeftJoin path. This test verifies:
+        // EF-368 Task 5: single-level reference Include now goes NATIVE (this test's name and premise
+        // predate that — it used to be "..._falls_back_to_driver_linq_under_Native_mode" and asserted the
+        // OLD driver-LINQ LeftJoin shape; renamed/re-asserted as part of delivering the capability). This
+        // test verifies:
         //   (a) The materialized result graph is correct (Customer navigation is populated).
-        //   (b) The emitted pipeline reflects the driver-LINQ shape (contains the $$ROOT / _outer / _inner
-        //       markers that characterise the LeftJoin path) and does NOT contain a native _lookup_ alias.
+        //   (b) The emitted pipeline reflects the NATIVE $lookup+$unwind shape (a root-level
+        //       _lookup_<NavigationName> alias) rather than the driver's $$ROOT/_outer/_inner LeftJoin shape.
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateCustomers") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateOrders") + Guid.NewGuid().ToString("N")[..8];
 
@@ -140,10 +152,13 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         // (b) Driver-LINQ LeftJoin shape: $$ROOT is projected as _outer, related documents collected as _inner.
         //     This is distinct from the future native path which would use a _lookup_<NavigationName> alias.
         var mql = Assert.Single(logs, l => l.Contains("Executed MQL query"));
-        Assert.Contains("$$ROOT", mql);      // driver projects principal rows as $$ROOT before joining
-        Assert.Contains("_outer", mql);      // LeftJoin wrapper field for principal document
-        Assert.Contains("_inner", mql);      // LeftJoin wrapper field for related document
-        Assert.DoesNotContain("_lookup_", mql);  // native path would use _lookup_<NavigationName> alias
+        Assert.Contains("_lookup_Customer", mql);   // native $lookup alias for the confirmed reference Include
+        Assert.Contains(
+            "{ \"$unwind\" : { \"path\" : \"$_lookup_Customer\", \"preserveNullAndEmptyArrays\" : false } }",
+            mql); // required nav (non-nullable CustomerId) -> inner unwind
+        Assert.DoesNotContain("$$ROOT", mql);   // no longer the driver's LeftJoin shape
+        Assert.DoesNotContain("_outer", mql);
+        Assert.DoesNotContain("_inner", mql);
     }
 
     // ── EF-339: single-level collection Include emits a flat $lookup (no $unwind) natively ─────────

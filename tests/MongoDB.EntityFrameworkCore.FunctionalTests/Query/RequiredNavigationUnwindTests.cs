@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -63,6 +64,25 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         // L5's prod_id matches no product, so it is excluded: Product is required.
         Assert.Equal(["L1", "L2", "L3", "L4", "L6"], LineNames(lines));
         Assert.All(lines, l => Assert.NotNull(l.Product));
+    }
+
+    // EF-368: the same seed, now asserted ACROSS MODES. This is the assertion that would have caught
+    // EF-370's row-count divergence, and it is the slice's gate: the native pipeline and the driver-LINQ
+    // fallback must return the same rows over a dangling foreign key, not merely both "work".
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Required_single_reference_Include_excludes_dangling_foreign_key_in_every_mode(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode);
+
+        var orders = db.Orders.Include(o => o.Buyer).OrderBy(o => o.OrderName).ToList();
+
+        // O3's buyer_id is dangling and Buyer is required => inner join => O3 absent, in EVERY mode.
+        Assert.Equal(3, orders.Count);
+        Assert.All(orders, o => Assert.NotNull(o.Buyer));
+        Assert.DoesNotContain(orders, o => o.Buyer == null);
     }
 
     [Fact]
@@ -405,7 +425,12 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     //   Carriers  C1
     //   Lines     L1 O1/P1/C1, L2 O2/P2/no carrier, L3 O3/P1/C1,
     //             L4 dangling order/P1/C1, L5 O1/dangling product/C1, L6 O1/P1/dangling carrier
-    private RequiredNavDbContext Setup()
+    // EF-368: mode-differential entry point mirroring the CreateContext(MongoQueryMode, ...) idiom used in
+    // NativeReferenceIncludeTests.cs. Setup() (mode defaults to Native) is unchanged for every pre-existing
+    // test in this file.
+    private RequiredNavDbContext CreateContext(MongoQueryMode mode) => Setup(mode);
+
+    private RequiredNavDbContext Setup(MongoQueryMode mode = MongoQueryMode.Native)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var buyersName = TemporaryDatabaseFixtureBase.CreateCollectionName("ReqNavBuyers") + suffix;
@@ -484,7 +509,7 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             }
         ]);
 
-        return new RequiredNavDbContext(database, buyersName, ordersName, productsName, carriersName, linesName);
+        return new RequiredNavDbContext(database, buyersName, ordersName, productsName, carriersName, linesName, mode);
     }
 
     class Buyer
@@ -551,9 +576,11 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             string ordersCollection,
             string productsCollection,
             string carriersCollection,
-            string linesCollection)
+            string linesCollection,
+            MongoQueryMode mode = MongoQueryMode.Native)
             : base(new DbContextOptionsBuilder<RequiredNavDbContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
+                    b => b.UseQueryMode(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

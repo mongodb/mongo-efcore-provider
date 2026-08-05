@@ -187,22 +187,60 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         mb.Entity<Order>().HasOne(o => o.Customer).WithMany().HasForeignKey(o => o.CustomerId);
 
     [Fact]
-    public void Non_owned_reference_include_still_falls_back()
+    public void Non_owned_reference_include_now_goes_native()
     {
-        var coll = database.MongoDatabase.GetCollection<BsonDocument>(
-            UniqueCollectionName(nameof(Non_owned_reference_include_still_falls_back)));
-        coll.InsertOne(new BsonDocument
+        // EF-368 Task 5: this test's premise predates that ticket (it used to be
+        // "Non_owned_reference_include_still_falls_back", asserting a NativeOnly throw). It still pins the
+        // ORIGINAL point — a NON-owned (reference) navigation's explicit Include Select must NOT be admitted
+        // by IsOwnedEmbeddedIncludeSelector's !navigation.IsEmbedded() guard (EF-322) — but the CONSEQUENCE of
+        // that decline has changed: the shape is now admitted by a DIFFERENT, later mechanism, the
+        // single-level reference-Include recognizer/confirm (TryConfirmReferenceInclude), so it goes native
+        // instead of falling back. Customer here is a REQUIRED navigation (non-nullable CustomerId), so the
+        // native path's INNER $unwind drops any row whose CustomerId is dangling: NativeOnly now SUCCEEDS
+        // rather than throwing.
+        //
+        // EF-368 final fix wave, Finding 7: this test's assertion used to be a bare Assert.Empty over a
+        // seed whose ONLY row had a deliberately dangling CustomerId — which is also exactly what a BROKEN
+        // query returns, so it no longer discriminated the stated purpose (that the shape reaches the
+        // reference-Include machinery at all rather than being admitted or dropped elsewhere). A second,
+        // RESOLVABLE row is now seeded so the test asserts a populated navigation as well as the drop.
+        var customersName = UniqueCollectionName(nameof(Non_owned_reference_include_now_goes_native)) + "Cust";
+        var resolvableCustomerId = ObjectId.GenerateNewId();
+        database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(new BsonDocument
         {
-            { "_id", ObjectId.GenerateNewId() }, { "OrderDescription", "Widget" }, { "CustomerId", ObjectId.GenerateNewId() }
+            { "_id", resolvableCustomerId }, { "FullName", "Ada" }
         });
+
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(
+            UniqueCollectionName(nameof(Non_owned_reference_include_now_goes_native)));
+        coll.InsertMany(
+        [
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "OrderDescription", "Widget" },
+                { "CustomerId", ObjectId.GenerateNewId() } // dangling: dropped by the inner $unwind.
+            },
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "OrderDescription", "Gadget" },
+                { "CustomerId", resolvableCustomerId } // resolvable: kept, navigation populated.
+            }
+        ]);
         var collection = database.MongoDatabase.GetCollection<Order>(coll.CollectionNamespace.CollectionName);
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, OrderCustomerModel);
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly,
+            mb =>
+            {
+                OrderCustomerModel(mb);
+                mb.Entity<Customer>().ToCollection(customersName);
+            });
 
-        // A NON-owned (reference) navigation's explicit Include Select must NOT be admitted by the new
-        // predicate (!navigation.IsEmbedded()) — it stays on the pre-existing reference-Include fallback route.
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.AsNoTracking().Include(o => o.Customer).ToList());
+        var results = db.Entities.AsNoTracking().Include(o => o.Customer).ToList();
+
+        var kept = Assert.Single(results);
+        Assert.Equal("Gadget", kept.OrderDescription);
+        Assert.NotNull(kept.Customer);
+        Assert.Equal("Ada", kept.Customer.FullName);
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════

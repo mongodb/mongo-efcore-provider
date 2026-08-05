@@ -350,4 +350,79 @@ public class MongoSelectDefinitionTests
 
         Assert.False(select.IsSingleReferenceUnwindTerminalOnly);
     }
+
+    // ── Reference-Include candidate join counting (EF-368, fix round 1) ────────────
+    //
+    // These exercise MarkSawCandidateReferenceIncludeJoin/MarkReferenceIncludeConfirmed directly at the IR
+    // level. Task 4 wires the candidate-recording call site (NativeSlotPopulator) but NOT the confirming one
+    // (that is Task 5's job) — so there is no LINQ shape yet that reaches MarkReferenceIncludeConfirmed. Unit
+    // testing the counters directly is the only way to pin the two-candidate-joins-one-confirmation case
+    // before Task 5 exists; a functional/end-to-end test would be vacuous today (nothing can confirm), so
+    // this is deliberately at the IR level, not end-to-end.
+
+    [Fact]
+    public void HasUnconfirmedCandidateJoin_false_with_no_candidates()
+        => Assert.False(new MongoSelectDefinition().HasUnconfirmedCandidateJoin);
+
+    [Fact]
+    public void HasUnconfirmedCandidateJoin_true_for_a_single_unconfirmed_candidate()
+    {
+        var select = new MongoSelectDefinition();
+        select.MarkSawCandidateReferenceIncludeJoin();
+
+        Assert.True(select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Fallback, select.Route);
+    }
+
+    [Fact]
+    public void HasUnconfirmedCandidateJoin_false_when_the_single_candidate_is_confirmed()
+    {
+        var select = new MongoSelectDefinition();
+        select.MarkSawCandidateReferenceIncludeJoin();
+        select.MarkReferenceIncludeConfirmed();
+
+        Assert.False(select.HasUnconfirmedCandidateJoin);
+    }
+
+    [Fact]
+    public void HasUnconfirmedCandidateJoin_true_when_only_one_of_two_candidates_is_confirmed()
+    {
+        // The fix-round-1 regression pin: two candidate joins, only one confirmed. A flat boolean pair would
+        // go "all confirmed" the moment ANY join confirms, wrongly admitting the second, untouched candidate
+        // and defeating default-deny. The count form must still report unconfirmed here.
+        var select = new MongoSelectDefinition();
+        select.MarkSawCandidateReferenceIncludeJoin();
+        select.MarkSawCandidateReferenceIncludeJoin();
+        select.MarkReferenceIncludeConfirmed();
+
+        Assert.True(select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Fallback, select.Route);
+    }
+
+    [Fact]
+    public void HasUnconfirmedCandidateJoin_false_when_two_candidates_are_both_confirmed()
+    {
+        var select = new MongoSelectDefinition();
+        select.MarkSawCandidateReferenceIncludeJoin();
+        select.MarkSawCandidateReferenceIncludeJoin();
+        select.MarkReferenceIncludeConfirmed();
+        select.MarkReferenceIncludeConfirmed();
+
+        Assert.False(select.HasUnconfirmedCandidateJoin);
+    }
+
+    [Fact]
+    public void HasUnconfirmedCandidateJoin_true_when_confirmations_exceed_candidates()
+    {
+        // A confirmation arriving without a matching candidate join is a broken invariant. The strict
+        // inequality (!=, not >) means this fails closed (still routes to Fallback) rather than being
+        // silently read as "all confirmed" — see the doc comment on HasUnconfirmedCandidateJoin.
+        var select = new MongoSelectDefinition();
+        select.MarkSawCandidateReferenceIncludeJoin();
+        select.MarkReferenceIncludeConfirmed();
+        select.MarkReferenceIncludeConfirmed();
+
+        Assert.True(select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Fallback, select.Route);
+    }
 }

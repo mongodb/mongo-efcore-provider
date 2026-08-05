@@ -252,8 +252,16 @@ internal sealed class MongoSelectLowerer
         {
             if (lookup.IsStreamableReference)
             {
+                // EF-368 Task 5: the $unwind must follow the navigation's own requiredness (INNER for a
+                // required nav so a dangling FK drops the row; LEFT-outer for an optional one so it
+                // survives with a null navigation) rather than the LEFT-outer default every earlier caller
+                // of this arm relied on. The registered LookupExpression already carries that decision on
+                // PreserveNullAndEmptyArrays (set at confirmation time in TryConfirmReferenceInclude); it
+                // must be threaded through here explicitly, not left to MongoUnwindStage's own
+                // LEFT-outer-by-default parameter, or every reference Include would silently unwind
+                // LEFT-outer regardless of requiredness.
                 stages.Add(new MongoLookupStage(lookup));
-                stages.Add(new MongoUnwindStage(lookup));
+                stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }
             else if (lookup.IsNativeCollectionLookup)
             {

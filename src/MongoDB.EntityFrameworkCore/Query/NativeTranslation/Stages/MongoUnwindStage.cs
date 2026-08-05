@@ -28,10 +28,13 @@ internal sealed class MongoUnwindStage : MongoPipelineStage
     /// <param name="lookup">The lookup expression that specifies which array field to unwind.</param>
     /// <param name="preserveNullAndEmptyArrays">
     /// Whether a principal document with no matching array element/document is preserved (LEFT-join
-    /// semantics, e.g. a reference Include's streaming <c>$unwind</c>) rather than dropped (INNER-join
-    /// semantics, e.g. the EF-347 slice-5 cross-collection reference SelectMany flatten). Defaults to
-    /// <see langword="true"/> so every pre-existing caller (the reference-Include <c>$unwind</c>) is
-    /// unchanged; only the SelectMany flatten passes <see langword="false"/>.
+    /// semantics) rather than dropped (INNER-join semantics, e.g. the EF-347 slice-5 cross-collection
+    /// reference SelectMany flatten). Defaults to <see langword="true"/> so a caller that does not think
+    /// about this gets the conservative (LEFT-join) behavior. EF-368 Task 5: the reference-Include
+    /// <c>$unwind</c> (<c>MongoSelectLowerer.AppendLookupStages</c>'s <c>IsStreamableReference</c> arm) is
+    /// no longer such a caller — it now passes the registered <see cref="LookupExpression.PreserveNullAndEmptyArrays"/>
+    /// explicitly, since that flag follows the navigation's own requiredness (INNER for a required
+    /// navigation, LEFT-join for an optional one) rather than always being left-outer.
     /// </param>
     public MongoUnwindStage(LookupExpression lookup, bool preserveNullAndEmptyArrays = true)
     {

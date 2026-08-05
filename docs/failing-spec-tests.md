@@ -23,6 +23,16 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 > basis is unknown. Rows touched from 2026-08-03 onwards state the rule's figure; the rest are left as
 > they stand rather than silently re-derived.
 
+> **EF-368 (2026-08-04) touches no row in this table.** That slice made single-level reference `Include`
+> go native and, as part of the same change, made the driver-LINQ fallback for a reference `Include` emit
+> a flat `_lookup_<Nav>` `$lookup`+`$unwind` shape instead of the old `_outer`/`_inner` form — a pure MQL
+> re-baseline in the four Northwind Include suites plus `NorthwindNavigationsQueryMongoTest`, not a change
+> in translation-failure status for any test. None of the re-baselined tests carried a `// Fails:` tag
+> before or after (they always passed under default `Native` mode, just against a different MQL string),
+> so no ticket row's method count or description changes here. The totals column is left untouched per the
+> counting-basis note above, for the same reason it always is — its basis does not reconcile under any
+> rule tried, and EF-368 gives no new information that would let it be re-derived.
+
 > If you fix one of these bugs, search for the ticket id in the spec-tests
 > project — the corresponding overrides need to be updated (drop the
 > `AssertTranslationFailed` wrapper or the throws-asserting `Assert.Contains`,

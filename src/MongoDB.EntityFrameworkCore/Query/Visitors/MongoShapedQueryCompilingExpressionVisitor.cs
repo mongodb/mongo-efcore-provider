@@ -834,6 +834,32 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// admit collection lookups; a query whose joins cannot ALL be expressed as streamable reference lookups
     /// (a collection include, a filtered include with pipeline stages, a transitive/nested lookup, or any join
     /// shape not mappable to a direct root reference navigation) stays on the DOM / driver-LINQ path.
+    /// <para>
+    /// EF-368 fix round 1 (I3): also NOT streamable when the looked-up navigation's TARGET has an
+    /// eager-loaded navigation of its own (an owned/embedded reference or collection, auto-included by EF
+    /// Core convention — the same condition <c>MongoQueryableMethodTranslatingExpressionVisitor</c>'s
+    /// <c>HasNonEmbeddedThenInclude</c> now lets THROUGH at confirmation time, per I3's fix). Narrowing
+    /// TryConfirmReferenceInclude to admit that shape surfaced a SEPARATE, pre-existing gap one layer
+    /// down: <c>MongoStreamingEntityMaterializerRewriter</c> has no plan for a nested include on a looked-up
+    /// reference's target and throws <c>NativeTranslationNotSupportedException</c> the moment the STREAMING
+    /// shaper is attempted for a query in this shape.
+    /// </para>
+    /// <para>
+    /// Fix round 2 (review finding A) corrects this note's original severity claim, which was measured
+    /// false: it said the throw was "uncaught, in every mode, not merely a missed optimization". Removing
+    /// this guard and probing all three <see cref="Infrastructure.MongoQueryMode"/>s on the owned-target
+    /// Include shows <c>Native</c> and <c>DriverLinq</c> both succeed with correct data (the pre-existing
+    /// <c>catch (Exception) when (mode != MongoQueryMode.NativeOnly)</c> around the streaming-shaper
+    /// build already falls back to the DOM shaper) — only <c>NativeOnly</c> throws, which is the intended,
+    /// designed decline behavior for a `NativeOnly`-forbidden fallback, not a crash. So the pre-fix severity
+    /// was a <c>NativeOnly</c>-only decline, not an every-mode failure. The fix itself is still correct and
+    /// worth having independent of that correction: it makes the shape succeed under <c>NativeOnly</c> too,
+    /// by routing straight to the DOM shaper (which already materializes nested owned data correctly, see
+    /// <c>MongoOwnedReferenceWholeEntityTests</c>) instead of attempting streaming and catching the failure
+    /// — mirroring the identical pattern
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable</c> already applies for
+    /// the analogous owned-SelectMany bare-entity-result gap (EF-360).
+    /// </para>
     /// </summary>
     private static bool AllPendingLookupsAreStreamable(MongoQueryExpression mongoQueryExpression)
     {
@@ -847,7 +873,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             return false;
         }
 
-        return referenceLookups.All(lookup => lookup.IsStreamableReference);
+        return referenceLookups.All(lookup =>
+            lookup.IsStreamableReference
+            && !lookup.Navigation.TargetEntityType.GetNavigations().Any(n => n.IsEagerLoaded));
     }
 
     private static (MongoQueryContext, MongoExecutableQuery) TranslateQuery<TEntity>(
@@ -1069,7 +1097,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             queryContext, entityType, bsonSerializerFactory, nonQuery.SourceQuery, ResultCardinality.Enumerable,
             nativeFactory: null, streaming: false,
             (translator, expression) =>
-                translator.Translate(MongoNonQueryExpression.UnwrapBulkOperator(expression)!, ResultCardinality.Enumerable));
+                // guardUnstrippableForceUnwindJoin: false — EF-368 final fix wave, Finding 3. That guard exists
+                // because the READ path's whole-entity shaper is pre-built assuming the flat _lookup_<Nav>
+                // shape; the bulk path builds no shaper at all (it asks the driver for raw BsonDocuments and
+                // keeps only _id), so the guard's premise does not hold and it would be a pure false-positive
+                // throw surface for ExecuteUpdate/ExecuteDelete.
+                translator.Translate(
+                    MongoNonQueryExpression.UnwrapBulkOperator(expression)!, ResultCardinality.Enumerable,
+                    guardUnstrippableForceUnwindJoin: false));
 
         return executableQuery.Provider.CreateQuery<BsonDocument>(executableQuery.Query);
     }

@@ -120,6 +120,27 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // For explicit Join queries with pending lookups, strip the join and use $lookup instead.
         // Otherwise rewrite any Include-generated LeftJoin into Queryable.Join + LeftJoinResult so the
         // driver's pipeline translator (which has no LeftJoin translator) accepts it.
+        // NOTE: unlike Translate below, this method does NOT call GuardAgainstUnstrippableForceUnwindJoin
+        // when the strip fails. EF-368 fix round 1 (I2/regression finding), corrected in fix round 2
+        // (review finding D): this guard covers the WHOLE-ENTITY path (Translate, below); the
+        // MIXED-projection path reached from here is KNOWINGLY UNGATED, not immune by construction. A
+        // pure/PLAIN projected query's member accesses ARE translated by the driver's own LINQ v3 provider
+        // directly against whatever document shape the actually-executed pipeline produces, so it genuinely
+        // has no pre-built shape commitment to mismatch — but MongoMixedProjectionBindingRemovingExpression-
+        // Visitor.cs and MongoProjectionBindingExpressionVisitor.cs's own RootReferenceExpression case ALSO
+        // read MongoQueryExpression.UsesDriverJoinFields, for a MIXED projection (one containing an entity
+        // reference LINQ v3 cannot translate) reached through TranslateProjected, and that shaper IS
+        // pre-built the same way the whole-entity one is. Guarding this call site was not attempted for that
+        // case because doing so reintroduces the very regression this fix round found: measured,
+        // NorthwindGroupByQueryMongoTest.GroupBy_with_group_key_access_thru_nested_navigation (a multi-join
+        // GroupBy with a ForceUnwind lookup registered by TranslateJoinCore's PRE-EXISTING retroactive-
+        // flattening — EF-369, unrelated to EF-368) relies on strip failing here (a nested-aggregate GroupBy
+        // shape ReattachComposedOperator cannot rebuild) and the driver rendering the surviving joins
+        // natively — correctly, with the EXPECTED baseline MQL — despite a pending ForceUnwind lookup;
+        // guarding this site the same way Translate is guarded turned that correct, pre-existing fallback
+        // into a spurious InvalidOperationException. So a mixed-projection shape sharing this exact
+        // vulnerability, should one ever surface, is not yet covered by any guard here — a known gap, not a
+        // verified-safe one.
         Expression expressionToTranslate;
         if (_pendingLookups.Count > 0)
         {
@@ -143,9 +164,23 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return AppendLookupStages(query);
     }
 
+    /// <param name="efQueryExpression">The captured EF method chain to rewrite as driver-LINQ.</param>
+    /// <param name="resultCardinality">The query's result cardinality.</param>
+    /// <param name="guardUnstrippableForceUnwindJoin">
+    /// Whether a failed <see cref="StripJoinForLookup"/> with a <c>ForceUnwind</c> lookup pending should fail
+    /// translation (see <see cref="GuardAgainstUnstrippableForceUnwindJoin"/>). <see langword="true"/> for the
+    /// READ path, whose whole-entity shaper is pre-built assuming the flat <c>_lookup_&lt;Nav&gt;</c> shape and
+    /// so genuinely can mismatch. <see langword="false"/> for the BULK path
+    /// (<c>MongoShapedQueryCompilingExpressionVisitor.BuildIdDocumentQuery</c>, which reuses this same
+    /// translate call to fetch raw <c>BsonDocument</c>s for <c>ExecuteUpdate</c>/<c>ExecuteDelete</c>):
+    /// EF-368 final fix wave, Finding 3 — there is NO shaper on that path, so the guard's own premise does not
+    /// hold and it is a pure false-positive throw surface. No reachable shape was found, so this is scoping,
+    /// not a bug fix, but the guard is this branch's addition and it should not be on that path.
+    /// </param>
     public MethodCallExpression Translate(
         Expression? efQueryExpression,
-        ResultCardinality resultCardinality)
+        ResultCardinality resultCardinality,
+        bool guardUnstrippableForceUnwindJoin = true)
     {
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
 
@@ -162,6 +197,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         if (_pendingLookups.Any(l => l.ForceUnwind))
         {
             var stripped = StripJoinForLookup(efQueryExpression);
+            if (guardUnstrippableForceUnwindJoin)
+            {
+                GuardAgainstUnstrippableForceUnwindJoin(stripped, efQueryExpression);
+            }
             expressionToTranslate = stripped ?? efQueryExpression;
             // See TranslateProjected: only emit the forceUnwind lookups when they actually replaced a
             // stripped Join chain. If the strip did not fire the Join survives and the driver renders it.
@@ -638,6 +677,50 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// </summary>
     private static readonly HashSet<string> SetOperationMethodNames =
         new(StringComparer.Ordinal) { "Union", "Concat", "Except", "Intersect" };
+
+    /// <summary>
+    /// EF-368 Task 5 fix round 1 (C1). Defence-in-depth ONLY — called from <see cref="Translate"/> (the
+    /// WHOLE-ENTITY shaper path) and only when its <c>guardUnstrippableForceUnwindJoin</c> argument is set,
+    /// which the BULK path deliberately clears (EF-368 final fix wave, Finding 3: there is no shaper on that
+    /// path, so this guard's premise does not hold there). Never called from
+    /// <see cref="TranslateProjected"/> (see the note at that call site for why the same guard there turned a
+    /// correct, pre-existing fallback into a regression).
+    /// <para>
+    /// Background: when a <c>ForceUnwind</c> lookup is pending, the whole-entity shaper is built (at
+    /// translation time, via <see cref="Expressions.MongoQueryExpression.UsesDriverJoinFields"/>) assuming
+    /// the FLAT <c>_lookup_&lt;Nav&gt;</c> document shape — unconditionally, regardless of whether
+    /// <see cref="StripJoinForLookup"/> later actually manages to strip the join out of THIS execution's
+    /// captured chain. <see cref="StripJoinForLookup"/>'s own summary says a failed strip is safe to fall
+    /// through on ("the join survives... the driver renders it natively... if the driver cannot render it
+    /// either, translation fails there") — true whenever the surviving join's composed operators still
+    /// operate on the join's own <c>TransparentIdentifier</c> (the shape
+    /// <see cref="TransparentIdentifierToLookupFieldRewriter"/> knows how to rewrite), but NOT when a
+    /// composed operator's lambda is written directly against the ALREADY-FLATTENED root type — the actual
+    /// root cause found here, and fixed directly in <see cref="ReattachComposedOperator"/> (see its own
+    /// comment): that method's "does a generic argument still mention the eliminated TransparentIdentifier
+    /// type" guard was comparing against <c>oldSourceItemType</c> unconditionally, misfiring the moment an
+    /// operator positioned ABOVE the Include's own flattening Select (e.g. the 2-arg
+    /// <c>Queryable.First(source, predicate)</c> EF folds
+    /// <c>Include(o =&gt; o.Carrier).First(o =&gt; o.Carrier == null)</c> into) had an
+    /// <c>oldSourceItemType</c> that was already the flattened root type, not the TransparentIdentifier.
+    /// </para>
+    /// <para>
+    /// With that fix in place this guard is no longer known to fire for any shape reachable via ordinary
+    /// LINQ — it exists purely so that if ANOTHER, not-yet-found gap in
+    /// <see cref="ReattachComposedOperator"/>/<see cref="TransparentIdentifierToLookupFieldRewriter"/> lets a
+    /// strip fail while a <c>ForceUnwind</c> lookup is pending for a WHOLE-ENTITY query, the shaper mismatch
+    /// fails cleanly (an <see cref="InvalidOperationException"/>, in EVERY <see cref="Infrastructure.MongoQueryMode"/>)
+    /// rather than reaching the shaper and throwing an unrelated-looking BSON-materialization exception.
+    /// </para>
+    /// </summary>
+    private void GuardAgainstUnstrippableForceUnwindJoin(Expression? stripped, Expression efQueryExpression)
+    {
+        if (stripped == null && _pendingLookups.Any(l => l.ForceUnwind))
+        {
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(efQueryExpression.Print()));
+        }
+    }
 
     /// <summary>
     /// A projected collection-navigation count is materialized by a single <c>$lookup</c> injected right

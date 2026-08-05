@@ -169,6 +169,20 @@ internal static class NativeSlotPopulator
             if (!NativeCardinalityBinder.TryBindReducer(mongoQ, reducerKind, call.Method.ReturnType))
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
+        else if (methodDefinition == QueryableMethods.Join
+                 || methodDefinition == QueryableMethods.GroupJoin
+#if !EF8 && !EF9
+                 || methodDefinition == QueryableMethods.LeftJoin
+#endif
+                )
+        {
+            // EF-368: might be EF's nav-expansion of a single-level reference Include. Record a candidate
+            // rather than marking non-native; TranslateSelect confirms it when the trailing
+            // IncludeExpression matches the recognizer. Unconfirmed candidates route to Fallback, so this
+            // is default-deny and a user join is unaffected. See MongoSelectDefinition §Reference-Include
+            // candidate join.
+            mongoQ.Select.MarkSawCandidateReferenceIncludeJoin();
+        }
         else if (!IsNativeRepresentableSlotOperator(methodDefinition))
         {
             // Any other top-level operator (Distinct, Cast, DefaultIfEmpty, scalar aggregates, cardinality

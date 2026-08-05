@@ -787,7 +787,24 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             }
         }
 
-        if (genericArgs.Contains(oldSourceItemType) || genericArgs.Any(a => ContainsType(a, oldSourceItemType)))
+        // Only a genuine residual TransparentIdentifier reference is a problem. EF-368 fix round 1 (C1)
+        // finding: a composed operator positioned ABOVE the synthesized flattening Select (e.g. the 2-arg
+        // Queryable.First(source, predicate) EF folds Include(o => o.Carrier).First(o => o.Carrier == null)
+        // into — see IsSynthesizedIdentifierSelect) has an oldSourceItemType that is ALREADY the flattened
+        // root entity type, not the join's TransparentIdentifier, because ITS OWN immediate source (in the
+        // ORIGINAL captured chain) is that synthesized Select, not the join. In that case oldSourceItemType
+        // equals newSourceItemType (both the flattened root type, e.g. Order) even though NONE of this
+        // operator's generic arguments ever mentioned the TransparentIdentifier at all — so the OLD version
+        // of this check, "does a generic arg still equal oldSourceItemType", fired a FALSE POSITIVE the
+        // moment the flattened type reappeared as a perfectly ordinary generic argument (TSource=Order for
+        // First<Order>), refusing the strip and leaving the join to be rendered by the driver's own native
+        // LeftJoin — a shape the shaper (already committed to the flat _lookup_<Nav> layout by
+        // MongoQueryExpression.UsesDriverJoinFields, decided BEFORE this rewrite ever runs) cannot read,
+        // corrupting rather than merely missing an optimization. Gating on
+        // IsTransparentIdentifier(oldSourceItemType) restores the check's actual intent — decline only when
+        // a TI-shaped generic argument genuinely could not be eliminated by the substitution above.
+        if (IsTransparentIdentifier(oldSourceItemType)
+            && (genericArgs.Contains(oldSourceItemType) || genericArgs.Any(a => ContainsType(a, oldSourceItemType))))
         {
             // A generic argument still mentions the (now non-existent) TransparentIdentifier type.
             return null;
