@@ -41,6 +41,11 @@ comes from an existing document rather than my own check, the document is named.
 
 ### 0.3 The FIRST task: a Task-0 spike (do this before designing anything)
 
+> **Read §8 first — as of 2026-08-06 the owner has ruled on all six open questions, and three of those rulings
+> narrow the spike below.** In particular: the bare-scalar `Select` bucket is **out** of this slice, `__score`
+> is **in**, and both diagnostics **must keep working**. Where the text below still presents one of those as
+> undecided, §8 wins.
+
 The status doc (§9.8 step 2) already prescribes a Task-0 spike, on the grounds that `$vectorSearch` must be
 the first pipeline stage and that cuts against the lowerer's stage ordering. My research says the stage-order
 problem is **real but the smaller of the two problems**, and the spike should be scoped wider than the doc
@@ -570,29 +575,31 @@ there is precedent to follow rather than invent.
 
 ---
 
-## 8. Open questions for the owner
+## 8. Open questions for the owner — ANSWERED 2026-08-06
 
-Surfacing rather than deciding, per §6:
+*All six are now ruled on by the owner. These are decisions, not suggestions: treat them the way §7's settled
+items are treated, and do not re-open them without the owner saying so.*
 
-1. **Slice scope: bare call only, or composed shapes too?** The docs only commit to "emit `$vectorSearch` as a
-   stage", but §3's measurement shows 106 of the 112 tests are composed shapes and a bare-call-only slice would
-   flip almost none of them. Should the slice be sized to move the 82-test `Where` bucket (the natural unit),
-   or narrower?
-2. **Is `__score` in scope?** It is a synthetic field with no `IProperty`, read via `Mql.Field` (a *driver*
-   API) and via `EF.Property<double>(e, "__score")`. A native equivalent is plausible
-   (`MongoElementRefExpression` exists for exactly "raw path, no `IProperty`") but is a design decision, and
-   `Mql.Field` in particular is awkward on a path that does not use the driver's LINQ provider.
-3. **Are the bare-scalar `Select` shapes in scope**, or deferred to step 3 (the projection long tail)? They
-   are a chunk of the 24-test "projects a non-entity result" bucket and are *not* vector-specific.
-4. **Must the two diagnostics (`VectorSearchReturnedZeroResults`, `VectorSearchNeedsIndex`) keep working on
-   the native path in this slice?** They are currently plumbed through the bridge's `AdditionalState` (§2.4)
-   and four spec cases depend on the first. A native path that declines to reproduce them is possible but
-   changes observable behaviour under the default mode.
-5. **Should the status doc's gate table (§9.8 row 5) be corrected in this slice?** It names only
-   `ContainsVectorSearch`; §1.2 shows there are two independent gates. This is a small docs fix but it is the
-   kind of thing this repo prefers corrected in place rather than annotated.
-6. **Does the "stop after every task" gate stay ON for the whole slice?** Recorded as ON in §7; confirming is
-   cheap and the EF-379 precedent shows it does get revoked mid-slice sometimes.
+1. **Slice scope: bare call only, or composed shapes too?** → **Bare call + the `Where` bucket.** The slice
+   emits `$vectorSearch` (with `preFilter` folded into the stage body) and the `$addFields { __score }`
+   companion natively, handles **both** `numCandidates` and `exact` (per §6, `Exact` alone is 56 of the 112),
+   and supports `.Where(...)` composed after the search — the 82-test bucket. The 24-test bare-scalar `Select`
+   bucket is **not** in this slice (see 3).
+2. **Is `__score` in scope?** → **Yes, in scope.** Emit the `$addFields` companion and give `__score` a native
+   read; `MongoElementRefExpression` (raw path, no `IProperty`) is the lead to try first. `Mql.Field` is a
+   *driver* API and will need either a native meaning or a targeted decline — the spike should say which.
+3. **Are the bare-scalar `Select` shapes in scope?** → **No — deferred to step 3** (the projection long tail).
+   They are the SP3-wide bare-projection boundary, not a vector-search problem. Expect the 24-test bucket to
+   survive this slice.
+4. **Must the two diagnostics keep working on the native path?** → **Yes, both must keep working.** Index
+   resolution and the zero-results plumbing move to `Build(parameterValues)` time so that behaviour under the
+   default mode is unchanged and the four `VectorSearch_logs_for_zero_results` cases pass natively. Budget this
+   as real work, not bookkeeping.
+5. **Should the status doc's gate table (§9.8 row 5) be corrected?** → **Already done**, ahead of the slice, in
+   commit `d54b86f7`. `docs/native-query-status-EF-322.md` now names both gates in two places. No action left.
+6. **Does the "stop after every task" gate stay ON?** → **ON for the whole slice.** Spike → owner review →
+   design → owner review → implementation, stopping after every task. Do not assume the EF-379 mid-slice
+   revocation carries over.
 
 ---
 
