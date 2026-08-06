@@ -615,6 +615,13 @@ items are treated, and do not re-open them without the owner saying so.*
    **Spike answer: `MongoElementRefExpression("__score", typeof(double))` renders to `"$__score"` (measured,
    executed) and is the right vehicle; `Mql.Field` gets a targeted decline** — it is a general driver
    element-addressing API, and admitting it is a step-3 decision.
+
+   **Clarified 2026-08-06, after the design task read "targeted decline" as possibly excluding all
+   `Mql.Field`.** It does not. This ruling was made on a question that described `__score` as *"read both via
+   the driver's `Mql.Field` and via `EF.Property<double>`"*, so **both spellings are in scope**; 4 of the 8
+   score-projection cases use `Mql.Field(e, "__score", DoubleSerializer.Instance)` and they are IN. "Targeted
+   decline" means declining `Mql.Field` as a **general** element-addressing API — recognising exactly the
+   literal `"__score"` element is inside this ruling, not an exception to it. Target stays **96/112**, not 92.
 3. **Are the bare-scalar `Select` shapes in scope?** → **No — deferred to step 3** (the projection long tail).
    They are the SP3-wide bare-projection boundary, not a vector-search problem.
 
