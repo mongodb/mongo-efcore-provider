@@ -74,7 +74,19 @@ sentinels per execution (the "B2" design; see `Query/AGENTS.md`). So the spike m
     produce the stage `BsonDocument`, rather than growing a hand-written renderer? **INFERRED that this is
     possible; not tested.**
 
-**Q3 — What "make it native" has to cover to be worth anything.** 106 of the 112 failures are *composed*
+**Q3 — What "make it native" has to cover to be worth anything.**
+
+> **CORRECTED 2026-08-06 by the Task-0 spike, and this was my worst error in this document.** I wrote that
+> "106 of the 112 failures are *composed* shapes, not the bare `VectorSearch(...)` call". **That is false.**
+> Attributed case by case, the 82-test bucket is **70 bare `VectorSearch(...)` calls, 8 `preFilter`, and 4
+> `.Where`** — exactly one test method composes a `Where`. (Independently re-verified: `pre_filter` is 4
+> methods of which 2 are `Skip`ped → 2 × 2 classes × 2 async = 8; the only `.Where` not followed by a `Select`
+> is one method → 4; 82 − 12 = 70.) There is no "82-test `Where` bucket"; **the majority of the prize is the
+> bare call.** Worse, `.Where` is never the blocker for *any* of the 112 — the 24 projection-bucket tests all
+> compose the same `.Where`, a shape the native translator already handles. See
+> `2026-08-06-vectorsearch-spike-findings.md` §Q3. Everything below this box is the original, pre-spike text.
+
+106 of the 112 failures are *composed*
 shapes, not the bare `VectorSearch(...)` call (§3). Establish, per shape, what the native path is missing:
   - `.Where(pred)` after `VectorSearch` — the 82-test bucket. Probably the cheapest win.
   - `.Select(e => e.Author)` — a **bare-scalar** projection, which is the SP3-wide bare-projection boundary,
@@ -469,7 +481,10 @@ Verified against `tests/MongoDB.EntityFrameworkCore.FunctionalTests/Utilities/Te
 §9.8 gate table row 5 says the same. **Neither §9.8, §9.1, §4 nor §5 says anything about pre-filtering, score
 projection, `exact`/`numCandidates`, quantization or binary vectors as slice scope.** The 106-test figure is
 the only sizing signal, and — per §3 — those 106 are dominated by *composed* shapes, so a slice that only
-handles the bare call would move very few of them.
+handles the bare call would move very few of them. **[FALSE — corrected in the §0.3 box: 70 of the 82 are the
+bare call, and a bare-call slice moves most of the prize. The conclusion this sentence was used to support
+(take more than the bare call) still happens to be right, but for the `preFilter`/`exact` reasons below, not
+this one.]**
 
 **IN scope, on the plain reading of the docs plus the measurement:**
 
@@ -478,7 +493,9 @@ handles the bare call would move very few of them.
 - Emit the `$addFields { __score }` companion stage — it is unconditional on the existing path, and dropping
   it would change results for every `__score` test.
 - The two gates in §1, both of them.
-- `.Where(...)` composed after the search — that is where the 82-test bucket lives.
+- ~~`.Where(...)` composed after the search — that is where the 82-test bucket lives.~~ **Wrong on both counts**
+  (see the §0.3 box): the 82 are overwhelmingly bare calls, and `.Where` after a `VectorSearch` is already
+  handled by the native translator, so it needs no work of its own in this slice.
 - **`exact` / `numCandidates` are not optional extras.** `VectorSearchExactMongoTest` is *half the test class
   count* (56 of 112) and differs from `VectorSearchMongoTest` only in emitting `"exact": true` instead of
   `"numCandidates"`. Any slice that ignores `Exact` leaves 56 tests behind.
@@ -580,11 +597,18 @@ there is precedent to follow rather than invent.
 *All six are now ruled on by the owner. These are decisions, not suggestions: treat them the way §7's settled
 items are treated, and do not re-open them without the owner saying so.*
 
-1. **Slice scope: bare call only, or composed shapes too?** → **Bare call + the `Where` bucket.** The slice
-   emits `$vectorSearch` (with `preFilter` folded into the stage body) and the `$addFields { __score }`
-   companion natively, handles **both** `numCandidates` and `exact` (per §6, `Exact` alone is 56 of the 112),
-   and supports `.Where(...)` composed after the search — the 82-test bucket. The 24-test bare-scalar `Select`
-   bucket is **not** in this slice (see 3).
+1. **Slice scope: bare call only, or composed shapes too?** → **Bare call + the `Where` bucket** *(as the
+   option was worded to the owner)*. The slice emits `$vectorSearch` (with `preFilter` folded into the stage
+   body) and the `$addFields { __score }` companion natively, handles **both** `numCandidates` and `exact` (per
+   §6, `Exact` alone is 56 of the 112). The 24-test bare-scalar `Select` bucket is **not** in this slice
+   (see 3).
+
+   **The rationale offered with this option was wrong; the ruling survives it.** The option was sold as
+   "targets the 82-test `Where` bucket". Per the §0.3 correction box there is no such bucket — the 82 are 70
+   bare calls, 8 `preFilter`, 4 `.Where` — and `.Where` needs no work at all. What the ruling actually buys is
+   the bare call plus `preFilter` plus `exact`/`numCandidates`, which the spike sizes at **88 of 112** (96 if
+   the 8 `{ member, score }` cases are added — see the question in 2/3 below). So the chosen scope is *better*
+   value than it was pitched as, and the boundary it draws is unchanged.
 2. **Is `__score` in scope?** → **Yes, in scope.** Emit the `$addFields` companion and give `__score` a native
    read; `MongoElementRefExpression` (raw path, no `IProperty`) is the lead to try first. `Mql.Field` is a
    *driver* API and will need either a native meaning or a targeted decline — the spike should say which.
