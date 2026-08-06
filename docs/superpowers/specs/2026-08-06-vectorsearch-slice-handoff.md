@@ -612,9 +612,22 @@ items are treated, and do not re-open them without the owner saying so.*
 2. **Is `__score` in scope?** → **Yes, in scope.** Emit the `$addFields` companion and give `__score` a native
    read; `MongoElementRefExpression` (raw path, no `IProperty`) is the lead to try first. `Mql.Field` is a
    *driver* API and will need either a native meaning or a targeted decline — the spike should say which.
+   **Spike answer: `MongoElementRefExpression("__score", typeof(double))` renders to `"$__score"` (measured,
+   executed) and is the right vehicle; `Mql.Field` gets a targeted decline** — it is a general driver
+   element-addressing API, and admitting it is a step-3 decision.
 3. **Are the bare-scalar `Select` shapes in scope?** → **No — deferred to step 3** (the projection long tail).
-   They are the SP3-wide bare-projection boundary, not a vector-search problem. Expect the 24-test bucket to
-   survive this slice.
+   They are the SP3-wide bare-projection boundary, not a vector-search problem.
+
+   **AMENDED 2026-08-06, after the spike found rulings 2 and 3 in direct collision.** Every test that reads
+   `__score` sits in the 24-test bucket, so as originally ruled the slice would have built a `__score` read
+   that **no test exercises**. The owner's resolution: **bring the 8 score-projection cases in** —
+   `VectorSearch_with_projection_of_score` and `…_using_EF_Property` (4 each). They are not the SP3
+   bare-projection boundary ruling 3 is aimed at; they are ordinary anonymous member-access projections with a
+   single synthetic leaf. **The remaining 16 of that bucket — 4 bare scalar, 12 mixed / entity-constructing —
+   stay out and are step 3.** Slice target is therefore **96 of 112**. Carry this known risk into the design:
+   the DOM shaper **read-back** for an alias with no backing `IProperty` is **UNVERIFIED** (the spike measured
+   only the emit half); the GroupBy flatten does the analogous thing, so it is plausible, but it is the piece
+   most likely to surprise.
 4. **Must the two diagnostics keep working on the native path?** → **Yes, both must keep working.** Index
    resolution and the zero-results plumbing move to `Build(parameterValues)` time so that behaviour under the
    default mode is unchanged and the four `VectorSearch_logs_for_zero_results` cases pass natively. Budget this
