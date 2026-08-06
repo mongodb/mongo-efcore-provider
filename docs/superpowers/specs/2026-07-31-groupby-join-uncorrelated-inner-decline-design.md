@@ -490,19 +490,18 @@ Then, in one commit:
    3 exception-type assertions (including `Reverse_in_join_inner_with_skip`).
 7. Revert *only* the paged-inner sentences of the `Query/AGENTS.md` note (keep the group-first `GroupBy`+`Join`
    paragraph and the `PropagateFallbackWrongDataFrom` sentence).
-8. **Decide `BREAKING-CHANGES.md` by release order, and it is decidable at removal time by looking at
-   `gh release list`: if 8.5.0 / 9.2.0 / 10.1.0 (whichever line is in flight) has ALREADY SHIPPED with the
-   guard, the entry is permanent history and must STAY — a released version did behave that way, and readers
-   whose code started throwing need to find out why; if the driver fix lands FIRST, so the guard never appears in
-   any released package, DELETE the entry, because it would document a change that never shipped.** (Per the
-   `AGENTS.md` rubric: something added and removed within one unreleased development cycle is not a break.) The
-   two tautology re-baselines in §2.5 are unaffected either way.
+8. ~~**Decide `BREAKING-CHANGES.md` by release order…**~~ **MOOT as of 2026-08-06 — there is no entry left to
+   decide about. The entry §2.7 called for was added, and has since been REMOVED, because §2.7's case 2 was
+   measured FALSE (see the correction there). Nothing to do at driver-fix time.** The step used to read: decide
+   by release order at removal time via `gh release list` — keep the entry if the guard had already shipped,
+   delete it if the driver fix landed first. That framing assumed the entry was correct to begin with; it was
+   not. The two tautology re-baselines in §2.5 are unaffected, as they always were.
 
 Every one of those sites carries a `TODO(CSHARP-6017)` marker, so
-`grep -rn "CSHARP-6017" src tests docs BREAKING-CHANGES.md` is the removal checklist. **`BREAKING-CHANGES.md`
-must be in the grep root** — it is outside `src tests docs`, and step 8 above is the reason it matters. (The plan
-document's own final-verification step already greps with `BREAKING-CHANGES.md` appended; this spec is the
-authoritative version and now matches it.)
+`grep -rn "CSHARP-6017" src tests docs BREAKING-CHANGES.md` is the removal checklist. **Keep
+`BREAKING-CHANGES.md` in the grep root even though it no longer matches** — it is outside `src tests docs`, and
+a zero-hit grep there is now the *expected* result rather than a sign the grep root is wrong. (Before
+2026-08-06 that file carried the entry and the grep was how you found it.)
 
 **Do NOT touch `Join_GroupBy_Aggregate_in_subquery`.** Unlike the other two `…GroupBy_Aggregate` spec cases
 above, its inner has no paging at all — it declines because a wrong-data verdict on its inner subquery is
@@ -530,13 +529,37 @@ configuration of the released package**.
    `ExpressionNotSupportedException` during driver translation. After the fix they throw
    `NativeTranslationNotSupportedException`. Before = throw, after = throw; only the exception **type** on an
    **unsupported** operation differs, which the `AGENTS.md` rubric carves out explicitly as *not* a break.
-2. **Against the released package with the driver independently upgraded to 3.10.0: a real behaviour change.**
-   Before = the query executes and returns **silently wrong rows** (measured: PA returns 0 where 453 is
+2. ~~**Against the released package with the driver independently upgraded to 3.10.0: a real behaviour change.**~~
+   **REFUTED 2026-08-06 — this case is FALSE, and it is the reason the entry has now been deleted.** It read:
+   "Before = the query executes and returns **silently wrong rows** (measured: PA returns 0 where 453 is
    correct; PD returns 830 where 181 is correct — and PA has no `GroupBy`, so this is reachable from the
-   *released* provider, not only from this branch). After = a clean throw. That is observable to a real user in
-   a configuration the shipped package permits, and the next release will pin driver 3.10 for everyone.
+   *released* provider, not only from this branch). After = a clean throw."
 
-**Decision: yes, add an entry** to the current unreleased section of `BREAKING-CHANGES.md`
+   **The PA/PD numbers are real but were measured on `NativeQueryOngoing`, where joins translate. They were
+   then asserted of the *released* provider, and that inference does not hold.** At `v10.0.2`, `v9.1.2` and
+   `v8.4.2` alike (`git show <tag>:src/…/MongoQueryableMethodTranslatingExpressionVisitor.cs`):
+   `TranslateJoin`, `TranslateGroupJoin` and `TranslateLeftJoin` are each literally `=> null`, and
+   `TranslateSelect` **throws** `InvalidOperationException` — "Join operations (Join, LeftJoin, GroupJoin) are
+   not supported by the MongoDB EF Core Provider" — the moment a selector parameter is a
+   `TransparentIdentifier`. So a user-authored `Join` **cannot execute on any published package at any driver
+   version**, 3.9 or 3.10; the driver's fold is never reached because the provider rejects the query first.
+   Independently confirmed at runtime against the published `MongoDB.EntityFrameworkCore 10.0.2` package during
+   the EF-379 review: the EF-366 shape throws "could not be translated" there. Case 1 (not a break at 3.9)
+   stands and was always right; with case 2 gone, **both** configurations are throw-before / throw-after.
+
+~~**Decision: yes, add an entry**~~ **SUPERSEDED 2026-08-06 — the entry was added, and has now been REMOVED
+from `BREAKING-CHANGES.md`.** With case 2 refuted, the guard changes nothing observable to anyone upgrading
+from `v8.4.2` / `v9.1.2` / `v10.0.2`, so by this repo's own rubric (breaks are measured against the latest
+*released* assembly) it is not a break — and an entry describing an unreachable change actively mis-warns:
+it told upgraders their working queries "will now throw where they previously succeeded" and offered
+`UseQueryMode(MongoQueryMode.DriverLinq)` as the mitigation, a mode that does not exist in any released
+package either. The removed text is preserved in git history (removed in the commit that added this note) and
+the guard itself remains fully documented in `Query/AGENTS.md` and in §2.6 above. **The lesson, which is the
+durable part: a measurement taken on the development branch does not establish reachability on the released
+package — check the release TAGS, not `upstream/main` and not the branch.** The original decision text
+follows, for the record.
+
+**Original decision (superseded): yes, add an entry** to the current unreleased section of `BREAKING-CHANGES.md`
 ("Breaking changes in 8.5.0 / 9.2.0 / 10.1.0"), scoped and honest: title it as a behaviour change — a join whose
 inner sequence is paged now throws instead of returning wrong results — state that on driver 3.9 it already
 threw, that on driver 3.10 (which the next release pins, and which the released package permits) it silently

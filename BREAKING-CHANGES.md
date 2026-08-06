@@ -61,41 +61,6 @@ collection.UpdateOne(
 
 Otherwise, treat the normalization as a one-time migration of the documents you save, and take whatever record of the distinction you need — a backup, or an audit query using the `Find` above — before saving.
 
-### A join whose inner sequence applies `Skip`/`Take` to itself now throws instead of returning wrong results
-
-#### Old behavior
-
-`Skip`/`Take` applied to the **inner** sequence of a `Join`, `GroupJoin` or (EF Core 10) `LeftJoin` — for example `orders.Join(customers.OrderBy(c => c.City).Skip(10).Take(50), o => o.CustomerId, c => c.Id, (o, c) => new { … })` — behaved differently depending on which version of the MongoDB C# driver was resolved. With driver 3.9 (the version the previous release pinned) the query threw a driver `ExpressionNotSupportedException`. With driver 3.10 — which the previous release's `MongoDB.Driver (>= 3.9.0)` dependency permits, and which this release pins — the query **ran and returned silently wrong rows**: the driver's LINQ provider folds the uncorrelated inner's `$sort`/`$skip`/`$limit` into the correlated `$lookup` sub-pipeline, where they apply per outer document over the key-matched subset (at most one document for a unique inner key) instead of once over the whole inner sequence. Measured against the Northwind data set, one such query returned 0 rows where 453 is correct, and another returned 830 rows where 181 is correct.
-
-#### New behavior
-
-The provider recognizes the shape at translation time and throws, rather than executing a query it knows the driver mistranslates. Explicit `UseQueryMode(MongoQueryMode.DriverLinq)` still executes it, unchanged — that mode is the documented opt-in to driver-LINQ execution and carries this caveat.
-
-Paging elsewhere is unaffected and still works: `Skip`/`Take` on the **outer** sequence, `Skip`/`Take` applied **after** the join, and a filtered `Include` such as `Include(c => c.Orders.OrderBy(o => o.Date).Take(5))` are all correct and are not declined.
-
-**The decline cannot tell a genuinely-affected query apart from a merely-suspicious one.** The check is shape-based — "does the inner sequence apply `Skip`/`Take` to itself?" — not cardinality-aware, so it cannot tell whether the fold the driver performs would actually change the result. `Join(inner.Take(n))` where `n` is greater than or equal to the inner sequence's own row count is a case where the driver's fold is a genuine no-op: on driver 3.10 that query returns **correct** results today. It is an example, not the whole class — any paging that cannot remove a row is in the same position, including `Skip(0)` and `Take(int.MaxValue)`, and all of it is declined alike. (On driver 3.9 it already threw — measured: a bare `Take`, with no `OrderBy`/`Skip`, on a join's inner still throws driver `ExpressionNotSupportedException` there, the same as every other paged-inner shape — so a user pinned to 3.9 sees no change beyond the exception type.) On driver 3.10, though, that query will now throw where it previously succeeded. If you have a query of this shape running against driver 3.10 today, it will start throwing after this upgrade even though nothing about its results was ever wrong — that is the most likely way an existing, correctly-behaving query is affected by this change.
-
-#### Why
-
-The underlying defect is in the MongoDB C# driver (CSHARP-6017), not in the provider. Until it is fixed, the only two options for this shape are a clean failure or silently wrong data. A clean failure is the safe one. The guard is temporary and will be removed when the driver stops folding.
-
-#### Mitigations
-
-Materialize the paged inner sequence first. A `Join` between a `DbSet` and a local, already-materialized sequence is not itself translatable, so pull the matching outer rows down with a `Contains` filter on the paged inner's keys, then join the two materialized sequences in memory:
-
-```c#
-var page = db.Customers.OrderBy(c => c.City).Skip(10).Take(50).ToList();
-var keys = page.Select(c => c.Id).ToList();
-var orders = db.Orders.Where(o => keys.Contains(o.CustomerId)).ToList();
-var result = orders.Join(page, o => o.CustomerId, c => c.Id, (o, c) => new { o, c }).ToList();
-```
-
-Or, if you need the previous behavior including its incorrect results, opt in explicitly:
-
-```c#
-options.UseMongoDB(connectionString, databaseName, b => b.UseQueryMode(MongoQueryMode.DriverLinq));
-```
-
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 
 #### Old behavior
