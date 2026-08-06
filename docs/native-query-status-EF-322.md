@@ -433,7 +433,7 @@ independent gates were collapsed into one fact read twice (`hasUnboundVectorSear
 state — both gates open, no stage emitted, right row count in insertion order — is unreachable by construction.
 **Still not native:** the 16 remaining projection-bucket cases (4 bare-scalar, 12 mixed/entity-constructing —
 the SP3-wide bare-projection boundary and the entity-leaf gap, not anything vector-specific) and the 4
-`VectorSearch_with_complex_pre_filter` cases (blocked on `MongoExpressionTranslator` not supporting
+`VectorSearch_with_complex_pre_filter` cases (**tracked as EF-382**; blocked on `MongoExpressionTranslator` not supporting
 `arrayField.Contains(constant)` — a cross-cutting predicate-breadth gap deliberately not fixed in that slice).
 Both decline gracefully: correct, score-ordered rows under default `Native`, throwing only under `NativeOnly`.
 See the "Atlas Vector Search" note in `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for the mechanism, the
@@ -867,7 +867,7 @@ Ordered by size. Each is a genuine "remove the fallback and the user gets an exc
 > **DELIVERED 2026-08-06 — read the rest of this sub-section as the SIZING that justified the slice, not as
 > outstanding work.** 92 of the 112 now pass under `MONGODB_EF_NATIVE_ONLY=1`. The 20 residual are **16** from
 > the 24-case projection bucket (row 1 above — step 3's bare-projection/entity-leaf boundary, not anything
-> vector-specific) and **4** `VectorSearch_with_complex_pre_filter` (a `MongoExpressionTranslator`
+> vector-specific) and **4** `VectorSearch_with_complex_pre_filter` (**EF-382**; a `MongoExpressionTranslator`
 > predicate-breadth gap on `arrayField.Contains(constant)`, cross-cutting rather than vector-specific). All 6
 > of the exception-shape bucket now pass. So `VectorSearch` no longer contributes to row 2 at all, and
 > contributes 16 to row 1.
