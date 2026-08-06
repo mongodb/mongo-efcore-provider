@@ -294,10 +294,16 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         if (queryMode != MongoQueryMode.DriverLinq
             && mongoQueryExpression.Select.Route == NativeRoute.Projection)
         {
+            // stripBareProjectionOnFallback (EF-322 step 3a, Task 1b): the tier is read HERE, on the one branch
+            // that builds the alias-addressed DOM shaper for a projection, and acted on inside
+            // CompileShapedQuery the moment TryBuildNativeFactory declines. Reading it here rather than there is
+            // what keeps the strip structurally disjoint from the mixed path's own StripPushedDownSelect call
+            // below — the two can never both fire on one query, so the captured chain is never stripped twice.
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
                 (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
                     rootEntityType, mongoQueryExpression, bsonDoc, behavior),
-                allowStreaming: false);
+                allowStreaming: false,
+                stripBareProjectionOnFallback: ShouldStripBareProjectionOnFallback(mongoQueryExpression.Select));
         }
 
         // Native scalar-aggregate path (EF-SP4 Task 5): Count/LongCount/Sum/Min/Max/Average/Any/All were
@@ -405,12 +411,77 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return captured;
     }
 
+    /// <summary>
+    /// Whether a native-factory failure on the <see cref="NativeRoute.Projection"/> route must strip the
+    /// pushed-down <c>Select</c> out of the captured chain before that chain is handed to the driver-LINQ
+    /// bridge (EF-322 step 3a, Task 1b; widened by EF-362).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The shaper is built FIRST and native-vs-driver is decided SECOND (see <see cref="CompileShapedQuery"/>),
+    /// so a late <c>TryBuildNativeFactory</c> decline hands the ALREADY alias-addressed DOM shaper a pipeline
+    /// the driver rendered from the captured chain — <c>$project</c> and all. For a
+    /// <see cref="NativeRoute.Projection"/> shape whose aliases are all projection-member names that is
+    /// harmless, because the driver picks the same names. It stops being harmless the moment the emit side
+    /// registers an alias OVERRIDE, which is exactly the set of shapes that reach this predicate as
+    /// <see langword="true"/>:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// a BARE selector body — the driver names a bare projection <c>_v</c>, the emit side named it the leaf's
+    /// document path (step 3a);
+    /// </description></item>
+    /// <item><description>
+    /// an <c>OwnsOne</c>-hop array leaf — the driver names it by MEMBER (<c>Notes</c>), the emit side named it
+    /// by full document path (<c>Home.Notes</c>). <b>MEASURED, and it refutes what this method's first version
+    /// asserted:</b> a named override was documented as needing no strip because "the driver's own alias for it
+    /// is the member name, not <c>_v</c>, so there is nothing to strip". The driver's alias being the member
+    /// name is precisely the problem — it is not the name the shaper reads by. Left un-stripped, the wrapped
+    /// hop shape returned EMPTY collections, silently, under the default mode (EF-362).
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// Stripping makes the fallback yield WHOLE documents instead, which a
+    /// <see cref="ProjectionAliasTier.DocumentPath"/> alias reads correctly precisely because that alias IS the
+    /// leaf's root-relative document path — for a dotted one via
+    /// <c>BsonBinding</c>'s segment walk, which resolves identically against a projected document and an
+    /// un-projected one. The SIBLING leaves of a stripped projection are whole-document-readable too, and that
+    /// is guaranteed rather than hoped: an array leaf forces
+    /// <c>NativeProjectionBinder.IsWholeDocumentReadableLeaf</c> on every non-array sibling, and a bare body has
+    /// no siblings at all.
+    /// </para>
+    /// <para>
+    /// So the strip is TIER-CONDITIONAL, and both arms matter: strip for
+    /// <see cref="ProjectionAliasTier.DocumentPath"/> (path-addressable, therefore whole-document-readable);
+    /// do NOT strip for <see cref="ProjectionAliasTier.Synthetic"/>, whose <c>_v</c> alias has no document path
+    /// at all — leaving the driver's own push-down in place is exactly what makes that read hit, and stripping
+    /// it instead was measured to turn a working query into
+    /// <c>Document element '_v' is missing but required</c>.
+    /// </para>
+    /// <para>
+    /// The tier is read as DATA off the override the emit side registered — never by sniffing the alias string
+    /// for <c>"_v"</c>, and never by asking whether the override is the bare one. A string sniff would be a
+    /// second, independently derived copy of a fact the emit side already knows, which is the failure mode the
+    /// alias carrier exists to remove.
+    /// </para>
+    /// <para>
+    /// <see cref="NativeRoute"/> is deliberately NOT checked here: the sole call site is the
+    /// <see cref="NativeRoute.Projection"/> branch of <see cref="VisitProjectedQuery"/>, and by the time the
+    /// gate runs every route flip has already happened, so the branch itself is the routing gate. The method is
+    /// <c>internal</c> rather than <c>private</c> only so the unit tests can pin the tier-vs-alias-string
+    /// decision directly — the same reason, and the same precedent, as EF-373's <c>DependenciesPrecede</c>.
+    /// </para>
+    /// </remarks>
+    internal static bool ShouldStripBareProjectionOnFallback(MongoSelectDefinition select)
+        => select.HasDocumentPathAliasOverride;
+
     private MethodCallExpression CompileShapedQuery(
         ShapedQueryExpression shapedQueryExpression,
         MongoQueryExpression mongoQueryExpression,
         IEntityType rootEntityType,
         Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor> createBindingRemover,
-        bool allowStreaming = true)
+        bool allowStreaming = true,
+        bool stripBareProjectionOnFallback = false)
     {
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
         var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
@@ -425,6 +496,20 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // (not at run time), we compile EXACTLY ONE shaper
         // (streaming, DOM-native, or driver-DOM) and need no run-time dual-shaper dispatch.
         var nativeFactory = TryBuildNativeFactory(mode, mongoQueryExpression);
+
+        // The late-fallback bare-projection strip (EF-322 step 3a, Task 1b). The shaper above was built
+        // alias-addressed for the native $project; the driver-LINQ fallback renders the captured chain
+        // INCLUDING the pushed-down bare Select, which the driver aliases `_v`. For a path-addressable
+        // (tier-1) bare leaf the two disagree, so remove the Select and let the fallback yield whole
+        // documents — the read the tier-1 alias is correct against. See ShouldStripBareProjectionOnFallback
+        // for why this is tier-conditional and why the flag is decided at the call site.
+        // Only CapturedExpression is touched, and only the driver-LINQ execution path reads it, so the shaper
+        // built above is unaffected.
+        if (nativeFactory == null && stripBareProjectionOnFallback)
+        {
+            mongoQueryExpression.CapturedExpression =
+                StripPushedDownSelect(mongoQueryExpression.CapturedExpression);
+        }
 
         // Streaming is only chosen when the native factory was built, the entity shape is streaming-eligible,
         // and every cross-collection join is a streamable single-level reference lookup the streaming reader

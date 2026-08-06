@@ -994,14 +994,21 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         arrayShaper = null;
 
         // The alias comes from the SAME ProjectionMember the post-processor will derive the $project alias from,
-        // so this side and the emit side cannot disagree about it.
+        // so this side and the emit side cannot disagree about it — including when the emit side registered an
+        // alias OVERRIDE for that member (EF-322 step 3a), which is read here through the same single carrier
+        // MongoQueryExpression.ApplyProjection reads. A bare selector body has no last member, so without the
+        // override this derivation yields null and the alias-agreement conjunct below could never hold.
         var arrayProjectionMember = GetCurrentProjectionMember();
+        var arrayMemberName = arrayProjectionMember.Last?.Name;
+        var arrayAlias = _queryExpression.Select.TryGetProjectionAlias(arrayMemberName, out var overriddenAlias)
+            ? overriddenAlias
+            : arrayMemberName;
 
         if (_queryExpression.Select.Route != NativeRoute.Projection
             || !NativeProjectionBinder.IsNativeArrayProjectionLeaf(
                 materializeCollectionNavigationExpression.Navigation as INavigation,
                 _queryExpression.CollectionExpression.EntityType,
-                arrayProjectionMember.Last?.Name))
+                arrayAlias))
         {
             return false;
         }

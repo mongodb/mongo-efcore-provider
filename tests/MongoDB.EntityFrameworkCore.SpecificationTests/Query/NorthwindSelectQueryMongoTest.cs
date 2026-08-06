@@ -175,8 +175,8 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$Region", "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "Region" : "$Region", "_id" : 0 } }
+""");
     }
 
     public override async Task Projection_when_client_evald_subquery(bool async)
@@ -262,8 +262,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$City", "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "City" : "$City", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_anonymous_one(bool async)
@@ -362,8 +362,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Employees.{ "$limit" : 9 }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Employees.{ "$limit" : 9 }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Select_project_filter(bool async)
@@ -372,8 +372,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "_v" : "$CompanyName", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_project_filter2(bool async)
@@ -382,8 +382,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "_v" : "$City", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "City" : "$City", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_nested_collection(bool async)
@@ -897,8 +897,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$OrderDate", "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }
+""");
     }
 
     public override async Task Anonymous_projection_with_repeated_property_being_ordered(bool async)
@@ -1845,8 +1845,8 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-            Employees.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Employees.{ "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Client_method_in_projection_requiring_materialization_2(bool async)
@@ -1885,8 +1885,8 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Select_bool_closure(bool async)

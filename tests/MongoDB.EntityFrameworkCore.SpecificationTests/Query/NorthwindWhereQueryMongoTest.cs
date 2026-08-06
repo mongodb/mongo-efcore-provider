@@ -734,8 +734,8 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
         AssertMql(
             """
-            Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Where_bool_member(bool async)
@@ -1683,8 +1683,8 @@ Products.{ "$match" : { "UnitPrice" : { "$gt" : 100.0 } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "_v" : "$CompanyName", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }
+""");
     }
 
     public override async Task Enclosing_class_settable_member_generates_parameter(bool async)

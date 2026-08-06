@@ -338,19 +338,19 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
-    // The array leaf under a nested OWNER (`b.Home.Notes`) is DELIBERATELY declined by this slice — see
-    // NativeProjectionBinder.IsNativeArrayProjectionLeaf's remarks for why the shape needs a non-root
-    // access expression the shaper cannot yet build. This test is the TRIPWIRE for that narrowing: a later
-    // slice widening the shared predicate flips the NativeOnly leg here DELIBERATELY, instead of the narrowing
-    // silently evaporating (or, worse, being half-widened on one side only, which is silent wrong data).
+    // FLIPPED BY EF-362. This used to be the TRIPWIRE for the nested-owner narrowing
+    // (`Array_leaf_under_a_nested_owner_is_declined_but_still_returns_correct_data`, asserting a NativeOnly
+    // throw); the narrowing has now been widened deliberately, which is exactly the flip that test existed to
+    // force. Its parity leg is kept verbatim, and it is the oracle the widening was checked against: the
+    // values below are what the fallback returned before EF-362.
     //
-    // The parity leg is what makes that safe to flip: it pins that the shape returns CORRECT data today via the
-    // fallback, so a future widening has an oracle to be checked against rather than just "NativeOnly stopped
-    // throwing".
+    // The full EF-362 surface — the ragged array-state matrix, the parameterized-Where late-fallback leg, the
+    // dotted `$project` alias, and the shadow-key element — lives in Ef362OwnedHopArrayProjectionTests. This
+    // one stays here as the flipped tripwire, in the file whose predicate was widened.
     [Fact]
-    public void Array_leaf_under_a_nested_owner_is_declined_but_still_returns_correct_data()
+    public void Array_leaf_under_a_nested_owner_now_goes_native_and_still_returns_correct_data()
     {
-        var collection = SeedNestedOwner(nameof(Array_leaf_under_a_nested_owner_is_declined_but_still_returns_correct_data));
+        var collection = SeedNestedOwner(nameof(Array_leaf_under_a_nested_owner_now_goes_native_and_still_returns_correct_data));
 
         static List<(string Title, int Count, string Texts)> Run(SingleEntityDbContext<NestedOwnerBlog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -372,8 +372,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         // The routing proof, and the only reliable one: MQL shape cannot distinguish the two paths.
         using var nativeOnly = CreateNestedOwnerContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => Run(nativeOnly));
+        Assert.Equal(new[] {"", "n1", "n2|n3"}, Run(nativeOnly).Select(r => r.Texts));
     }
 
     // Measured (spike Q1a): with a shadow-key owned collection the element shaper reads the OWNER's key out

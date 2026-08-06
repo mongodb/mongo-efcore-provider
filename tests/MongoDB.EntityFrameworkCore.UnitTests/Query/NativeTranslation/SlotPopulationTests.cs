@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -207,14 +207,20 @@ public class SlotPopulationTests
         Assert.False(mongoQ.Select.Route == NativeRoute.Fallback);
     }
 
-    // ── Test 4: Projecting Select → Route = Fallback ──────────────────────────────
+    // ── Test 4: a Select the projection binder DECLINES → Route = Fallback ───────
 
+    // FLIPPED by EF-322 step 3a. This test used to use a BARE scalar body (`c => c.Name`) as its example of a
+    // non-representable projection; that shape is now native (see Bare_scalar_projection_is_native above), so the
+    // example has to be one the binder still declines or the test would be asserting the opposite of the truth.
+    // A type-CHANGING cast leaf is the closest still-declining shape — the computed long tail, unrelated to the
+    // bare/wrapped boundary — so what this test pins is unchanged: a declined projection drives Route to Fallback.
     [Fact]
-    public void Projecting_Select_is_not_native_representable()
+    public void A_declined_projecting_Select_is_not_native_representable()
     {
-        var mongoQ = TranslateToMongoQuery<Customer>(q => q.Select(c => c.Name));
+        var mongoQ = TranslateToMongoQuery<Customer>(q => q.Select(c => (long)c.Age));
 
         Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+        Assert.Empty(mongoQ.Select.Projection);
     }
 
     // ── Test 5: Native projection slot population (EF-331 Task 4) ────────────────
@@ -307,12 +313,19 @@ public class SlotPopulationTests
     }
 
     [Fact]
-    public void Bare_scalar_projection_is_not_native()
+    // FLIPPED by EF-322 step 3a (the bare-projection boundary), which is the whole point of that slice: a bare
+    // selector body now populates the native Projection with the leaf's own document path as the alias, so this
+    // asserts the opposite of what it used to. The alias, its tier, and the every-leaf-kind decline set are
+    // covered by NativeProjectionBinderBareBodyTests; what belongs HERE is only that slot population reaches
+    // Route == Projection for the shape this file is about.
+    public void Bare_scalar_projection_is_native()
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => c.Name));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
-        Assert.Empty(mongoQuery.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        var projection = Assert.Single(mongoQuery.Select.Projection);
+        Assert.Equal("Name", projection.Alias);
+        Assert.True(mongoQuery.Select.IsBareProjection);
     }
 
     [Fact]

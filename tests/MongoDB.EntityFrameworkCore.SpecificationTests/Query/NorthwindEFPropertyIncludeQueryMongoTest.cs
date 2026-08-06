@@ -720,7 +720,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : { "$mod" : [23, 17] }, "Quantity" 
 
         AssertMql(
             """
-Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
+Customers.{ "$project" : { "_id" : "$_id" } }
 """);
     }
 
@@ -833,7 +833,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : "$CustomerID", "_id" : 0 } }
+Orders.{ "$project" : { "CustomerID" : "$CustomerID", "_id" : 0 } }
 """);
     }
 

@@ -107,7 +107,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$lookup" : { "from" 
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$OrderDate", "_id" : 0 } }, { "$limit" : 1 }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }
 """);
     }
 

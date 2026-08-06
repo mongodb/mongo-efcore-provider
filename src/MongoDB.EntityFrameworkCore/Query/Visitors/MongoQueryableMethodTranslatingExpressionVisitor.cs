@@ -2489,10 +2489,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // This does NOT touch the slice-C2 TRAILING projection (Union(A,B).Select(b => new { b.Title, b.Posts })),
     // which is measured sound and stays native: that path never consults this predicate, and its dedup runs over
     // whole entities BEFORE the trailing $project, so neither the array nor the owner key reaches the comparison.
+    // EF-322 step 3a adds the !IsBareProjection conjunct, and it is a CORRECTNESS guard on the set operation's
+    // own semantics, not a scope preference — the same call the HasArrayProjectionLeaf conjunct above makes, on
+    // the same reasoning and with its own measurement. A projected-OPERAND set op dedups/source-tags over the
+    // WHOLE PROJECTED document ($group{_id:"$$ROOT"} / $group{_id:"$_doc"}), so admitting a BARE projected
+    // operand changes what $$ROOT is for that comparison. Measured with the conjunct removed: 12 specification
+    // cases change their emitted MQL, and — the part that matters — Intersect_non_entity and Except_non_entity
+    // flip from throwing to ANSWERING, on the two operators that have NO driver-LINQ oracle at all, with the
+    // spec not checking the answer they now return. That is exactly the slice-8 hazard the array conjunct exists
+    // for (Union 1 -> 2 rows, Intersect 1 -> 0, Except 0 -> 1) arriving through a different door.
+    //
+    // Declining restores the pre-3a disposition precisely: Union/Concat fall back gracefully (correct results
+    // under Native/DriverLinq, NativeTranslationNotSupportedException only under NativeOnly), Intersect/Except
+    // hard-fail in every mode via TryTranslateSetOperation's null return. A bare projected OPERAND is a
+    // composition relaxation, and belongs with the rest of them rather than with the boundary slice. Note this
+    // does NOT touch a TRAILING bare projection after a whole-entity set op (Union(A,B).Select(b => b.Title)),
+    // which never consults this predicate and IS admitted by 3a: its dedup runs over whole entities BEFORE the
+    // trailing $project, so it cannot change set semantics. Pinned by NativeBareProjectionTests.
     private static bool IsPlainProjectedSelect(MongoQueryExpression mongo)
         => mongo.Select.Route == NativeRoute.Projection
            && mongo.Select.Projection.Count > 0
            && !mongo.Select.HasArrayProjectionLeaf
+           && !mongo.Select.IsBareProjection
            && mongo.Select.SetOperation == null
            && !mongo.Select.IsSetOp
            && mongo.Select.Grouping == null

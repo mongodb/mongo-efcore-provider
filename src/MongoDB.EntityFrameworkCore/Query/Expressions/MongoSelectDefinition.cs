@@ -15,6 +15,7 @@
 
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -192,6 +193,145 @@ internal sealed class MongoSelectDefinition
     /// value back out of the degenerate-<c>$group</c> <c>_id</c>.
     /// </summary>
     internal void ClearProjections() => _projections.Clear();
+
+    // ── Projection-alias overrides (EF-322 step 3a) ────────────────────────────────
+    //
+    // The ONE fact, written once by the emit side and read by every site that would otherwise derive a
+    // $project alias (and therefore the element name the DOM shaper reads by) from
+    // ProjectionMember.Last?.Name. Empty ⇒ every one of those sites behaves exactly as it did before 3a,
+    // which is what makes the read-side edits inert until the binder registers an override.
+    //
+    // Why a MAP rather than a single "bare projection alias" string: EF-362 needs exactly the same
+    // alias/document-path decoupling for a NAMED member ("Notes" -> "Home.Notes"), so designing it as a
+    // keyed table means that ticket adds binder logic and touches none of the alias-reading sites. For
+    // step 3a itself the table holds at most ONE entry, always keyed BareProjectionMemberKey.
+
+    /// <summary>
+    /// The override-table key standing in for a BARE selector body, which has no member name at all.
+    /// A LITERAL SENTINEL, not <see langword="null"/>: <see cref="Dictionary{TKey,TValue}"/> rejects a null
+    /// key (<see cref="System.ArgumentNullException"/> on both <c>Add</c> and <c>ContainsKey</c>), and the
+    /// leading space makes it unrepresentable as a real CLR member name, so it cannot collide with a member
+    /// key registered for a named projection member.
+    /// </summary>
+    internal const string BareProjectionMemberKey = " bare";
+
+    private Dictionary<string, (string Alias, ProjectionAliasTier Tier)>? _projectionAliasOverrides;
+
+    /// <summary>
+    /// Overrides the <c>$project</c> OUTPUT ELEMENT NAME (and therefore the name the DOM shaper reads by)
+    /// for a projection member, keyed by the member's own name — <see cref="BareProjectionMemberKey"/> for a
+    /// BARE selector body. Written ONLY by <c>NativeProjectionBinder</c>, in the same commit block as the
+    /// matching <see cref="AddProjection"/>, so "the emit gate opened" and "the override exists" are the same
+    /// event rather than two events to keep ordered.
+    /// </summary>
+    /// <param name="memberName">
+    /// The projection member's own name, or <see cref="BareProjectionMemberKey"/> for a bare selector body.
+    /// </param>
+    /// <param name="alias">The output element name to emit and to read back by.</param>
+    /// <param name="tier">
+    /// Whether <paramref name="alias"/> is the leaf's root-relative document path
+    /// (<see cref="ProjectionAliasTier.DocumentPath"/>) or a synthetic name
+    /// (<see cref="ProjectionAliasTier.Synthetic"/>). Carried as DATA because the late-fallback strip is
+    /// tier-conditional; sniffing the alias STRING there would re-create a second, independently derived
+    /// copy of a fact the emit side already knows, which is the failure mode this carrier exists to remove.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>WRITE-ONCE, enforced by <see cref="Dictionary{TKey,TValue}.Add"/> rather than documented by an
+    /// indexer assignment</b> (EF-322 step 3a, Task 2 — Task 1 deliberately left the choice open until a caller
+    /// existed that could tell whether re-entry was reachable). A second write for the same member would mean
+    /// the emit side had committed two different aliases for one projection member, and the alias-reading sites
+    /// would see only the later one — i.e. the emitted <c>$project</c> key and the name the shaper reads by
+    /// could disagree, which is SILENT: a missed read returns <see langword="null"/> for a nullable/reference
+    /// leaf and an EMPTY collection for an array leaf, with no exception anywhere. Failing loudly is strictly
+    /// better than that, and it is the same call <c>MongoEFToLinqTranslatingExpressionVisitor</c>'s
+    /// injection-point map makes for the same reason.
+    /// </para>
+    /// <para>
+    /// It is safe to fail loudly because the one writer makes a second write UNREACHABLE rather than merely
+    /// unlikely: <c>NativeProjectionBinder.TryPopulateNativeProjection</c> declines a bare body outright when
+    /// <see cref="Projection"/> is already populated, so it can commit at most one bare override per select
+    /// definition, and it registers named-member overrides for no shape at all today. If a future slice widens
+    /// the writer, this <c>Add</c> is the thing that will tell it so.
+    /// </para>
+    /// </remarks>
+    internal void AddProjectionAliasOverride(string memberName, string alias, ProjectionAliasTier tier)
+        => (_projectionAliasOverrides ??= new Dictionary<string, (string, ProjectionAliasTier)>()).Add(
+            memberName, (alias, tier));
+
+    /// <summary>
+    /// Looks up the registered alias override for <paramref name="memberName"/>, mapping
+    /// <see langword="null"/> (a BARE selector body, whose <c>ProjectionMember</c> has no last member) onto
+    /// <see cref="BareProjectionMemberKey"/>. The parameter is deliberately nullable so an alias-reading site
+    /// can pass <c>projectionMember.Last?.Name</c> straight through — that keeps the null handling in exactly
+    /// one place instead of at every call site.
+    /// </summary>
+    internal bool TryGetProjectionAlias(string? memberName, [NotNullWhen(true)] out string? alias)
+    {
+        if (_projectionAliasOverrides != null
+            && _projectionAliasOverrides.TryGetValue(memberName ?? BareProjectionMemberKey, out var entry))
+        {
+            alias = entry.Alias;
+            return true;
+        }
+
+        alias = null;
+        return false;
+    }
+
+    /// <summary>
+    /// <see langword="true"/> when a BARE selector body populated <see cref="Projection"/> (EF-322 step 3a).
+    /// </summary>
+    internal bool IsBareProjection
+        => _projectionAliasOverrides?.ContainsKey(BareProjectionMemberKey) == true;
+
+    /// <summary>
+    /// The tier of the bare-body override, or <see langword="null"/> when there is no bare-body override.
+    /// Read by the late native-factory-failure fallback in
+    /// <c>MongoShapedQueryCompilingExpressionVisitor</c>: a <see cref="ProjectionAliasTier.DocumentPath"/>
+    /// alias is readable off a WHOLE document, a <see cref="ProjectionAliasTier.Synthetic"/> one is not.
+    /// </summary>
+    internal ProjectionAliasTier? BareProjectionTier
+        => _projectionAliasOverrides != null
+           && _projectionAliasOverrides.TryGetValue(BareProjectionMemberKey, out var entry)
+            ? entry.Tier
+            : null;
+
+    /// <summary>
+    /// <see langword="true"/> when ANY registered override — bare or named — is a
+    /// <see cref="ProjectionAliasTier.DocumentPath"/> alias, i.e. when the shaper reads at least one leaf by a
+    /// name the driver-LINQ bridge would NOT emit for the same projection member. Read by the late
+    /// native-factory-failure strip in <c>MongoShapedQueryCompilingExpressionVisitor</c>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately keyed on the TIER rather than on which member the override belongs to. Both override
+    /// families that exist reach the same conclusion for the same reason: the emit side picked a name the
+    /// driver does not pick (<c>_v</c> for a bare body, the member name for an <c>OwnsOne</c>-hop array leaf),
+    /// and a <see cref="ProjectionAliasTier.DocumentPath"/> alias is readable off a whole document, so
+    /// removing the pushed-down <c>Select</c> is what makes the fallback's read hit. Asking "is it the bare
+    /// override?" instead would have made the second family silently wrong, which is what it was until EF-362
+    /// measured it.
+    /// </remarks>
+    internal bool HasDocumentPathAliasOverride
+    {
+        get
+        {
+            if (_projectionAliasOverrides == null)
+            {
+                return false;
+            }
+
+            foreach (var entry in _projectionAliasOverrides.Values)
+            {
+                if (entry.Tier == ProjectionAliasTier.DocumentPath)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
 
     // ── Cardinality / aggregate ───────────────────────────────────────────────────
 
@@ -619,6 +759,24 @@ internal sealed class MongoSelectDefinition
             : Grouping != null ? NativeRoute.GroupBy
             : _projections.Count > 0 ? NativeRoute.Projection
             : NativeRoute.WholeEntity;
+}
+
+/// <summary>
+/// Which alias family a registered projection-alias override belongs to (EF-322 step 3a) — read as DATA by
+/// the late-fallback strip, so that decision never has to be re-derived by inspecting the alias string.
+/// </summary>
+internal enum ProjectionAliasTier
+{
+    /// <summary>
+    /// The alias IS the leaf's root-relative document path, so reading that element off a WHOLE (un-projected)
+    /// document is the same read as reading it off the projected one.
+    /// </summary>
+    DocumentPath,
+
+    /// <summary>
+    /// A computed leaf with no document path, carrying a synthetic alias. NOT whole-document-readable.
+    /// </summary>
+    Synthetic
 }
 
 /// <summary>

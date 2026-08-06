@@ -723,8 +723,8 @@ OrderDetails.{ "$match" : { "_id.ProductID" : { "$mod" : [23, 17] }, "Quantity" 
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Include_reference_SelectMany_GroupBy_Select(bool async)
@@ -836,8 +836,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$CustomerID", "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "CustomerID" : "$CustomerID", "_id" : 0 } }
+""");
     }
 
     public override async Task Include_duplicate_collection_result_operator(bool async)

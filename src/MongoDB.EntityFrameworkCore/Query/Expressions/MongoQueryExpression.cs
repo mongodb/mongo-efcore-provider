@@ -105,7 +105,19 @@ internal sealed partial class MongoQueryExpression : Expression
         Dictionary<ProjectionMember, Expression> result = new();
         foreach (var (projectionMember, expression) in _projectionMapping)
         {
-            result[projectionMember] = Constant(AddToProjection(expression, projectionMember.Last?.Name));
+            // EF-322 step 3a: the alias normally IS the projection member's own name, but the emit side may
+            // have registered an override for it (see MongoSelectDefinition.AddProjectionAliasOverride) —
+            // notably for a BARE selector body, whose ProjectionMember has no last member at all and would
+            // otherwise yield a null alias. Reading the override here is what keeps the emitted $project key
+            // and the name the DOM shaper reads by the SAME fact rather than two independently derived ones.
+            // The table is empty unless the binder registered something, so this is inert by default.
+            var memberName = projectionMember.Last?.Name;
+            var alias = Select.Route == NativeRoute.Projection
+                        && Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
+                ? overriddenAlias
+                : memberName;
+
+            result[projectionMember] = Constant(AddToProjection(expression, alias));
         }
 
         _projectionMapping = result;

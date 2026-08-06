@@ -6,6 +6,67 @@ In order to evolve the provider as we introduce new features, we will be using t
 
 ## Breaking changes in 8.5.0 / 9.2.0 / 10.1.0
 
+### Projecting a required property whose stored element is absent or `null` now throws
+
+#### Old behavior
+
+Projecting a non-nullable property returned the CLR default — `0`, `null`, `false`, … — for any document in which that element was absent, or was present but stored as BSON `null`. This applied to both spellings of a projection:
+
+```c#
+context.Blogs.Select(b => b.Rank);            // returned 0 for a document with no "Rank" element
+context.Blogs.Select(b => new { b.Rank });    // the same
+```
+
+The projected value was deserialized by the MongoDB C# driver, whose serializers are lenient about a missing element and substitute the default.
+
+A *whole-entity* query over those same documents already behaved differently: `context.Blogs.ToList()` (and `Select(b => b)`) threw `InvalidOperationException: Document element 'Rank' is missing for required non-nullable property 'Rank'`. So two read paths over one document disagreed about whether it was acceptable.
+
+#### New behavior
+
+Projections are now materialized by the provider's own shaper, which applies the same required-property rule as a whole-entity read. Projecting a non-nullable property whose stored element is absent, or is explicitly BSON `null`, throws:
+
+```
+System.InvalidOperationException: Document element 'Rank' is missing for required non-nullable property 'Rank'.
+```
+
+Both spellings above are affected, and the change applies under the default query mode with no configuration change.
+
+Nullable properties are unaffected: `int?`, `string?` and friends still read back as `null` for both of those stored states, in every spelling. Documents that do store the element are unaffected, whatever its value.
+
+#### Why
+
+The two read paths over the same document disagreed — a whole-entity query refused it, a projection quietly substituted a default — and only one of those can be right for a property the model declares required. A projection now agrees with the whole-entity read that was already rejecting these documents, rather than silently answering `0` for data that is not there.
+
+#### Mitigations
+
+In preference order:
+
+1. **Make the property nullable** if the element is genuinely optional. This is the recommended fix: it makes the intent explicit in the model, both read paths then agree on `null`, and nothing else in the application has to change.
+
+2. **Backfill the documents** so the element is present, if the property really is required:
+
+    ```c#
+    var collection = client.GetDatabase("mydb").GetCollection<BsonDocument>("Blogs");
+
+    collection.UpdateMany(
+        Builders<BsonDocument>.Filter.Exists("Rank", false),
+        Builders<BsonDocument>.Update.Set("Rank", 0));
+
+    collection.UpdateMany(
+        Builders<BsonDocument>.Filter.Eq("Rank", BsonNull.Value),
+        Builders<BsonDocument>.Update.Set("Rank", 0));
+    ```
+
+    Use the same `IMongoClient` your `DbContext` is configured with, or a new `MongoClient` against the same connection string. To find the affected documents before changing anything, run the same two filters through `Find` instead.
+
+3. **As a temporary measure**, restore the previous values by opting the context back onto the driver's LINQ provider:
+
+    ```c#
+    optionsBuilder.UseMongoDB(connectionString, databaseName, o => o.UseQueryMode(MongoQueryMode.DriverLinq));
+    ```
+
+    This restores the old projection results only. A whole-entity read of the same documents throws in every query mode, as it did in previous versions — so this is a way to keep a projection working while you apply mitigation 1 or 2, not a way to make those documents readable in general.
+
 ### A missing or `null` embedded array now materializes as an empty collection, not `null`
 
 #### Old behavior

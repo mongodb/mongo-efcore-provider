@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1189,21 +1189,24 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([1, 2, 3, 4, 5], result.Select(r => r.M).OrderBy(v => v));
     }
 
-    // Deferred (unchanged): a BARE-SCALAR trailing projection is never pushed down (SP3 does not push a bare
-    // scalar), so it falls back gracefully after Union.
+    // FLIPPED by EF-322 step 3a: a BARE-SCALAR trailing projection after a whole-entity set op now goes native.
+    // The comment here used to say SP3 never pushes a bare scalar down; it does now, and this shape is SAFE
+    // precisely because the trailing projection sits AFTER the combinator — slice C2's dedup runs over WHOLE
+    // ENTITIES before the $project, so a trailing projection cannot change set semantics. Contrast
+    // Bare_scalar_operand_union_falls_back_gracefully below, which is the OPERAND position and is still declined
+    // deliberately (IsPlainProjectedSelect's !IsBareProjection conjunct), because there the dedup key IS the
+    // projected document. That the two disagree is the point, not an inconsistency.
+    //
+    // NativeBareProjectionTests.Bare_projection_after_a_union_or_concat_goes_native carries the version of this
+    // over a fixture where two distinct entities share a projected value, so it can tell whole-entity dedup from
+    // projected-value dedup; this seed cannot (its values are distinct), so it pins routing and the value set.
     [Fact]
-    public void Bare_scalar_projection_after_union_falls_back_gracefully()
+    public void Bare_scalar_projection_after_union_goes_native()
     {
-        var collection = SeedCollection(nameof(Bare_scalar_projection_after_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
-                    .Select(i => i.Value).ToList());
-        }
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
-            .Select(i => i.Value).OrderBy(v => v).ToList();
+        var collection = SeedCollection(nameof(Bare_scalar_projection_after_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        var result = nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
+            .Select(i => i.Value).ToList().OrderBy(v => v).ToList();
         Assert.Equal([1, 2, 3, 4, 5], result);
     }
 
@@ -1343,7 +1346,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     // A bare-scalar operand (Select(i => i.Name)) never populates Projection (IsPlainProjectedSelect requires
     // Route == Projection && Projection.Count > 0), so it does not qualify as a "plain projected select" --
     // this falls back gracefully for Union, same as the whole-entity
-    // Bare_scalar_projection_after_union_falls_back_gracefully test above (which covers a trailing projection
+    // Bare_scalar_projection_after_union_goes_native test above (which covers a trailing projection
     // AFTER a whole-entity set op; this one covers the operand ITSELF being this shape).
     // NOTE: a "mixed operands" test (one whole-entity operand, one projected operand) is unreachable by
     // construction -- Union requires both operand queryables to share a CLR result type, so a whole-entity

@@ -357,8 +357,25 @@ internal static class NativeGroupByBinder
         // Union(A,B).Select(p).Distinct()) has its Projection applied AFTER the set-op stage as a genuine
         // trailing projection, which this method converts to a $group safely and correctly — a documented
         // native capability that must be preserved.
+        // EF-322 step 3a: decline a BARE projection (Select(o => o.Country).Distinct()). This is the fifth
+        // provenance-shaped decline on this line and, like the others, it is a CORRECTNESS guard rather than a
+        // scope choice — MEASURED, not reasoned about. Binding it would clear Projection, install a Grouping and
+        // flip Route to NativeRoute.GroupBy; MongoQueryExpression.ApplyProjection's own
+        // `Route == NativeRoute.Projection` conjunct then reverts the bare body's alias to null AFTER the emit
+        // side has already committed, so the shaper's ProjectionExpression has no alias, the binding remover
+        // hands back the whole BsonDocument, and the shaper's result type becomes BsonDocument. Measured with
+        // this conjunct removed: Distinct_Scalar and OrderBy_Distinct (async: False/True each — 4 cases) fail
+        // with `ArgumentException: Expression of type 'QueryingEnumerable`2[BsonDocument,BsonDocument]' cannot
+        // be used`, in Native AND NativeOnly, from a base state of PASSING under Native.
+        //
+        // Note what this does NOT decline: a Distinct after a WRAPPED projection, and a Distinct after a
+        // whole-entity set op's TRAILING wrapped projection, both of which stay native exactly as before —
+        // IsBareProjection is true only when a bare selector body populated Projection. Bare Distinct
+        // composition belongs with the other composition relaxations, not with the boundary slice. Pinned by
+        // NativeBareProjectionTests.
         if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null || select.HasPaging
-            || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true })
+            || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true }
+            || select.IsBareProjection)
             return false;
 
         var keyParts = new List<MongoGroupingKeyPart>();

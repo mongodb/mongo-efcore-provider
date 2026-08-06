@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -527,15 +527,21 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Null(first);
     }
 
+    // FLIPPED by EF-322 step 3a: a bare-scalar projection now pushes a $project down, so a cardinality operator
+    // composed after one goes native too. Neither of that slice's two deliberate narrowings (the projected set-op
+    // operand and Distinct) sits on the cardinality path, so this is an INCIDENTAL widening of the boundary
+    // slice rather than the composition work — worth its own pin for exactly that reason. Note the lowerer
+    // appends Projection LAST, so the emitted order is $sort, $limit, $project: the reducer runs before the
+    // projection, which is 1:1 with respect to rows and is the ordering a wrapped projection already had.
     [Fact]
-    public void Select_bare_scalar_First_falls_back_under_NativeOnly_and_is_correct_under_Native()
+    public void Select_bare_scalar_First_goes_native()
     {
         using var nativeOnly = CreateContext(
-            [1, 2, 3], MongoQueryMode.NativeOnly, nameof(Select_bare_scalar_First_falls_back_under_NativeOnly_and_is_correct_under_Native) + "only");
-        Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities.OrderBy(e => e.Value).Select(e => e.Value).First());
+            [1, 2, 3], MongoQueryMode.NativeOnly, nameof(Select_bare_scalar_First_goes_native) + "only");
+        Assert.Equal(1, nativeOnly.Entities.OrderBy(e => e.Value).Select(e => e.Value).First());
 
         using var native = CreateContext(
-            [1, 2, 3], MongoQueryMode.Native, nameof(Select_bare_scalar_First_falls_back_under_NativeOnly_and_is_correct_under_Native) + "native");
+            [1, 2, 3], MongoQueryMode.Native, nameof(Select_bare_scalar_First_goes_native) + "native");
         Assert.Equal(1, native.Entities.OrderBy(e => e.Value).Select(e => e.Value).First());
     }
 

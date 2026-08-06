@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -58,6 +59,16 @@ internal static class NativeProjectionBinder
         // EF-322 owned-data slice 8, Task 4: true once any leaf accepted by TryTranslateLeaf was an owned
         // array leaf. Drives the owner-key emission below — see that block's comment for why.
         var hasArrayLeaf = false;
+        // EF-322 step 3a: the alias a BARE selector body was admitted under, or null when the body was not
+        // bare. Registered on the select in the commit block below, in the SAME block as AddProjection, so
+        // "the emit gate opened for a bare body" and "the alias override exists" are one event rather than two
+        // to keep ordered.
+        string? bareProjectionAlias = null;
+        // EF-362: the (memberName, alias) pairs a WRAPPED body's leaves were admitted under, whenever the
+        // alias could not be the member's own name. Collected here and registered on the select in the commit
+        // block below, alongside AddProjection, for the same reason the bare override is: "the emit gate
+        // opened for this leaf" and "the override exists" have to be one event, not two to keep ordered.
+        var namedAliasOverrides = new List<(string MemberName, string Alias)>();
 
         switch (selector.Body)
         {
@@ -67,12 +78,15 @@ internal static class NativeProjectionBinder
                      && newExpression.Arguments.Count > 0:
                 for (var i = 0; i < newExpression.Arguments.Count; i++)
                 {
-                    var alias = newExpression.Members[i].Name;
+                    var memberName = newExpression.Members[i].Name;
+                    var alias = DeriveWrappedLeafAlias(mongoQ, newExpression.Arguments[i], memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], newExpression.Arguments[i], alias, pendingLookups, out var leaf, out var isArrayLeaf))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
                     projections.Add(new MongoProjection(alias, leaf));
+                    if (alias != memberName)
+                        namedAliasOverrides.Add((memberName, alias));
                     leafIsArray.Add(isArrayLeaf);
                     hasArrayLeaf |= isArrayLeaf;
                 }
@@ -86,19 +100,79 @@ internal static class NativeProjectionBinder
                     if (binding is not MemberAssignment assignment)
                         return false;
 
-                    var alias = binding.Member.Name;
+                    var memberName = binding.Member.Name;
+                    var alias = DeriveWrappedLeafAlias(mongoQ, assignment.Expression, memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], assignment.Expression, alias, pendingLookups, out var leaf, out var isArrayLeaf))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
                     projections.Add(new MongoProjection(alias, leaf));
+                    if (alias != memberName)
+                        namedAliasOverrides.Add((memberName, alias));
                     leafIsArray.Add(isArrayLeaf);
                     hasArrayLeaf |= isArrayLeaf;
                 }
                 break;
 
+            // EF-322 step 3a: a BARE selector body — `b => b.Title`, `b => b.Posts`, `o => o.OrderID` — as
+            // opposed to the two wrapped (anonymous-type / DTO) constructions above. It has no member name at
+            // all, so the alias cannot come from the syntax the way a wrapped leaf's does; it is derived from
+            // the TRANSLATED LEAF and registered as an override on the select, which every alias-reading site
+            // then reads instead of deriving its own (see MongoSelectDefinition.AddProjectionAliasOverride).
+            //
+            // Only TIER 1 is admitted here — a leaf with a root-relative DOCUMENT PATH, whose alias IS that
+            // path. That equality is what makes the alias-addressed read and the document-path read the SAME
+            // read, so the shaper built here stays correct when a LATE fallback hands it whole documents
+            // instead of the projected ones (see ShouldStripBareProjectionOnFallback). A COMPUTED leaf (a
+            // count, a filtered count, arithmetic) has no document path and is declined below; admitting it
+            // needs the synthetic-alias tier, which is a separate change.
             default:
-                return false;
+            {
+                // A bare body appended onto an ALREADY-POPULATED projection is declined outright. Reaching
+                // here with Projection.Count > 0 means a prior Select on this same select definition already
+                // pushed a $project down (the composition-after-projection seam this file's callers document):
+                // the emitted $project would then carry BOTH projections' entries while the single bare-body
+                // ProjectionMember can name only one alias, and the alias-override table can hold only one
+                // bare entry. Declining leaves the shape exactly as it was before step 3a — the whole
+                // projection falls back — and it is what makes the bare override provably WRITE-ONCE, which
+                // AddProjectionAliasOverride relies on (it uses Dictionary.Add, so a second write throws).
+                if (mongoQ.Select.Projection.Count > 0)
+                {
+                    return false;
+                }
+
+                // Step 1 — the PROVISIONAL alias, needed only because TryTranslateLeaf's owned-array branch
+                // takes the alias as an INPUT (IsNativeArrayProjectionLeaf's alias-agreement conjunct). For a
+                // bare array body that conjunct is therefore vacuous — we choose the alias it demands — and
+                // what actually admits the leaf is its DeclaringEntityType == rootEntityType sibling, which is
+                // what forces the single top-level hop tier 1 requires. Every other leaf kind ignores the
+                // alias argument entirely, so the placeholder is never observable.
+                var provisionalAlias = selector.Body is MaterializeCollectionNavigationExpression materializeBare
+                    ? (materializeBare.Navigation as INavigation)?.TargetEntityType.GetContainingElementName()
+                      ?? BareLeafProvisionalAlias
+                    : BareLeafProvisionalAlias;
+
+                if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], selector.Body, provisionalAlias,
+                        pendingLookups, out var bareLeaf, out var bareIsArrayLeaf))
+                {
+                    return false;
+                }
+
+                // Steps 2 and 3 — derive the FINAL alias from the translated leaf rather than from the syntax,
+                // and decline anything that is not path-addressable. For the array branch the two agree by
+                // construction (an owned-collection array leaf's path IS the containing element name).
+                if (!TryDeriveDocumentPathAlias(bareLeaf, out var derivedAlias))
+                {
+                    return false;
+                }
+
+                bareProjectionAlias = derivedAlias;
+                seenAliases.Add(derivedAlias);
+                projections.Add(new MongoProjection(derivedAlias, bareLeaf));
+                leafIsArray.Add(bareIsArrayLeaf);
+                hasArrayLeaf |= bareIsArrayLeaf;
+                break;
+            }
         }
 
         // EF-322 owned-data slice 8, Task 5 fix round 1 (branch-review finding — a COMPLETENESS gap in the array-leaf
@@ -162,6 +236,24 @@ internal static class NativeProjectionBinder
             mongoQ.AddLookup(lookup);
         foreach (var projection in projections)
             mongoQ.Select.AddProjection(projection);
+        // EF-322 step 3a: register the bare body's alias override in the SAME commit block as the projections
+        // it describes, after every `return false` above — so a declined bare body leaves no override behind
+        // and the read side keeps behaving exactly as it did before this slice. The tier is DocumentPath by
+        // construction: TryDeriveDocumentPathAlias admits nothing else.
+        if (bareProjectionAlias != null)
+        {
+            mongoQ.Select.AddProjectionAliasOverride(
+                MongoSelectDefinition.BareProjectionMemberKey, bareProjectionAlias, ProjectionAliasTier.DocumentPath);
+        }
+
+        // EF-362: the same registration for a WRAPPED body's named members. DocumentPath by construction —
+        // DeriveWrappedLeafAlias returns a non-member-name alias only when it IS the leaf's root-relative
+        // document path.
+        foreach (var (memberName, alias) in namedAliasOverrides)
+        {
+            mongoQ.Select.AddProjectionAliasOverride(memberName, alias, ProjectionAliasTier.DocumentPath);
+        }
+
         // EF-322 owned-data slice 8, Task 7: record the array leaf's PRESENCE for the one consumer that has to decline this
         // projection — the projected-set-op-operand scope gate. Set only here, alongside the commit, so a
         // projection that declined on any path above leaves no provenance behind.
@@ -487,13 +579,16 @@ internal static class NativeProjectionBinder
     /// </para>
     /// <list type="bullet">
     /// <item><description>
-    /// <paramref name="rootEntityType"/> — the navigation is declared on the query ROOT, so its document path is a
-    /// single top-level element (no <c>Home.Notes</c> dotting) and the shaper's bare
-    /// <c>RootReferenceExpression</c> resolves against the whole document rather than an embedded sub-document.
+    /// <paramref name="rootEntityType"/> — the navigation's array is reachable from the query ROOT by a DOTTED
+    /// DOCUMENT PATH (<see cref="TryGetRootRelativeArrayPath"/>): every hop above it is a single embedded
+    /// reference, so every segment resolves to a sub-document and the whole path is readable in one walk.
+    /// <b>EF-362 widened this from "declared on the root" to "reachable by a dotted path from the root"</b>, so
+    /// an <c>OwnsOne</c> hop (<c>Home.Notes</c>) now qualifies; a collection nested inside a collection
+    /// (<c>Posts.Comments</c>) still does not, because an array intermediate has no dotted read at all.
     /// </description></item>
     /// <item><description>
-    /// <paramref name="alias"/> equals that element name, so "read top-level field &lt;alias&gt;" and "read the
-    /// navigation at its document path" are literally the same read.
+    /// <paramref name="alias"/> equals that path, so "read element &lt;alias&gt;" and "read the navigation at its
+    /// document path" are literally the same read.
     /// </description></item>
     /// </list>
     /// <para>
@@ -505,11 +600,15 @@ internal static class NativeProjectionBinder
     /// implicit member name IS the property name and therefore happened to satisfy the invariant.
     /// </para>
     /// <para>
-    /// Neither conjunct is intrinsic to the feature — both are what a mode-independent shaper costs. Lifting
-    /// either one (a nested owner, or an arbitrary DTO/renamed alias) means giving the shaper a way to know
-    /// whether the native pipeline will really be emitted, and is a later slice's work; the translator entry point
-    /// this gates (<c>MongoExpressionTranslator.TryTranslateOwnedCollectionArray</c>) is already general enough
-    /// for the nested path, so this predicate is the only thing narrowing it.
+    /// Neither conjunct is intrinsic to the feature — both are what a mode-independent shaper costs.
+    /// <b>The nested-owner half was lifted by EF-362</b>, and NOT by giving the shaper a way to know whether the
+    /// native pipeline will really be emitted (which is what this paragraph used to say it would take). It was
+    /// lifted by keeping the invariant and making the alias a DOTTED path that satisfies it on both shapes —
+    /// which needed a segment walk on the read side (<c>BsonBinding</c>) and a strip on the late-fallback route
+    /// (<c>MongoShapedQueryCompilingExpressionVisitor.ShouldStripBareProjectionOnFallback</c>, whose widening
+    /// closed a MEASURED silent-empty-collection defect). The RENAMED-alias half is untouched and still
+    /// declines: <c>DeriveWrappedLeafAlias</c> only ever replaces a member name that already agreed with the
+    /// navigation's own containing element name.
     /// </para>
     /// <para>
     /// <b>A fourth conjunct (EF-322 owned-data slice 8): the element type must carry no EAGER-LOADED navigation of
@@ -557,9 +656,16 @@ internal static class NativeProjectionBinder
         => navigation is not null
            && navigation.IsEmbedded()
            && navigation.IsCollection
-           && navigation.DeclaringEntityType == rootEntityType
            && alias is not null
-           && alias == navigation.TargetEntityType.GetContainingElementName()
+           // EF-362 replaced the pair `DeclaringEntityType == rootEntityType && alias == GetContainingElementName()`
+           // with this ONE test, which is the same invariant expressed against the FULL path instead of a single
+           // hop. For a root-declared navigation the path IS the containing element name, so that case is
+           // unchanged; for an OwnsOne hop the path is dotted ("Home.Notes") and the alias is the emit side's
+           // chosen dotted alias, which the shaper walks segment by segment (BsonBinding.TryGetValueAtPath).
+           // The walk requires every INTERMEDIATE hop to be a single embedded reference, so a collection nested
+           // inside a collection ("Posts.Comments" — not addressable by a dotted read at all) still declines.
+           && TryGetRootRelativeArrayPath(navigation, rootEntityType, out var arrayPath)
+           && alias == arrayPath
            // Decline an element type carrying an EAGER-LOADED navigation of its own (a nested owned collection or
            // single reference) — EF's auto-include for it crashes shaper build, ticket EF-360. Admits ANY
            // non-eager-loaded navigation on the element, not just the lazy inverse back-reference to the owner
@@ -569,6 +675,86 @@ internal static class NativeProjectionBinder
            // MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable's Reference arm
            // (MongoQueryableMethodTranslatingExpressionVisitor.cs:582) exactly. See the remarks above.
            && !navigation.TargetEntityType.GetNavigations().Any(n => n.IsEagerLoaded);
+
+    /// <summary>
+    /// The root-relative DOCUMENT PATH of an owned collection navigation's stored array — the dotted join of
+    /// every containing element name from the query root down to <paramref name="navigation"/>'s own
+    /// (EF-362). <see langword="false"/> when the chain does not reach <paramref name="rootEntityType"/>
+    /// through single embedded references only.
+    /// </summary>
+    /// <remarks>
+    /// The intermediate-hop constraint is what keeps the path READABLE as a dotted name: every hop above the
+    /// array must be a single embedded reference, so each segment resolves to a sub-document. A collection
+    /// anywhere above it (an owned collection inside an owned collection) has no dotted read at all — the
+    /// intermediate is an array, not a document — and declines here, exactly as it did before EF-362.
+    /// </remarks>
+    private static bool TryGetRootRelativeArrayPath(
+        INavigation navigation, IEntityType rootEntityType, [NotNullWhen(true)] out string? path)
+    {
+        var segments = new List<string>();
+        var current = navigation;
+
+        // A bounded walk rather than `while (true)`: an owned chain is finite by construction, but a
+        // translation-time infinite loop is not a failure mode worth risking on a model this code did not build.
+        for (var depth = 0; depth < MaxOwnedChainDepth; depth++)
+        {
+            if (current.TargetEntityType.GetContainingElementName() is not { } segment)
+            {
+                break;
+            }
+
+            segments.Add(segment);
+
+            if (current.DeclaringEntityType == rootEntityType)
+            {
+                segments.Reverse();
+                path = string.Join(".", segments);
+                return true;
+            }
+
+            if (current.DeclaringEntityType.FindOwnership()?.PrincipalToDependent is not INavigation owner
+                || owner.IsCollection
+                || !owner.IsEmbedded())
+            {
+                break;
+            }
+
+            current = owner;
+        }
+
+        path = null;
+        return false;
+    }
+
+    /// <summary>The bound on <see cref="TryGetRootRelativeArrayPath"/>'s walk. Not a modelling limit.</summary>
+    private const int MaxOwnedChainDepth = 32;
+
+    /// <summary>
+    /// The <c>$project</c> output alias a WRAPPED body's leaf is admitted under (EF-362): the member's own
+    /// name, except for an owned-collection array leaf reached through one or more <c>OwnsOne</c> hops, where
+    /// it is the leaf's dotted root-relative document path instead.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The member-name conjunct is what keeps the RENAMED-alias decline intact. Deriving a path alias for any
+    /// array leaf would also admit <c>new { P = b.Posts }</c> (aliasing it <c>Posts</c> and reading it back
+    /// correctly) — a real widening, but a different one, with its own tripwire test. Requiring the member name
+    /// to equal the navigation's own containing element name means this method only ever REPLACES a name that
+    /// already agreed with the last path segment, never one the user chose differently.
+    /// </para>
+    /// <para>
+    /// For a ROOT-declared array leaf the derived path equals the member name, so the alias is unchanged and no
+    /// override is registered — every pre-EF-362 shape emits and reads exactly the same names as before.
+    /// </para>
+    /// </remarks>
+    private static string DeriveWrappedLeafAlias(
+        MongoQueryExpression mongoQ, Expression leafExpression, string memberName)
+        => leafExpression is MaterializeCollectionNavigationExpression materializeCollection
+           && materializeCollection.Navigation is INavigation navigation
+           && memberName == navigation.TargetEntityType.GetContainingElementName()
+           && TryGetRootRelativeArrayPath(navigation, mongoQ.CollectionExpression.EntityType, out var path)
+            ? path
+            : memberName;
 
     /// <summary>
     /// EF-322 owned-data slice 8, Task 5 fix round 1: true when <paramref name="leaf"/> would read back the SAME, correct value if
@@ -584,6 +770,65 @@ internal static class NativeProjectionBinder
         => leaf is MongoFieldExpression field
            && !field.ElementName.Contains('.')
            && alias == field.ElementName;
+
+    /// <summary>
+    /// The placeholder alias handed to <see cref="TryTranslateLeaf"/> for a BARE selector body whose leaf is
+    /// not an owned-collection array (EF-322 step 3a). Only the array branch reads the alias argument at all,
+    /// and for that branch the caller supplies the navigation's own containing element name instead — so this
+    /// value is never observable in a pipeline or a shaper. The leading space makes it unrepresentable as a
+    /// stored element name, so it cannot accidentally satisfy that branch's alias-agreement conjunct either.
+    /// </summary>
+    private const string BareLeafProvisionalAlias = " bare";
+
+    /// <summary>
+    /// Derives a BARE selector body's projection alias from its TRANSLATED leaf (EF-322 step 3a), admitting
+    /// only a leaf that has a root-relative document PATH and taking that path as the alias.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Alias == document path is the whole point: the DOM shaper is built alias-addressed at TRANSLATION time,
+    /// while whether a <c>$project</c> is really emitted is decided LATER (an explicit
+    /// <see cref="Infrastructure.MongoQueryMode.DriverLinq"/>, or a late native-factory decline whose fallback
+    /// is stripped back to whole documents — see
+    /// <c>MongoShapedQueryCompilingExpressionVisitor.ShouldStripBareProjectionOnFallback</c>). When the alias
+    /// IS the leaf's path, "read top-level element &lt;alias&gt;" and "read the leaf at its document path" are
+    /// literally the same read, so one shaper is correct against a projected document and an un-projected one
+    /// alike. This is the same invariant <see cref="IsNativeArrayProjectionLeaf"/> enforces for a wrapped array
+    /// leaf, reached from the other direction: there the alias is given and checked, here it is chosen.
+    /// </para>
+    /// <para>
+    /// Hence the two admitted node kinds and the DOTTED exclusion. A <see cref="MongoFieldExpression"/> covers
+    /// a plain top-level scalar and a primitive-collection property; a <see cref="MongoElementRefExpression"/>
+    /// covers the owned-collection array leaf (whose path is the containing element name) and the synthetic
+    /// vector-search <c>__score</c> element (which the <c>$addFields</c> companion really writes). A DOTTED
+    /// path is declined because the alias would have to be dotted too, and a dotted alias is looked up by the
+    /// shaper as a LITERAL key while MongoDB's <c>$project</c> renders it as a NESTED document — that gap is
+    /// EF-362's, and the decline here is its tripwire, not an oversight.
+    /// </para>
+    /// <para>
+    /// Everything else — a count, a filtered count, an arithmetic leaf — is backed by no document element at
+    /// all, so it has no path to use as an alias and is declined: the whole projection then falls back exactly
+    /// as it did before step 3a. Admitting those needs a synthetic alias AND the matching (non-stripping)
+    /// fallback disposition, which is deliberately a separate change rather than a widening of this method.
+    /// </para>
+    /// </remarks>
+    private static bool TryDeriveDocumentPathAlias(MongoExpression leaf, out string alias)
+    {
+        switch (leaf)
+        {
+            case MongoFieldExpression field when !field.ElementName.Contains('.'):
+                alias = field.ElementName;
+                return true;
+
+            case MongoElementRefExpression elementRef when !elementRef.Path.Contains('.'):
+                alias = elementRef.Path;
+                return true;
+
+            default:
+                alias = null!;
+                return false;
+        }
+    }
 
     /// <summary>
     /// Recognizes a projected collection-navigation <c>Count</c>/<c>LongCount</c> leaf

@@ -192,8 +192,8 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Address" : { "$regularExpression" : { "pattern" : "Hanover", "options" : "s" } } } }, { "$project" : { "_v" : "$Address", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Address" : { "$regularExpression" : { "pattern" : "Hanover", "options" : "s" } } } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }
+""");
     }
 
     public override async Task Union_Select_scalar(bool async)
@@ -854,8 +854,8 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$project" : { "City" : "$City", "_id" : 0 } }
+""");
     }
 
     public override async Task Concat_with_distinct_on_one_source_and_pruning(bool async)
