@@ -861,9 +861,22 @@ message:
 
 So **106 of the 112 are inside the 1742**, and VectorSearch alone accounts for roughly **10% of row 2** and
 **3% of row 1**. It is the largest single *named feature* in the coverage gap, and it is architecturally
-distinctive: `VectorSearch(...)` is lifted out of the tree by the preprocessor *before* nav-expansion, so it
-never reaches slot population at all — the gate declines it via `ContainsVectorSearch` over the captured
-expression. Making it native means getting the lifted call back down to the lowerer as a `$vectorSearch` stage.
+distinctive: `VectorSearch(...)` is lifted out of the tree by the preprocessor *before* nav-expansion (which it
+crashes) and re-inserted after. Making it native means getting the lifted call back down to the lowerer as a
+`$vectorSearch` stage.
+
+**CORRECTED 2026-08-06 (measured, by mutation): this used to say the call "never reaches slot population at
+all — the gate declines it via `ContainsVectorSearch`". The second half is right, the first half is FALSE, and
+the difference matters because there are TWO INDEPENDENT GATES, not one.** `VectorSearch`'s declaring type IS in
+the QMTEV's `AllowedQueryableExtensions`, and it is NOT in the `VisitMethodCall` switch, so it falls through to
+`NativeSlotPopulator.PopulateNativeSlots`; not being in `IsNativeRepresentableSlotOperator` either, the catch-all
+fires `MarkNotNativelyRepresentable()`. **`Route` is therefore already `Fallback` before `ContainsVectorSearch`
+is ever consulted.** Verified by mutation in a throwaway worktree at `51a94d4f`: disabling `ContainsVectorSearch`
+alone produces an IDENTICAL decline with the same message; disabling BOTH lets the query go native and return
+**silently wrong data** — `VectorSearch_floats` returns 4 books, the correct COUNT, in *insertion order* rather
+than by score, with no exception. So anyone implementing this must (a) open both gates, and (b) know that **row
+count cannot discriminate a broken vector search** — the discriminating assertion is result ORDER, or the score.
+See `docs/superpowers/specs/2026-08-06-vectorsearch-slice-handoff.md`.
 
 **Not in the table at all, because Northwind does not cover it — genuinely invisible to the counts above:**
 
@@ -1141,7 +1154,7 @@ re-derive it. Ordered by leverage (how much of the fallback set one site's remov
 | 2 | Bare-scalar, entity-ref and mixed projections | `NativeProjectionBinder.TryPopulateNativeProjection`'s selector-body shape check, plus the gate's "projects a non-entity result" throw |
 | 3 | Computed long tail | `MongoExpressionTranslator.TranslateNode`'s final `return null`, `TranslateOperand`'s cast guard, and `NativeProjectionBinder.TryTranslateLeaf`'s final `return null` |
 | 4 | Joins | `NativeSlotPopulator`'s catch-all + `MongoSelectLowerer`'s join-coverage guard; **GroupBy+Join is the one *hard* decline** (throws under `Native` too, because the driver fallback returns silently-empty joins) |
-| 5 | `VectorSearch` | `ClassifyNativeDisposition`'s `ContainsVectorSearch` branch — needs the preprocessor-lifted call to reach the lowerer as a stage |
+| 5 | `VectorSearch` | **TWO independent gates, not one** (corrected 2026-08-06, measured by mutation): `NativeSlotPopulator`'s catch-all fires first — `VectorSearch` is in `AllowedQueryableExtensions` but in neither the `VisitMethodCall` switch nor `IsNativeRepresentableSlotOperator` — so `Route` is already `Fallback` before `ClassifyNativeDisposition`'s `ContainsVectorSearch` branch is consulted. Both must open. Needs the preprocessor-lifted call to reach the lowerer as a stage. **Opening both WITHOUT emitting the stage returns silently wrong data** (correct row count, insertion order) — see §7's VectorSearch note |
 | 6 | GroupBy breadth | five separate sites: computed keys and computed accumulator operands in `NativeGroupByBinder`, element/result selectors in `TranslateGroupBy`, bare `IGrouping`, and the post-group guards |
 | 7 | `Contains` / `ElementAt` / `Last` | no binder at all — `NativeSlotPopulator` catch-all |
 | 8 | Composite-PK member access | `MongoExpressionTranslator.TryResolveMember` / `TryResolveOwnedFieldPath` |
