@@ -25,13 +25,13 @@ attribution, `MongoElementRefExpression` rendering). And it does not change the 
 
 | | |
 |---|---|
-| **Target** | **96 of 112** currently-failing `MONGODB_EF_NATIVE_ONLY=1` vector cases. The 16 left failing are named in §8. |
+| **Target** | ~~**96 of 112**~~ **AS BUILT: 92 of 112** currently-failing `MONGODB_EF_NATIVE_ONLY=1` vector cases (MEASURED at the end of Task 6, by failing-test-name SET against a base worktree). **20** are left failing: the 16 named in the Appendix **plus** the 4 `VectorSearch_with_complex_pre_filter` cases (see the correction box above §8 Task 5). Default `Native` unmoved at 114 passed / 0 failed / 4 skipped, zero baseline diffs. |
 | **The one new mechanism** | A **deferred `Build`-time stage slot** in `MongoPipelineFactory` (§3). Everything else is a variation on an existing pattern. |
 | **The one shared component** | `VectorSearchStageBuilder` — extracted from `ProcessVectorSearch` so BOTH paths run the same validation, index resolution, diagnostics and driver call, in the same order, across the same reflection boundary (§4). This is what makes exception parity structural rather than a thing to remember. |
 | **How the two gates are kept in sync** | Gate 1's signal changes from `containsVectorSearch` to **`hasUnboundVectorSearch`** = "the captured chain has a `VectorSearch` and the slot populator did **not** bind it". The gates then cannot open independently — opening gate 2 (populating the slot) is what closes gate 1, and *not* opening gate 2 leaves gate 1 shut (§6). The silent-wrong-data state is unreachable by construction, not merely by commit ordering. |
 | **`__score` read-back risk** | **RESOLVED BY READING, not left open** (§7). It is the same generic raw-alias read (`BsonBinding.CreateGetElementValue`) already shipped for native count leaves, native arithmetic leaves and the GroupBy flatten; `TryResolveFieldAccess` has explicit `EF.Property` **and** `Mql.Field` arms that return `Property: null` for an unmapped name, which is exactly the `__score` case. No probe needed. |
 | **`limit: 0` today** | **MEASURED** end-to-end through EF at `dcdfa7e2`: `System.Reflection.TargetInvocationException` wrapping `ArgumentOutOfRangeException: Value is not greater than 0: 0. (Parameter 'limit')`. It is thrown from `ProcessVectorSearch`'s reflection `Invoke` of the driver builder, *before* any I/O. Parity is achieved by keeping the reflection boundary in the shared builder (§4.4). |
-| **Breaking change** | Expected **none**, but it must be re-verified per member against `v10.0.2` / `v9.1.2` / `v8.4.2` in Task 6 rather than assumed (§10). |
+| **Breaking change** | **VERIFIED NONE in Task 6, and no `BREAKING-CHANGES.md` entry.** Of the 15 `src/` files the slice touches, only two exist at `v10.0.2` / `v9.1.2` / `v8.4.2` (`MongoEFToLinqTranslatingExpressionVisitor.cs`, `MongoShapedQueryCompilingExpressionVisitor.cs`) and both are `internal sealed class` at the tag and at HEAD; `MongoQueryableExtensions` is byte-identical to all three tags; `MongoQueryMode.cs` exists at none of them. See §10. |
 | **Decision the owner must see** | The ruling "the 8 score-projection cases are IN" and the ruling "`Mql.Field` gets a targeted decline" **collide**: 4 of those 8 (`VectorSearch_with_projection_of_score`) are spelled with `Mql.Field`. §7.4 states the reconciliation I designed for and the alternative. |
 
 ---
@@ -537,6 +537,17 @@ if (mongoQ.Select.VectorSearch is not null
 }
 ```
 
+> **CORRECTION FOLDED BACK FROM TASK 5 — "rooted on the selector's own parameter" is not a raw reference
+> comparison, and the design did not anticipate this.** An entity owning an eager-loaded navigation — every
+> owned navigation is one by EF convention, and the specification suite's `Book` owns a `Preface` — has its
+> auto-include injected around the very expression the projection reads through, so the `Mql.Field` spelling
+> arrives as `Mql.Field(IncludeExpression(e, Preface), "__score", …)` while the `EF.Property` spelling arrives
+> with a bare parameter. Comparing the raw receiver by reference therefore admitted ONE spelling and silently
+> declined the other **on exactly the models that carry owned data — invisible to a fixture without owned
+> data; only the specification suite caught it.** `IsSelectorParameter` peels `IncludeExpression` layers first
+> (mirroring `TryGetWholeEntityMemberAccess`), which is safe because an include layer changes what is
+> MATERIALIZED from the row, never which document the element is read out of.
+
 `TryRecognizeVectorScoreLeaf` accepts exactly two spellings, both rooted on the selector's own parameter, both
 naming the literal `"__score"`, and both typed `double` (or `double?`):
 
@@ -581,7 +592,7 @@ changes. The spike also flagged (UNVERIFIED) that leaving two sibling tests with
 read as arbitrary; under the reading I designed for, that asymmetry does not arise, which is a further reason
 to prefer it.
 
-> **RESOLVED — this is not an open question, and the reading above is the right one. Target is 96/112.**
+> **RESOLVED — this is not an open question, and the reading above is the right one. Target is 96/112** — *and that FIGURE is stale, for an unrelated reason found later: the 4 `VectorSearch_with_complex_pre_filter` cases decline on predicate breadth, so the as-built figure is **92/112**. The RULING below (both `__score` spellings are in scope) is unaffected and stands; only the arithmetic moved. See the correction box above §8 Task 5.*
 > The stricter reading was never on the table: the question the owner actually ruled on described `__score` as
 > *"read both via the driver's `Mql.Field` and via `EF.Property<double>`"*, and the answer was "in scope". So
 > ruling 2 already covers **both spellings** by construction. "Targeted decline" entered the record from spike
@@ -665,13 +676,26 @@ equivalent), which is *expected* and must be **stated, not hidden** — the conj
 (c) delete the lowerer's vector block while leaving the populator branch ⇒ the tests must fail **loudly**
 (row-order assertions), never pass; this is the silent-wrong-data tripwire.
 
+> **NUMBERS CORRECTED after Task 4 (measured, `2e2e65cc`).** Task 4's residual is **28, not 24**:
+> the 24-test projection bucket **plus** `VectorSearch_with_complex_pre_filter` ×4. That pre-filter is
+> `arrayField.Contains(constant)`, which `MongoExpressionTranslator` does not support — §4.3 traced the
+> *renderer* and concluded byte-identity, but **translation declines before the renderer is ever reached**, so
+> the trace was correct and irrelevant. The decline is graceful (correct rows under default `Native`; throws
+> only under `NativeOnly`) and is pinned by `NativeVectorSearchTests` test 16. Widening the translator is a
+> cross-cutting predicate-breadth change that would flip routing for **every** non-vector query using that
+> shape, so it is explicitly **not** this slice's work.
+>
+> **Consequences: Task 5 goes 28 → 20, not 24 → 16. The slice's final target is 92 of 112, not 96.** The 20
+> residual is the 16 of §8 plus these 4. Every other number in this document that says 96, 24 or 16 is stale
+> in exactly this way.
+
 ### Task 5 — the `__score` projection leaf (the 8)
 
 `TryRecognizeVectorScoreLeaf` + the `NativeProjectionBinder.TryTranslateLeaf` branch, with the three guards of
 §7.3. `NativeVectorSearchTests` tests 6, 7, 14, 15.
 
-*Verify:* `MONGODB_EF_NATIVE_ONLY=1` VectorSearch filter: **24 → 16 failures**, the 16 matching §9 exactly, by
-name set. Default `Native` unchanged, no baseline diffs. Full solution green ×3.
+*Verify:* `MONGODB_EF_NATIVE_ONLY=1` VectorSearch filter: **28 → 20 failures** (corrected; was written as
+24 → 16), the 20 being §9's 16 plus the 4 `complex_pre_filter` cases, by name set. Default `Native` unchanged, no baseline diffs. Full solution green ×3.
 **Mutations:** (a) drop the `Select.VectorSearch is not null` guard ⇒ test 15 goes red; (b) widen the element
 name from the `"__score"` literal to any string ⇒ test 14 goes red; (c) drop the `double` type restriction ⇒
 add a case in test 14 that goes red.
@@ -748,14 +772,22 @@ makes every test in this file vacuous.
 | 11 | `Exact_with_num_candidates_throws_InvalidOperationException_in_every_mode` | exception **type** + message fragment, under `Native`, `DriverLinq`, `NativeOnly` | n/a — a parity pin |
 | 12 | `Limit_zero_throws_identically_in_every_mode` | outer `TargetInvocationException` **and** inner `ArgumentOutOfRangeException` type + `"limit"` param name, under all three modes (§4.4) | n/a — a parity pin |
 | 13 | `Vector_search_emits_the_stage_first` | MQL: `$vectorSearch` is stage 0 and `$addFields` stage 1 | **captioned as NOT a routing proof** — see §9.5 |
-| 14 | `Mql_Field_for_a_non_score_element_declines` | correct values under `Native`; `NativeTranslationNotSupportedException` under `NativeOnly` | the decline |
+| 14 | `Mql_Field_for_a_non_score_element_declines` | correct values under `Native`; `NativeTranslationNotSupportedException` under `NativeOnly` | the decline. **CORRECTION FOLDED BACK FROM TASK 5: the non-score element must be DOUBLE-typed** (the fixture grew a real stored `Weight` for this) — declining `Mql.Field(e, "SomeString", …)` proves nothing, because the CLR-TYPE guard would have declined it too. Only a double-typed, really-stored, parameter-rooted element makes the element NAME the sole reason for the decline. The test's second half is the mirror image (`EF.Property<float>(e, "__score")` — name admitted, type the sole decline) |
 | 15 | `Score_leaf_without_a_vector_search_declines` | `EF.Property<double>(e, "__score")` on a plain query: unchanged disposition | the guard |
 | 16 | `Untranslatable_pre_filter_falls_back_with_correct_rows` | correct rows under `Native`, throws under `NativeOnly` | the graceful decline |
 
 **Every data assertion pins order or score. None pins row count alone.** Where a count is asserted it is
 alongside the ordered labels, never instead of them.
 
-### 9.4 The one genuinely open execution risk: streaming + the extra `__score` element
+### 9.4 The one genuinely open execution risk: streaming + the extra `__score` element — **RESOLVED, it passed first time**
+
+> **MEASURED in Task 6: test 8 PASSED on its first run, on EF8, EF9 and EF10. The pre-designed
+> `allowStreaming: false` fallback was NOT applied and does NOT exist in the shipped code.** The test asserts
+> `StreamingEligibility.IsEligible` directly as a premise and then every mapped scalar plus the owned
+> sub-document; the fixture's `VectorDoc` grew an `OwnsOne Meta` precisely so it mirrors the spec suite's
+> `Book`/`Preface` shape. It is **mutation-verified**: replacing `BuildFillLoop`'s `reader.SkipValue()` base
+> case with a no-op (leaving the reader positioned at the unconsumed value) turns both of its cases red, along
+> with 11 other cases in the file — so the test genuinely exercises the skip rather than passing vacuously.
 
 The spec fixture's `Book` owns a `Preface` (a single owned reference), which since EF-322 Task 2 makes a
 whole-entity query native **and streaming-eligible** (READ, `StreamingEligibility.IsEligible`). So the 70
@@ -793,6 +825,25 @@ Therefore, in this slice:
 ---
 
 ## 10. Breaking changes
+
+> **TASK 6 OUTCOME — VERIFIED NONE; no `BREAKING-CHANGES.md` entry is warranted.** Baselines re-confirmed
+> with `gh release list`: latest overall `v10.0.2`; latest per line `v10.0.2` / `v9.1.2` / `v8.4.2`. Of the 15
+> `src/` files the slice touches, **13 do not exist at any of the three tags** (every new IR/stage/binder/
+> builder file, plus `MongoPipelineFactory`, `MongoSelectDefinition`, `MongoSelectLowerer`,
+> `NativeProjectionBinder`, `NativeSlotPopulator`, `MongoQueryLanguageRenderer`, `PlaceholderTable`). The two
+> that do — `MongoEFToLinqTranslatingExpressionVisitor.cs` and `MongoShapedQueryCompilingExpressionVisitor.cs`
+> — declare `internal sealed class` **at each tag and at HEAD alike**, so every `public` member inside them is
+> a member of an internal type and is not public surface (rubric: internal is never public surface, regardless
+> of `InternalsVisibleTo`). Of the members §10 lists below: `MongoQueryableExtensions` is **byte-identical**
+> to all three tags; `Metadata/VectorQueryOptions.cs` differs from the tags by **one doc-comment word**
+> (pre-existing on the branch, not this slice, record signature unchanged); `MongoExecutableQuery`'s deltas vs
+> the tags are all `internal` members and all predate this slice; `MongoEventId`'s deltas vs the tags are five
+> pure ADDITIONS unrelated to vector search, and there is **no** `VectorSearch`-related diagnostics delta at
+> all. `Infrastructure/MongoQueryMode.cs` is absent at all three tags (`git ls-tree`), so on a released
+> package vector search only ever ran on driver-LINQ — every mode-dependent statement in this design is
+> vacuous there. Finally the rubric explicitly carves out both "which internal execution path a supported LINQ
+> query takes" and "the exact emitted MQL", and results are unchanged (measured: zero spec delta on both axes,
+> zero `AssertMql` baseline diffs).
 
 **Expected: none, and no `BREAKING-CHANGES.md` entry — but verify per member against the release TAGS in
 Task 6, do not take it from here.** Baselines: `v10.0.2` / `v9.1.2` / `v8.4.2` (CITED handoff §7, which

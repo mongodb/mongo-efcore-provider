@@ -64,7 +64,7 @@ Query modes:
 | SP3 | Projection pushdown — server-side `$project` | EF-331 | ✅ Done |
 | SP4 | Scalar cardinality — Count / First / Any / aggregates | EF-336 | ✅ Done |
 | SP5 | Collection Includes | EF-339 | 🟡 Flat collection Include done; several shapes deferred |
-| SP6 | Remaining operators — GroupBy, SelectMany, set-ops, Distinct, OfType, non-canonical paging | EF-344 / EF-347 | 🟡 Largely done; VectorSearch + long tail deferred |
+| SP6 | Remaining operators — GroupBy, SelectMany, set-ops, Distinct, OfType, non-canonical paging | EF-344 / EF-347 | 🟡 Largely done; long tail deferred (**`VectorSearch` is no longer deferred — delivered 2026-08-06, see §4**) |
 | SP7 | Materializer perf — one-pass stream → POCO | — | 🟡 **Phase 1 done** (one-pass materializer, `e38587f`); Phase 2 (streaming breadth) not started |
 
 Beyond the seven planned sub-projects, an **owned-data (embedded-document) work stream** has since landed as
@@ -421,7 +421,25 @@ fallback now returns `0` instead of throwing `ArgumentNullException`, and **EF-3
 `CollectionShaperExpression`. See the rewritten note in `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for
 the full mechanism, the parity-claim split (bare vs. wrapped count), and the `TypeAs` conflation.
 
-**Not native at all:** `VectorSearch`; non-TPH `OfType`.
+**Atlas Vector Search (EF-322 VectorSearch slice, 2026-08-06).** `VectorSearch` used to be listed here as "not
+native at all". **It no longer is.** A bare vector search, one carrying a `preFilter` the native predicate
+translator can express, `exact`/`numCandidates` options, a `Where` composed after it, and a `__score`
+projection leaf all emit natively — via a **deferred `Build`-time stage slot** on `MongoPipelineFactory` that
+invokes the driver's own `PipelineStageDefinitionBuilder.VectorSearch` per execution (so the emitted body,
+including the `numCandidates = limit * 10` derivation and field order, is byte-identical to the bridge's and
+**no `AssertMql` baseline moved**), plus the fixed `$addFields{__score}` companion. The `MONGODB_EF_NATIVE_ONLY=1`
+`VectorSearch` filter went **112 → 20** failures (92 fixed); default `Native` is unchanged at 114/0/4. The two
+independent gates were collapsed into one fact read twice (`hasUnboundVectorSearch`), so the silent-wrong-data
+state — both gates open, no stage emitted, right row count in insertion order — is unreachable by construction.
+**Still not native:** the 16 remaining projection-bucket cases (4 bare-scalar, 12 mixed/entity-constructing —
+the SP3-wide bare-projection boundary and the entity-leaf gap, not anything vector-specific) and the 4
+`VectorSearch_with_complex_pre_filter` cases (blocked on `MongoExpressionTranslator` not supporting
+`arrayField.Contains(constant)` — a cross-cutting predicate-breadth gap deliberately not fixed in that slice).
+Both decline gracefully: correct, score-ordered rows under default `Native`, throwing only under `NativeOnly`.
+See the "Atlas Vector Search" note in `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` for the mechanism, the
+three `__score` guards, and the set-op dedup hazard.
+
+**Not native at all:** non-TPH `OfType`.
 
 ---
 
@@ -846,6 +864,14 @@ Ordered by size. Each is a genuine "remove the fallback and the user gets an exc
 | 4 | **Non-constant regex** | 13 | **EF-247**, and note its JIRA status is `Blocked`, not merely open — check what it is blocked on before scheduling. |
 | 5 | **`Not` over an unsupported subtree** | 8 | `RenderUnary` handles `Not` over a query-native comparison (slice 5); a `Not` whose operand is a conjunction or a nested `Not` still declines by design. Smallest and most self-contained item on this list. |
 
+> **DELIVERED 2026-08-06 — read the rest of this sub-section as the SIZING that justified the slice, not as
+> outstanding work.** 92 of the 112 now pass under `MONGODB_EF_NATIVE_ONLY=1`. The 20 residual are **16** from
+> the 24-case projection bucket (row 1 above — step 3's bare-projection/entity-leaf boundary, not anything
+> vector-specific) and **4** `VectorSearch_with_complex_pre_filter` (a `MongoExpressionTranslator`
+> predicate-breadth gap on `arrayField.Contains(constant)`, cross-cutting rather than vector-specific). All 6
+> of the exception-shape bucket now pass. So `VectorSearch` no longer contributes to row 2 at all, and
+> contributes 16 to row 1.
+
 **`VectorSearch` is a large, concrete slice of the two big buckets — measured, not estimated, and this
 corrects a claim made in the first draft of this section.** That draft said VectorSearch's 112 tests "land in
 the exception-shape bucket rather than the data buckets", which would have made them cutover bookkeeping. The
@@ -1059,7 +1085,7 @@ Ranked by what actually gates the cutover:
    re-rank against item 2 before treating it as still first.
 2. **The computed/client-eval projection long tail** — the largest bucket by test count, and the least
    unified: it is many small features, not one.
-3. **`VectorSearch`** — **106 tests, promoted here on measurement.** It was ranked below `GroupBy` in this
+3. ~~**`VectorSearch`** — **106 tests, promoted here on measurement.**~~ **DONE 2026-08-06** (92 of 112 fixed; the 20 residual fold into item 2's projection long tail and into predicate breadth — see §4). It was ranked below `GroupBy` in this
    list's first draft on the assumption its tests were exception-shape bookkeeping; they are not, and it is the
    largest single named feature in the coverage gap.
 4. **The bulk-path bridge dependency** (§9.2) — small in code, but currently unscheduled and easy to miss.
@@ -1110,9 +1136,11 @@ de-linked** from the group: it has no key rather than a weak one, and its clean 
 state. The two new residuals are not in that sequence: **EF-380** is the one with a §9.5 claim on it (silent
 wrong data under the default mode), **EF-381** is a loud-failure-quality item.
 
-**Next up is step 2 below — `VectorSearch`. Its effort is INFERRED, not measured** (the 106-test figure is
-measured; the *work* is not), and it opens with a **Task-0 spike**, for the reason step 2 already records:
-`$vectorSearch` must be the first pipeline stage, which cuts against the lowerer's canonical stage ordering.
+**Step 2 below — `VectorSearch` — is now DONE** (slice landed 2026-08-06; see §4 and the "Atlas Vector Search"
+note in `Query/AGENTS.md`). The Task-0 spike it opened with confirmed the first-stage constraint, and the
+answer was a dedicated `MongoSelectDefinition.VectorSearch` slot emitted by the lowerer *ahead of*
+`AppendSelectOpStages`, so first-ness is structural rather than incidental. **Next up is step 3, the projection
+long tail** — which is also what holds 16 of the 20 vector cases still failing under `NativeOnly`.
 
 ---
 
@@ -1129,14 +1157,20 @@ EF-317 is throwaway, build what joins need), the agreed order is:
    case (FK-correlated, single-level, left-join semantics) and is the one where the lowerer already carries
    built-but-dormant code behind a single gate site. Build it, then generalize. Starting at the general join
    is the higher-risk path for no compensating benefit.
-2. ⬅ **NEXT (as of 2026-08-05, EF-379 having closed out step 1's insertion). `VectorSearch`** — 106 tests,
-   architecturally isolated, good parallel or follow-on work. *(It was ranked FIRST in the pre-ruling order for
-   a reason that has since evaporated: it was the thing that could proceed while the EF-317 decision was
-   pending. There is no longer a decision to wait on.)* **The 106 is measured; the EFFORT is INFERRED, not
-   measured.** It opens with a **Task-0 spike** — `$vectorSearch` must be the first pipeline stage, which cuts
-   against the lowerer's canonical stage ordering.
-3. **Projection long tail**, anchored on the **bare-scalar projection boundary** — one structural change
-   unblocking bare scalars, bare entities and bare arrays together, rather than 873 individual fixes.
+2. ✅ **`VectorSearch`** *(delivered 2026-08-06 — see §4 and the "Atlas Vector Search" note in
+   `Query/AGENTS.md`)*. **112 → 20** `NativeOnly` failures on the `VectorSearch` filter (92 fixed); default
+   `Native` unmoved at 114/0/4 with zero baseline diffs. The Task-0 spike it opened with confirmed the
+   first-stage constraint (`Location40602`, uniformly), and the answer was a dedicated
+   `MongoSelectDefinition.VectorSearch` slot emitted by the lowerer **ahead of** `AppendSelectOpStages` —
+   first-ness structural, not incidental — plus a deferred `Build`-time stage slot that calls the driver's own
+   stage builder per execution (the `$vectorSearch` BODY varies with runtime options, so it must be
+   *constructed*, not *substituted*). **The 20 residual are BOTH already accounted for by other work:** 16 are
+   step 3's bare-projection/entity-leaf boundary, and 4 are a `MongoExpressionTranslator` predicate-breadth gap
+   (`arrayField.Contains(constant)`) that is cross-cutting rather than vector-specific. Both decline
+   gracefully.
+3. ⬅ **NEXT. Projection long tail**, anchored on the **bare-scalar projection boundary** — one structural change
+   unblocking bare scalars, bare entities and bare arrays together, rather than 873 individual fixes. It also
+   carries 16 of the 20 remaining `VectorSearch` failures with it.
 4. **The bulk-path bridge** (§9.2) — scope early, execute late.
 5. **Test re-baselining + public-API decisions** — last.
 
@@ -1154,7 +1188,7 @@ re-derive it. Ordered by leverage (how much of the fallback set one site's remov
 | 2 | Bare-scalar, entity-ref and mixed projections | `NativeProjectionBinder.TryPopulateNativeProjection`'s selector-body shape check, plus the gate's "projects a non-entity result" throw |
 | 3 | Computed long tail | `MongoExpressionTranslator.TranslateNode`'s final `return null`, `TranslateOperand`'s cast guard, and `NativeProjectionBinder.TryTranslateLeaf`'s final `return null` |
 | 4 | Joins | `NativeSlotPopulator`'s catch-all + `MongoSelectLowerer`'s join-coverage guard; **GroupBy+Join is the one *hard* decline** (throws under `Native` too, because the driver fallback returns silently-empty joins) |
-| 5 | `VectorSearch` | **TWO independent gates, not one** (corrected 2026-08-06, measured by mutation): `NativeSlotPopulator`'s catch-all fires first — `VectorSearch` is in `AllowedQueryableExtensions` but in neither the `VisitMethodCall` switch nor `IsNativeRepresentableSlotOperator` — so `Route` is already `Fallback` before `ClassifyNativeDisposition`'s `ContainsVectorSearch` branch is consulted. Both must open. Needs the preprocessor-lifted call to reach the lowerer as a stage. **Opening both WITHOUT emitting the stage returns silently wrong data** (correct row count, insertion order) — see §7's VectorSearch note |
+| 5 | `VectorSearch` | ✅ **OPENED 2026-08-06 — this row is now HISTORY, kept because it records the hazard the fix is shaped around.** There were **TWO independent gates, not one** (corrected 2026-08-06, measured by mutation): `NativeSlotPopulator`'s catch-all fired first — `VectorSearch` is in `AllowedQueryableExtensions` but in neither the `VisitMethodCall` switch nor `IsNativeRepresentableSlotOperator` — so `Route` was already `Fallback` before `ClassifyNativeDisposition`'s `ContainsVectorSearch` branch was consulted, and **opening both WITHOUT emitting the stage returns silently wrong data** (correct row count, insertion order, no exception). **The fix collapses the two into ONE FACT READ TWICE:** `NativeSlotPopulator` gained an explicit `call.IsVectorSearch()` branch that either binds `Select.VectorSearch` or calls `MarkNotNativelyRepresentable()` (no third exit), and `ClassifyNativeDisposition`'s third parameter changed meaning to `hasUnboundVectorSearch` = `ContainsVectorSearch(CapturedExpression) && Select.VectorSearch is null`. The dangerous state now requires two contradictory conditions, so a later edit deleting the lowerer block or the populator branch degrades to a graceful fallback rather than to wrong data. Residual decline: a `preFilter` outside the native predicate set, or a non-parameter/non-constant vector/limit/options argument |
 | 6 | GroupBy breadth | five separate sites: computed keys and computed accumulator operands in `NativeGroupByBinder`, element/result selectors in `TranslateGroupBy`, bare `IGrouping`, and the post-group guards |
 | 7 | `Contains` / `ElementAt` / `Last` | no binder at all — `NativeSlotPopulator` catch-all |
 | 8 | Composite-PK member access | `MongoExpressionTranslator.TryResolveMember` / `TryResolveOwnedFieldPath` |

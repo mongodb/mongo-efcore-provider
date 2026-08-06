@@ -299,6 +299,28 @@ internal sealed class MongoSelectDefinition
     internal bool IsSetOpTerminalOnly
         => IsSetOp && !IsGroupBy && !IsDistinct && Grouping == null && UnwindSources.Count == 0 && Projection.Count == 0;
 
+    /// <summary>
+    /// The Atlas <c>$vectorSearch</c> anchoring this query, or <see langword="null"/> when it has none
+    /// (EF-322 VectorSearch slice).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A DEDICATED slot rather than a <see cref="PipelineOps"/> entry: the server requires
+    /// <c>$vectorSearch</c> to be the FIRST stage of the pipeline (<c>Location40602</c>), and the lowerer
+    /// emits <see cref="PipelineOps"/> verbatim in arrival order — so a vector search recorded there would
+    /// only HAPPEN to come first. Its own slot, emitted from a block ahead of the op list, makes first-ness
+    /// structural.
+    /// </para>
+    /// <para>
+    /// It deliberately does NOT join <see cref="HasTerminalOperator"/>. A vector search is a root ANCHOR, not
+    /// a terminal — a <c>Where</c>/<c>OrderBy</c>/paging composed after it must keep recording into
+    /// <see cref="PipelineOps"/> exactly as it would over a plain collection scan. <see cref="Route"/> is
+    /// unaffected too: a bare vector search stays <see cref="NativeRoute.WholeEntity"/>, and one with a bound
+    /// projection stays <see cref="NativeRoute.Projection"/>.
+    /// </para>
+    /// </remarks>
+    internal MongoVectorSearch? VectorSearch { get; set; }
+
     /// <summary>The terminal set operation (Union/Concat), when this select is a set-op query (EF-347 slice 2).</summary>
     internal MongoSetOperation? SetOperation { get; set; }
 
@@ -563,6 +585,12 @@ internal sealed class MongoSelectDefinition
            && Grouping == null
            && PendingGroupKey == null
            && SetOperation == null
+           // A vector search is as disqualifying as any other recorded operation: the flat $lookup a
+           // reference Include emits can carry no sub-pipeline, so an inner side anchored on one is not a
+           // bare scan of the target collection. The slot IS populated as of the EF-322 VectorSearch slice
+           // Task 4, but no reachable shape puts a vector search on a join's INNER side (VectorSearch must
+           // sit at the query root), so this conjunct is defence-in-depth rather than a live discriminator.
+           && VectorSearch == null
            && !IsGroupBy
            && !IsDistinct
            && !IsSetOp

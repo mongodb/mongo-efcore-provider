@@ -15,6 +15,7 @@
 
 using System.Linq.Expressions;
 using System.Reflection;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -183,6 +184,26 @@ internal static class NativeSlotPopulator
             // candidate join.
             mongoQ.Select.MarkSawCandidateReferenceIncludeJoin();
         }
+        else if (call.IsVectorSearch())
+        {
+            // EF-322 VectorSearch slice. This is GATE 2, and binding the slot is what opens GATE 1 too: the
+            // disposition reads `ContainsVectorSearch(captured) && Select.VectorSearch is null`, so a bound
+            // slot means "native" AND "the lowerer has a $vectorSearch stage to emit" as ONE fact. There are
+            // exactly two exits here — bind, or mark non-representable — which is what makes the
+            // silently-wrong-data state (native route with the stage never emitted: the right row count, in
+            // INSERTION order rather than score order, no exception) unreachable by construction.
+            //
+            // This branch sits ABOVE the catch-all rather than in IsNativeRepresentableSlotOperator because
+            // that whitelist takes only a MethodInfo and there is no QueryableMethods constant for
+            // VectorSearch — the recognizer is the internal MethodCallExpression extension IsVectorSearch().
+            // The area's "native catch-all whitelist must stay in sync" pitfall is therefore satisfied by
+            // construction here: the explicit branch means the catch-all is never reached for this operator,
+            // so there is nothing for the whitelist to hold. See IsNativeRepresentableSlotOperator's note.
+            if (!NativeVectorSearchBinder.TryBind(mongoQ, call))
+            {
+                mongoQ.Select.MarkNotNativelyRepresentable();
+            }
+        }
         else if (!IsNativeRepresentableSlotOperator(methodDefinition))
         {
             // Any other top-level operator (Distinct, Cast, DefaultIfEmpty, scalar aggregates, cardinality
@@ -210,6 +231,12 @@ internal static class NativeSlotPopulator
 
     // The operators PopulateNativeSlots lowers into a native slot. Everything else either sets the flag in its
     // own Translate override (Select/OfType) or must drop off the native path (handled by the catch-all above).
+    //
+    // VectorSearch is deliberately ABSENT, and its absence is not an omission to "fix": this predicate takes a
+    // MethodInfo, and VectorSearch has no QueryableMethods constant to compare against — it is recognized by
+    // the internal MethodCallExpression extension IsVectorSearch(), which needs the whole call node. Its own
+    // explicit branch above runs BEFORE the catch-all, so the catch-all never sees it and this whitelist has
+    // nothing to hold for it (EF-322 VectorSearch slice).
     internal static bool IsNativeRepresentableSlotOperator(MethodInfo methodDefinition)
         => methodDefinition == QueryableMethods.Where
            || methodDefinition == QueryableMethods.OrderBy

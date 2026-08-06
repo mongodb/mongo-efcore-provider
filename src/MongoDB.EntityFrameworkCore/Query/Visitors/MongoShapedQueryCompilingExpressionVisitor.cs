@@ -420,8 +420,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // Unlike the spike (B1), which builds the native pipeline per execution inside TranslateQuery
         // and falls back to driver-LINQ at run time, this decision is made deterministically here at
         // COMPILE time. A native query that can be lowered/rendered yields a MongoPipelineFactory captured
-        // into the executor; per execution it is only re-bound (factory.Build(parameterValues)) — never
-        // re-translated. Because fallback happens here (not at run time), we compile EXACTLY ONE shaper
+        // into the executor; per execution it is only re-bound (factory.Build over a MongoNativeBuildContext,
+        // which also constructs any deferred stage slot) — never re-translated. Because fallback happens here
+        // (not at run time), we compile EXACTLY ONE shaper
         // (streaming, DOM-native, or driver-DOM) and need no run-time dual-shaper dispatch.
         var nativeFactory = TryBuildNativeFactory(mode, mongoQueryExpression);
 
@@ -589,10 +590,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // returned IEnumerable<T> to apply First/Single semantics. Scalar aggregates (Route ==
         // ScalarAggregate) are not yet lowered by the pipeline and remain on the driver-LINQ path.
         //
-        // A VectorSearch query is realized by the driver-LINQ path ($vectorSearch stage built from the captured
-        // VectorSearch call) and carries the index-resolution / zero-results diagnostics. The native lowerer
-        // reads only the logical slots and never the captured chain, so it would silently drop the vector
-        // search. Vector search is therefore not natively representable; keep it on the driver path.
+        // A VectorSearch query is native when — and only when — NativeSlotPopulator bound it into
+        // MongoSelectDefinition.VectorSearch (EF-322 VectorSearch slice). The lowerer emits the $vectorSearch
+        // stage (plus its $addFields{__score} companion) from that slot, ahead of every other stage, and
+        // MongoPipelineFactory's deferred slot runs the SAME VectorSearchStageBuilder the driver-LINQ bridge
+        // does — so the index resolution, the VectorSearchNeedsIndex warning and the AdditionalState the
+        // zero-results diagnostic reads are all produced identically on both paths. An UNBOUND vector search
+        // (the binder declined) classifies as Fallback via hasUnboundVectorSearch, so it keeps the driver path;
+        // the lowerer can never be reached with a vector search it has no slot to emit.
         // This builder handles the whole-entity / reducer / projection / group native pipelines. It declines
         // when the query is not native at all (ClassifyNativeDisposition != Native — EF-334) AND, additionally,
         // when Route == ScalarAggregate: that shape IS native but is built by TryBuildAggregateFactory, so
@@ -784,12 +789,21 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// <param name="isFallbackWrongData">Whether this query's driver-LINQ fallback returns silently wrong rows —
     /// a GroupBy combined with a join, or a join whose inner sequence pages itself (CSHARP-6017). See
     /// <see cref="MongoSelectDefinition.IsFallbackWrongData"/>.</param>
-    /// <param name="containsVectorSearch">Whether the captured chain contains a lifted-out <c>VectorSearch</c> (<see cref="ContainsVectorSearch"/>).</param>
+    /// <param name="hasUnboundVectorSearch">
+    /// Whether the captured chain contains a lifted-out <c>VectorSearch</c> that the native slot populator did
+    /// NOT bind into <see cref="MongoSelectDefinition.VectorSearch"/> (EF-322 VectorSearch slice). This is one
+    /// fact read twice: a BOUND slot makes this <see langword="false"/>, so the query classifies Native AND the
+    /// lowerer has a <c>$vectorSearch</c> stage to emit; an UNBOUND one makes it <see langword="true"/>, and the
+    /// binder's only other exit is <c>MarkNotNativelyRepresentable()</c>, so <paramref name="route"/> is
+    /// <see cref="NativeRoute.Fallback"/> as well. The dangerous middle state — native route, no stage emitted,
+    /// which returns the right ROW COUNT in INSERTION order rather than score order with no exception — is
+    /// therefore unreachable rather than merely avoided.
+    /// </param>
     /// <param name="mode">The active <see cref="MongoQueryMode"/>.</param>
     internal static NativeDisposition ClassifyNativeDisposition(
         NativeRoute route,
         bool isFallbackWrongData,
-        bool containsVectorSearch,
+        bool hasUnboundVectorSearch,
         MongoQueryMode mode)
     {
         // A query whose driver-LINQ fallback returns wrong rows must hard-decline under Native/NativeOnly.
@@ -801,8 +815,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
 
         // Not natively representable (an unsupported slot/projection shape, or a lifted-out vector search the
-        // native lowerer never sees) -> graceful driver-LINQ fallback.
-        if (route == NativeRoute.Fallback || containsVectorSearch)
+        // slot populator did not bind, so the native lowerer would never emit it) -> graceful driver-LINQ
+        // fallback, which still carries the VectorSearch in the captured chain and runs it correctly.
+        if (route == NativeRoute.Fallback || hasUnboundVectorSearch)
         {
             return NativeDisposition.Fallback;
         }
@@ -813,14 +828,17 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// <summary>
     /// Gather the three is-native signals from <paramref name="q"/> and classify (see the pure
     /// <see cref="ClassifyNativeDisposition(NativeRoute, bool, bool, MongoQueryMode)"/> overload). The one
-    /// signal that cannot live on <see cref="MongoSelectDefinition"/> is vector search: the <c>VectorSearch</c>
-    /// call is lifted out of the tree before the Select is built, so it is read from the captured chain here.
+    /// signal that cannot live wholly on <see cref="MongoSelectDefinition"/> is vector search: the
+    /// <c>VectorSearch</c> call is lifted out of the tree before the Select is built, so its PRESENCE is read
+    /// from the captured chain here — and paired with the slot the native binder either did or did not fill, so
+    /// the two gates open and close together (EF-322 VectorSearch slice; see the
+    /// <c>hasUnboundVectorSearch</c> parameter documentation).
     /// </summary>
     private static NativeDisposition ClassifyNativeDisposition(MongoQueryExpression q, MongoQueryMode mode)
         => ClassifyNativeDisposition(
             q.Select.Route,
             q.Select.IsFallbackWrongData,
-            ContainsVectorSearch(q.CapturedExpression),
+            ContainsVectorSearch(q.CapturedExpression) && q.Select.VectorSearch is null,
             mode);
 
     /// <summary>
@@ -899,7 +917,17 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // MongoClientWrapper.Execute. The driver-LINQ Query is left as Expression.Empty() — it is never used.
         if (nativeFactory != null)
         {
-            var pipeline = nativeFactory.Build(GetParameterValues(queryContext));
+            // A deferred stage slot (today: $vectorSearch) is CONSTRUCTED during Build, and may both raise a
+            // diagnostic and record state the executor reads back afterwards — the zero-results vector-search
+            // warning reads VectorQueryProperty/VectorQueryIndexName out of AdditionalState. So the dictionary
+            // is created here, filled by Build, and handed to the executable query; a baked-only template
+            // simply leaves it empty, exactly as before.
+            var additionalState = new Dictionary<string, object>();
+            var pipeline = nativeFactory.Build(new MongoNativeBuildContext(
+                GetParameterValues(queryContext),
+                bsonSerializerFactory,
+                mongoQueryContext.QueryLogger,
+                additionalState));
 
             var queryable = transaction == null ? collection.AsQueryable() : collection.AsQueryable(transaction.Session);
             var nativeExecutable = new MongoExecutableQuery(
@@ -907,7 +935,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 resultCardinality,
                 (IMongoQueryProvider)queryable.Provider,
                 collection.CollectionNamespace,
-                new(new Dictionary<string, object>()))
+                new(additionalState))
             {
                 NativePipeline = pipeline,
                 Session = transaction?.Session,

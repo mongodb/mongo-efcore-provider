@@ -518,95 +518,31 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             var limit = ParamValue<int>(4);
             var options = ParamValue<VectorQueryOptions?>(5);
 
-            var concreteOptions = options ?? new();
-
-            if (concreteOptions is { NumberOfCandidates: not null, Exact: true })
-            {
-                throw new InvalidOperationException(
-                    "The option 'Exact' is set to 'true' on a call to 'VectorQuery', indicating an exact nearest neighbour (ENN) search, and the number of candidates has also been set. Either 'NumberOfCandidates' or 'Exact' can be set, but not both.");
-            }
-
-            var members = propertyExpression.GetMemberAccess<MemberInfo>();
             var entityType = _queryContext.Context.Model.FindEntityType(_source.Type.TryGetItemType()!);
-            var memberMetadata = entityType?.FindMember(members[0].Name);
 
-            if (memberMetadata == null)
-            {
-                throw new InvalidOperationException(
-                    $"Could not create a vector query for '{(entityType?.ClrType ?? _source.Type).ShortDisplayName()}.{members[0].Name}'. Make sure the entity type is included in the EF Core model and that the property or field is mapped.");
-            }
+            // The guard/member/index resolution lives in VectorSearchStageBuilder.Resolve, reflection-free, so
+            // its exceptions surface unwrapped exactly as they always have. See that type's remarks - the split
+            // between Resolve and CreateStage is what keeps the observable exceptions identical across the
+            // driver-LINQ bridge and the native path.
+            var resolved = VectorSearchStageBuilder.Resolve(
+                entityType, _source.Type, propertyExpression, options, _queryContext.QueryLogger);
 
-            foreach (var memberInfo in members.Skip(1))
-            {
-                memberMetadata = (memberMetadata as INavigation)?.TargetEntityType.FindMember(memberInfo.Name);
-            }
+            AdditionalState[MongoExecutableQuery.VectorQueryProperty] = resolved.Member;
+            AdditionalState[MongoExecutableQuery.VectorQueryIndexName] = resolved.Options.IndexName!;
 
-            AdditionalState[MongoExecutableQuery.VectorQueryProperty] = memberMetadata!;
-
-            var vectorIndexesInModel = memberMetadata?.DeclaringType.ContainingEntityType
-                .GetIndexes().Where(i => i.GetVectorIndexOptions() != null && i.Properties[0] == memberMetadata).ToList();
-
-            if (concreteOptions.IndexName == null)
-            {
-                // Index to use was not specified in the query. Throw or warn if there is anything but one index in the model.
-                if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
-                {
-                    ThrowForBadOptions(
-                        "the vector index for this query could not be found. Use 'HasIndex' on the EF model builder to specify the index, or " +
-                        "specify the index name in the call to 'VectorQuery' if indexes are being managed outside of EF Core.");
-                }
-
-                if (vectorIndexesInModel!.Count > 1)
-                {
-                    ThrowForBadOptions(
-                        "multiple vector indexes are defined for this property in the EF Core model. Specify the index to use in the call to 'VectorSearch'.");
-                }
-
-                // There is only one index and none was specified, so use that index.
-                concreteOptions = concreteOptions with { IndexName = vectorIndexesInModel[0].Name };
-            }
-            else
-            {
-                // Index to use was specified in the query. Throw or warn if it doesn't match any index in the model.
-                if (vectorIndexesInModel == null || vectorIndexesInModel.All(i => i.Name != concreteOptions.IndexName))
-                {
-                    _queryContext.QueryLogger.VectorSearchNeedsIndex((IProperty)memberMetadata!);
-                }
-                // Index name in query already matches, so just continue.
-            }
-
-            AdditionalState[MongoExecutableQuery.VectorQueryIndexName] = concreteOptions.IndexName!;
-
-            var searchOptionsType = typeof(VectorSearchOptions<>).MakeGenericType(entityType!.ClrType);
-            var searchOptions = Activator.CreateInstance(searchOptionsType)!;
-
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.IndexName))!.SetValue(searchOptions,
-                concreteOptions.IndexName);
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.NumberOfCandidates))!.SetValue(searchOptions,
-                concreteOptions.NumberOfCandidates);
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.Exact))!.SetValue(searchOptions,
-                concreteOptions.Exact);
-
+            object? filterDefinition = null;
             if (preFilterExpression != null)
             {
-                var convertedExpression = Activator.CreateInstance(
-                    typeof(ExpressionFilterDefinition<>).MakeGenericType(entityType.ClrType),
+                filterDefinition = Activator.CreateInstance(
+                    typeof(ExpressionFilterDefinition<>).MakeGenericType(entityType!.ClrType),
                     Visit(preFilterExpression));
-
-                searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.Filter))!.SetValue(searchOptions,
-                    convertedExpression);
             }
 
-            var vectorSearchPipelineStage = typeof(PipelineStageDefinitionBuilder)
-                .GetTypeInfo().GetDeclaredMethods(nameof(PipelineStageDefinitionBuilder.VectorSearch))
-                .Single(mi =>
-                    mi.GetParameters()[0].ParameterType.IsGenericType
-                    && mi.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(Expression<>))
-                .MakeGenericMethod(entityType.ClrType, memberMetadata!.ClrType)
-                .Invoke(null, [propertyExpression, queryVector, limit, searchOptions]);
+            var vectorSearchPipelineStage = VectorSearchStageBuilder.CreateStage(
+                entityType!, propertyExpression, resolved, filterDefinition, queryVector!, limit);
 
             var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
-                .MakeGenericMethod(entityType.ClrType, entityType.ClrType);
+                .MakeGenericMethod(entityType!.ClrType, entityType.ClrType);
 
             var serializerType = typeof(IBsonSerializer<>).MakeGenericType(entityType.ClrType);
 
@@ -628,12 +564,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     Expression.Constant(AddScoreField),
                     Expression.Constant(null, serializerType)),
                 Expression.Constant(null, serializerType));
-
-            void ThrowForBadOptions(string reason)
-            {
-                throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because {reason}");
-            }
 
 #if EF8 || EF9
             TValue? ParamValue<TValue>(int index)

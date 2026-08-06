@@ -16,15 +16,20 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using MongoDB.Bson;
+using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Translates a typed <see cref="MongoPipelineStage"/> list into a cached <see cref="BsonDocument"/>
-/// template and binds per-execution parameter values via <see cref="Build"/>.
+/// Translates a typed <see cref="MongoPipelineStage"/> list into a cached template of stage slots and
+/// binds per-execution parameter values via
+/// <see cref="Build(IReadOnlyDictionary{string, object})"/> /
+/// <see cref="Build(in MongoNativeBuildContext)"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -33,21 +38,83 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// placeholder sentinels in a shared <see cref="PlaceholderTable"/>. The resulting template is immutable.
 /// </para>
 /// <para>
-/// At execution time <see cref="Build"/> clones the template and substitutes every sentinel with the
-/// serialized runtime value. Constants are already baked — they are never touched by Build.
+/// A template slot is therefore normally a rendered <see cref="BsonDocument"/>. It may instead be
+/// <em>deferred</em> — a <see cref="Func{T, TResult}"/> invoked at Build time — for the rare stage whose
+/// BSON <em>shape</em>, not merely its values, depends on runtime state and so cannot be expressed as a
+/// value sentinel. A deferred slot is built by <see cref="Build(in MongoNativeBuildContext)"/> only;
+/// the parameter-values-only overload throws rather than emit a pipeline with a hole.
+/// </para>
+/// <para>
+/// At execution time Build clones the template and substitutes every sentinel with the serialized runtime
+/// value. Constants are already baked — they are never touched by Build. The substitution pass runs over a
+/// deferred slot's freshly built document too, so anything it embeds that was rendered at compile time into
+/// the shared <see cref="PlaceholderTable"/> resolves in the same pass.
 /// No EF-version-conditional code appears here; bridging <c>QueryContext.Parameters</c> (EF10) vs
 /// <c>QueryContext.ParameterValues</c> (EF8/EF9) is the caller's responsibility.
 /// </para>
 /// </remarks>
 internal sealed class MongoPipelineFactory
 {
-    private readonly IReadOnlyList<BsonDocument> _template;
+    private readonly IReadOnlyList<StageSlot> _template;
     private readonly PlaceholderTable _placeholders;
+    private readonly bool _hasDeferredSlot;
 
-    private MongoPipelineFactory(IReadOnlyList<BsonDocument> template, PlaceholderTable placeholders)
+    internal MongoPipelineFactory(IReadOnlyList<StageSlot> template, PlaceholderTable placeholders)
     {
         _template = template;
         _placeholders = placeholders;
+
+        foreach (var slot in template)
+        {
+            if (slot.IsDeferred)
+            {
+                _hasDeferredSlot = true;
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// One slot of the compiled pipeline template: either a <see cref="BsonDocument"/> rendered once at
+    /// <see cref="Create"/> time, or a builder deferred to
+    /// <see cref="Build(in MongoNativeBuildContext)"/> time.
+    /// </summary>
+    /// <remarks>
+    /// Deferral exists for a stage whose document SHAPE depends on runtime state — which keys are present
+    /// at all, not just which values they carry — so the compile-time template cannot represent it and a
+    /// value sentinel cannot substitute for it.
+    /// </remarks>
+    internal readonly struct StageSlot
+    {
+        private readonly BsonDocument? _document;
+        private readonly Func<MongoNativeBuildContext, BsonDocument>? _builder;
+
+        private StageSlot(BsonDocument? document, Func<MongoNativeBuildContext, BsonDocument>? builder)
+        {
+            _document = document;
+            _builder = builder;
+        }
+
+        /// <summary>A slot holding a document rendered at compile time.</summary>
+        internal static StageSlot Rendered(BsonDocument document) => new(document, null);
+
+        /// <summary>A slot whose document is constructed per execution, at Build time.</summary>
+        internal static StageSlot Deferred(Func<MongoNativeBuildContext, BsonDocument> builder) => new(null, builder);
+
+        /// <summary>Whether this slot's document is built per execution rather than baked at compile time.</summary>
+        internal bool IsDeferred => _builder is not null;
+
+        /// <summary>
+        /// Deep-clones the baked template document, so per-execution substitution never mutates the template.
+        /// Only valid when <see cref="IsDeferred"/> is <see langword="false"/>.
+        /// </summary>
+        internal BsonDocument CloneDocument() => (BsonDocument)_document!.DeepClone();
+
+        /// <summary>
+        /// Invokes the deferred builder to construct this execution's document.
+        /// Only valid when <see cref="IsDeferred"/> is <see langword="true"/>.
+        /// </summary>
+        internal BsonDocument Build(in MongoNativeBuildContext context) => _builder!(context);
     }
 
     // ------------------------------------------------------------------
@@ -66,16 +133,18 @@ internal sealed class MongoPipelineFactory
         MongoQueryLanguageRenderer renderer)
     {
         var placeholders = new PlaceholderTable();
-        var template = new List<BsonDocument>(stages.Count);
+        var template = new List<StageSlot>(stages.Count);
 
         foreach (var stage in stages)
         {
             if (stage is MongoUnionWithStage unionWith)
-                template.AddRange(RenderUnionWith(unionWith, renderer, placeholders));
+                template.AddRange(RenderUnionWith(unionWith, renderer, placeholders).Select(StageSlot.Rendered));
             else if (stage is MongoSetDifferenceStage setDiff)
-                template.AddRange(RenderSetDifference(setDiff, renderer, placeholders));
+                template.AddRange(RenderSetDifference(setDiff, renderer, placeholders).Select(StageSlot.Rendered));
+            else if (stage is MongoVectorSearchStage vectorSearch)
+                template.Add(StageSlot.Deferred(CreateVectorSearchBuilder(vectorSearch.Search, renderer, placeholders)));
             else
-                template.Add(RenderStage(stage, renderer, placeholders));
+                template.Add(StageSlot.Rendered(RenderStage(stage, renderer, placeholders)));
         }
 
         return new MongoPipelineFactory(template, placeholders);
@@ -114,11 +183,114 @@ internal sealed class MongoPipelineFactory
                     : (BsonValue)("$" + replaceRoot.NewRoot))),
             MongoProjectStage project => RenderProject(project, placeholders),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
+            // The $vectorSearch score companion: a fixed document, so nothing about it is deferred. It is a
+            // payload-free marker stage precisely so this BSON lives here rather than in the lowerer.
+            MongoVectorSearchScoreStage => new BsonDocument("$addFields",
+                new BsonDocument(MongoVectorSearchScoreStage.ScoreField,
+                    new BsonDocument("$meta", "vectorSearchScore"))),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
             MongoGroupStage keyedGroup => RenderKeyedGroup(keyedGroup, placeholders),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoPipelineFactory does not support stage type '{stage.GetType().Name}'.")
         };
+
+    // ------------------------------------------------------------------
+    // $vectorSearch — the one DEFERRED slot
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Builds the deferred slot for a <c>$vectorSearch</c> stage: the pre-filter is rendered NOW, at
+    /// compile time, into the SHARED placeholder table; everything else is constructed per execution.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deferral is necessary, not a convenience. The body's SHAPE — whether the <c>exact</c> or
+    /// <c>numCandidates</c> key is present at all, and which <c>index</c> is used (a choice that can itself
+    /// throw or warn) — depends on a runtime <c>VectorQueryOptions</c>, which no value sentinel can express.
+    /// And the driver's own builder DERIVES <c>numCandidates</c> from the runtime <c>limit</c> when the caller
+    /// leaves it null; reusing that builder, rather than hand-writing the body, is what keeps the emitted MQL
+    /// byte-identical to the driver-LINQ path's.
+    /// </para>
+    /// <para>
+    /// The pre-filter is rendered once, here, so a parameter captured inside it lands in the same
+    /// <see cref="PlaceholderTable"/> as every other stage's and resolves in Build's ordinary substitution
+    /// pass — which runs over a deferred slot's freshly built document too. It is DEEP-CLONED per execution
+    /// because that substitution pass rewrites sentinels in place; embedding the template document itself
+    /// would let the first execution consume the sentinels for good.
+    /// </para>
+    /// </remarks>
+    private static Func<MongoNativeBuildContext, BsonDocument> CreateVectorSearchBuilder(
+        MongoVectorSearch search,
+        MongoQueryLanguageRenderer renderer,
+        PlaceholderTable placeholders)
+    {
+        var preFilterTemplate = search.PreFilter is null
+            ? null
+            : (BsonDocument)renderer.Render(search.PreFilter, placeholders);
+
+        return context =>
+        {
+            var entityType = search.EntityType;
+
+            // The three runtime arguments, resolved exactly as the driver-LINQ bridge's own ParamValue<T>
+            // does — via NativeQueryParameter, which is where the EF8/EF9-vs-EF10 query-parameter node
+            // difference lives, so no version-conditional compilation is needed here.
+            var queryVector = (QueryVector)ResolveVectorSearchArgument(search.QueryVectorArgument, context.ParameterValues)!;
+            var limit = (int)ResolveVectorSearchArgument(search.LimitArgument, context.ParameterValues)!;
+            var options = (VectorQueryOptions?)ResolveVectorSearchArgument(search.OptionsArgument, context.ParameterValues);
+
+            // Guard / member resolution / index resolution + the VectorSearchNeedsIndex warning. Reflection-free
+            // and shared with the driver-LINQ bridge, so its exceptions surface identically on both paths.
+            var resolved = VectorSearchStageBuilder.Resolve(
+                entityType, entityType.ClrType, search.PropertyLambda, options, context.QueryLogger);
+
+            // Read back by QueryingEnumerable's zero-results diagnostic (VectorSearchReturnedZeroResults).
+            context.AdditionalState[MongoExecutableQuery.VectorQueryProperty] = resolved.Member;
+            context.AdditionalState[MongoExecutableQuery.VectorQueryIndexName] = resolved.Options.IndexName!;
+
+            // A BsonDocumentFilterDefinition, not the bridge's ExpressionFilterDefinition: the pre-filter is
+            // already rendered. The driver embeds the document verbatim, so its sentinels ride through to the
+            // substitution pass.
+            object? filterDefinition = preFilterTemplate is null
+                ? null
+                : Activator.CreateInstance(
+                    typeof(BsonDocumentFilterDefinition<>).MakeGenericType(entityType.ClrType),
+                    preFilterTemplate.DeepClone());
+
+            var stage = VectorSearchStageBuilder.CreateStage(
+                entityType, search.PropertyLambda, resolved, filterDefinition, queryVector, limit);
+
+            return VectorSearchStageBuilder.RenderStage(
+                stage, entityType, context.SerializerFactory.GetEntitySerializer(entityType));
+        };
+    }
+
+    /// <summary>
+    /// Resolves one <c>VectorSearch</c> argument node to its runtime value: an EF query parameter is looked
+    /// up in this execution's parameter values; a constant is read directly.
+    /// </summary>
+    private static object? ResolveVectorSearchArgument(
+        Expression argument,
+        IReadOnlyDictionary<string, object?> parameterValues)
+    {
+        if (NativeQueryParameter.TryGetQueryParameterName(argument, out var name))
+        {
+            if (!parameterValues.TryGetValue(name, out var value))
+                throw new InvalidOperationException(
+                    $"MongoPipelineFactory.Build: vector-search parameter '{name}' is not present in "
+                    + "parameterValues. This is a bug in the query compilation pipeline.");
+
+            return value;
+        }
+
+        if (argument is ConstantExpression constant)
+            return constant.Value;
+
+        // The slot is only ever populated for argument nodes of one of the two shapes above; anything else
+        // must have been declined at binding time.
+        throw new NativeTranslationNotSupportedException(
+            $"A VectorSearch argument must be a query parameter or a constant; got '{argument.NodeType}'.");
+    }
 
     private static BsonDocument RenderMatch(
         MongoMatchStage stage,
@@ -313,15 +485,61 @@ internal sealed class MongoPipelineFactory
     /// in the caller and throws <see cref="InvalidOperationException"/>.
     /// </param>
     /// <returns>A freshly materialized <see cref="BsonDocument"/> array ready to send to the server.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// The template contains a deferred stage slot, which cannot be built from parameter values alone.
+    /// </exception>
     public BsonDocument[] Build(IReadOnlyDictionary<string, object?> parameterValues)
     {
+        // Fail loudly rather than emit a pipeline with a hole where the deferred stage should be.
+        if (_hasDeferredSlot)
+            throw new InvalidOperationException(
+                "MongoPipelineFactory.Build(parameterValues) cannot bind a template containing a deferred "
+                + "stage slot: such a stage is constructed at Build time and needs the serializer factory, "
+                + "query logger and additional-state dictionary carried by MongoNativeBuildContext. "
+                + "Call Build(in MongoNativeBuildContext) instead. "
+                + "This is a bug in the query compilation pipeline.");
+
         var result = new BsonDocument[_template.Count];
         for (var i = 0; i < _template.Count; i++)
-            result[i] = SubstituteDocument((BsonDocument)_template[i].DeepClone(), parameterValues);
+            result[i] = SubstituteDocument(_template[i].CloneDocument(), parameterValues);
 
         // Validate paging bounds: MongoDB rejects $limit <= 0 and $skip < 0 server-side;
         // throw the EF-correct exception (ArgumentOutOfRangeException) client-side to match
         // driver-LINQ behaviour (which threw it client-side for Take(0)).
+        ValidatePagingStages(result);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Builds this execution's pipeline: constructs every deferred slot at its own stage position, clones
+    /// every baked slot, then substitutes every placeholder sentinel across the whole result.
+    /// </summary>
+    /// <param name="context">
+    /// The per-execution build state. Its <see cref="MongoNativeBuildContext.ParameterValues"/> must contain
+    /// an entry for every parameter name recorded in <see cref="_placeholders"/>; a missing key is a bug in
+    /// the caller and throws <see cref="InvalidOperationException"/>.
+    /// </param>
+    /// <returns>A freshly materialized <see cref="BsonDocument"/> array ready to send to the server.</returns>
+    public BsonDocument[] Build(in MongoNativeBuildContext context)
+    {
+        var parameterValues = context.ParameterValues;
+        var result = new BsonDocument[_template.Count];
+
+        for (var i = 0; i < _template.Count; i++)
+        {
+            var slot = _template[i];
+
+            // A deferred slot is constructed HERE, at its own stage position, because its document shape
+            // depends on this execution's state; a baked slot is cloned exactly as it always was.
+            var document = slot.IsDeferred ? slot.Build(context) : slot.CloneDocument();
+
+            // Substitution then runs over the deferred document as well: whatever the deferred builder
+            // embeds may itself have been rendered at compile time into the SHARED PlaceholderTable (a
+            // vector-search pre-filter, for instance), so its sentinels must resolve in this same pass.
+            result[i] = SubstituteDocument(document, parameterValues);
+        }
+
         ValidatePagingStages(result);
 
         return result;
@@ -395,7 +613,21 @@ internal sealed class MongoPipelineFactory
         IReadOnlyDictionary<string, object?> parameterValues)
     {
         for (var i = 0; i < array.Count; i++)
-            array[i] = SubstituteValue(array[i], parameterValues);
+        {
+            // Read the element ONCE: a lazily-materializing array (see below) hands back a fresh BsonValue
+            // per access, so re-reading it would defeat the reference check.
+            var element = array[i];
+            var newValue = SubstituteValue(element, parameterValues);
+
+            // Assign only when the element was actually REPLACED (a sentinel), mirroring SubstituteDocument.
+            // Writing back an identical reference is a no-op for a normal array, but it THROWS for a
+            // read-only one — and a deferred slot can embed one: the driver renders a $vectorSearch
+            // queryVector as its own read-only QueryVectorBsonArray, whose elements are baked scalars with
+            // nothing to substitute.
+            if (!ReferenceEquals(newValue, element))
+                array[i] = newValue;
+        }
+
         return array;
     }
 

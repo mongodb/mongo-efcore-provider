@@ -641,9 +641,15 @@ items are treated, and do not re-open them without the owner saying so.*
    as real work, not bookkeeping.
 5. **Should the status doc's gate table (§9.8 row 5) be corrected?** → **Already done**, ahead of the slice, in
    commit `d54b86f7`. `docs/native-query-status-EF-322.md` now names both gates in two places. No action left.
-6. **Does the "stop after every task" gate stay ON?** → **ON for the whole slice.** Spike → owner review →
-   design → owner review → implementation, stopping after every task. Do not assume the EF-379 mid-slice
-   revocation carries over.
+6. **Does the "stop after every task" gate stay ON?** → **Originally ON for the whole slice** (spike → owner
+   review → design → owner review → implementation, stopping after every task).
+
+   **REVOKED 2026-08-06, after Task 2.** The owner dropped the stop-and-wait gate for the remainder of this
+   slice: Tasks 3–6 run back to back with a single report at the end. Exactly as in EF-379, the revocation is
+   **per-branch and per-slice** — it does **not** carry to the next slice, which starts with the gate back ON
+   unless the owner says otherwise. Note what the revocation does *not* touch: the per-task **verification
+   bar** is unchanged (full green on EF8/EF9/EF10, `NativeOnly` comparison by failing-test-name set, zero `#if`
+   delta under `src/`, every guard test mutation-verified). Fewer checkpoints, not less proof.
 
 ---
 

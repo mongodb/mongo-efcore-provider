@@ -40,7 +40,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <see cref="IProperty"/> carried inside the node, and baked into the returned template.
 /// <see cref="MongoParameterExpression"/> sites are recorded as placeholder sentinels in
 /// the supplied <see cref="PlaceholderTable"/> for per-execution substitution by the pipeline
-/// factory (<see cref="MongoPipelineFactory.Build"/>).
+/// factory (<c>MongoPipelineFactory.Build</c>).
 /// </para>
 /// </remarks>
 internal sealed class MongoQueryLanguageRenderer

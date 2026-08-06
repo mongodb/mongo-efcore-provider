@@ -59,6 +59,18 @@ internal sealed class MongoSelectLowerer
         var select = query.Select;
         var stages = new List<MongoPipelineStage>();
 
+        // 0. $vectorSearch MUST be the first stage in the pipeline — the server rejects it anywhere else
+        // (Location40602), for every preceding-stage shape. This is why it lives in a dedicated slot rather
+        // than in PipelineOps (which is emitted verbatim in arrival order, so a vector search recorded there
+        // would only HAPPEN to come first): a block at the very top makes first-ness structural. The
+        // $addFields companion follows it immediately, unconditionally, exactly as the driver-LINQ bridge
+        // emits it — that is what keeps the two paths' MQL identical.
+        if (select.VectorSearch is { } vectorSearch)
+        {
+            stages.Add(new MongoVectorSearchStage(vectorSearch));
+            stages.Add(new MongoVectorSearchScoreStage());
+        }
+
         // 1. $match / $sort / $skip / $limit ops, emitted verbatim in the order they were recorded
         // (Select.PipelineOps — EF-347: no fixed canonical order; arrival order IS emission order).
         AppendSelectOpStages(select.PipelineOps, stages);

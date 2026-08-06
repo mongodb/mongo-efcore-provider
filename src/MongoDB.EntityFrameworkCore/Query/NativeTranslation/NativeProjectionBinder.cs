@@ -17,10 +17,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
+using Microsoft.EntityFrameworkCore.Infrastructure;  // IsEFPropertyMethod()
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Driver;                                // Mql.Field
 using MongoDB.EntityFrameworkCore.Extensions;        // IsEmbedded()
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -205,6 +209,20 @@ internal static class NativeProjectionBinder
             return true;
         }
 
+        // The synthetic vector-search relevance score (EF-322 VectorSearch slice, Task 5):
+        // `new { e.Author, Score = EF.Property<double>(e, "__score") }` and its Mql.Field spelling.
+        //
+        // Admitted ONLY when this query actually emits the $addFields{__score} companion — see
+        // TryRecognizeVectorScoreLeaf's remarks for why each of the three guards is load-bearing. The leaf is a
+        // MethodCallExpression, so this branch is structurally disjoint from the member-access branch above and
+        // from the count branch below (which requires Queryable.Count/LongCount).
+        if (mongoQ.Select.VectorSearch is not null
+            && TryRecognizeVectorScoreLeaf(leafExpression, outerParameter, out var scoreType))
+        {
+            result = new MongoElementRefExpression(MongoVectorSearchScoreStage.ScoreField, scoreType);
+            return true;
+        }
+
         // An owned entity-COLLECTION leaf (EF-322 owned-data slice 8): `new { b.Title, b.Posts }`.
         // EF's nav-expansion always wraps the navigation in a MaterializeCollectionNavigationExpression whose
         // Subquery is `EF.Property(b, "Posts").AsQueryable()` — MEASURED on this shape, not assumed — so this
@@ -304,6 +322,145 @@ internal static class NativeProjectionBinder
         result = null!;
         return false;
     }
+
+    /// <summary>
+    /// Recognizes the synthetic vector-search relevance score as a projection leaf — exactly
+    /// <c>EF.Property&lt;double&gt;(e, "__score")</c> or
+    /// <c>Mql.Field(e, "__score", DoubleSerializer.Instance)</c>, both rooted on the selector's own parameter
+    /// (EF-322 VectorSearch slice, Task 5).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Three guards, each load-bearing for a DIFFERENT reason. None is decoration.</b>
+    /// </para>
+    /// <list type="number">
+    /// <item><description>
+    /// <b>The caller's <c>Select.VectorSearch is not null</c> check</b> (at the call site, not here, because
+    /// this method is deliberately free of query state). Only a query carrying a bound vector search emits the
+    /// <c>$addFields{__score}</c> companion, so only there does the element this leaf names actually exist. A
+    /// plain query projecting <c>EF.Property&lt;double&gt;(e, "__score")</c> would otherwise emit a
+    /// <c>$project</c> alias reading an element no stage writes. Today that shape falls back to driver-LINQ;
+    /// with the guard it still does.
+    /// </description></item>
+    /// <item><description>
+    /// <b>The literal <c>"__score"</c> element name.</b> This keeps a GENERAL driver element-addressing
+    /// capability out of the native projection binder. Admitting arbitrary <c>Mql.Field</c> names opens
+    /// serializer-honouring and value-converter questions that belong to the projection long tail, not here —
+    /// note the read-back below IGNORES <c>Mql.Field</c>'s serializer argument entirely. Recognising exactly the
+    /// one synthetic element this slice is about is inside the "targeted decline of <c>Mql.Field</c>" ruling,
+    /// not an exception to it.
+    /// </description></item>
+    /// <item><description>
+    /// <b>The CLR type <c>double</c>/<c>double?</c>.</b> The DOM shaper reads this leaf back RAW by alias
+    /// (<c>BsonBinding.CreateGetElementValue</c> → <c>BsonSerializerFactory.CreateTypeSerializer(type)</c>),
+    /// which — again — ignores any serializer the user passed to <c>Mql.Field</c>.
+    /// <c>$meta: "vectorSearchScore"</c> always yields a BSON double, so <c>double</c> is exact; any other
+    /// requested type could read back differently from what the driver's own serializer would have produced on
+    /// the fallback path.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// Everything else — another element name, another CLR type, a receiver that is not the selector's own
+    /// parameter — returns <see langword="false"/>, and the WHOLE projection then declines gracefully to
+    /// driver-LINQ (correct results under <c>Native</c>/<c>DriverLinq</c>, throwing only under
+    /// <c>NativeOnly</c>), exactly as any other unrecognized leaf does.
+    /// </para>
+    /// <para>
+    /// The receiver is matched by REFERENCE against <paramref name="outerParameter"/>, never by type — the same
+    /// identity-not-name rule the SelectMany binders' scope routing follows.
+    /// </para>
+    /// </remarks>
+    private static bool TryRecognizeVectorScoreLeaf(
+        Expression leafExpression,
+        ParameterExpression outerParameter,
+        out Type scoreType)
+    {
+        scoreType = null!;
+
+        if (leafExpression is not MethodCallExpression call)
+        {
+            return false;
+        }
+
+        Expression receiver;
+        string elementName;
+
+        if (call.Method.IsEFPropertyMethod()
+            && call.Arguments is [var efReceiver, ConstantExpression { Value: string efName }])
+        {
+            receiver = efReceiver;
+            elementName = efName;
+        }
+        else if (call.Method.IsGenericMethod
+                 && call.Method.GetGenericMethodDefinition() == MqlFieldMethodInfo
+                 && call.Arguments is [var mqlReceiver, ConstantExpression { Value: string mqlName }, _])
+        {
+            receiver = mqlReceiver;
+            elementName = mqlName;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (elementName != MongoVectorSearchScoreStage.ScoreField
+            || !IsSelectorParameter(receiver, outerParameter))
+        {
+            return false;
+        }
+
+        if (call.Type != typeof(double) && call.Type != typeof(double?))
+        {
+            return false;
+        }
+
+        scoreType = call.Type;
+        return true;
+    }
+
+    /// <summary>
+    /// True when <paramref name="receiver"/> is the selector's own lambda parameter, possibly wrapped in
+    /// auto-include layers EF's nav-expansion added.
+    /// </summary>
+    /// <remarks>
+    /// <b>The <see cref="IncludeExpression"/> peel is load-bearing, and it was MEASURED, not anticipated.</b>
+    /// An entity owning an eager-loaded navigation (every owned navigation is, by EF Core convention — the
+    /// specification suite's <c>Book</c> owns a <c>Preface</c>) has its auto-include injected around the very
+    /// expression the projection reads through, so the <c>Mql.Field</c> spelling arrives as
+    /// <c>Mql.Field(IncludeExpression(e, Preface), "__score", …)</c> while the <c>EF.Property</c> spelling
+    /// arrives with a bare parameter. Comparing the raw receiver by reference therefore admitted one spelling
+    /// and silently declined the other on exactly the models that carry owned data. Peeling mirrors
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.TryGetWholeEntityMemberAccess</c>, which unwraps the
+    /// same layers for the same reason; it is safe here because an include layer changes what is MATERIALIZED
+    /// from the row, never which document the element is read out of.
+    /// <para>
+    /// Matching is by REFERENCE against the parameter, never by type — the same identity-not-name rule the
+    /// SelectMany binders' scope routing follows, and the thing that keeps a captured outer entity of the same
+    /// CLR type from being mistaken for the selector's own row.
+    /// </para>
+    /// </remarks>
+    private static bool IsSelectorParameter(Expression receiver, ParameterExpression outerParameter)
+    {
+        var current = receiver.RemoveConvert();
+
+        while (current is IncludeExpression include)
+        {
+            current = include.EntityExpression.RemoveConvert();
+        }
+
+        return ReferenceEquals(current, outerParameter);
+    }
+
+    /// <summary>
+    /// The open generic definition of <c>Mql.Field&lt;TDocument, TField&gt;(TDocument, string, IBsonSerializer&lt;TField&gt;)</c>.
+    /// Resolved by reflection because the driver exposes no canonical <see cref="MethodInfo"/> constant for it;
+    /// matched by reference equality on the generic DEFINITION, never by name — mirroring
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor</c>'s own <c>Mql.Field</c> arm, which is the read-back
+    /// side of the very same leaf.
+    /// </summary>
+    private static readonly MethodInfo MqlFieldMethodInfo =
+        typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
 
     /// <summary>
     /// THE single admissibility rule for an owned entity-collection array projection leaf
