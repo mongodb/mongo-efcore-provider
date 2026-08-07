@@ -378,6 +378,15 @@ public class MongoExpressionTranslatorTests
         public int Quantity { get; set; }
     }
 
+    // Composite-PK fixture: its key components are stored under "_id" and are not addressable by their own
+    // top-level element names, which is what TryResolveMember's composite-PK guard declines.
+    private class CompositeKeyed
+    {
+        public int KeyA { get; set; }
+        public int KeyB { get; set; }
+        public string Label { get; set; } = "";
+    }
+
     [Fact]
     public void Composite_PK_property_access_reports_not_translatable()
     {
@@ -1669,4 +1678,109 @@ public class MongoExpressionTranslatorTests
     public void A_primitive_collection_Count_declines()
         // TryResolveOwnedCollectionPath requires an embedded collection NAVIGATION; Tags is a property.
         => Assert.Null(TryTranslateBlogPredicate(b => b.Tags.Count > 2));
+
+    // ------------------------------------------------------------------
+    // EF-322 stream 1, slice A2: a top-level EF.Property leaf resolves in
+    // all three positions (predicate / sort key / projection value).
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void EF_Property_top_level_leaf_resolves_in_predicate_position()
+    {
+        var entityType = GetEntityType<Customer>();
+        var body = PredicateBody<Customer>(c => EF.Property<int>(c, "Age") > 21);
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, bin.Operator);
+        Assert.Equal("Age", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+    }
+
+    [Fact]
+    public void EF_Property_top_level_leaf_resolves_in_sort_position()
+    {
+        var entityType = GetEntityType<Customer>();
+        var body = FieldBody<Customer>(c => EF.Property<int>(c, "Age"));
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslateField(body, out var field));
+        Assert.Equal("Age", field!.ElementName);
+    }
+
+    [Fact]
+    public void EF_Property_top_level_leaf_resolves_in_value_position()
+    {
+        var entityType = GetEntityType<Customer>();
+        var body = FieldBody<Customer>(c => EF.Property<int>(c, "Age") + 1);
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslateValue(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal("Age", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+    }
+
+    [Fact]
+    public void EF_Property_naming_an_unmapped_member_declines()
+    {
+        var entityType = GetEntityType<Customer>();
+        var body = FieldBody<Customer>(c => EF.Property<int>(c, "NotAProperty"));
+        var translator = NewTranslator(entityType);
+
+        Assert.False(translator.TryTranslateField(body, out _));
+    }
+
+    // A hand-built EF.Property node, so the test controls the receiver shape exactly. EF's own nav-expansion
+    // emits a BARE receiver, but the C# compiler may wrap a reference argument in a Convert-to-object for the
+    // `object entity` parameter — the implementation unwraps it (Step 3), and these two tests cover both shapes:
+    // this helper builds the bare form, and the C#-lambda tests above build whatever Roslyn emits.
+    private static MethodCallExpression EfProperty<TProperty>(Expression root, string name)
+        => Expression.Call(
+            typeof(EF).GetMethod(nameof(EF.Property))!.MakeGenericMethod(typeof(TProperty)),
+            root,
+            Expression.Constant(name));
+
+    [Fact]
+    public void EF_Property_on_the_outer_param_resolves_against_the_OUTER_scope_by_identity()
+    {
+        // InnerRef and OuterRef both declare "Name", so a by-NAME resolution would silently answer with the
+        // inner scope's field. Two-scope mode routes by ReferenceEquals on the parameter — and must do so for
+        // the EF.Property spelling exactly as it already does for the member-access spelling
+        // (cf. Two_scope_shadowed_member_name_resolves_by_parameter_identity_not_name, above).
+        var innerType = GetEntityType<InnerRef>();
+        var outerType = GetEntityType<OuterRef>();
+        var outerParam = Expression.Parameter(typeof(OuterRef), "o");
+        var innerParam = Expression.Parameter(typeof(InnerRef), "r");
+        // EF.Property<string>(r, "Name") == EF.Property<string>(o, "Name")
+        var body = Expression.Equal(
+            EfProperty<string>(innerParam, nameof(InnerRef.Name)),
+            EfProperty<string>(outerParam, nameof(OuterRef.Name)));
+        var translator = new MongoExpressionTranslator(innerType, outerParam, outerType, "_lookup_Refs");
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal("_lookup_Refs.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+    }
+
+    [Fact]
+    public void EF_Property_naming_a_composite_primary_key_component_still_declines()
+    {
+        // A composite-PK component is stored nested under "_id" and is NOT addressable by its top-level element
+        // name. TryResolveMember declines it for the member-access spelling; the EF.Property spelling must
+        // decline identically, or the emitted $match addresses a field that does not exist and silently
+        // returns nothing.
+        using var db = SingleEntityDbContext.Create<CompositeKeyed>(
+            mb => mb.Entity<CompositeKeyed>().HasKey(x => new { x.KeyA, x.KeyB }));
+        var entityType = db.Model.FindEntityType(typeof(CompositeKeyed))!;
+        var translator = NewTranslator(entityType);
+        var param = Expression.Parameter(typeof(CompositeKeyed), "c");
+
+        Assert.False(translator.TryTranslateField(EfProperty<int>(param, nameof(CompositeKeyed.KeyA)), out _));
+
+        // Control: a NON-key scalar on the same entity resolves, so the decline above is the composite-PK guard
+        // and not a general failure of this fixture.
+        Assert.True(translator.TryTranslateField(EfProperty<string>(param, nameof(CompositeKeyed.Label)), out var ok));
+        Assert.Equal("Label", ok!.ElementName);
+    }
 }

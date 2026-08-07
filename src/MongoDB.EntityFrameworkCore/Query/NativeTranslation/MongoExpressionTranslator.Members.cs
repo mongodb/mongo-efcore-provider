@@ -53,12 +53,40 @@ internal sealed partial class MongoExpressionTranslator
         property = null;
         fieldPath = null;
 
-        // Fast path: a bare top-level member on the query parameter (p.Foo). Everything else — a member
-        // rooted on another hop, or an EF.Property(...) call produced by owned-nav expansion — is delegated
-        // to the owned single-reference dotted-path resolver (single-scope only), which declines cleanly
-        // (returns false) for any shape that is not a valid owned chain.
-        if (node is not MemberExpression { Expression: ParameterExpression param } me)
-            return TryResolveOwnedFieldPath(node, out property, out fieldPath);
+        // Fast path: a top-level scalar access on the query parameter, in EITHER spelling EF produces —
+        // a bare member (p.Foo) or the shadow-safe EF.Property<T>(p, "Foo") call. Both name ONE hop off the
+        // parameter and must resolve identically; the EF.Property spelling used to fall into a gap, because
+        // this method delegated it to TryResolveOwnedFieldPath, whose own `names.Count < 2` check declines a
+        // single hop on the (correct) assumption that this fast path already handled it (EF-322 slice A2).
+        //
+        // Everything else — a member rooted on another hop, or a MULTI-hop EF.Property chain from owned-nav
+        // expansion — is still delegated to the owned dotted-path resolver, which declines cleanly for any
+        // shape that is not a valid owned chain.
+        ParameterExpression param;
+        string memberName;
+        switch (node)
+        {
+            case MemberExpression { Expression: ParameterExpression memberParam } me:
+                param = memberParam;
+                memberName = me.Member.Name;
+                break;
+
+            // The EF.Property spelling, single hop only: EF.Property<T>(param, "Name"). Unwrap is applied to
+            // the receiver because EF's own nav-expansion emits a BARE parameter there while the C# compiler
+            // may wrap it in a Convert-to-object for EF.Property's `object entity` parameter — the two must
+            // resolve identically, and Unwrap strips exactly that. A receiver that is anything else after
+            // unwrapping is a MULTI-hop chain and belongs to the owned dotted-path resolver, unchanged.
+            case MethodCallExpression call
+                when call.Method.IsEFPropertyMethod()
+                     && call.Arguments is [var receiver, ConstantExpression { Value: string name }]
+                     && Unwrap(receiver) is ParameterExpression callParam:
+                param = callParam;
+                memberName = name;
+                break;
+
+            default:
+                return TryResolveOwnedFieldPath(node, out property, out fieldPath);
+        }
 
         // Two-scope mode: a member rooted on the outer param resolves against the outer entity type at document
         // root; every other member is inner-scoped. Identity (ReferenceEquals), never name — so a member name
@@ -66,7 +94,7 @@ internal sealed partial class MongoExpressionTranslator
         var isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
         var scopeType = isOuter ? _outerEntityType! : _entityType;
 
-        var resolved = scopeType.FindProperty(me.Member.Name);
+        var resolved = scopeType.FindProperty(memberName);
         if (resolved is null)
             return false;
 

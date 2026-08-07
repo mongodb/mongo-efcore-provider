@@ -284,7 +284,16 @@ internal static class NativeProjectionBinder
         // every early return in this method except that one.
         isArrayLeaf = false;
 
-        if (leafExpression is MemberExpression && translator.TryTranslateField(leafExpression, out var field))
+        // A plain top-level scalar leaf, in either spelling EF produces: a bare member (c.Foo) or the
+        // shadow-safe EF.Property<T>(c, "Foo") call (EF-322 slice A2). Both are handed to TryTranslateField
+        // unconditionally — its own TryResolveMember gate is what decides whether either shape resolves to a
+        // real document field, so no separate type check is needed here beyond ruling out the leaf kinds every
+        // OTHER branch below owns (an owned array leaf, a projected count, an arithmetic leaf, the vector-search
+        // score) — each of those already declines cleanly through TryResolveMember/TryResolveOwnedFieldPath's
+        // own structural checks (see their remarks), so admitting them here first is safe by construction.
+        if ((leafExpression is MemberExpression
+                || (leafExpression is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
+            && translator.TryTranslateField(leafExpression, out var field))
         {
             // A dotted (owned single-ref) leaf is read back RAW by the DOM shaper (the shaper's field-access
             // resolver is single-hop and cannot apply the converter for a nested owned chain), so a

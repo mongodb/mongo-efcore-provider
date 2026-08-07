@@ -374,8 +374,8 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
         AssertMql(
             """
-            Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "_v" : "$Title", "_id" : 0 } }
-            """);
+Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "Title" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_simple_shadow_subquery(bool async)
@@ -787,8 +787,8 @@ Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "_id"
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : "$Discontinued" } }
-            """);
+Products.{ "$match" : { "Discontinued" : true } }
+""");
     }
 
     public override async Task Where_bool_member_false_shadow(bool async)
@@ -796,8 +796,8 @@ Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "_id"
         await base.Where_bool_member_false_shadow(async);
         AssertMql(
             """
-            Products.{ "$match" : { "$nor" : [{ "$expr" : "$Discontinued" }] } }
-            """);
+Products.{ "$match" : { "Discontinued" : { "$ne" : true } } }
+""");
     }
 
     public override async Task Where_bool_member_equals_constant(bool async)

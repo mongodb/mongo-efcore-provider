@@ -1181,7 +1181,28 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     {
         if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))
         {
-            if (source is StructuralTypeShaperExpression { StructuralType: IEntityType entityType })
+            // EF-322 slice A2 fix: by the time this runs, the selector's own parameter has already been
+            // replaced with a StructuralTypeShaperExpression wherever it appears in the tree — including
+            // inside a Convert node the C# compiler inserts when EF.Property's `object entity` receiver is
+            // an unconstrained generic type parameter rather than a directly-typed reference (e.g. inside a
+            // generic helper like `ShadowPropertySelect<TIn, TOut>`). `RemoveConvert()` mirrors both the
+            // Convert-aware switch a few lines below (case UnaryExpression) and IsSelectorParameter's own
+            // `receiver.RemoveConvert()` call further down this file — without it, a Convert-wrapped shaper
+            // failed this pattern match, so this method returned false, the call fell through to the generic
+            // recursive walk instead of being registered as a projection leaf, and the query silently
+            // returned the CLR default (null) instead of the shadow property's value. Confirmed live via
+            // NorthwindMiscellaneousQueryMongoTest.Select_Property_when_shadow_unconstrained_generic_method,
+            // which exercises exactly this Convert-wrapped receiver shape.
+            //
+            // This method has NO Route == NativeRoute.Projection guard (unlike the sibling arithmetic case
+            // in Visit's switch above), and _projectionBindingExpressionVisitor.Translate is called
+            // unconditionally for every Select — so this check, and this RemoveConvert(), run on the
+            // fallback/mixed routes too, not only the native one. That is deliberate, not an oversight to
+            // gate away: the read side this registration feeds (MongoProjectionBindingRemovingExpressionVisitor.
+            // TryResolveFieldAccess / TryResolveFieldAccessSource) also calls RemoveConvert() unconditionally,
+            // on every route. Adding a Route guard here would make the write side disagree with a read side
+            // that already unwraps everywhere — the asymmetry a guard would introduce, not remove.
+            if (source.RemoveConvert() is StructuralTypeShaperExpression { StructuralType: IEntityType entityType })
             {
                 var navigation = entityType.FindNavigation(memberName);
                 // Embedded navigations should be handled by VisitMethodCall

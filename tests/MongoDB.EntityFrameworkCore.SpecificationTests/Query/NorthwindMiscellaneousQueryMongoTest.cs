@@ -4210,8 +4210,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_i
 
         AssertMql(
             """
-            Employees.{ "$project" : { "_v" : "$Title", "_id" : 0 } }
-            """);
+Employees.{ "$project" : { "Title" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_Property_when_non_shadow(bool async)
@@ -4220,8 +4220,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_i
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task OrderByDescending_ThenBy(bool async)
@@ -4249,8 +4249,8 @@ Customers.{ "$sort" : { "_id" : -1, "Country" : 1 } }, { "$project" : { "City" :
 
         AssertMql(
             """
-            Employees.{ "$project" : { "_v" : "$Title", "_id" : 0 } }
-            """);
+Employees.{ "$project" : { "Title" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_Property_when_shadow(bool async)
