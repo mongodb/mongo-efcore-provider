@@ -45,6 +45,24 @@ public class MongoExpressionTranslatorTests
         public bool? NullableFlag { get; set; }
     }
 
+    // Fixture for the EF-400 `.Value`-peel conjunct. CustomerCode declares its own `Value` member and is
+    // mapped as a VALUE-CONVERTED scalar, so the receiver (`Code`) is a real mapped property — which is what
+    // makes an unconditional (name-only) peel resolve the WRONG field rather than merely decline. `Amount` is
+    // the genuine Nullable<T> control on the same entity.
+    private readonly struct CustomerCode
+    {
+        public CustomerCode(string value) => Value = value;
+
+        public string Value { get; }
+    }
+
+    private class CodedEntity
+    {
+        public ObjectId Id { get; set; }
+        public CustomerCode Code { get; set; }
+        public int? Amount { get; set; }
+    }
+
     // Two-scope (correlated reference SelectMany) fixtures — InnerRef and OuterRef deliberately share a
     // "Name" member to prove identity-based routing never conflates the two scopes by name.
     private class InnerRef
@@ -1782,5 +1800,108 @@ public class MongoExpressionTranslatorTests
         // and not a general failure of this fixture.
         Assert.True(translator.TryTranslateField(EfProperty<string>(param, nameof(CompositeKeyed.Label)), out var ok));
         Assert.Equal("Label", ok!.ElementName);
+    }
+
+    // ------------------------------------------------------------------
+    // EF-322 stream 1, slice A5 (EF-400): Nullable<T>.Value peels to the underlying
+    // field; Nullable<T>.HasValue becomes the existing "!= null" node.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Nullable_Value_peels_to_the_underlying_field_in_predicate_position()
+    {
+        var entityType = GetEntityType<Customer>();
+        var body = PredicateBody<Customer>(c => c.NullableAge!.Value > 21);
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal("NullableAge", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+    }
+
+    [Fact]
+    public void Nullable_Value_peels_to_the_underlying_field_in_value_position()
+    {
+        var entityType = GetEntityType<Customer>();
+        var body = FieldBody<Customer>(c => c.NullableAge!.Value + 1);
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslateValue(body, out var result));
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal("NullableAge", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
+    }
+
+    [Fact]
+    public void Nullable_HasValue_becomes_the_same_node_as_an_explicit_null_comparison()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslate(PredicateBody<Customer>(c => c.NullableAge.HasValue), out var viaHasValue));
+        Assert.True(translator.TryTranslate(PredicateBody<Customer>(c => c.NullableAge != null), out var viaNullCheck));
+
+        // Same operator, same field, same right-hand constant — the two spellings must be indistinguishable at
+        // the IR level, which is what makes the renderer and MongoExpressionNegator correct for HasValue for free.
+        var a = Assert.IsType<MongoBinaryExpression>(viaHasValue);
+        var b = Assert.IsType<MongoBinaryExpression>(viaNullCheck);
+        Assert.Equal(b.Operator, a.Operator);
+        Assert.Equal(MongoBinaryOperator.NotEqual, a.Operator);
+        Assert.Equal(
+            Assert.IsType<MongoFieldExpression>(b.Left).ElementName,
+            Assert.IsType<MongoFieldExpression>(a.Left).ElementName);
+        Assert.Null(Assert.IsType<MongoConstantExpression>(a.Right).Value);
+    }
+
+    [Fact]
+    public void Negated_HasValue_renders_to_a_form_that_selects_null_AND_missing()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+
+        Assert.True(translator.TryTranslate(PredicateBody<Customer>(c => !c.NullableAge.HasValue), out var result));
+
+        // Pin the RENDERED form, not the node kind: what matters is that the emitted query selects both a stored
+        // null and a MISSING element, which is what LINQ's !HasValue means. `$not` over `$ne: null` does, because
+        // $eq/$ne partition every BSON value INCLUDING missing (the rule MongoExpressionNegator's own remarks
+        // state, and the reason equality may be inverted where the four relational operators may not).
+        var rendered = new MongoQueryLanguageRenderer().Render(result!, new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse("{ 'NullableAge' : { '$not' : { '$ne' : null } } }"),
+            rendered.AsBsonDocument);
+    }
+
+    [Fact]
+    public void A_user_type_member_named_Value_is_NOT_peeled()
+    {
+        // The `Nullable.GetUnderlyingType(...) is not null` conjunct on the .Value peel is load-bearing, not a
+        // redundant sibling of the name test. `Code` is a MAPPED scalar property (a value-converted struct), so
+        // WITHOUT the conjunct the peel strips `.Value`, resolves the RECEIVER, and returns the element that
+        // backs `x.Code` — silently answering a question about `Code` when the query asked about `Code.Value`,
+        // and bypassing the value converter while doing so. WITH the conjunct the shape declines and falls back
+        // to driver-LINQ. (Same shape of reasoning as ClassifyJoinHop's IsTransparentIdentifierType conjunct.)
+        using var db = SingleEntityDbContext.Create<CodedEntity>(
+            mb => mb.Entity<CodedEntity>().Property(e => e.Code)
+                .HasConversion(c => "X" + c.Value, s => new CustomerCode(s.Substring(1))));
+        var entityType = db.Model.FindEntityType(typeof(CodedEntity))!;
+        var translator = NewTranslator(entityType);
+        var param = Expression.Parameter(typeof(CodedEntity), "e");
+
+        // e.Code.Value — "Value" on a USER struct, not on Nullable<T>.
+        var userValue = Expression.Property(
+            Expression.Property(param, nameof(CodedEntity.Code)), nameof(CustomerCode.Value));
+        Assert.False(translator.TryTranslateField(userValue, out _));
+
+        // Control 1: the receiver itself DOES resolve, so the decline above is the conjunct and not a broken
+        // fixture — this is exactly the field the peel would wrongly return.
+        Assert.True(translator.TryTranslateField(Expression.Property(param, nameof(CodedEntity.Code)), out var code));
+        Assert.Equal("Code", code!.ElementName);
+
+        // Control 2: a genuine Nullable<T>.Value on the SAME entity still peels, so the conjunct narrows the peel
+        // rather than disabling it.
+        var realNullable = Expression.Property(
+            Expression.Property(param, nameof(CodedEntity.Amount)), "Value");
+        Assert.True(translator.TryTranslateField(realNullable, out var amount));
+        Assert.Equal("Amount", amount!.ElementName);
     }
 }

@@ -425,6 +425,30 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoElemMatchExpression(arrayPath, child, negated);
             }
 
+            // --- Nullable<T>.HasValue (EF-322 slice A5 / EF-400) ---
+            //
+            // Deliberately built as the SAME node an explicit `x.A != null` produces, rather than a new node
+            // kind: MongoQueryLanguageRenderer already renders it, MongoExpressionNegator already inverts it
+            // exactly ($eq/$ne partition every BSON value INCLUDING missing and null — see the negator's own
+            // remarks for why that is true of equality and false of the four relational operators), so `!HasValue`
+            // needs no code of its own. The rendered form selects null AND missing, which is what LINQ's
+            // HasValue means for a stored element that is absent.
+            //
+            // This arm must sit BEFORE the bare-boolean-member default below: HasValue is a bool-typed
+            // MemberExpression, so the default would reach TryResolveMember, fail to find a "HasValue"
+            // property and decline the whole predicate.
+            case MemberExpression { Member.Name: nameof(Nullable<int>.HasValue), Expression: { } hasValueReceiver }
+                when Nullable.GetUnderlyingType(hasValueReceiver.Type) is not null:
+            {
+                if (!TryResolveMember(Unwrap(hasValueReceiver), out var nullableProperty, out var nullablePath))
+                    return null;
+
+                return new MongoBinaryExpression(
+                    MongoBinaryOperator.NotEqual,
+                    new MongoFieldExpression(nullableProperty, nullablePath),
+                    new MongoConstantExpression(null, nullableProperty));
+            }
+
             // --- Bare boolean member access (c.Active) ---
 
             default:

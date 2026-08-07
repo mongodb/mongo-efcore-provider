@@ -692,35 +692,83 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Assert.Equal(expected, actual);
     }
 
-    // The brief's "in" theory case — Contains over a nullable element leaf accessed via ".Value" — declines
-    // under NativeOnly rather than going native (verified), so per this task's brief it is pulled out of the
-    // strict-equality theory above and asserted here instead: NativeOnly must throw cleanly, and the
-    // DriverLinq-backed fallback (Native/DriverLinq) must still return results agreeing with a hand-verified
-    // expected set. Root cause: the element-scoped translator All's negator builds is rooted on the OWNED
-    // ELEMENT type (Post), which is never a document root — TryResolveMember's fast path only accepts a BARE
-    // "p.Foo" member access, and "p.Rank!.Value" is a ".Value" property access wrapping that member access, so
-    // it falls through to the dotted-owned-path resolver, which declines outright for a non-document-root scope.
+    // FLIPPED BY EF-400 (EF-322 stream 1, slice A5) — this test USED TO ASSERT A DECLINE, and the paragraph
+    // that stood here explained why: "TryResolveMember's fast path only accepts a BARE `p.Foo` member access,
+    // and `p.Rank!.Value` is a `.Value` property access wrapping that member access, so it falls through to the
+    // dotted-owned-path resolver, which declines outright for a non-document-root scope." That was accurate,
+    // and A5 removed exactly that step — `TryResolveMember` now PEELS `Nullable<T>.Value` before its fast-path
+    // switch, so `p.Rank!.Value` reduces to `p.Rank` and resolves against the owned ELEMENT type like any other
+    // element member. The dotted-owned-path resolver is never reached, and its non-document-root decline (still
+    // correct, and still live for a genuinely dotted element access) no longer applies to this shape.
+    //
+    // So this is an INCIDENTAL widening of A5, not one that slice planned: the peel sits in the one shared
+    // resolver every scope reaches, so it widens the ELEMENT-scoped translator that Any/All build for their
+    // $elemMatch child at the same time as it widens the root-scoped one. Verified, not assumed, that the
+    // widening is value-preserving OVER THIS SEED: the expected titles below are UNCHANGED from the decline
+    // era, and AssertNativeAndParity re-checks the native answer against DriverLinq's on every run. That scope
+    // qualifier is load-bearing — SeedWellFormed deliberately excludes the missing/null ARRAY states, which are
+    // exactly the states where behaviour moved (an exception became correct rows). See
+    // All_with_a_nullable_leaf_Contains_predicate_is_correct_for_missing_and_null_ARRAYS_too below, which
+    // covers them.
+    //
+    // The emitted form is { Posts: { $not: { $elemMatch: { Rank: { $nin: [7, 9] } } } } } — All(pred) as a
+    // negated $elemMatch over the exact complement, with $nin as $in's own complement. It is correct for the
+    // ragged element states for the reason $eq/$ne partitioning always gives here: a MISSING or explicitly-null
+    // Rank matches $nin, so it satisfies the inner $elemMatch and excludes the row, which is what LINQ's All
+    // answers for an element whose Contains(null) is false.
     //
     // This uses SeedWellFormed, NOT the full DifferentialRows: DriverLinq's own All-over-collection translation
-    // (the fallback this decline lands on) renders as $expr/$allElementsTrue, which — same as the file's
-    // existing Any/All notes document — throws a MongoCommandException when the ARRAY itself is missing/null
-    // (DifferentialRows' MissingPostsRow/NullPostsRow), so AssertDeclinesCleanly's DriverLinq leg cannot even
-    // execute against the full matrix. SeedWellFormed (real, non-null Posts arrays; element-level Rank may
-    // still be missing/null) is exactly the seed the file's OTHER decline tests already use for this reason.
+    // (the parity oracle) renders as $expr/$allElementsTrue, which — same as the file's existing Any/All notes
+    // document — throws a MongoCommandException when the ARRAY itself is missing/null (DifferentialRows'
+    // MissingPostsRow/NullPostsRow), so the DriverLinq leg cannot execute against the full matrix. SeedWellFormed
+    // (real, non-null Posts arrays; element-level Rank may still be missing/null) is exactly the seed the file's
+    // OTHER parity tests already use for this reason.
     //
-    // Expected titles, hand-verified (confirmed empirically via Native/DriverLinq parity before writing this
-    // assertion — see the task report): allpass (ranks 9,7, both in {7,9} -> All true); onefails (ranks 9,1 ->
-    // 1 not in {7,9} -> All false, excluded); missingfield/nullfield (Rank absent/null -> Contains(null) does
-    // not match -> All false, excluded); empty (All over an empty sequence is vacuously true).
+    // Expected titles, hand-verified and unchanged by the flip: allpass (ranks 9,7, both in {7,9} -> All true);
+    // onefails (ranks 9,1 -> 1 not in {7,9} -> All false, excluded); missingfield/nullfield (Rank absent/null ->
+    // Contains(null) does not match -> All false, excluded); empty (All over an empty sequence is vacuously true).
     [Fact]
-    public void All_with_a_nullable_leaf_Contains_predicate_declines_and_falls_back_to_correct_rows()
+    public void All_with_a_nullable_leaf_Contains_predicate_goes_native_since_EF400()
     {
         var collection = SeedWellFormed(
-            nameof(All_with_a_nullable_leaf_Contains_predicate_declines_and_falls_back_to_correct_rows));
+            nameof(All_with_a_nullable_leaf_Contains_predicate_goes_native_since_EF400));
 
-        var titles = AssertDeclinesCleanly(
+        var titles = AssertNativeAndParity(
             collection, q => q.Where(b => b.Posts.All(p => new[] { 7, 9 }.Contains(p.Rank!.Value))));
         Assert.Equal(new[] { "allpass", "empty" }, titles);
+    }
+
+    // Minor 5 of EF-400's review round: the flip above is asserted over SeedWellFormed, which by construction
+    // EXCLUDES the two array states where behaviour actually MOVED — so "value-preserving" was true but scoped
+    // to a seed that could not have shown otherwise. This case covers exactly those states.
+    //
+    // BEFORE EF-400 the shape fell back, and the driver's own All translation ($expr/$allElementsTrue) ABORTS
+    // the aggregate on a missing or explicitly-null Posts array ("$allElementsTrue's argument must be an array,
+    // but is null") — so MissingPostsRow/NullPostsRow produced a MongoCommandException and no rows at all.
+    // AFTER EF-400 the shape goes native, $not/$elemMatch matches a missing or null array vacuously, and both
+    // rows are correctly INCLUDED — which is what LINQ's All over an empty sequence returns.
+    //
+    // So over these two states behaviour DID move: exception → correct rows. That is an improvement, and it is
+    // not a break versus the published packages (which have no native path and therefore threw here too), but
+    // it is a change and it belongs in a test rather than in a claim.
+    //
+    // No DriverLinq oracle leg is possible for this seed for the reason above — the oracle cannot execute — so
+    // this uses AssertNativeOnlyMatches, the same helper every other full-matrix case in this file uses, with a
+    // hand-verified expectation. Derivation for { Posts: { $not: { $elemMatch: { Rank: { $nin: [7, 9] } } } } }:
+    // allpass (9,7 — no element is $nin, so nothing matches the inner $elemMatch) INCLUDED; onefails (9,1 — 1 is
+    // $nin) excluded; missingfield/nullfield (a missing or null Rank matches $nin) excluded; empty/missing/null
+    // (no array, or no elements, so the inner $elemMatch cannot match) INCLUDED. Identical to the expectation
+    // Owned_collection_All_goes_native asserts for the same fixture, which is the cross-check.
+    [Fact]
+    public void All_with_a_nullable_leaf_Contains_predicate_is_correct_for_missing_and_null_ARRAYS_too()
+    {
+        var collection = SeedMatrix(
+            nameof(All_with_a_nullable_leaf_Contains_predicate_is_correct_for_missing_and_null_ARRAYS_too));
+
+        var titles = AssertNativeOnlyMatches(
+            collection, q => q.Where(b => b.Posts.All(p => new[] { 7, 9 }.Contains(p.Rank!.Value))));
+
+        Assert.Equal(new[] { "allpass", "empty", "missing", "null" }, titles);
     }
 
     // Every element state crossed with every array state that changes quantifier semantics.

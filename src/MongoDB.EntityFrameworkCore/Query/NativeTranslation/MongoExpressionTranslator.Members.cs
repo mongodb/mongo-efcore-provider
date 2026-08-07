@@ -53,6 +53,25 @@ internal sealed partial class MongoExpressionTranslator
         property = null;
         fieldPath = null;
 
+        // Peel Nullable<T>.Value: `x.A.Value` is a MemberExpression whose RECEIVER is the member access we
+        // actually want, so without this it misses the fast path below and is handed to the owned dotted-path
+        // resolver, which walks hops requiring embedded navigations and declines (EF-322 slice A5 / EF-400).
+        // The peel is safe because the resolved property keeps its own nullability — `.Value` changes the CLR
+        // type, never the stored element — so the emitted field ref is identical to the one `x.A` produces.
+        //
+        // The `Nullable.GetUnderlyingType(...) is not null` conjunct is LOAD-BEARING, not a redundant sibling of
+        // the name test: a user type may declare its own member called `Value`, and when that user type is the
+        // CLR type of a MAPPED scalar property (a value-converted strongly-typed id, say), peeling it would
+        // resolve the RECEIVER — silently answering a question about `x.Code` when the query asked about
+        // `x.Code.Value`, and bypassing the value converter while doing so. Pinned by
+        // MongoExpressionTranslatorTests.A_user_type_member_named_Value_is_NOT_peeled. (Same shape of reasoning
+        // as ClassifyJoinHop's IsTransparentIdentifierType conjunct, recorded in Query/AGENTS.md.)
+        while (node is MemberExpression { Member.Name: nameof(Nullable<int>.Value), Expression: { } nullableReceiver }
+               && Nullable.GetUnderlyingType(nullableReceiver.Type) is not null)
+        {
+            node = nullableReceiver;
+        }
+
         // Fast path: a top-level scalar access on the query parameter, in EITHER spelling EF produces —
         // a bare member (p.Foo) or the shadow-safe EF.Property<T>(p, "Foo") call. Both name ONE hop off the
         // parameter and must resolve identically; the EF.Property spelling used to fall into a gap, because
