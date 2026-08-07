@@ -65,6 +65,34 @@ them.
 
 588 is 37% of the entire coverage gap.
 
+#### AMENDED 2026-08-07, after the stream-1 spike measured this stream
+
+The spike (`docs/superpowers/specs/2026-08-07-stream1-translator-breadth-spike.md`, commit `6f11c5c4`)
+re-derived the above and **confirmed the "one capability" claim for two of the three positions and REFUTED it
+for the third.** Predicate and projection-leaf converge on literally the same method — `TranslateOperand`,
+called from `TranslateComparison` and `TryTranslateValue`, differing only by `allowNumericWidening` — which is
+stronger than this section claimed. **Sort key is a different capability**: `TryTranslateField` returns a
+`MongoFieldExpression` and `RenderSort` hard-throws for anything else, because MQL `$sort` takes field paths
+only.
+
+**Consequently a computed-sort slice is added to stream 1** (owner ruling, 2026-08-07). It is IR, lowerer and
+renderer work — `$set` + `$sort` + `$unset` — **not** a translator arm, and it is the one piece of stream 1
+that is not translator breadth at all. It **enables ≥92 cases and delivers none by itself**, so it must be
+sequenced before the sort-position feature slices rather than measured on its own.
+
+**Measured yield, replacing the 588 above as the number to plan against:**
+
+| | cases | closes when |
+|---|---:|---|
+| sole-cause, one feature | **474** | that feature's slice ships |
+| co-blocked on stream 2 (set ops 32, `Distinct` 26, aggregate 4) | 62 | **streams 1 + 2 both land** |
+| needs two stream-1 features | 34 | both slices ship |
+| additionally blocked by **deferred** work | 12 | **never, this release** |
+
+So stream 1's bucket yields **≈474 after stream 1 alone** and **≈570 once streams 1 and 2 have both landed**.
+There is **no double-count** with stream 2 — the buckets are partitioned by *first* decline site — but there
+is a real **dependency** that this document did not previously record.
+
 ### Stream 2 — the sole-cause tranche (**282 cases**)
 
 Five small gaps, chosen because **250 of the 282 are sole-cause**: nothing else declines them, so opening one
@@ -100,7 +128,22 @@ deferred correctness gaps only when they are.
 spike that must answer that first — if it is not separable, that is a finding to bring back, not to push
 through.
 
-**Total: 588 + 282 + 52 = +922 → 3349/4075 = 82.2%** (stream 4 contributes correctness, not cases).
+**Total, MEASURED-based and superseding the +922 figure used above:**
+
+| | cases |
+|---|---:|
+| current | 2427 |
+| stream 1's bucket, after streams 1 **and** 2 | +570 |
+| stream 2's own first-decline-site cases | +282 |
+| stream 3 (slice 3b) | +52 |
+| **projected** | **3331 / 4075 = 81.7%** |
+
+**INFERRED** by composing the spike's MEASURED per-bucket table across streams; the spike measured each bucket,
+not this sum.
+
+**The computed-sort slice is load-bearing for the bar, not an optimisation.** Without it the ≥92 sort-position
+cases do not convert, giving ≈3239/4075 = **79.5% — under the 80% bar.** That is why it was ruled in rather
+than deferred. Stream 4 contributes correctness, not cases.
 
 ---
 
@@ -192,10 +235,19 @@ Because it is easy to carry the old plan's assumptions forward:
 lowerer or the renderer can still fail once a gate opens, so stream 2's 282 is an upper bound, not a promise.
 Stream 1's 588 carries the same risk in smaller proportion.
 
-**Therefore: re-measure after stream 1, using the §9.0 method, before committing to the rest.** If stream 1's
-yield comes in materially under 588, that is the moment to pull joins or GroupBy back in — not after stream 2
-has also under-delivered. The ~90 cases of margin above 80% exist to absorb a small shortfall; they do not
-absorb a large one.
+**Therefore: re-measure after stream 1, using the §9.0 method, before committing to the rest.**
+
+**CORRECTED 2026-08-07 — the trigger above was wrong and would have misfired.** This section originally said to
+pull joins or GroupBy back in "if stream 1's yield comes in materially under 588". The spike measured that the
+expected yield after stream 1 **alone** is **≈474**, because 62 cases wait on stream 2, 34 need a second
+stream-1 feature, and 12 cannot convert this release at all. **≈474 at the checkpoint is success, not
+shortfall.** Judging it against 588 would have triggered a scope expansion that the measurement does not
+justify.
+
+The revised trigger: expect **≈474 after stream 1**, and **≈570 after streams 1 and 2 together**. Pull deferred
+work back in only if the post-stream-2 figure lands materially under ≈570. Note that 474 is itself an upper
+bound — sole-cause means nothing else declined at *population* time, and the lowerer or renderer can still
+decline afterwards.
 
 ---
 
