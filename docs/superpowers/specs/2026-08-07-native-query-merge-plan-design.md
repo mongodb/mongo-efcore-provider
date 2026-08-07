@@ -17,8 +17,9 @@ withdrawn. Two owner decisions replace it:
 1. **Merge early, at reasonable coverage, and track the rest.** The bar is **~80% coverage, no major
    architectural issues, and good tracking of the remaining work.** Correctness gaps are acceptable *if* they
    are well-defined, uncommon, and tracked.
-2. **The driver path is not removed in this release.** It ships, probably obsoleted in some form, and is
-   retired later.
+2. **The driver path is not removed in this release.** It ships as-is and is retired later. How it is
+   eventually deprecated is a **separate project** and is explicitly out of scope here — this plan makes no
+   public-surface changes to the query-mode API.
 
 Decision 2 is the one that reshapes the engineering, and its consequences are easy to miss — see §6.
 
@@ -135,16 +136,16 @@ Three items. None blocks merge; all need a decision recorded rather than a ticke
 3. **`ProjectionAliasTier.Synthetic` is unreachable** after the tier-2 revert. Housekeeping, but a reviewer
    will ask; either remove it or comment it as deliberate.
 
-### New, from decision 2: how the driver path is obsoleted
+### No public-API work in this plan
 
-The first release ships both paths with the driver path "obsoleted in some way". That is **public surface** and
-needs a decision: what carries `[Obsolete]` (`MongoQueryMode.DriverLinq`? `UseQueryMode`? neither, just docs?),
-what the message says, and whether it warns or errors.
+Deprecating the driver path is a **separate project**, deferred by the owner. This plan therefore makes **no
+changes to the query-mode public surface** — nothing gains `[Obsolete]`, nothing is renamed or removed.
 
-**Measured, tag-side:** `git grep -c QueryMode` returns **zero** at `v10.0.2`, `v9.1.2` and `v8.4.2` — the
-entire query-mode surface is additive within this unreleased cycle and has never shipped. So this is a
-free choice today and becomes a compatibility commitment the moment it ships. **This is the one API decision
-that cannot be deferred past merge.**
+One fact worth carrying into that later project, MEASURED here so it does not have to be re-derived:
+`git grep -c QueryMode` returns **zero** at `v10.0.2`, `v9.1.2` and `v8.4.2`. The entire query-mode surface
+(`MongoQueryMode`, `UseQueryMode`, `MongoOptionsExtension.QueryMode`/`WithQueryMode`) is additive within this
+unreleased cycle and **has never shipped** — so it can still be shaped freely, and becomes a compatibility
+commitment only once it is released.
 
 ---
 
@@ -202,7 +203,7 @@ Unchanged from the last two slices, and non-negotiable:
 3. **Checkpoint: re-measure** (§7).
 4. **Stream 3 — slice 3b** (fixes EF-356).
 5. **Stream 2 — the sole-cause tranche.**
-6. **Obsoletion decision + architecture record** (§5).
+6. **Architecture record** (§5) — the three debt items, decided and recorded, not silently carried.
 7. **Final measurement, status-doc update, merge.**
 
 Streams 2 and 3 are independent of each other; 3b is placed before stream 2 only so the silent-wrong-data fix
