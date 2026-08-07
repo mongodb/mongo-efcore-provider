@@ -1,0 +1,281 @@
+/* Copyright 2023-present MongoDB Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure; // IsEFPropertyMethod()
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;           // QueryableMethods
+using MongoDB.EntityFrameworkCore.Extensions;        // GetDocumentPath(), IsEmbedded()
+using MongoDB.EntityFrameworkCore.Query.Expressions;
+
+namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+
+/// <summary>
+/// <see cref="MongoExpressionTranslator"/> — member resolution. Resolves a member-access / <c>EF.Property</c>
+/// chain to an <see cref="IProperty"/> and its MongoDB document path, in every position (predicate, sort key
+/// and projection leaf all reach <see cref="MongoExpressionTranslator.TryResolveMember"/>).
+/// </summary>
+/// <remarks>
+/// Split out of the single-file translator as EF-322 stream 1's slice 0 — a pure <c>partial class</c> file
+/// move, no signature or semantics change. These members read the private scope state
+/// (<c>_entityType</c>/<c>_outerParam</c>/<c>_outerEntityType</c>/<c>_innerPrefix</c>), which is why the split
+/// is <c>partial</c> and NOT an extracted type: the by-name-retarget hazard documented on
+/// <see cref="TryResolveOwnedCollectionPath"/> is exactly a hazard about which scope a member resolves against.
+/// </remarks>
+internal sealed partial class MongoExpressionTranslator
+{
+    /// <summary>
+    /// Attempts to resolve a simple member-access expression to its <see cref="IProperty"/> and
+    /// the MongoDB document element name. Returns <see langword="false"/> for any property that
+    /// cannot be natively addressed, including composite-PK components whose storage path is
+    /// <c>_id.&lt;element&gt;</c> — those fall back to driver-LINQ.
+    /// </summary>
+    private bool TryResolveMember(Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath)
+    {
+        property = null;
+        fieldPath = null;
+
+        // Fast path: a bare top-level member on the query parameter (p.Foo). Everything else — a member
+        // rooted on another hop, or an EF.Property(...) call produced by owned-nav expansion — is delegated
+        // to the owned single-reference dotted-path resolver (single-scope only), which declines cleanly
+        // (returns false) for any shape that is not a valid owned chain.
+        if (node is not MemberExpression { Expression: ParameterExpression param } me)
+            return TryResolveOwnedFieldPath(node, out property, out fieldPath);
+
+        // Two-scope mode: a member rooted on the outer param resolves against the outer entity type at document
+        // root; every other member is inner-scoped. Identity (ReferenceEquals), never name — so a member name
+        // shared between the two scopes cannot be mis-routed.
+        var isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
+        var scopeType = isOuter ? _outerEntityType! : _entityType;
+
+        var resolved = scopeType.FindProperty(me.Member.Name);
+        if (resolved is null)
+            return false;
+
+        // A component of a composite primary key is stored nested under "_id" (e.g. { _id: { Key1, Key2 } }),
+        // so its top-level element name does not address the stored field. The native translator does not resolve
+        // the dotted "_id.<name>" path, so refuse it here and let the query fall back rather than emit a $match
+        // against a non-existent top-level field (which silently returns nothing).
+        if (resolved.IsPrimaryKey() && resolved.FindContainingPrimaryKey()!.Properties.Count > 1)
+            return false;
+
+        property = resolved;
+        fieldPath = resolved.GetElementName();
+
+        // Inner-scope fields are prefixed with the unwind scope in two-scope mode; outer-scope fields (and every
+        // field in single-scope mode, where _innerPrefix is null) stay at their resolved element name.
+        if (!isOuter && _innerPrefix is not null)
+            fieldPath = _innerPrefix + "." + fieldPath;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a nested member/navigation access chain into an owned single-reference (OwnsOne) dotted
+    /// document path, e.g. <c>p.Address.City</c> → element path <c>"Address.City"</c> and the <c>City</c>
+    /// property. Each hop may be a <see cref="MemberExpression"/> (scalar access) or an
+    /// <c>EF.Property(root, "Nav")</c> call (the shadow-nav-safe form EF's nav-expansion rewrites owned-nav
+    /// access into); every non-leaf hop must resolve to an embedded single-reference navigation, and the chain
+    /// must be rooted at the query parameter with a mapped scalar leaf. Returns <see langword="false"/> (caller
+    /// falls back to driver-LINQ) for any other shape. Engaged only in single-scope mode — a two-scope
+    /// SelectMany-unwind translator declines, because <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>
+    /// yields a root-relative path that would not compose with the unwind-scope prefixing. Also declines when
+    /// <c>_entityType</c> is not itself a document root — <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>
+    /// always yields a TRUE-document-root-relative path, so a single-scope translator built on a non-root scope
+    /// (e.g. an owned-collection-element inner filter translator whose result the CALLER separately prefixes
+    /// with the unwind path) would otherwise have that prefix applied twice.
+    /// </summary>
+    private bool TryResolveOwnedFieldPath(
+        Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath)
+    {
+        property = null;
+        fieldPath = null;
+
+        if (_outerParam is not null || _innerPrefix is not null)
+            return false; // two-scope mode: owned dotted paths are out of scope (declined, falls back)
+
+        // GetDocumentPath() below returns a path rooted at the TRUE document root. That composes correctly
+        // only when _entityType IS the document root (the query-parameter's own entity type) — which is what
+        // every predicate/sort/projection surface builds this translator against (CollectionExpression.EntityType).
+        // A single-scope translator built on a NON-root entity type (e.g. NativeSelectManyBinder.
+        // TryBuildOwnedInnerFilter's owned-inner-filter translator, built on the owned collection ELEMENT type)
+        // would already have its result prefixed with the unwind path by its caller — composing that with a
+        // root-relative GetDocumentPath() double-prefixes the path and silently matches nothing. Decline here so
+        // that shape falls back to driver-LINQ instead of emitting a wrong (empty) native $match.
+        if (!_entityType.IsDocumentRoot())
+            return false;
+
+        // Collect hop names from the outer (leaf) hop inward; the root must be the query parameter.
+        var names = new List<string>();
+        var current = node;
+        while (TryGetMemberOrEFProperty(current, out var inner, out var name))
+        {
+            names.Add(name);
+            current = inner;
+        }
+
+        if (current is not ParameterExpression)
+            return false;
+
+        // A single top-level member is handled by TryResolveMember's fast path, never here.
+        if (names.Count < 2)
+            return false;
+
+        names.Reverse(); // now root-first: [firstNav, ..., leaf]
+
+        var scopeType = _entityType;
+        for (var i = 0; i < names.Count - 1; i++)
+        {
+            var navigation = scopeType.FindNavigation(names[i]);
+            if (navigation is null || !navigation.IsEmbedded() || navigation.IsCollection)
+                return false; // cross-collection or owned-collection intermediate → fall back
+            scopeType = navigation.TargetEntityType;
+        }
+
+        var leaf = scopeType.FindProperty(names[^1]);
+        if (leaf is null)
+            return false;
+
+        // Composite-PK components are stored under "_id" and are not addressable by their top-level element
+        // name (mirrors the single-member guard in TryResolveMember).
+        if (leaf.IsPrimaryKey() && leaf.FindContainingPrimaryKey()!.Properties.Count > 1)
+            return false;
+
+        property = leaf;
+        // GetDocumentPath() gives the ordered containing element names from the document root down to the leaf's
+        // declaring owned entity type (scopeType, after the loop above); append the leaf's own element name. This
+        // is the exact dotted path the shapers and pipeline use, so the emitted $match/$project/$sort addresses
+        // the stored field correctly. (Reads scopeType rather than the obsolete IProperty.DeclaringEntityType.)
+        fieldPath = string.Join(".", scopeType.GetDocumentPath().Append(leaf.GetElementName()));
+        return true;
+    }
+
+    // A single access hop in either shape EF produces: a plain MemberExpression (scalar access) or an
+    // EF.Property(root, "Name") call (owned-nav expansion). Mirrors NativeSelectManyBinder.TryGetMemberAccess.
+    private static bool TryGetMemberOrEFProperty(Expression expression, out Expression inner, out string name)
+    {
+        switch (expression)
+        {
+            case MemberExpression { Expression: { } e } member:
+                inner = e;
+                name = member.Member.Name;
+                return true;
+
+            case MethodCallExpression call
+                when call.Method.IsEFPropertyMethod()
+                     && call.Arguments is [var root, ConstantExpression { Value: string propName }]:
+                inner = root;
+                name = propName;
+                return true;
+
+            default:
+                inner = null!;
+                name = null!;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the SOURCE of an owned-collection quantifier (<c>b.Posts</c>, <c>b.Address.Notes</c>) to the
+    /// dotted document path of the embedded array — <b>relative to this translator's scope entity type</b> —
+    /// and yields the array's element entity type. Every non-final hop must be an embedded single-reference
+    /// navigation; the final hop must be an embedded collection navigation; the chain must be rooted at the
+    /// query parameter. Returns <see langword="false"/> (caller falls back to driver-LINQ) for anything else,
+    /// including a reference (non-embedded) navigation and a primitive collection property.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why scope-relative, and why there is deliberately no <c>IsDocumentRoot</c> guard here</b> (unlike
+    /// <see cref="TryResolveOwnedFieldPath"/>): that method builds paths with
+    /// <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>, which is always relative to the TRUE document
+    /// root, so a translator built on a non-root scope whose caller separately prefixes the result would
+    /// double-prefix and silently match nothing — hence its blanket decline. This method instead joins the
+    /// hop navigations' own containing element names, so the path is relative to <c>_entityType</c> by
+    /// construction. That composes correctly with
+    /// <see cref="MongoFieldPrefixRewriter"/> prepending rather than fighting it, and it is what makes a
+    /// nested <c>Any</c>-within-<c>Any</c> correct: the element-scoped child translator resolves the inner
+    /// array relative to the element, which is exactly what the enclosing <c>$elemMatch</c> expects.
+    /// </para>
+    /// <para>
+    /// Two-scope mode is still declined: a cross-scope quantifier is out of scope for this slice.
+    /// </para>
+    /// <para>
+    /// <b>Why accepting ANY <see cref="ParameterExpression"/> root is safe.</b> This walk does not check WHICH
+    /// parameter roots the chain, so on its own it would resolve a source rooted on an ENCLOSING parameter
+    /// (<c>b.Posts.Any(p =&gt; b.Posts.Any(q =&gt; …))</c>) against this translator's own scope type. That shape cannot
+    /// reach here: the enclosing parameter is free in the element-predicate body, so the <c>Any</c> arm's
+    /// <see cref="ReferencesEnclosingScope"/> guard declines the whole quantifier before the element-scoped child
+    /// translator is even constructed. At the outermost level the only parameter in scope IS the query parameter.
+    /// </para>
+    /// </remarks>
+    private bool TryResolveOwnedCollectionPath(
+        Expression source,
+        [NotNullWhen(true)] out string? arrayPath,
+        [NotNullWhen(true)] out IEntityType? elementType)
+    {
+        arrayPath = null;
+        elementType = null;
+
+        if (_outerParam is not null || _innerPrefix is not null)
+            return false; // two-scope mode: cross-scope quantifiers are out of scope (declined, falls back)
+
+        // Collect hop names from the outer hop inward; the root must be the query parameter.
+        var names = new List<string>();
+        var current = source;
+        while (TryGetMemberOrEFProperty(current, out var inner, out var name))
+        {
+            names.Add(name);
+            current = inner;
+        }
+
+        if (current is not ParameterExpression || names.Count == 0)
+            return false;
+
+        names.Reverse(); // now root-first: [ownedRefNav, ..., collectionNav]
+
+        var scopeType = _entityType;
+        var segments = new List<string>(names.Count);
+        for (var i = 0; i < names.Count; i++)
+        {
+            var navigation = scopeType.FindNavigation(names[i]);
+            if (navigation is null || !navigation.IsEmbedded())
+                return false; // a primitive collection property or a reference nav has no embedded path
+
+            // A collection is allowed only as the FINAL hop (it is the quantifier's source); every
+            // intermediate hop must be an owned single reference.
+            if (navigation.IsCollection != (i == names.Count - 1))
+                return false;
+
+            // The navigation's containing element name is the same source the shapers and pipeline use, so
+            // the emitted path matches stored layout (including HasElementName overrides and shared types).
+            var elementName = navigation.TargetEntityType.GetContainingElementName();
+            if (string.IsNullOrEmpty(elementName))
+                return false;
+
+            segments.Add(elementName);
+            scopeType = navigation.TargetEntityType;
+        }
+
+        arrayPath = string.Join(".", segments);
+        elementType = scopeType;
+        return true;
+    }
+}
