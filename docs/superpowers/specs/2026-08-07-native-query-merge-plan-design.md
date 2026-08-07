@@ -85,7 +85,22 @@ Already designed as part of step 3. It is in the plan for a correctness reason r
 policy admits deferred correctness gaps only when they are *uncommon*; this one is not. 3b **fixes** EF-356
 rather than pinning it (a standing ruling from 2026-08-06).
 
-**Total: 588 + 282 + 52 = +922 → 3349/4075 = 82.2%.**
+### Stream 4 — EF-375, the join-key weakness (**correctness, ~0 coverage**)
+
+Pulled in on 2026-08-07 after the Task-1 ticket audit (see §4). It is a **targeted defect fix**, not the joins
+stream: EF-375 has a known location — the agreement check in `TryResolveIntermediateLookupPrefix` carries a
+`TODO(EF-375)` — and the rest of joins (373 cases) stays deferred under EF-392.
+
+**It adds correctness, not coverage.** Its cases sit inside the deferred joins bucket, so they stay failing
+either way and **the 82.2% target is unchanged.** It is in the plan because a defect on
+`Include(A).Include(B)` over a self-referencing model is not an uncommon shape, and the owner's policy admits
+deferred correctness gaps only when they are.
+
+**UNVERIFIED:** whether the fix is genuinely targeted or drags in the joins machinery. Its slice opens with a
+spike that must answer that first — if it is not separable, that is a finding to bring back, not to push
+through.
+
+**Total: 588 + 282 + 52 = +922 → 3349/4075 = 82.2%** (stream 4 contributes correctness, not cases).
 
 ---
 
@@ -111,13 +126,20 @@ housekeeping. Existing: EF-382, EF-390, EF-391. The joins stream also carries EF
 Admitted under the owner's policy — **well-defined, uncommon, tracked**. Each needs a ticket carrying a
 reproduction and an explicit statement that it is *silent* rather than loud:
 
-- **EF-380** — silent wrong data under the default mode (from the EF-379 slice's residuals).
-- **EF-375** — join-key weakness.
+- **EF-380** — silent wrong data under the default mode (from the EF-379 slice's residuals). Amended
+  2026-08-07: its original text implied `Native`-only, but its own reproduction table shows `DriverLinq`
+  produces the identical wrong result.
 - **EF-390** — dotted owned-hop scalar leaf returns `null`; pinned by a test asserting today's wrong behaviour,
   which must be **inverted** when fixed, not deleted.
 - **EF-355** — carried.
 
-**EF-356 is explicitly NOT in this list** — see §3 stream 3.
+**Two tickets are explicitly NOT in this list**, both because they failed the *uncommon* half of the criterion:
+
+- **EF-356** — see §3 stream 3.
+- **EF-375** — **pulled into the plan 2026-08-07.** The Task-1 audit found its throw symptom fires on
+  `Employee.Include(Manager).Include(Mentor)` — its own text calls that "an ordinary modelling pattern", i.e.
+  any self-referencing model with two same-typed navigations. Well-defined and tracked, but not uncommon. See
+  §3 stream 4.
 
 ---
 
@@ -201,7 +223,7 @@ Unchanged from the last two slices, and non-negotiable:
 1. **File the deferral tickets** (§4) — merge-bar item, and cheapest done first.
 2. **Stream 1 — translator breadth**, as several slices split by feature group.
 3. **Checkpoint: re-measure** (§7).
-4. **Stream 3 — slice 3b** (fixes EF-356).
+4. **Stream 3 — slice 3b** (fixes EF-356), then **stream 4 — EF-375**, spike first (§3 stream 4).
 5. **Stream 2 — the sole-cause tranche.**
 6. **Architecture record** (§5) — the three debt items, decided and recorded, not silently carried.
 7. **Final measurement, status-doc update, merge.**
