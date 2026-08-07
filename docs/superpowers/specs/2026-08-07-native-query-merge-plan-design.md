@@ -141,9 +141,19 @@ through.
 **INFERRED** by composing the spike's MEASURED per-bucket table across streams; the spike measured each bucket,
 not this sum.
 
-**The computed-sort slice is load-bearing for the bar, not an optimisation.** Without it the ≥92 sort-position
-cases do not convert, giving ≈3239/4075 = **79.5% — under the 80% bar.** That is why it was ruled in rather
-than deferred. Stream 4 contributes correctness, not cases.
+**The computed-sort slice is load-bearing for the bar, not an optimisation — and the counterfactual is now
+MEASURED, replacing the inferred figure this paragraph originally carried.** It first read "without it the ≥92
+sort-position cases do not convert, giving ≈3239/4075 = 79.5%". The spike's fix round measured the actual
+exposure: of stream 1's **474** sole-cause cases, **74 depend on slice B**, leaving **400** deliverable without
+it — so the counterfactual is ≈`2427 + (570 − 74) + 282 + 52` = **3257/4075 = 79.9%**, still under the bar but
+by a thinner margin than the inferred number implied.
+
+Two details that were invisible until measured, and that matter for sequencing: the dependency is spread across
+**seven** feature groups rather than the four originally caveated, and **A3 (bare constant/parameter) carries 10
+of them while being 100% sole-cause**, so every one is a direct loss. The claim that "A1–A5 need no slice B" was
+false — that tranche is 188, not 204, and the genuinely slice-B-independent part is **158**.
+
+Stream 4 contributes correctness, not cases.
 
 ---
 
@@ -244,7 +254,8 @@ stream-1 feature, and 12 cannot convert this release at all. **≈474 at the che
 shortfall.** Judging it against 588 would have triggered a scope expansion that the measurement does not
 justify.
 
-The revised trigger: expect **≈474 after stream 1**, and **≈570 after streams 1 and 2 together**. Pull deferred
+The revised trigger: expect **≈474 after stream 1 with slice B landed** (**≈400 without it**), and **≈570
+after streams 1 and 2 together**. Pull deferred
 work back in only if the post-stream-2 figure lands materially under ≈570. Note that 474 is itself an upper
 bound — sole-cause means nothing else declined at *population* time, and the lowerer or renderer can still
 decline afterwards.
