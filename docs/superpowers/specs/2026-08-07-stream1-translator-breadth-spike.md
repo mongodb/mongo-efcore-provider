@@ -45,8 +45,9 @@ TestContainers booted its own `mongodb/mongodb-atlas-local`.
    6-case gap is itemized in §4.3. READ + MEASURED. §4.
 3. **Stream 1's realistic yield is 474, not 588 — and only 400 of that 474 is deliverable without the
    computed-sort slice.** MEASURED sole-cause. **74 of the 474 are slice-B-dependent** (their single decline is
-   a sort-position one that no translator arm can reach), spread across six groups and *not* confined to the
-   ones §7 originally caveated — see §5.1, corrected on review. Beyond the 474: **62** need stream 1 **and**
+   a sort-position one that no translator arm can reach), spread across **seven** groups — the four §7
+   originally caveated (A6, A9, A12, A13) plus **three it did not** (A1, A3, A11) — see §5.1, corrected on
+   review. Beyond the 474: **62** need stream 1 **and**
    stream 2 (set ops 32, `Distinct` 26, scalar aggregate 4); **34** need two stream-1 features at once; **12**
    are additionally blocked by deferred work (joins / composite-PK / entity leaf) and cannot convert this
    release. There is **no double-count** between streams 1 and 2 — the buckets are partitioned by *first*
@@ -330,7 +331,8 @@ is in sort position and is not `EF.Property` needs slice B"*:
 | …of which **slice-B-dependent** | **74** |
 | **…deliverable without slice B** | **400** |
 
-Which groups carry it — **six, not the four §7 originally caveated**:
+Which groups carry it — **seven**: the four §7 originally caveated (A6, A9, A12, A13) **plus three it did not**
+(A1, A3, A11). 4 + 3 = 7, and 7 + the 13 zero rows = the 20 groups of §3.
 
 | group | sole-cause | slice-B-dependent | without slice B |
 |---|---:|---:|---:|
