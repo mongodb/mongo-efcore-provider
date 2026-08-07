@@ -1,8 +1,26 @@
 # Native LINQ Translation (EF-322) — Status Report
 
-*Generated 2026-07-26 · last updated 2026-08-06 · currently on `EF-322-step3a` @ `1c470704`, stacked above
-`NativeQueryOngoing` tip `9065acfc` and not yet squashed onto it. Everything below `NativeQueryOngoing` is
-stacked on `main` and unmerged.*
+*Generated 2026-07-26 · **last updated 2026-08-07** · currently on `NativeQueryOngoing` @ `99d74735`, stacked
+on `main` and unmerged. (The previous header said `EF-322-step3a` @ `1c470704` above tip `9065acfc`; both
+slices have since been squashed onto the rolling branch.)*
+
+> **UPDATED 2026-08-07 — §9 REWRITTEN AS-MEASURED (EF-391, first half).** Every count in §9 was re-derived at
+> `99d74735` by instrumenting the *decline sites* rather than bucketing failure messages, and reproducing the
+> baseline exactly on both axes. **Three things to carry away before reading further:**
+> 1. **§7 is now a historical snapshot.** Its totals (2395 / 1742 / 651) are superseded by §9's
+>    **2166 / 1598 / 518 / 50**. §7.4's *method* is still current and is what was re-run.
+> 2. **The binding constraint on retirement is not what this document has said for weeks.** The largest single
+>    lever is `MongoExpressionTranslator` **expression breadth** — ≈588 of the 1598 real gaps, spanning
+>    predicates, sort keys and projection leaves as one capability — and it has no slice, no ticket and no
+>    place in the execution order. §9.7 is re-ranked and §9.8 gains steps 4–11.
+> 3. **Two long-standing labels measured out FALSE**: the "66 `ArgumentOutOfRangeException` — a
+>    materialization/shaper gap" bucket is 48 `AssertMql` baseline failures and *zero* shaper bugs, and
+>    "composite-PK member access … Northwind does not cover it" is 116 measured cases, 112 of them inside the
+>    reference-`Include` suites.
+>
+> **Also settled by measurement: the public-API worry in §9.4 is a non-issue.** The whole `MongoQueryMode`
+> surface exists at **none** of `v10.0.2` / `v9.1.2` / `v8.4.2`, so removing it at cutover restores the
+> released shape rather than breaking it.
 
 > **UPDATED 2026-08-06 for §9.8 steps 2 and 3a.** Two slices have landed since `9065acfc`: the `VectorSearch`
 > slice (step 2) and **step 3a, the bare-projection boundary**. §2 gains a table for them; §4, §5, §8, §9.1 and
@@ -19,7 +37,8 @@ stacked on `main` and unmerged.*
 > established: slice 7 `cfe873e`→`9b641549`, EF-358 fix `7c199e4`→`46e5a3f8`, slice 8 `33fdc58`→`d63659fc`,
 > slice 9 `229294f`→`3483fc60`. The remaining rows have not been re-derived.
 >
-> **Also stale: §7's measurements.** They were taken at pre-rebase tip `229294f`; **seven** slices have landed
+> **Also stale: §7's measurements.** (Superseded again 2026-08-07 — see the banner at the top of §7 and
+> §9.) They were taken at pre-rebase tip `229294f`; **seven** slices have landed
 > since (§2's joins table — this read "six" until EF-379 landed). Treat §7's numbers as a floor of unknown
 > tightness, not as current, and re-measure per §7.4 before relying on them. (EF-379 specifically moved neither
 > spec axis — see §2 — so it does not by itself widen the gap between §7 and reality.)
@@ -368,6 +387,22 @@ yet — the whole native stack lands at parity/cutover.
   into a single `null`. That divergence is an **accepted, documented owner ruling**, not a defect. See
   `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`'s "EF-359 AS BUILT" note for the full as-built account,
   every decline, and the residuals that still hard-fail.
+- **Atlas Vector Search (cutover step 2, 2026-08-06).** `VectorSearch(...)` emits a native `$vectorSearch`
+  first stage from a dedicated `MongoSelectDefinition.VectorSearch` slot the lowerer writes *ahead of*
+  `AppendSelectOpStages`, so first-ness is structural rather than incidental; the stage BODY is built per
+  execution by the driver's own `PipelineStageDefinitionBuilder.VectorSearch` (it varies with runtime options,
+  so it must be constructed, not substituted), with the fixed `$addFields{__score}` companion. Covers a bare
+  vector search, a `preFilter` the native predicate translator can express, `exact`/`numCandidates`, a `Where`
+  composed after it, and a `__score` projection leaf. `MONGODB_EF_NATIVE_ONLY=1` `VectorSearch` failures
+  **112 → 20**, and **→ 16** after step 3a. No `AssertMql` baseline moved. See §4 for the residual.
+- **Bare projections (cutover step 3a, 2026-08-06).** A terminal `Select` whose body IS the leaf —
+  `Select(p => p.Name)`, `Select(o => o.OrderID)`, `Select(b => b.Tags)`, `Select(b => b.Posts)` — populates
+  `Projection` and emits a native `$project` aliased by the leaf's own root-relative document path (which is
+  what keeps one alias-addressed shaper correct against a projected and an un-projected document alike, on the
+  late-fallback route). **74 `NativeOnly` cases won, zero regressions**; 78 `AssertMql` baselines re-based as
+  the `$project` key moved from the driver's `_v` to the element name; the epic's first `BREAKING-CHANGES.md`
+  entry for a native-routing flip. A bare projection followed by a cardinality operator or by
+  `Skip`/`Take`/`Where`/`OrderBy` also goes native, as an incidental widening. See §4 for what still declines.
 
 ---
 
@@ -569,7 +604,10 @@ the four derivation sites plus the fifth reader, and why there is deliberately *
      segment walk. **Pre-existing and byte-identical at step 3a's base** — neither caused nor closed by that
      slice — and pinned as *measured*, not as correct, by
      `Ef362OwnedHopArrayProjectionTests.Owned_hop_SCALAR_leaf_alongside_the_array_leaf_is_still_declined_and_still_loses_the_scalar`.
-     It is also what keeps a bare `Select(b => b.Home.City)` declining. **No ticket has been filed for it.**
+     It is also what keeps a bare `Select(b => b.Home.City)` declining. ~~**No ticket has been filed for it.**~~
+     **STALE — corrected 2026-08-07: it is now tracked as EF-390** (filed by `99d74735`). Note the category:
+     this is a **silent-wrong-data** item reachable under the default `Native` mode, which is why §9.5 carries
+     it rather than §5 alone.
 
   5. **A non-renderable element predicate in a filtered `Count(pred)` projection (EF-365).** Newly filed by
      slice 9. `Select(b => new { N = b.Posts.Count(p => p.Heading.StartsWith("h")) })` hard-fails in every mode,
@@ -705,6 +743,13 @@ slice 7.
 
 ## 7. Which tests require driver-LINQ to pass — empirical measurement
 
+> ⚠️ **STALE AS A SNAPSHOT — every total in §7.1, §7.2 and §7.3 is a `229294f` figure and has been superseded
+> by the 2026-08-07 re-measurement at `99d74735` in §9.** Two slices landed in between (`VectorSearch`,
+> step 3a). Current totals: `Native` **4593 / 0 / 17**, `NativeOnly` **2427 / 2166 / 17** (was 4589/0/19 and
+> 2194/2395/19), and the coverage-gap split is **1598 / 518 / 50**, not 1742 / 651 / 2 — see §9.1, which also
+> records the two §7.2 bucket LABELS that measured out false. **§7.4's method is still correct and is what was
+> re-run**; only the numbers below are historical. The current per-class breakdown is in the box after §7.1.
+
 Measured by the two-sweep subtraction on the **EF10 specification suite**. **Fully re-measured at the current
 tip `229294f` on 2026-07-31** — both sweeps re-run from scratch after slices 8 and 9 landed, with §7.1 and §7.2
 re-derived from the fresh `nativeonly.trx` (previous revisions carried §7.2 forward from `1dd7862`). The
@@ -787,6 +832,43 @@ figure already in the table, summing to 2395 — this table is now confirmed at 
 | 3 | NorthwindAsTrackingQueryMongoTest |
 | 1 | NorthwindQueryTaggingQueryMongoTest |
 
+**CURRENT per-class breakdown, re-derived 2026-08-07 at `99d74735` (total 2166).** The table above is the
+`229294f` snapshot and is kept for the historical comparison; this is the live one. The right-hand column is
+the §9.1 category-(a) subset — the cases that are genuine coverage gaps rather than exception-shape or
+baseline bookkeeping.
+
+| All 2166 | of which (a) | Class |
+|---:|---:|---|
+| 521 | 326 | NorthwindMiscellaneousQueryMongoTest |
+| 234 | 146 | NorthwindAggregateOperatorsQueryMongoTest |
+| 218 | 146 | NorthwindWhereQueryMongoTest |
+| 202 | 162 | NorthwindGroupByQueryMongoTest |
+| 180 | 138 | NorthwindSelectQueryMongoTest |
+| 118 | 110 | NorthwindEFPropertyIncludeQueryMongoTest |
+| 118 | 110 | NorthwindIncludeQueryMongoTest |
+| 116 | 108 | NorthwindStringIncludeQueryMongoTest |
+| 110 | 96 | NorthwindSetOperationsQueryMongoTest |
+| 90 | 82 | NorthwindIncludeNoTrackingQueryMongoTest |
+| 72 | 36 | NorthwindNavigationsQueryMongoTest |
+| 60 | 52 | NorthwindJoinQueryMongoTest |
+| 29 | 23 | NorthwindQueryFiltersQueryMongoTest |
+| 24 | 2 | NorthwindBulkUpdatesMongoTest |
+| 14 | 13 | BuiltInDataTypesMongoTest |
+| 12 | 6 | NorthwindKeylessEntitiesQueryMongoTest |
+| 12 | 12 | NorthwindAsNoTrackingQueryMongoTest |
+| 10 | 4 | NorthwindDbFunctionsQueryMongoTest |
+| 8 | 8 | VectorSearchMongoTest |
+| 8 | 8 | VectorSearchExactMongoTest |
+| 5 | 5 | NorthwindChangeTrackingQueryMongoTest |
+| 3 | 3 | NorthwindAsTrackingQueryMongoTest |
+| 2 | 2 | NorthwindCompiledQueryMongoTest |
+| **2166** | **1598** | **total** |
+
+Three movements worth naming: `VectorSearchMongoTest` + `VectorSearchExactMongoTest` **112 → 16** (the step-2
+slice), `NorthwindQueryTaggingQueryMongoTest` has **left the list entirely**, and
+`NorthwindBulkUpdatesMongoTest` holds at 24 — which is itself evidence for §9.2, since the bulk path is
+supposed to be driver-LINQ-only and yet 24 of its cases see the native gate.
+
 ### 7.2 By *why* they fall back (failure-message buckets)
 
 **Re-derived from the fresh `229294f` sweep (2026-07-31), replacing the carried-forward `1dd7862` figures.**
@@ -820,6 +902,15 @@ Reconciling with the previous revision's numbers, so the differences are not mis
   broken out here because they are categorically different: nothing about them is a coverage gap.
 
 ### 7.3 The fallback set splits into two meaningfully different kinds
+
+> **SUPERSEDED 2026-08-07 by §9.1 — the SPLIT survives, the NUMBERS and one of the LABELS do not.** Current:
+> **(a) 1598** genuine coverage gaps, **(b) 518** unsupported in every mode, **(c) 50** `AssertMql` baseline
+> bookkeeping. In particular the "66 `ArgumentOutOfRangeException` … a materialization / shaper gap" label
+> below is **FALSE** — re-measured, all 48 of them (it is 48 now) bottom out in
+> `TestMqlLoggerFactory.AssertBaseline`, i.e. they are baseline-length failures, not shaper failures. And 18
+> cases that this split filed as "failure shape" are really coverage gaps: driver-LINQ **runs** those queries
+> and throws at execution (`TruncationException`, `FormatException`, `MongoCommandException`, …), so native
+> declining at translation *is* lost functionality.
 
 *Figures below are the fresh `229294f` counts (previously stated as "~1744 / ~647" from the `1dd7862` sweep).*
 
@@ -880,20 +971,27 @@ claim below.)
 **CORRECTED at this revision — this paragraph used to read "The remaining native work is SP7 Phase 2
 (streaming breadth: reducer/aggregate, collection-Include arrays, reference-Include) plus the parity cutover
 that retires driver-LINQ." That is true only if "the parity cutover" is read as a single line item, which
-badly understates it.** §9 (new) enumerates what parity actually requires, and the headline is that the
+badly understates it.** §9 enumerates what parity actually requires. ~~The headline is that the
 remaining work is dominated by three things this sentence did not name: **joins** (no native form at all),
 **reference `Include`**, and the **computed/client-eval projection long tail** — together the bulk of the 1742
-spec tests that still need driver-LINQ for correct results. SP7 Phase 2 is real but is **performance, not
-parity**, and does not gate the cutover. One further item is in no plan yet: the EF9+ bulk
-`ExecuteUpdate`/`ExecuteDelete` path shares the driver-LINQ bridge (§9.2). ~~**The next work is joins,
+spec tests that still need driver-LINQ for correct results.~~ **CORRECTED AGAIN 2026-08-07 on measurement:
+that trio is 373 + 290 = 663 of the 1598, i.e. 41%, not "the bulk". The largest single item is
+`MongoExpressionTranslator` expression breadth at ≈588, which this sentence has never named at all** — see
+the re-attribution paragraph at the end of this section and §9.7. SP7 Phase 2 is real but is **performance,
+not parity**, and does not gate the cutover. One further item is still in no plan: the EF9+ bulk
+`ExecuteUpdate`/`ExecuteDelete` path shares the driver-LINQ bridge — **and, measured at this tip, it does more
+than share it: it re-enters `TranslateQuery`, the fallback's own entry point, and consumes
+`MongoExecutableQuery.Provider`/`.Query`** (§9.2). ~~**The next work is joins,
 beginning with reference `Include`**~~ — **STALE as of 2026-08-05, corrected here rather than deleted: that
 work stream has landed SEVEN slices** (§2), ending with EF-379, and §9.8's step 1 is now substantially
 delivered — `ThenInclude` breadth, filtered `Include`, collection-of-collection and the general join remain
 behind it. ~~but the next scheduled work is §9.8's **step 2, `VectorSearch`**~~ — **also STALE as of 2026-08-06:
-step 2 (`VectorSearch`) is DONE and so is step 3's first slice, 3a (the bare-projection boundary). The next
-scheduled work is §9.8's step 3b, the entity leaf inside a projection.** See §9.8 for the execution order
-(and the owner ruling that inserted EF-379 ahead of step 2), and §9.2 for the EF-317 ruling that unblocked
-step 1.
+step 2 (`VectorSearch`) is DONE and so is step 3's first slice, 3a (the bare-projection boundary).**
+~~The next scheduled work is §9.8's step 3b, the entity leaf inside a projection.~~ **STALE as of 2026-08-07:
+on the corrected ranking the next work is §9.8's new step 4, `MongoExpressionTranslator` breadth, which pays
+into predicates, sort keys and 3c at once; 3b follows it (step 5) and still carries the standing ruling that
+it must FIX EF-356 rather than pin it.** See §9.8 for the execution order (and the owner ruling that inserted
+EF-379 ahead of step 2), and §9.2 for the EF-317 ruling that unblocked step 1.
 
 **CORRECTED at owned-data slice 8 — this paragraph previously named the nearest owned-data follow-on as
 "array-valued embedded-collection projections (`Select(b => b.Posts)`), blocked on an alias-driven array
@@ -919,413 +1017,487 @@ only before owned-data slice 7. Since slice 7 the bare form (`Select(b => b.Post
 translation; since EF-358 (2026-07-29) it returns correct results for every array state, including missing or
 explicitly-null. See §4 and §6 for the current disposition.
 
-Empirically, 2395 EF10 spec tests still lean on the driver-LINQ fallback — **1742** for correct results (real
+~~Empirically, 2395 EF10 spec tests still lean on the driver-LINQ fallback — **1742** for correct results (real
 coverage gaps) and **651** only for the expected exception shape (re-baselined at cutover), plus 2 that are
-neither. *(These were "roughly 1744 / ~647" from the `1dd7862` sweep; the figures here are the fresh
-`229294f` re-measurement — see §7.2's reconciliation, and note the shift is almost entirely bucket
-classification, not behavior.)* That number has **not** moved at all across slices 5–9, and for a good reason
-worth remembering: **Northwind has no owned collections**, so this work stream's coverage gains are proven by
-the functional `Native*` suites, not by the spec scoreboard. A flat spec number does not mean a slice achieved
-nothing — but, per §9, it does mean the owned-data stream is not on the cutover's critical path.
+neither.~~ **RE-MEASURED 2026-08-07 at tip `99d74735`, and the paragraph is corrected in place rather than
+annotated beside its stale text. §7 above is a `229294f` snapshot and is now STALE on every total; §9 carries
+the current figures.** At this tip **2166** EF10 spec cases lean on the fallback (`Native` 4593/0/17,
+`NativeOnly` 2427/2166/17), and re-deriving the split by *decline site* rather than by failure message gives:
+
+| | Cases | What it is |
+|---|---:|---|
+| **(a)** | **1598** (73.8%) | genuine coverage gaps — remove the fallback and the user gets an exception instead of data |
+| **(b)** | **518** (23.9%) | unsupported in **every** mode; the test pins driver-LINQ's exception type/message, so retirement loses nothing |
+| **(c)** | **50** (2.3%) | pure `AssertMql` baseline bookkeeping — a re-baseline resolves them |
+
+So the number that gates retirement is **1598, not 1742** — see §9.1 for the derivation, the method, and the
+two labels in the old figure that measured out FALSE. The owned-data stream's flat spec number across slices
+5–9 still stands, and for the same structural reason: **Northwind has no owned collections**, so that work
+stream's coverage gains are proven by the functional `Native*` suites, not by the spec scoreboard. A flat spec
+number does not mean a slice achieved nothing — but, per §9, it does mean the owned-data stream is not on the
+cutover's critical path.
+
+**And the headline of the 2026-08-07 re-attribution.** Partitioned into disjoint owning work streams, the
+1598 ranks: **joins / cross-collection 373**, **`MongoExpressionTranslator` breadth in predicate and sort-key
+position 368**, **projection long tail 290** (3b 52 / 3c 220 / 3d 18), **GroupBy 130**, **composite-PK member
+access 116**, `Distinct` 84, scalar-aggregate binder 82, set operations 42, no-binder operators 40,
+post-terminal 34, regex 19, the rest ≤ 8 each. Two of those rows are the news. First, **translator breadth is
+one capability appearing in three positions** — the same ~20 features (casts, `??`, `?:`, `EF.Property`,
+`Nullable.Value`, string concat, entity equality, `Contains` over a client collection, …) account for the 368
+*and* for the 220 in the projection column, so **≈588 cases (37% of the 1598) are reachable by one translator
+work stream** that has no slice, no ticket and no place in §9.8's execution order. Second, **composite-PK
+member access is 116 measured cases, 112 of them inside the four reference-`Include` suites** — §9.1 has
+listed it for weeks as "not in the table at all, because Northwind does not cover it", and that is FALSE:
+Northwind's `OrderDetail` has a composite key, and the `Include_references_*` / `Include_multiple_references_*`
+families walk straight into it. See §9.1 and §9.7.
 
 ---
 
 ## 9. What must be done before driver-LINQ can be retired without regression
 
-*Added 2026-07-31, grounded in the fresh `229294f` two-sweep measurement (§7) and a source sweep of the
-delegation surface. This section is the answer to "what is left", and it is deliberately separate from §5
-("deferred items"): §5 lists what the epic still wants; §9 lists what **blocks deleting the fallback**. The two
-are not the same set — several §5 items are optional at cutover, and several §9 items appear nowhere in §5.*
+*Added 2026-07-31 on the `229294f` two-sweep measurement. **FULLY RE-MEASURED 2026-08-07 at tip `99d74735`**
+(EF-391's first half) and rewritten as-measured — every count below was re-derived at this tip, not carried
+forward. This section is the answer to "what is left", and it is deliberately separate from §5 ("deferred
+items"): §5 lists what the epic still wants; §9 lists what **blocks deleting the fallback**. The two are not
+the same set — several §5 items are optional at cutover, and several §9 items appear nowhere in §5.*
 
-**The one-line answer.** Native cannot replace driver-LINQ today, and the binding constraint is **not** the
-owned-data long tail that the last nine slices worked on. It is four things the native translator cannot
-express at all — **joins, client-evaluated projections, reference `Include`, and `VectorSearch`** — plus one
-structural dependency nobody has had to think about yet: **the EF9+ bulk `ExecuteUpdate`/`ExecuteDelete` path
-uses the driver-LINQ bridge**, so "delete the fallback" does not currently mean "delete the bridge".
+> **Read this before trusting any other number in this file.** §7 is a `229294f` snapshot and every total in
+> it is now stale — including the **2395 / 1742 / 651** triple that §7.2, §7.3 and (until this revision) §8
+> quoted. The 2026-08-06 re-derivation of §7.2's largest row already found its LABEL 41% wrong; this revision
+> re-derived **every** bucket the same way and found two further labels false outright (§9.1). Use §9's
+> figures. §7's *method* (§7.4) is still correct and is what was re-run.
 
-### 9.1 Coverage — the 1742 tests that need driver-LINQ for correct *results*
+**The one-line answer, and it has changed.** Native still cannot replace driver-LINQ, but the binding
+constraint is no longer the four "things the translator cannot express at all" this section used to name.
+Measured by decline site, **the largest single lever is ordinary `MongoExpressionTranslator` expression
+breadth** — the same ~20 features recurring in predicate, sort-key and projection-leaf position, ≈588 of the
+1598 real gaps — and it has no slice, no ticket, and no place in §9.8. Joins remain the second-largest at 373.
+And the *structural* dependency is unchanged and confirmed at this tip: **the EF9+ bulk
+`ExecuteUpdate`/`ExecuteDelete` path does not merely share the bridge, it re-enters the fallback's own
+translation entry point**, so "delete the fallback" is not even close to "delete the bridge" (§9.2).
 
-Ordered by size. Each is a genuine "remove the fallback and the user gets an exception instead of data".
+### 9.0 How this was measured (so the next re-derivation reproduces it)
 
-| # | Gap | Spec tests | Notes |
-|---|---|---:|---|
-| 1 | **Non-entity projection long tail** | ~~873~~ **881, of which only ~360 is projection work** | String transforms, date parts, `Math.*`, casts, integer `Divide`, client-eval, and the bare-projection boundary. **RE-DERIVED 2026-08-06 and this row's sizing was misleading: 363 of the 881 are NOT projection work at all** (GroupBy 130, predicates 85, scalar-aggregate 56, `OrderBy` keys 24, Distinct 20, post-terminal 34, catch-all 4) and should be re-attributed to those gaps. The structural boundary change unblocks **78 outright** (100 with a bare-value leaf), plus 104 more that also need a composition relaxation — **not 873**. Two premises are also refuted: the boundary is **two sites**, not one (opening the emit gate alone makes things WORSE — default `Native` 0 → 105 failures), and **bare entities already go native** (zero bare-entity cases in the 881). See the step-3 spike findings doc. **PARTLY DELIVERED 2026-08-06 by step 3a (the bare-projection boundary), and this row is now a stale COUNT as well as a stale sizing: the whole `NativeOnly` axis moved from 2352 passed / 2241 failed / 17 skipped to 2427 / 2166 / 17, zero regressions**, which is short of the 78 the spike predicted for the boundary change — the difference is the two measured correctness narrowings (a bare set-op operand and a bare `Distinct` stay declined by design). **The 881 has NOT been re-derived per-bucket since**, so treat it as a pre-3a figure; the remaining boundary work is 3b/3c/3d — see §9.8. **The 363 re-attributed cases named above are now tracked as EF-391**, which also covers re-deriving the OTHER bucket labels by decline site (the same mislabelling mechanism applies to all of them) and re-ranking §9.8 step 4 onward on the corrected attribution. |
-| 2 | **Query not natively representable** | 794 | Dominated by **`Join`/`GroupJoin`/`LeftJoin`, which have no native form whatsoever** (`TranslateJoin*` declines unconditionally); plus cross-collection navigation, the non-native `GroupBy` shapes (computed keys, computed accumulator operands, bare `GroupBy` terminating on `IGrouping`, user `resultSelector`, post-group HAVING/paging, correlated keys), and misc operators (`Contains`/`ElementAt`/`Last`). |
-| 3 | **Reference `Include`** | 54 | The `$lookup`/`$unwind` machinery is **built but dormant** — it nav-expands to a `LeftJoin` the gate treats as non-native. Also blocks SP7 Phase 2's reference-Include streaming. Nested/transitive `ThenInclude`, filtered `Include` and collection-of-collection `Include` sit behind it. |
-| 4 | **Non-constant regex** | 13 | **EF-247**, and note its JIRA status is `Blocked`, not merely open — check what it is blocked on before scheduling. |
-| 5 | **`Not` over an unsupported subtree** | 8 | `RenderUnary` handles `Not` over a query-native comparison (slice 5); a `Not` whose operand is a conjunction or a nested `Not` still declines by design. Smallest and most self-contained item on this list. |
+Method: §7.4's two-sweep subtraction, plus the spike's decline-site instrumentation
+(`docs/superpowers/specs/2026-08-06-step3-projection-spike-findings.md` §Q2), extended.
+In a throwaway worktree at `99d74735` (created, used and removed; `git worktree list` verified):
 
-> **DELIVERED 2026-08-06 — read the rest of this sub-section as the SIZING that justified the slice, not as
-> outstanding work.** 92 of the 112 now pass under `MONGODB_EF_NATIVE_ONLY=1`. The 20 residual are **16** from
-> the 24-case projection bucket (row 1 above — step 3's bare-projection/entity-leaf boundary, not anything
-> vector-specific) and **4** `VectorSearch_with_complex_pre_filter` (**EF-382**; a `MongoExpressionTranslator`
-> predicate-breadth gap on `arrayField.Contains(constant)`, cross-cutting rather than vector-specific). All 6
-> of the exception-shape bucket now pass. So `VectorSearch` no longer contributes to row 2 at all, and
-> contributes 16 to row 1. **UPDATED 2026-08-06 by step 3a: the residual is now 16 in total, not 20** — the 4
-> bare-scalar cases went native with the bare-projection boundary, so row 1's `VectorSearch` contribution is
-> **12** (all mixed / entity-constructing, i.e. step 3b's entity-leaf gap) and EF-382's 4 are unchanged.
+1. `MongoSelectDefinition.MarkNotNativelyRepresentable` gained `[CallerMemberName]`/`[CallerLineNumber]`/
+   `[CallerFilePath]`, recording the **first** decline site and the de-duplicated **list** of all sites.
+2. `NativeSlotPopulator` recorded, at the `Where` and `OrderBy` declines, the **smallest failing subtree** —
+   found by re-invoking the translator on each sub-expression and descending until no child fails, *never*
+   descending to a bare `ParameterExpression` (which is never translatable standalone and is the degenerate
+   floor of the search — stopping above it is what makes the answer `o.Customer` rather than `o`).
+3. A parallel probe classified each `NativeProjectionBinder` decline as `BARE` / `WRAPPED_NEW` /
+   `WRAPPED_INIT`, plus the first leaf the *existing* translator cannot already resolve as a field
+   (`FIELD_OK` / `VALUE_OK` / `NO_XLATE`) and that leaf's minimal failing node.
+4. All of it was appended to the `NativeOnly` throw reasons, so the `.trx` carries per-test attribution.
 
-**`VectorSearch` is a large, concrete slice of the two big buckets — measured, not estimated, and this
-corrects a claim made in the first draft of this section.** That draft said VectorSearch's 112 tests "land in
-the exception-shape bucket rather than the data buckets", which would have made them cutover bookkeeping. The
-opposite is true. Attributing the 112 `VectorSearchMongoTest` + `VectorSearchExactMongoTest` failures by
-message:
+Five instrumented sweeps were run — four `NativeOnly` (one per instrumentation round) and one `Native` —
+**each preceded by a full `dotnet build`**, because a previous task in this slice measured stale binaries and
+had to redo a whole round. **Every one reproduced the baseline exactly: `NativeOnly` 2427 passed / 2166 failed
+/ 17 skipped, and the `Native` axis 4593 / 0 / 17 with an EMPTY failure list** (so no `Native`-mode `AssertMql`
+baseline moved either) — the instrumentation is behaviour-preserving on both axes, and the (a)/(b)/(c)
+partition came out **identical in all four** `NativeOnly` rounds. Both `MONGODB_URI` and `ATLAS_URI` were
+unset, so an `mongodb/mongodb-atlas-local` container really ran the Atlas-gated tests (the 16 `VectorSearch`
+failures below are real Atlas Search results, not skips). All instrumentation lived in the throwaway worktree;
+nothing under `src/` in the main tree was touched.
 
-| Bucket | VectorSearch tests |
-|---|---:|
-| "Query not natively representable" (row 2 above) | 82 |
-| "Non-entity projection" (row 1 above) | 24 |
-| `Assert.Throws` exception-shape | 6 |
-| **total** | **112** |
+### 9.1 Coverage — the tests that need driver-LINQ for correct *results*
 
-So **106 of the 112 are inside the 1742**, and VectorSearch alone accounts for roughly **10% of row 2** and
-**3% of row 1**. It is the largest single *named feature* in the coverage gap, and it is architecturally
-distinctive: `VectorSearch(...)` is lifted out of the tree by the preprocessor *before* nav-expansion (which it
-crashes) and re-inserted after. Making it native means getting the lifted call back down to the lowerer as a
-`$vectorSearch` stage.
+**The partition of the 2166, classified `Assert.Throws` FIRST (its message quotes the inner exception; a naive
+substring match over-counted by 149 in the previous round):**
 
-**CORRECTED 2026-08-06 (measured, by mutation): this used to say the call "never reaches slot population at
-all — the gate declines it via `ContainsVectorSearch`". The second half is right, the first half is FALSE, and
-the difference matters because there are TWO INDEPENDENT GATES, not one.** `VectorSearch`'s declaring type IS in
-the QMTEV's `AllowedQueryableExtensions`, and it is NOT in the `VisitMethodCall` switch, so it falls through to
-`NativeSlotPopulator.PopulateNativeSlots`; not being in `IsNativeRepresentableSlotOperator` either, the catch-all
-fires `MarkNotNativelyRepresentable()`. **`Route` is therefore already `Fallback` before `ContainsVectorSearch`
-is ever consulted.** Verified by mutation in a throwaway worktree at `51a94d4f`: disabling `ContainsVectorSearch`
-alone produces an IDENTICAL decline with the same message; disabling BOTH lets the query go native and return
-**silently wrong data** — `VectorSearch_floats` returns 4 books, the correct COUNT, in *insertion order* rather
-than by score, with no exception. So anyone implementing this must (a) open both gates, and (b) know that **row
-count cannot discriminate a broken vector search** — the discriminating assertion is result ORDER, or the score.
-See `docs/superpowers/specs/2026-08-06-vectorsearch-slice-handoff.md`.
+| | Cases | Definition | How identified |
+|---|---:|---|---|
+| **(a)** | **1598** | **genuine coverage gaps** — the user gets an exception instead of data | 1580 where the raw `NativeTranslationNotSupportedException` escaped to a *data* assertion, **plus 18** where the test pins an *execution-time* exception (`TruncationException`, `FormatException`, `MongoCommandException`, `InvalidCastException`, `TargetInvocationException`) — i.e. driver-LINQ **runs** that query and native cannot express it at all |
+| **(b)** | **518** | **fails in every mode** — unsupported in native *and* driver-LINQ, so retirement changes nothing | 488 where the test's own assertion is that the query throws and the expected type is a *translation* failure (`InvalidOperationException` 249, `ExpressionNotSupportedException` 145, `ArgumentException` 10, `NotSupportedException` 2, plus 82 `Assert.Contains` on exception-message text), **plus 30** where driver-LINQ executes but returns **wrong data** and the test pins the mismatch (`Assert.Throws<EqualException>` 28, `XunitException` 2 — `Select_Where_Navigation_Null_Deep`, EF-371) |
+| **(c)** | **50** | **`AssertMql` baseline bookkeeping** | every one bottoms out in `TestMqlLoggerFactory.AssertBaseline` — 48 as an index-past-the-end `ArgumentOutOfRangeException`, 2 as a string diff |
+| | **2166** | | |
 
-**Not in the table at all, because Northwind does not cover it — genuinely invisible to the counts above:**
+> ~~**1742** tests need driver-LINQ for correct results.~~ **MEASURED 1598 at this tip.** The old figure was
+> the sum of five *message* buckets (873 + 794 + 54 + 13 + 8) at a total of 2395; the drop is partly the two
+> landed slices (VectorSearch, step 3a) and partly re-classification. Note the direction of travel is real but
+> modest: the two slices between them moved (a) by roughly 144 cases.
+
+**Two claims this section carried for weeks measured out FALSE. Corrected in place.**
+
+1. ~~"The **66 `ArgumentOutOfRangeException`** rows … are described as a materialization/shaper gap surfaced
+   only under `NativeOnly`. If any of them is really a native shaper bug rather than an expected decline, it
+   belongs in §9.1, not here. Not re-investigated at this revision." (§9.3)~~ — **RE-INVESTIGATED AND
+   ANSWERED: none of them.** The bucket is now **48**, and **48 of 48** have `TestMqlLoggerFactory.
+   AssertBaseline` in the stack. They are `AssertMql` calls indexing past the end of the captured MQL list —
+   the test's *query-level* assertion already passed. There is no shaper gap here at all; the label
+   "a materialization / shaper gap" was simply wrong. All 48 are category (c).
+2. ~~"**Composite-PK member access is not native at all** … Not in the table at all, because Northwind does not
+   cover it — genuinely invisible to the counts above."~~ — **FALSE, and it is the fifth-largest item in the
+   whole gap.** Northwind's `OrderDetail` has a composite key, and **116 measured (a) cases** decline on
+   exactly `MongoExpressionTranslator.TryResolveMember`'s composite-PK guard, with the minimal failing node
+   being `OrderDetail.OrderID` (106) or `OrderDetail.ProductID` (10). **112 of the 116 are inside the four
+   reference-`Include` suites** (`NorthwindInclude` 32, `NorthwindStringInclude` 32,
+   `NorthwindEFPropertyInclude` 32, `NorthwindIncludeNoTracking` 16), the `Include_references_multi_level` /
+   `Include_multiple_references_*` families. So composite-PK resolution (`_id.<name>` dotted paths) is **on the
+   reference-`Include` critical path**, not an isolated footnote. Sizing caveat, measured: only **12** of the
+   116 are sole-cause — the other **104 also decline at the projection binder**, so fixing composite-PK alone
+   turns 12 green, and 116 needs it *plus* the projection work.
+
+**(a) = 1598, partitioned into disjoint owning work streams by first decline site.** "Sole-cause" is the count
+whose query recorded exactly one decline site — the honest leverage figure for fixing that site alone. **Line
+numbers are pristine-source at `99d74735`** (the instrumented worktree's own numbers were 2–6 lines higher;
+re-derive rather than trusting these after any edit to those files).
+
+| # | Owning work stream | Cases | Sole-cause | Decline site(s) |
+|---|---|---:|---:|---|
+| 1 | **Joins / cross-collection** | **373** | 250 | `NativeSlotPopulator.PopulateNativeSlots:107`/`:118` where the failing node is a `TransparentIdentifier` member or an `EntityQueryRootExpression` (**157**); `TranslateSelect:280` (the projection binder) on the same two node kinds (**108**); the `$lookup` hard throw "Native pipeline does not support lookup for navigation …" (**54**); `TranslateSelect:230`, the reference-`Include` confirm-decline (**36**); `Join`/`GroupJoin` with `Route == Fallback` and no recorded site at all (**18**) |
+| 2 | **`MongoExpressionTranslator` breadth — predicate + sort key** | **368** | 316 | `NativeSlotPopulator.PopulateNativeSlots:107`, the `Where` arm (**264** of that site's 507) and `:118`, the `OrderBy` arm (**104** of that site's 134) — both are `MongoExpressionTranslator.TryTranslate` / `TryTranslateField` returning false |
+| 3 | **Projection long tail** | **290** | 230 | `TranslateSelect:280` → `NativeProjectionBinder.TryPopulateNativeProjection` — **step 3c** computed/`VALUE_OK` leaf **220**, **step 3b** entity leaf **52**, **step 3d** narrowed composition **18** |
+| 4 | **GroupBy breadth** | **130** | 50 | `TranslateSelect:197` (62), `TranslateGroupBy:1448` (58, **zero** sole-cause — it always co-occurs), `TranslateGroupBy:1441` (10) |
+| 5 | **Composite-PK member access** | **116** | 12 | `MongoExpressionTranslator.TryResolveMember` / `TryResolveOwnedFieldPath` composite-key guards |
+| 6 | **`Distinct`** | **84** | 64 | `TranslateDistinct:1318` — `NativeGroupByBinder.TryBindDistinctFromProjection` declined |
+| 7 | **Scalar-aggregate binder** | **82** | 82 | `BindAggregateOrFallback:1368` — `NativeCardinalityBinder.TryBindAggregate` declined. **82 of 82 sole-cause — the largest row in the table where every case turns green on that site alone** |
+| 8 | **Set operations** | **42** | 42 | `TryTranslateSetOperation:2448`'s scope gate |
+| 9 | **No binder at all** (`Contains`/`ElementAt`/`Last`/`Cast`/…) | **40** | 40 | `NativeSlotPopulator.PopulateNativeSlots:215`, the catch-all |
+| 10 | **Post-terminal slot operator** | **34** | 22 | `NativeSlotPopulator.PopulateNativeSlots:94`, the `HasTerminalOperator` guard |
+| 11 | **Non-constant regex (EF-247)** | **19** | 19 | `MongoQueryLanguageRenderer` constant-only regex term. *(Was 13; re-measured 19.)* |
+| 12 | **`Not` over an unsupported subtree** | **8** | 8 | `MongoQueryLanguageRenderer.RenderUnary` |
+| 13 | Reducer binder / **EF-382** `VectorSearch` pre-filter / set-op + collection `Include` | **4** each | 4 each | `NativeSlotPopulator.PopulateNativeSlots:171` (reducer); `:204` → `NativeVectorSearchBinder.TryBind`; `TranslateSelect:245` |
+| | **total** | **1598** | | |
+
+**Row 2 and row 3 are ONE capability seen twice, and that is the most important thing in this section.**
+Breaking rows 2 and 3 down by the *feature* the translator is missing shows the same short list recurring in
+all three positions. Measured, across predicate / sort key / projection leaf:
+
+| Feature | predicate | sort key | projection leaf | total |
+|---|---:|---:|---:|---:|
+| `Convert` / cast operand | 50 | 8 | 14 | **72** |
+| a leaf the translator **already** resolves as a VALUE, needing only a synthetic alias (the reverted **tier 2**) | — | — | 54 | **54** |
+| constructed value (tuple / anonymous / DTO / list) | 16 | 2 | 32 | **50** |
+| `EF.Property` leaf | 38 | 6 | 4 | **48** |
+| a bare constant / query parameter as the whole node | 30 | 10 | — | **40** |
+| `Nullable.HasValue` / `.Value` | 10 | — | 28 | **38** |
+| `Contains` over a client collection | 18 | 18 | — | **36** |
+| entity equality (`o == someOrder`) | 34 | — | — | **34** |
+| `Coalesce` (`??`) | 2 | 22 | 8 | **32** |
+| `Add` (string concat / arithmetic) | 10 | 4 | 18 | **32** |
+| other client / BCL method call | 8 | — | 22 | **30** |
+| `Conditional` (`?:`) | 2 | 10 | 14 | **26** |
+| unary `Negate` | — | — | 18 | **18** |
+| other arithmetic / comparison operator | 12 | 4 | 2 | **18** |
+| `Not` over a non-native operand | — | 18 | — | **18** |
+| `Equals(...)` method | 16 | — | — | **16** |
+| array literal | 2 | — | 8 | **10** |
+| `GetType` / type test | 8 | — | — | **8** |
+| other member access | — | 2 | 4 | **6** |
+| `EF.Functions.Like` | 4 | — | — | **4** |
+| | | | | **≈590** |
+
+*(≈590 rather than exactly 588 because 2 `VALUE_OK` projection leaves are also joins cases and are counted in
+both views; the disjoint work-stream table above is the authoritative partition.)* **A single
+`MongoExpressionTranslator` breadth work stream therefore reaches ≈37% of the whole coverage gap.** Nothing
+else in this document reaches half that. This is EF-391's substantive finding and it should drive §9.8.
+
+**Where the projection bucket now stands, post-3a** (398 cases with the binder as *first* decline site; 631
+touch it anywhere). By selector-body shape: **BARE 222, `WRAPPED_NEW` 156, `WRAPPED_INIT` 20** — i.e. a bare
+body is *still* the majority, because 3a admitted only a **path-addressable** leaf and most bare bodies are
+computed. By what they need: computed leaf 166, joins 108, **entity leaf 52** (step 3b — this is the 12
+`VectorSearch` cases plus 40 others; the leaf presents as `IncludeExpression(<entity>)` or
+`MemberInit(<entity>)`, *not* as a `StructuralTypeShaperExpression`), translatable-VALUE leaf 54 (tier 2),
+and **18 where every leaf translates as a field and the binder still declines** — the two measured correctness
+narrowings 3d owns (bare set-op operand, bare `Distinct`). The computed tail's own head: `Nullable.Value` 28,
+unary `Negate` 16, `Conditional` 14, string concat 24, `??` 8.
+
+**`VectorSearch` residual: 16, confirmed at this tip** (8 `VectorSearchMongoTest` + 8
+`VectorSearchExactMongoTest`, all inside (a)). **12** are the entity leaf inside a projection (step 3b) —
+measured signature `WRAPPED_NEW/NO_XLATE/.../IncludeExpression/Book` (8) and `.../MemberInit/Book` (4) — and
+**4** are `VectorSearch_with_complex_pre_filter`, **EF-382**, declining at `NativeVectorSearchBinder.TryBind`
+because the predicate translator cannot express `arrayField.Contains(constant)`. That last one is row 2's
+work, not vector-specific.
+
+**Still genuinely invisible to these counts** (Northwind does not cover them — and note that "composite-PK"
+has just been removed from this list, having been on it wrongly):
 
 - **Non-TPH `OfType`.**
-- **The owned-data residuals in §5** (bare array projection, `OwnsOne`-hop array leaf/EF-362, correlated
-  element predicates, two-scope owned quantifiers, owned-collection intermediate hops in dotted paths).
-  Individually small; collectively the tail that the last nine slices have been eating.
-- **Composite-PK member access is not native at all** — `MongoExpressionTranslator.TryResolveMember` and
-  `TryResolveOwnedFieldPath` both decline a property that is a component of a composite primary key, because it
-  is stored nested under `_id` and is not addressable by its own top-level element name. Resolving `_id.<name>`
-  dotted paths is the fix. This is a documented strict-spike-parity decision from SP1, not an oversight — but
-  it is a coverage gap that must be closed or consciously accepted before the fallback goes.
-- **`Contains`, `ElementAt`/`ElementAtOrDefault`, `Last`/`LastOrDefault` have no binder at all** — they reach
-  `NativeSlotPopulator`'s catch-all. Small, self-contained, and easy to overlook precisely because they decline
-  so cleanly.
-- **A set operation combined with an `Include` declines** — `IsPlainWholeEntitySelect` and
-  `IsPlainProjectedSelect` both require **zero lookups**, so any `Union`/`Concat`/`Intersect`/`Except` over a
-  source carrying an `Include` falls back (Union/Concat) or hard-fails (Intersect/Except).
+- **The owned-data residuals in §5** (`OwnsOne`-hop dotted SCALAR read / **EF-390**, correlated element
+  predicates, two-scope owned quantifiers, owned-collection intermediate hops in dotted paths, **EF-365**).
+  Individually small; collectively the tail the nine owned-data slices were eating.
+- **A set operation combined with an `Include`** — `IsPlainWholeEntitySelect` and `IsPlainProjectedSelect`
+  both require zero lookups. Partly visible (4 cases at `TranslateSelect:245`), mostly not.
 
-### 9.2 The structural blocker nobody has scheduled: the bulk path shares the bridge
+### 9.2 The structural blocker: the bulk path shares the bridge — CONFIRMED, and it is worse than stated
 
-`MongoEFToLinqTranslatingExpressionVisitor` — the EF→driver-LINQ bridge, ~1050 lines plus a ~726-line
-`LeftJoin` partial — is **not** used only by the query fallback. On **EF9 and EF10** it is also used by the
-bulk `ExecuteUpdate`/`ExecuteDelete` translation, inside the `#if !EF8` region of
-`MongoShapedQueryCompilingExpressionVisitor.cs`: `BuildIdDocumentQuery` (:1028), `BuildFilter` (:1049) and
-`RenderSelfReferencingValue` (:1166) each construct one to lower a predicate body into `Mql.Field` form.
+Re-verified at `99d74735`. `MongoEFToLinqTranslatingExpressionVisitor` — the EF→driver-LINQ bridge, ~1050
+lines plus a ~726-line `LeftJoin` partial — is constructed at exactly three sites, **all** in
+`MongoShapedQueryCompilingExpressionVisitor.cs`, and two of them are the bulk path:
 
-Consequence, stated plainly because it changes the shape of the cutover: **retiring the query fallback does not
-retire the bridge.** Either the bulk filter/update translation is rewritten onto the native
-`MongoExpressionTranslator`/`MongoQueryLanguageRenderer` first, or the bridge survives cutover as bulk-only
-infrastructure. That is a real sub-project, and it is not currently on the SP scoreboard in §2.
+| Site | Method | Region |
+|---|---|---|
+| `:1050` | `TranslateQuery<TEntity>` — the query fallback | all EF versions |
+| `:1238` | `BuildFilter<TSource>` — lowers each bulk `Where` body to `Mql.Field` form | `#if !EF8` (lines 1162–1464) |
+| `:1355` | `RenderSelfReferencingValue<TSource>` — lowers a self-referencing `SetProperty` value | `#if !EF8` |
 
-**A second coordination question existed here — EF-317 — and it is now SETTLED. Owner ruling, 2026-07-31.**
-Four `TODO(EF-317)` markers sit in exactly the code this epic wants to delete
-(`MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs:37`,
-`MongoProjectionBindingExpressionVisitor.Lookup.cs:34`, `MongoQueryExpression.Lookup.cs:23`). EF-317 is
-`In Progress` and titled *"Use native driver LeftJoin to replace the cross-collection `$lookup` workaround"* —
-i.e. it invests in the **driver-LINQ** join path, the same ground EF-322 must take natively (§9.1 items 2
-and 3). This document previously recorded that as an open decision blocking the join family.
+**The escalation this revision measured, which §9.2 did not previously state.** `BuildIdDocumentQuery<TSource>`
+(:1203) does **not** construct a bridge of its own — it calls **`TranslateQuery<TSource>`**, the fallback's own
+entry point, and then consumes the result as
+`executableQuery.Provider.CreateQuery<BsonDocument>(executableQuery.Query)`. So the bulk path depends on:
 
-**The ruling: EF-317 is essentially THROWAWAY. None of its code needs to carry over to the native
-implementation unless doing so happens to make sense. Build what joins need and do not design around EF-317.**
-Coverage parity — every case EF-317 handles also being handled natively — is a **nice-to-have, not a
-constraint**; EF-317 has not been merged long enough for its coverage to be worth protecting. Do not re-open
-this as a blocker.
+1. the bridge class (`BuildFilter`, `RenderSelfReferencingValue`);
+2. **`TranslateQuery` itself** — the whole fallback translation entry point, including the native gate;
+3. **`MongoExecutableQuery.Query` and `.Provider`** — the two *public* members §9.4 below calls "dead". They
+   are not dead. They are load-bearing for `ExecuteUpdate`/`ExecuteDelete` on EF9 and EF10.
 
-**One distinction the ruling does NOT collapse, and it matters:** "EF-317 is throwaway" applies to its
-**`LeftJoin` partial** (`…LeftJoin.cs`, ~726 lines). The **main bridge file**
-(`MongoEFToLinqTranslatingExpressionVisitor.cs`, ~1050 lines) is a *different* dependency — the EF9+ bulk path
-above uses it, and that is unaffected by anything decided about EF-317. Retiring EF-317's join work does not
-retire the bridge.
+That the bulk path runs through the *native gate* is not theory: **24 `NorthwindBulkUpdatesMongoTest` cases
+fail under `MONGODB_EF_NATIVE_ONLY=1`** (2 in (a), 22 exception-shape), which can only happen because the gate
+sees those queries.
 
-### 9.3 Test-suite work at cutover — 651 re-baselines, and 10 that cannot be re-baselined
+Consequence, restated with the correction: **retiring the query fallback retires neither the bridge nor
+`MongoExecutableQuery`'s driver-LINQ surface.** Either the bulk filter/update translation is rewritten onto
+`MongoExpressionTranslator`/`MongoQueryLanguageRenderer` first, or all three survive cutover as bulk-only
+infrastructure. That is a real sub-project and it is still not on the SP scoreboard in §2.
 
-- **651 tests differ only in failure shape** (559 exception-type + 26 message + 66 `ArgumentOutOfRangeException`).
-  These features are unsupported in *every* mode; the tests pass under `Native` only because the override pins
-  the *driver-LINQ* exception type or message. At cutover each gets re-pointed at the native exception. This is
-  mechanical but large — schedule it, don't discover it.
-- **The 66 `ArgumentOutOfRangeException` rows deserve a second look before being filed as bookkeeping.** They
-  are described as a materialization/shaper gap surfaced only under `NativeOnly`. If any of them is really a
-  native shaper bug rather than an expected decline, it belongs in §9.1, not here. Not re-investigated at this
-  revision.
-- **10 spec cases (5 classes) cannot be re-baselined by the usual instrument.** They assert EF Core's *upstream*
-  `AssertTranslationFailed`, which requires an `InvalidOperationException` carrying "could not be translated" —
-  an exception type currently produced *by the driver-LINQ fallback failing*. `EF_TEST_REWRITE_BASELINES`
-  rewrites MQL baselines, not exception assertions. Two of the ten are EF8/EF9-only
-  (`NorthwindFunctionsQueryMongoTest` is wholly `#if EF8 || EF9`), so **eight** exist on the EF10 axes. This
-  constraint is already recorded as a hard constraint in `Query/AGENTS.md`'s array-valued-projections note; it
-  is repeated here because it is a *cutover* constraint, not a slice-8 one.
-- **The mode axis itself disappears.** `MONGODB_EF_NATIVE_ONLY=1` (`MongoTestStore.AddProviderOptions`) becomes
-  vacuous, and ~24 functional `Native*` test files that self-parametrize over `MongoQueryMode` lose their
-  `Native == DriverLinq` parity leg — which is, today, the primary oracle for a large amount of this work. **What
+No other consumer keeps the bridge alive. `VectorSearchStageBuilder` was extracted *verbatim from* the bridge
+and no longer depends on it; `MongoClientWrapper.Execute` cleanly splits `NativePipeline` from
+`Provider.CreateQuery(Query)`; `MongoLoggerExtensions.ExecutedMqlQuery` has a `Provider.LoggedStages` overload
+*and* a `(CollectionNamespace, BsonDocument[])` overload the native path already uses. The only other
+references are two unit tests of the static `DependenciesPrecede` helper.
+
+**The EF-317 ruling is unchanged and still SETTLED (owner, 2026-07-31): EF-317 is essentially THROWAWAY. Build
+what joins need; do not design around it.** Do not re-open. The distinction that ruling does *not* collapse
+also stands: "throwaway" applies to the **`LeftJoin` partial**, not to the main bridge file, which is what the
+bulk path uses.
+
+### 9.3 Test-suite work at cutover — 568 re-baselines, and 16 that need a helper the repo already has
+
+*Re-measured 2026-08-07. The previous figures (651 / "10 cases in 5 classes, 8 on EF10") are superseded; both
+are corrected in place below rather than deleted, because the direction of the correction matters.*
+
+- **568 tests differ only in failure shape** — ~~651~~ — split as **518** exception-shape (§9.1 category (b))
+  plus **50** `AssertMql` baseline diffs (category (c)). At cutover each gets re-pointed at the native
+  exception or re-baselined. Mechanical but large: schedule it, don't discover it.
+- ~~"The 66 `ArgumentOutOfRangeException` rows deserve a second look before being filed as bookkeeping … If any
+  of them is really a native shaper bug rather than an expected decline, it belongs in §9.1."~~ **DONE, and
+  the answer is none.** 48 of 48 are `AssertMql` baseline-index failures (§9.1). This item is closed.
+- ~~"**10 spec cases (5 classes) cannot be re-baselined by the usual instrument** … eight exist on the EF10
+  axes."~~ **RE-MEASURED: 16 cases in 2 classes on EF10** — `NorthwindBulkUpdatesMongoTest` (14) and
+  `NorthwindKeylessEntitiesQueryMongoTest` (2) — **and "cannot be re-baselined" overstates it.** Those two
+  classes still use a local `AssertTranslationFailed` that hard-pins `Assert.ThrowsAsync<InvalidOperationException>`
+  + `"could not be translated"`. **Thirteen other spec classes already route their shadow through
+  `MongoSpecTestHelpers.AssertNativeTranslationFailedAsync`, which accepts the native exception** — which is
+  precisely why only 16 of the ~838 `AssertTranslationFailed` references fail under `NativeOnly` at all. The
+  cutover work here is *applying an existing pattern to two more classes*, not inventing an instrument.
+  `EF_TEST_REWRITE_BASELINES` still does not rewrite exception assertions, so those 16 are hand edits.
+- **The mode axis itself disappears.** `MONGODB_EF_NATIVE_ONLY=1` (`MongoTestStore.AddProviderOptions`)
+  becomes vacuous, and ~24 functional `Native*` test files that self-parametrize over `MongoQueryMode` lose
+  their `Native == DriverLinq` parity leg — today the primary oracle for a large amount of this work. **What
   replaces that oracle needs deciding before the fallback goes, not after.** The in-memory differential oracle
   (used by the `All`, `.Count` and filtered-count slices, where no driver oracle existed) is the obvious
-  candidate and is already proven in this codebase.
+  candidate and is already proven in this codebase. *This is the item on this list with the longest lead time
+  and the least visible cost; it is not mechanical.*
 
-### 9.4 Public API decisions to make (each is a breaking-change judgement)
+### 9.4 Public API decisions — MEASURED against the release tags, and the answer is simpler than feared
 
-Retiring the fallback makes the following public surface meaningless. Per `AGENTS.md`, breaks are measured
-against the latest *released* assembly, so each needs a deliberate call — **note this cuts both ways: several
-of these were added during this unreleased cycle and can simply be removed, but that must be verified per
-member against the release tag, not assumed.**
+*Re-checked 2026-08-07 against `v10.0.2` / `v9.1.2` / `v8.4.2` (the latest non-preview tag on each EF line,
+from `gh release list`, not from `upstream/main`). **This project has twice got a break judgement wrong by
+measuring on the branch and asserting of the release; this check was done tag-side.***
 
-- `public enum MongoQueryMode` (`Infrastructure/MongoQueryMode.cs`) — `DriverLinq` becomes meaningless and
-  `NativeOnly` becomes a no-op. Removing the enum or a member is a source+binary break.
-- `MongoDbContextOptionsBuilder.UseQueryMode(MongoQueryMode)` — `virtual`, so also a subclassing break.
-- `MongoOptionsExtension.QueryMode` / `WithQueryMode(...)`, and the observable output of
-  `GetServiceProviderHashCode`, `ShouldUseSameServiceProvider`, `PopulateDebugInfo`'s `"Mongo:QueryMode"` key,
-  and `LogFragment`'s `QueryMode=…`.
-- `MongoQueryCompilationContext`'s mode-bearing primary constructor and its `QueryMode` property; the
-  `MongoQueryCompilationContextFactory` 2-arg constructor. **Precedent worth heeding:** that factory's 1-arg
-  constructor already carries an explicit "do not delete, v10.0.2 compat" remark — this repo has already
-  treated constructor removal here as breaking.
-- `public record MongoExecutableQuery` — the one public type whose *shape* is driver-LINQ: its `Query`
-  (a driver-LINQ expression) and `Provider` (`MongoDB.Driver.Linq.IMongoQueryProvider`) members become dead,
-  while every live member (`NativePipeline`, `Session`, `Streaming`, `OutputSerializer`) is `internal`.
-  Changing the positional record parameters breaks anyone constructing or deconstructing it. It is also the
-  **only** place `MongoDB.Driver.Linq` leaks into public API.
+**The entire query-mode surface has never shipped.** `git grep -c QueryMode <tag> -- src/` returns **zero** at
+all three tags, and `Infrastructure/MongoQueryMode.cs` does not exist at any of them. Every member §9.4
+previously listed as "a breaking-change judgement" is an **addition made inside this unreleased cycle**:
+
+| Member | At `v10.0.2` / `v9.1.2` / `v8.4.2` | Removing it at cutover |
+|---|---|---|
+| `public enum MongoQueryMode` | **absent** | not a break |
+| `MongoDbContextOptionsBuilder.UseQueryMode(...)` | **absent** | not a break |
+| `MongoOptionsExtension.QueryMode` / `WithQueryMode(...)`, and its contributions to `GetServiceProviderHashCode`, `ShouldUseSameServiceProvider`, `PopulateDebugInfo`'s `"Mongo:QueryMode"`, `LogFragment`'s `QueryMode=…` | **absent** | not a break — removal restores the released shape byte for byte |
+| `MongoQueryCompilationContext`'s 3-arg primary constructor + `QueryMode` property | **absent** (v10.0.2 has the 2-arg `(dependencies, async)` form, which the branch *preserved* as a delegating overload) | not a break |
+| `MongoQueryCompilationContextFactory` 2-arg constructor | **absent** (v10.0.2 has the 1-arg form, which the branch *preserved* with an explicit "do not delete, v10.0.2 compat" remark) | not a break |
+
+So the fear recorded here — "each is a breaking-change judgement", ~8 API members — **does not survive
+measurement**. There is exactly **one** genuine constraint left, and it points the other way:
+
+- **`public record MongoExecutableQuery` DID ship, and its positional parameters are byte-identical at all
+  three tags and at this tip** (`Query`, `Cardinality`, `Provider`, `CollectionNamespace`, `AdditionalState`;
+  everything the native path added — `NativePipeline`, `Session`, `Streaming`, `OutputSerializer` — is
+  `internal`). Changing those positional parameters *is* a source+binary break. **And per §9.2 they are not
+  dead anyway:** `BuildIdDocumentQuery` consumes `Provider.CreateQuery<BsonDocument>(Query)` for the EF9+ bulk
+  path. **The correct call is therefore: leave `MongoExecutableQuery` exactly as it is.** This corrects the
+  previous entry, which framed it as the type whose dead members invite removal.
 
 `NativeTranslationNotSupportedException` is `internal sealed`, so the exception users would start seeing is
-*not* currently public — decide whether it should be before it becomes the only failure mode.
+not currently public. Decide whether it should be before it becomes the only failure mode — **this is now the
+only open public-API question in this sub-section.**
 
 ### 9.5 Correctness debt that should not survive cutover
 
-Cutover removes the safety net that currently makes some of these benign, so they change priority:
+Cutover removes the safety net that currently makes some of these benign, so they change priority. Sorted by
+category, because the category is what should drive the order. *(JIRA was unreachable from the analysis
+environment on 2026-08-07, so the statuses below are **CITED from §6**, not re-verified against the tracker.)*
 
-- **EF-356** — mixed whole-entity + computed-arithmetic projection returns **silently wrong** values
-  (`Score²`). Reachable today under default `Native`. Silent wrong data is the worst category here.
-- **EF-355** — filtered reference SelectMany can silently drop a `!= null` inner filter. Latent today (EF emits
-  the nested, not folded, shape), but it is a silent-wrong-data mechanism sitting in code the cutover makes
-  load-bearing.
+**Silent wrong data reachable under the DEFAULT `Native` mode — fix before anything else:**
+
+- **EF-356** — mixed whole-entity + computed-arithmetic projection returns silently wrong values (`Score²`).
+  Lives in exactly the mixed shaper step **3b** would widen, and 3b **carries a standing ruling that it must
+  FIX EF-356, not pin it** (§9.8). It is also the reason 3b is not simply "the next projection slice".
+- **EF-390** — a dotted owned-hop **scalar** leaf silently returns `null` (`Select(b => new { b.Home.City,
+  b.Home.Notes })` loses `City` while the array beside it is correct). Pre-existing and byte-identical at step
+  3a's base; pinned as *measured, not correct* by
+  `Ef362OwnedHopArrayProjectionTests.Owned_hop_SCALAR_leaf_alongside_the_array_leaf_is_still_declined_and_still_loses_the_scalar`.
+  Newly ticketed by `99d74735` (§5 bullet 4a said "no ticket has been filed" and is corrected there).
+- **EF-380** — a `ThenInclude` nested under an **owned (embedded)** hop classifies as `Unclassifiable`, falls
+  through to the root tiers and returns a **silently null navigation** under default `Native`. Measured in all
+  three modes and byte-identical at EF-379's base, so a survivor, not a regression. The fall-through is
+  reachable, measured not assumed (8 hits / 2 shapes functional, 28 hits / 7 shapes spec); other families
+  arriving there are correctly root-scoped, so a blanket decline is not the fix.
+- **EF-375** — two joins onto the same target entity type. Three symptom classes from three sites: a throw
+  (bare same-typed pair), a **silently null navigation**, and **silently wrong values**
+  (`TARGET-B|TARGET-B` for `TARGET-A|TARGET-B`). A fix addressing only the first site converts a throw into
+  silent wrong data. `Employee.Include(Manager).Include(Mentor)` is enough, and same-typed siblings are
+  guaranteed by construction on any self-referencing model.
+- **EF-355** — filtered reference `SelectMany` can silently drop a `!= null` inner filter. **Latent** today
+  (EF emits the nested, not folded, shape) but the mechanism sits in code the cutover makes load-bearing.
+
+**Loud failures — bad, but they do not corrupt data:**
+
+- **EF-381** — reinstate the transitive-hop-with-no-resolvable-intermediate decline. The shape it would catch
+  fails LOUDLY today, at materialization. It is here because the *reason* it is absent is a missing
+  discriminator: a transparent identifier is produced by an owned `SelectMany` as well as by a prior join, and
+  the first cut hard-failed working first-join queries in `Native` **and** `DriverLinq` (measured: 3 correct
+  rows at base, throw at the unfixed tip; 11 firings over 4 shapes). `InnerCollections.Count > 1` is **not** a
+  usable gate — the self-referencing case is `Count == 1` too, which is EF-375's `IEntityType`-keyed blind
+  spot again.
+- **EF-376** — sibling `ThenInclude`s collapse into one `$lookup` (navigation-name-only aliases + `AddLookup`
+  de-duping on `As`). Declines cleanly. Must come **after** EF-373's shared lookup resolver.
+- **EF-377** — a chained `Join` whose first hop has no model navigation has no identity to scope the second
+  hop under. Declines cleanly; **de-linked** from the EF-375/376 family (it has *no* key rather than a weak
+  one) and its clean decline is a reasonable resting state.
 - **EF-354** — whole-outer `SelectMany` crashes instead of declining cleanly.
-- ~~**EF-379** — a root navigation to a transitive hop's target type misroutes the hop, returning a **silently
-  null navigation** where real data is correct.~~ **FIXED, joins slice 4 `9065acfc`** (owner ruled it in as the
-  next slice; §9.8). This item used to end "**Recommended as the next slice**" and that recommendation has been
-  acted on. Two facts from it are worth keeping *because they generalize to the rest of this list*: **row count
-  does not discriminate a misrouted `$lookup`** — both the correct and the broken pipeline return the same
-  number of rows and only the navigation *value* differs, so a regression test here must assert the VALUE
-  (`!= null` is not enough either: EF's identity fix-up can repair the object graph while the `$lookup` matched
-  the wrong field) — and the trigger was an ordinary model shape, a root with a direct navigation to some type
-  plus a longer chain that also reaches that type. **The fix is proven by functional fixtures, not by spec
-  movement: net spec delta was ZERO on both axes**, because Northwind has no colliding-FK model.
-- **EF-380** — **the silent-wrong-data item EF-379 did NOT close, and the one that belongs in this section
-  now.** A `ThenInclude` nested under an **owned (embedded)** hop reaches `ClassifyJoinHop` with a receiver that
-  is itself an `EF.Property` hop (`Property(Property(o.Inner, "Address"), "RegionId")`), classifies as
-  `Unclassifiable`, falls through to the root tiers and returns a **silently null navigation under the default
-  `Native` mode** — measured in all three modes, and byte-identical at EF-379's base, so it is a survivor, not a
-  regression. Same category and same discrimination caveat as the EF-379 entry above. The `Unclassifiable`
-  fall-through is **reachable, measured not assumed** (8 hits / 2 shapes functional, 28 hits / 7 shapes spec);
-  the other families arriving there are correctly root-scoped, so a blanket decline is not the fix.
-- **EF-381** — reinstate the transitive-hop-with-no-resolvable-intermediate decline. Not silent wrong data (the
-  shape it would catch fails LOUDLY today, at materialization), but it is on this list because the *reason* it
-  is absent is a missing discriminator: a transparent identifier is produced by an owned `SelectMany` as well as
-  by a prior join, and the first cut of the decline hard-failed working first-join queries in `Native` **and**
-  `DriverLinq` (measured: 3 correct rows at base, throw at the unfixed tip; 11 firings over 4 distinct shapes in
-  the EF10 functional `~Query` filter alone). `InnerCollections.Count > 1` is **not** a usable gate — the
-  self-referencing case is `Count == 1` too, which is EF-375's `IEntityType`-keyed blind spot again.
-- **EF-375** — two joins onto the same target entity type. Three symptom classes from three different sites: a
-  throw (bare same-typed pair), a **silently null navigation** (add any third distinct-typed join and
-  flattening fires, but the retroactive registration picks a navigation by target type alone — the pipeline
-  then contains a `$lookup` for a navigation the query never mentions), and **silently wrong values** (a double
-  join projecting both entities returns `TARGET-B|TARGET-B` for `TARGET-A|TARGET-B`, because
-  `UsesDriverJoinFields ? "_inner" : …` discards the navigation and both projections read the same field).
-  A fix addressing only the first site converts a throw into silent wrong data. Frequency is higher than it
-  looks: `Employee.Include(Manager).Include(Mentor)` is enough, and **same-typed siblings are guaranteed by
-  construction on any self-referencing model**.
-- **EF-360, EF-365** — hard-fail in every mode where a graceful path is available. EF-365 in particular is
-  *measured* to become a working fallback if one guard is deleted; after cutover there is no fallback to become.
+- **EF-360, EF-365** — hard-fail in every mode where a graceful path is available. EF-365 is *measured* to
+  become a working fallback if one guard is deleted; after cutover there is no fallback to become.
 - **The interposed-operator family** (`Distinct`/`Take`/`Reverse`/`DefaultIfEmpty`/`Concat` between an
-  owned-collection `Select` and a terminal operator) — recorded as a comment on the EF-322 epic rather than its
-  own ticket. Hard-fails in every mode today.
+  owned-collection `Select` and a terminal operator) — recorded as a comment on the EF-322 epic rather than
+  its own ticket. Hard-fails in every mode today.
+
+~~**EF-379**~~ — **FIXED, joins slice 4 `9065acfc`.** Two facts from it generalize to everything above and are
+kept: **row count does not discriminate a misrouted `$lookup`** (both pipelines return the same number of
+rows; a regression test must assert the navigation VALUE, and `!= null` is not enough either, because EF's
+identity fix-up can repair the object graph while the `$lookup` matched the wrong field), and the trigger was
+an ordinary model shape. Its fix is proven by functional fixtures, not spec movement: **net spec delta ZERO**.
 
 ### 9.6 Housekeeping that is cheap now and annoying later
 
-- **JIRA is now reconciled** (done 2026-07-31 — see the top of §6), but **one step is deferred to merge**:
-  EF-335/EF-357/EF-358/EF-359 sit at `In Code Review` and must be moved to `Closed` when the stack lands.
-- ~~**The stack is 1 commit behind `upstream/main`**~~ — **done.** Rebased onto `58e05a0e`; `upstream/main` is
-  now an ancestor of the tip. Note the rebase invalidated every SHA cited in §2 — see the warning in the header.
-- **EF-378 should be transitioned to `Closed`/duplicate of EF-375**, and EF-377 retitled toward "a
-  navigation-less join hop has no identity to scope under" so its distinction from EF-375/376/379 is visible
-  from the issue list. Both are recorded as JIRA comments; neither transition has been done.
-- **EF-379 should be moved to `In Code Review`** and given the same fixing-commit comment EF-335/357/358/359
-  carry — it is fixed in code (`9065acfc`) but still sits at `Needs Triage`, so the issue list currently
-  misrepresents it as open. Same non-`Closed` reasoning as the others: the stack is unmerged.
-- **SP7 Phase 2** (§5) — reducer/aggregate streaming, collection-Include array streaming, reference-Include
-  streaming (blocked on 9.1 item 3), and deleting the now-unreachable `RawBsonDocument` branch + `BsonRowReader`.
-  This is performance, not correctness: it does **not** block cutover, and should not be allowed to.
+- **JIRA transitions deferred to merge:** EF-335 / EF-357 / EF-358 / EF-359 sit at `In Code Review` and must
+  move to `Closed` when the stack lands. **EF-379** is fixed in code (`9065acfc`) but still at `Needs Triage`.
+  **EF-378** should be closed as a duplicate of EF-375, and **EF-377** retitled toward "a navigation-less join
+  hop has no identity to scope under". None of these has been done. *(JIRA was unreachable on 2026-08-07, so
+  this list is CITED from §6 and not re-verified.)*
+- **EF-391 is half done.** Its first half — re-deriving every bucket label by decline site — is this revision.
+  Its second half is acting on the result: rows 2 and 5 of §9.1's table (translator breadth; composite-PK)
+  have no slice, no ticket and no place in §9.8.
+- **SP7 Phase 2** (§5) — reducer/aggregate streaming, collection-`Include` array streaming, reference-`Include`
+  streaming, and deleting the now-unreachable `RawBsonDocument` branch + `BsonRowReader`. This is performance,
+  not correctness: it does **not** block cutover, and should not be allowed to.
 
-### 9.7 The honest summary
+### 9.7 The honest summary — RE-RANKED 2026-08-07 on measurement
 
-Ranked by what actually gates the cutover:
+*This ranking is what §9.7 has looked like since 2026-07-31, and it was built from the old message buckets.
+Re-derived by decline site, it is wrong in its first two places. Corrected in full; the old ordering is
+recorded beneath so the change is visible.*
 
-1. ~~**Joins** (no native form at all) and **reference `Include`** — the two largest structural absences.~~
-   **Partly closed as of 2026-08-05** — single-level reference `Include` is native (EF-368), transitive-hop
-   scoping and interleaved-operator positioning are fixed (EF-372, EF-373), and root-vs-transitive hop
-   classification is fixed (EF-379). What remains of this item: `ThenInclude` breadth, filtered `Include`,
-   collection-of-collection, the general join, and **six** open defects in §6 (EF-375/376/377 and the two
-   EF-379 residuals EF-380/EF-381, plus EF-378 pending its duplicate closure — this said "the five defects"
-   when EF-379 was among them). This ranking was written when the answer was "nothing"; it is now "partial", so
-   re-rank against item 2 before treating it as still first.
-2. **The computed/client-eval projection long tail** — the largest bucket by test count, and the least
-   unified: it is many small features, not one.
-3. ~~**`VectorSearch`** — **106 tests, promoted here on measurement.**~~ **DONE 2026-08-06** (92 of 112 fixed; the 20 residual fold into item 2's projection long tail and into predicate breadth — see §4). It was ranked below `GroupBy` in this
-   list's first draft on the assumption its tests were exception-shape bookkeeping; they are not, and it is the
-   largest single named feature in the coverage gap.
-4. **The bulk-path bridge dependency** (§9.2) — small in code, but currently unscheduled and easy to miss.
-5. **Non-native `GroupBy` shapes**, then the small renderer/regex/`Contains`/composite-PK items.
-6. **Test re-baselining and the public-API decisions** — not hard, but 651 tests and ~8 API members do not
-   happen in an afternoon.
+Ranked by how much of the 1598 each gates:
 
-### 9.8 Execution order (settled 2026-07-31 — and NOT the same as §9.7)
+1. **`MongoExpressionTranslator` expression breadth — ≈588 (37%).** The single largest lever, and **it appears
+   nowhere in the previous ranking, nowhere in §9.8, and has no ticket.** One work stream (casts, `??`, `?:`,
+   `EF.Property`, `Nullable.Value`, string concat, entity equality, `Contains` over a client collection,
+   constructed-value comparison, `Equals`, `GetType`, array literals) pays into predicates (368 incl. sort
+   keys) *and* projection leaves (220) at once, because they are the same `TranslateNode` /
+   `TryTranslateLeaf` surface. It is also unusually well-suited to incremental delivery: each feature is
+   independently testable and independently shippable.
+2. **Joins / cross-collection — 373 (23%).** Partly closed: single-level reference `Include` is native
+   (EF-368), transitive-hop scoping and interleaved-operator positioning are fixed (EF-372, EF-373), and
+   root-vs-transitive classification is fixed (EF-379). What remains: `ThenInclude` breadth, filtered
+   `Include`, collection-of-collection, the general `Join`/`GroupJoin`/`LeftJoin` (no native form at all), and
+   six open defects (EF-375/376/377, EF-380/381, plus EF-378 pending its duplicate closure).
+3. **Projection long tail — 290 (18%).** 3c (computed/value leaf) 220, 3b (entity leaf) 52, 3d (narrowed
+   composition) 18. Note 3c overlaps item 1 almost entirely — doing item 1 largely *is* doing 3c.
+4. **GroupBy breadth — 130 (8%)**, then **composite-PK — 116 (7%)**. Composite-PK jumped from "invisible" to
+   fifth on measurement, and it is on the reference-`Include` path (§9.1), so it belongs beside item 2.
+5. **The small, fully sole-cause items — cheap wins.** Scalar-aggregate binder 82, `Distinct` 84, set
+   operations 42, no-binder operators 40, regex 19, `Not` renderer 8 — **275 cases, of which 255 are
+   sole-cause**, i.e. turn green on that one site with no second fix. Scalar-aggregate, set-ops, no-binder,
+   regex and `Not` are 100% sole-cause; `Distinct` is 64 of 84. Highest green-per-line-changed in the plan.
+6. **The bulk-path bridge dependency (§9.2)** — small in code, still unscheduled, and now known to be broader
+   than "share a class" (it re-enters `TranslateQuery` and needs `MongoExecutableQuery.Query`/`Provider`).
+7. **Test re-baselining (568) and the oracle replacement (§9.3).** The re-baselining is mechanical. **The
+   oracle replacement is not**, and it has the longest lead time of anything on this list.
 
-**STATUS 2026-08-05 — step 1 is substantially delivered, the question that stood before step 2 has been
-RULED ON, and the answer has been executed. Step 2 (`VectorSearch`) is next.**
+*Superseded ordering, kept so the correction is legible:* ~~1. Joins + reference `Include`; 2. the
+computed/client-eval projection long tail; 3. `VectorSearch` (done); 4. the bulk-path bridge; 5. non-native
+`GroupBy`, then the small renderer/regex/`Contains`/composite-PK items; 6. test re-baselining + public-API
+decisions.~~ Three things were wrong: translator breadth was never a line item at all, composite-PK was filed
+as a footnote when it is 116 cases, and the public-API decisions turn out to be a non-issue (§9.4).
 
-Step 1 has shipped **seven** slices (§2's joins table), through **EF-379**. *(This paragraph said "six slices …
-through EF-373", and the two paragraphs that followed it said the EF-379 insertion "has been recommended but
-NOT ruled on by the owner. Do not treat it as agreed … Surface the question." **That is superseded: the owner
-ruled, EF-379 went next, and it is delivered as `9065acfc`.** The recommendation's grounds are kept below
-because they held up.)*
+### 9.8 Execution order
 
-The grounds the spike gave for inserting EF-379 ahead of step 2, and how they measured out:
+**STATUS 2026-08-07. Steps 1 (joins, seven slices), 2 (`VectorSearch`) and 3a (the bare-projection boundary)
+have shipped. The order BEYOND step 3 is now re-derived on §9.7's corrected ranking and differs from what this
+section said.**
 
-- *"The only one of the five that is silent wrong data with a correct answer already reachable"* — **held.** The
-  destination path (EF-372's prefix-or-decline resolver) already worked; the fix was to route the hop into it.
-- *"Needs no new IR, unlike EF-375/EF-376"* — **held.** `ClassifyJoinHop` reads only expression-tree structure.
-- *"Smallest blast radius of the five — one method plus one threaded argument"* — **held, and it turned out
-  smaller: there is no threaded argument.** `outer.ShaperExpression` was measured unnecessary and is not
-  threaded in.
-- *"Makes EF-375 easier by routing more hops through the resolver that declines rather than guesses"* — **not
-  yet demonstrated either way**; EF-375 has not been attempted. Note the counter-signal from the withdrawn
-  decline: EF-375's `IEntityType`-keyed blind spot is what made `InnerCollections.Count > 1` unusable as a gate.
-
-What EF-379 did *not* do, stated so it is not assumed: **net spec delta ZERO on both axes**, and
-`NorthwindNavigationsQueryMongoTest.Select_Where_Navigation_Null_Deep` keeps its EF-371
-**known-wrong-data** baseline (0 rows where 6 are correct; see `docs/failing-spec-tests.md`) — a re-baseline to
-`AssertTranslationFailed` was made during the slice and then reverted along with the withdrawn decline, so both
-that override and its two `docs/failing-spec-tests.md` entries are back to their base text. It also left **two residuals, both
-ticketed: EF-380** (the reachable `Unclassifiable` fall-through, one family of which is a surviving instance of
-the same silently-null symptom — §9.5) and **EF-381** (reinstate the decline with a discriminator that
-separates a join-produced `Inner` from a `SelectMany`-produced one).
-
-The remaining order *within the original five*, unchanged except that EF-379 is now struck from the front of it:
-~~**EF-379**~~ (done), then **EF-375** (all three of its sites; this also closes EF-378, and it must **delete
-the agreement check** in `TryResolveIntermediateLookupPrefix` — that check carries a `TODO(EF-375)` and exists
-only to paper over the same imprecision, so its removal also requires re-baselining
-`Two_same_typed_navigations_second_branch_only_declines_cleanly`, a test that currently pins a *decline* for a
-query that should return correct rows), then **EF-376** — and EF-376 only *after* EF-373's shared lookup
-resolver, since that resolver is the seam a path-scoped alias scheme has to change in lockstep. **EF-377 is
-de-linked** from the group: it has no key rather than a weak one, and its clean decline is a reasonable resting
-state. The two new residuals are not in that sequence: **EF-380** is the one with a §9.5 claim on it (silent
-wrong data under the default mode), **EF-381** is a loud-failure-quality item.
-
-**Step 2 below — `VectorSearch` — is now DONE** (slice landed 2026-08-06; see §4 and the "Atlas Vector Search"
-note in `Query/AGENTS.md`). The Task-0 spike it opened with confirmed the first-stage constraint, and the
-answer was a dedicated `MongoSelectDefinition.VectorSearch` slot emitted by the lowerer *ahead of*
-`AppendSelectOpStages`, so first-ness is structural rather than incidental. ~~Next up is step 3, the projection
-long tail — which is also what holds 16 of the 20 vector cases still failing under `NativeOnly`.~~
-
-**STEP 3 IS FOUR SLICES, NOT ONE, AND ONLY THE FIRST HAS SHIPPED (2026-08-06). Read the rest of this section
-with that in mind — the sentence above treated step 3 as a single line item, which is how step 1 came to be
-seven slices without anyone having planned for that.**
-
-| Slice | Scope | Status |
+| Step | Scope | Status |
 |---|---|---|
-| **3a** | **The bare-projection boundary** — a bare selector body populates `Projection` and emits a native `$project`, aliased by the leaf's own root-relative document path. **74 `NativeOnly` cases won, zero regressions** (`Native` 4593/0/17 unchanged; `NativeOnly` 2352/2241/17 → 2427/2166/17). Carries **EF-362** as its Task 4, and the epic's **first `BREAKING-CHANGES.md` entry for a native-routing flip** (§2, §4) | ✅ **Done** |
-| **3b** | **The entity leaf inside a projection** — `new { Book = e, Score = … }` and friends, which run on the **mixed shaper**. This is what holds the remaining **12** `VectorSearch` cases | ⬜ Not started |
-| **3c** | The computed / client-eval leaf long tail (string transforms, date parts, `Math.*`, casts) | ⬜ Not started |
-| **3d** | Composition after a bare projection — a bare projected **set-op operand** and a bare **`Distinct`**, both deliberately narrowed out of 3a by measured correctness guards (§4) | ⬜ Not started |
+| **1** | **Joins, as one work stream, starting with reference `Include`** — EF-366, EF-367, EF-370, EF-368, EF-372, EF-373, EF-379 | ✅ **seven slices shipped** (2026-08-03…05). Behind it: `ThenInclude` breadth, filtered `Include`, collection-of-collection, the general join, and EF-375/376/377/380/381 |
+| **2** | **`VectorSearch`** — a dedicated `MongoSelectDefinition.VectorSearch` slot emitted ahead of `AppendSelectOpStages` (first-ness structural), plus a deferred `Build`-time stage slot calling the driver's own stage builder per execution | ✅ **Done** 2026-08-06. `NativeOnly` `VectorSearch` failures **112 → 20 → 16**; `Native` unmoved; no baseline moved |
+| **3a** | **The bare-projection boundary** — a bare selector body populates `Projection` and emits a native `$project` aliased by the leaf's own root-relative document path. Carried **EF-362**; the epic's first `BREAKING-CHANGES.md` entry for a native-routing flip | ✅ **Done** 2026-08-06. **74 wins, zero regressions** (`Native` 4593/0/17 unchanged; `NativeOnly` 2352/2241/17 → 2427/2166/17) |
+| **3b** | **The entity leaf inside a projection** — `new { Book = e, Score = … }` and friends, on the **mixed shaper**. Holds the remaining **12** `VectorSearch` cases; **52** cases total (measured) | ⬜ Not started. **CARRIES A STANDING RULING: 3b must FIX EF-356, not pin it** — see below |
+| **3c** | The computed / client-eval leaf long tail — **220** cases, and **it is the projection half of §9.7 item 1**, not a separate feature set | ⬜ Not started |
+| **3d** | Composition after a bare projection — a bare projected **set-op operand** and a bare **`Distinct`**, both narrowed out of 3a by measured correctness guards. **18** cases | ⬜ Not started |
 
-**3b CARRIES A STANDING RULING, made before 3a shipped and still binding: 3b must FIX EF-356, not pin it.**
-EF-356 is a silent-wrong-data bug (`new { c, Total = c.Age * c.Score }` returns `Score²`) living in exactly the
-mixed shaper 3b would widen — see §6 and §9.5. Shipping an entity-leaf widening over a known-broken shaper is
-not acceptable, so the fix comes first within that slice. Recorded here because 3a is where a reader will be
-when they pick up 3b, and the ruling is otherwise only in the step-3 spike findings doc.
+**3b's standing ruling, unchanged and still binding: 3b must FIX EF-356, not pin it.** EF-356 is a
+silent-wrong-data bug (`new { c, Total = c.Age * c.Score }` returns `Score²`) living in exactly the mixed
+shaper 3b would widen (§9.5). Shipping an entity-leaf widening over a known-broken shaper is not acceptable,
+so the fix comes first within that slice.
 
-**3a's residual, stated so 3b/3c/3d do not re-discover it:** a bare **computed** leaf (the reverted **tier 2** —
-§2 has its real prerequisite, and it belongs with 3c rather than 3d), a bare **dotted** leaf (which additionally
-needs the dotted-SCALAR read, §5 bullet 4a, **EF-390**), and the two narrowed compositions that are 3d's.
+**3a's residual, so 3b/3c/3d do not re-discover it:** a bare **computed** leaf (the reverted tier 2 — 54 cases
+where the translator *already* produces a value and only a synthetic alias is missing), a bare **dotted** leaf
+(which additionally needs the dotted-SCALAR read, **EF-390**), and the two narrowed compositions that are 3d's.
 
-**STILL NOT FILED AS WORK ANYWHERE — flagged rather than left implicit.** The 2026-08-06 re-derivation of §9.1
-row 1 moved **363** of the 881 "non-entity projection" cases out of the projection bucket entirely and
-attributed them to other gaps: **GroupBy 130, predicates 85, scalar-aggregate 56, `OrderBy` keys 24, `Distinct`
-20, post-terminal guards 34, catch-all 4.** None of those has a ticket, a slice, or a place in this execution
-order. They are not step 3's work and will not be delivered by finishing it — so whoever plans the next tranche
-after step 3 should start by deciding what to do with them, rather than reading a shrinking row-1 count as
-progress against the whole 881.
+**~~STILL NOT FILED AS WORK ANYWHERE~~ — this flag is now the top of the order, not a footnote.** The
+2026-08-06 re-derivation moved 363 of the old "non-entity projection" bucket out of it and named GroupBy,
+predicates, scalar-aggregate, `OrderBy` keys, `Distinct` and post-terminal guards as their real owners. The
+2026-08-07 re-derivation measured those owners over the *whole* gap rather than inside one message bucket, and
+the result is §9.1's table. **The recommended order from step 3 onward, on that measurement:**
 
----
+| # | Slice | Cases | Why here |
+|---|---|---:|---|
+| **4** | **`MongoExpressionTranslator` breadth**, feature by feature, ranked by the §9.1 feature table (casts 72, tuple/anon comparison 50, `EF.Property` 48, bare constant/parameter 40, `Nullable.Value` 38, client-collection `Contains` 36, entity equality 34, `??` 32, concat 32, `?:` 26, …) | **≈588** | Largest lever by ~58% over the next one; pays into predicates, sort keys **and** 3c simultaneously; each feature ships independently. **Needs a ticket — it has none.** Doing this first also makes 3c mostly free |
+| **5** | **3b** — the entity leaf (incl. the EF-356 fix) | **52** | The mixed shaper is the one place a *silent-wrong-data* bug and a widening meet. Ranked here rather than at 4 because of that, not because of size |
+| **6** | **The sole-cause cheap wins**, in one tranche: scalar-aggregate binder (82, 100% sole-cause), `Distinct` (64 sole), set operations (42), no-binder operators (40), regex/EF-247 (19), `Not` renderer (8) | **255 green** | Highest green-per-line-changed in the whole plan. 255 of these 275 cases are sole-cause, i.e. turn green on that one site with nothing else fixed |
+| **7** | **Joins, resumed** — `ThenInclude` breadth, filtered `Include`, collection-of-collection, the general join — **with composite-PK resolution (`_id.<name>` dotted paths) as its first task**, since 112 of that gap's 116 cases are in the `Include` suites | **373 + 116** | Second-largest, but the most architecture per case; and 104 of the composite-PK cases *also* need step 4/3c, so much of it only pays off after them |
+| **8** | **GroupBy breadth** — computed keys, computed accumulator operands, element/result selectors, bare `IGrouping`, post-group guards | **130** | Five separate sites; **58 of the 130 have zero sole-cause**, i.e. they need something else fixed too |
+| **9** | **The bulk-path rewrite** (§9.2) — or the decision to keep the bridge as bulk-only infrastructure | — | Scope early, execute late. Nothing else unblocks it and it unblocks nothing else |
+| **10** | **Correctness debt** (§9.5) that the earlier steps have not already forced | — | EF-380, EF-375, EF-390, EF-355 are the silent-wrong-data four. EF-356 lands inside step 5 |
+| **11** | **Test re-baselining (568) + the oracle replacement (§9.3)** | — | Mechanical, except the oracle, which needs deciding much earlier than it needs doing |
 
-§9.7 ranks by what **gates** the cutover. It is not an execution order and must not be read as one: it ignores
-dependencies, and it was written while the EF-317 question was still open. With that question settled (§9.2 —
-EF-317 is throwaway, build what joins need), the agreed order is:
+**The owned-data work stream is still not on this list.** Nine slices landed and it is *not* on the cutover
+critical path — the spec number was flat across five consecutive tips, structurally, because Northwind has no
+owned collections. Do not default back to it because the machinery is warm.
 
-1. ✅ **Joins, as one work stream — starting with reference `Include` as its FIRST SLICE, not as a detour.**
-   *(Substantially delivered 2026-08-03…05: EF-366, EF-367, EF-370, EF-368, EF-372, EF-373, **EF-379** — see
-   §2; this list ended at EF-373 until the owner ruled EF-379 in as the seventh slice. Behind it still sit
-   `ThenInclude` breadth, filtered `Include`, collection-of-collection, and the open defects — **EF-375/376/377
-   plus EF-379's two residuals EF-380/EF-381**, where this read "the five filed defects".)*
-   Reference `Include` and joins are the *same* `$lookup` machinery; reference `Include` is the constrained
-   case (FK-correlated, single-level, left-join semantics) and is the one where the lowerer already carries
-   built-but-dormant code behind a single gate site. Build it, then generalize. Starting at the general join
-   is the higher-risk path for no compensating benefit.
-2. ✅ **`VectorSearch`** *(delivered 2026-08-06 — see §4 and the "Atlas Vector Search" note in
-   `Query/AGENTS.md`)*. **112 → 20** `NativeOnly` failures on the `VectorSearch` filter (92 fixed); default
-   `Native` unmoved at 114/0/4 with zero baseline diffs. The Task-0 spike it opened with confirmed the
-   first-stage constraint (`Location40602`, uniformly), and the answer was a dedicated
-   `MongoSelectDefinition.VectorSearch` slot emitted by the lowerer **ahead of** `AppendSelectOpStages` —
-   first-ness structural, not incidental — plus a deferred `Build`-time stage slot that calls the driver's own
-   stage builder per execution (the `$vectorSearch` BODY varies with runtime options, so it must be
-   *constructed*, not *substituted*). **The 20 residual are BOTH already accounted for by other work:** 16 are
-   step 3's bare-projection/entity-leaf boundary, and 4 are a `MongoExpressionTranslator` predicate-breadth gap
-   (`arrayField.Contains(constant)`) that is cross-cutting rather than vector-specific. Both decline
-   gracefully.
-3. 🟡 **IN PROGRESS — and it is FOUR slices, not one (see the step-3 table above). Projection long tail**,
-   anchored on the **bare-scalar projection boundary** — one structural change unblocking bare scalars, bare
-   entities and bare arrays together, rather than 873 individual fixes. **3a shipped that structural change on
-   2026-08-06 (74 `NativeOnly` wins, zero regressions) and it delivered the bare-scalar and bare-array halves;
-   the bare-ENTITY half was never blocked by it** — the step-3 spike measured zero bare-entity cases in the 881,
-   because bare entities already went native. ⬅ **NEXT is 3b, the entity leaf inside a projection**, which is
-   what carries **12** of the **16** remaining `VectorSearch` failures (this read "16 of the 20"; 3a took the
-   other 4), and which **must fix EF-356 rather than pin it** — a standing ruling, see above.
-4. **The bulk-path bridge** (§9.2) — scope early, execute late.
-5. **Test re-baselining + public-API decisions** — last.
+**Where each gap is gated, by decline site** — re-derived 2026-08-07 with counts attached, so the table sizes
+as well as locates. **The caution that has always accompanied it still applies and now has evidence: a row
+being "a single site" means the gate is in one place, not that the job is small.** The `sole-cause` column is
+the honest leverage figure — how many cases that site's removal turns green *by itself*.
 
-**The owned-data work stream is not on this list.** Nine slices landed and it is *not* on the cutover critical
-path — five consecutive tips of zero spec delta, structurally, because Northwind has no owned collections. Do
-not default back to it because the machinery is warm.
-
-**Where each of these is actually gated, by decline site** — recorded so the next slice does not have to
-re-derive it. Ordered by leverage (how much of the fallback set one site's removal would unblock), which is
-*not* the same order as the ranking above:
-
-| # | Gap | The gate |
-|---|---|---|
-| 1 | Reference `Include` / `ThenInclude` / filtered / collection-of-collection | `MongoSelectLowerer.cs` catch-all lookup arm — a **single** site; the `$lookup`/`$unwind` machinery is already built |
-| 2 | Bare-scalar, entity-ref and mixed projections | `NativeProjectionBinder.TryPopulateNativeProjection`'s selector-body shape check, plus the gate's "projects a non-entity result" throw. **The BARE-SCALAR half of this gate was OPENED by step 3a (2026-08-06)** — the `default:` arm now admits a path-addressable leaf under a document-path alias; what is left at this site is the **entity-ref and mixed** half (step 3b) and a bare **computed** leaf (the reverted tier 2). Note the row is still a single site but is now **two** decisions, and the read side has a **fifth** consumer of the alias carrier (the late-fallback strip in `MongoShapedQueryCompilingExpressionVisitor`) that any widening here must be checked against — missing it is silent. See the step-3a note in `Query/AGENTS.md` |
-| 3 | Computed long tail | `MongoExpressionTranslator.TranslateNode`'s final `return null`, `TranslateOperand`'s cast guard, and `NativeProjectionBinder.TryTranslateLeaf`'s final `return null` |
-| 4 | Joins | `NativeSlotPopulator`'s catch-all + `MongoSelectLowerer`'s join-coverage guard; **GroupBy+Join is the one *hard* decline** (throws under `Native` too, because the driver fallback returns silently-empty joins) |
-| 5 | `VectorSearch` | ✅ **OPENED 2026-08-06 — this row is now HISTORY, kept because it records the hazard the fix is shaped around.** There were **TWO independent gates, not one** (corrected 2026-08-06, measured by mutation): `NativeSlotPopulator`'s catch-all fired first — `VectorSearch` is in `AllowedQueryableExtensions` but in neither the `VisitMethodCall` switch nor `IsNativeRepresentableSlotOperator` — so `Route` was already `Fallback` before `ClassifyNativeDisposition`'s `ContainsVectorSearch` branch was consulted, and **opening both WITHOUT emitting the stage returns silently wrong data** (correct row count, insertion order, no exception). **The fix collapses the two into ONE FACT READ TWICE:** `NativeSlotPopulator` gained an explicit `call.IsVectorSearch()` branch that either binds `Select.VectorSearch` or calls `MarkNotNativelyRepresentable()` (no third exit), and `ClassifyNativeDisposition`'s third parameter changed meaning to `hasUnboundVectorSearch` = `ContainsVectorSearch(CapturedExpression) && Select.VectorSearch is null`. The dangerous state now requires two contradictory conditions, so a later edit deleting the lowerer block or the populator branch degrades to a graceful fallback rather than to wrong data. Residual decline: a `preFilter` outside the native predicate set, or a non-parameter/non-constant vector/limit/options argument |
-| 6 | GroupBy breadth | five separate sites: computed keys and computed accumulator operands in `NativeGroupByBinder`, element/result selectors in `TranslateGroupBy`, bare `IGrouping`, and the post-group guards |
-| 7 | `Contains` / `ElementAt` / `Last` | no binder at all — `NativeSlotPopulator` catch-all |
-| 8 | Composite-PK member access | `MongoExpressionTranslator.TryResolveMember` / `TryResolveOwnedFieldPath` |
-| 9 | Parameterized `StartsWith`/`EndsWith`/`Contains` | `MongoQueryLanguageRenderer`'s constant-only regex term (EF-247); also unblocks `!(Count > @param)` via the negator |
-| 10 | Correlated element predicates in `Any`/`All`/`Count(pred)` | `ReferencesEnclosingScope`; needs `$expr`+`$filter`/`$anyElementTrue` for the quantifiers, a two-scope element translator for the count |
-
-**One caution about reading that table.** Every row is a *decline site*, not a *feature estimate* — item 1 being
-"a single site" means the gate is in one place, not that reference `Include` is a small job. The table is for
-locating the work, not for sizing it.
-
-The owned-data work stream that has occupied the last nine slices is **not** on this critical path — which is
-exactly what §7's flat spec number has been saying all along, and is worth stating plainly rather than
-re-deriving each slice.
+| # | Gap | Cases | Sole-cause | The gate |
+|---|---|---:|---:|---|
+| 1 | Predicate breadth | 368 (incl. sort keys) | 316 | `NativeSlotPopulator.PopulateNativeSlots`'s `Where` and `OrderBy` arms → `MongoExpressionTranslator.TryTranslate` / `TryTranslateField` |
+| 2 | Projection: bare-computed, entity-ref and mixed leaves | 290 | 230 | `NativeProjectionBinder.TryPopulateNativeProjection`. **The bare-scalar half was OPENED by 3a**; what is left is the entity-ref/mixed half (3b), the bare computed leaf (tier 2), and the two narrowed compositions (3d). One site, now **three** decisions; the read side has a **fifth** consumer of the alias carrier (the late-fallback strip in `MongoShapedQueryCompilingExpressionVisitor`) that any widening must be checked against — missing it is silent |
+| 3 | Computed long tail (the translator itself) | (inside 1 and 2) | — | `MongoExpressionTranslator.TranslateNode`'s final `return null`, `TranslateOperand`'s cast guard, `NativeProjectionBinder.TryTranslateLeaf`'s final `return null` |
+| 4 | Joins | 373 | 250 | `NativeSlotPopulator`'s catch-all + `MongoSelectLowerer`'s join-coverage guard + `TranslateSelect`'s reference-`Include` confirm-decline + the `$lookup` hard throw. **GroupBy+Join is the one *hard* decline** (throws under `Native` too, because the driver fallback returns silently-empty joins) |
+| 5 | `VectorSearch` | 4 residual (EF-382) | 4 | ✅ **OPENED 2026-08-06 — this row is HISTORY, kept because it records the hazard the fix is shaped around.** There were **TWO independent gates, not one** (measured by mutation): `NativeSlotPopulator`'s catch-all fired first, so `Route` was already `Fallback` before `ContainsVectorSearch` was consulted, and **opening both WITHOUT emitting the stage returns silently wrong data** (correct row count, insertion order, no exception). The fix collapses the two into ONE FACT READ TWICE: an explicit `call.IsVectorSearch()` branch that either binds `Select.VectorSearch` or declines (no third exit), and `hasUnboundVectorSearch = ContainsVectorSearch(CapturedExpression) && Select.VectorSearch is null`. The dangerous state now needs two contradictory conditions. Residual: a `preFilter` outside the native predicate set (**EF-382**), or a non-parameter/non-constant vector/limit/options argument |
+| 6 | GroupBy breadth | 130 | 50 | five sites: computed keys and computed accumulator operands in `NativeGroupByBinder`, element/result selectors in `TranslateGroupBy`, bare `IGrouping`, and the post-group guards |
+| 7 | `Contains` / `ElementAt` / `Last` / `Cast` | 40 | 40 | no binder at all — `NativeSlotPopulator`'s catch-all |
+| 8 | Composite-PK member access | 116 | **12** | `MongoExpressionTranslator.TryResolveMember` / `TryResolveOwnedFieldPath`. **Sizing caveat: 104 of the 116 also decline at the projection binder**, so this site alone is worth 12 |
+| 9 | Parameterized `StartsWith`/`EndsWith`/`Contains` | 19 | 19 | `MongoQueryLanguageRenderer`'s constant-only regex term (**EF-247**, JIRA status `Blocked` — check what it is blocked on before scheduling); also unblocks `!(Count > @param)` via the negator |
+| 10 | Scalar-aggregate binder | 82 | **82** | `BindAggregateOrFallback` → `NativeCardinalityBinder.TryBindAggregate`. **82 of 82 sole-cause** (as are rows 7, 9, 12 and projection step 3b — but this is the biggest of them) |
+| 11 | `Distinct` | 84 | 64 | `TranslateDistinct` → `NativeGroupByBinder.TryBindDistinctFromProjection` |
+| 12 | Set operations | 42 | 42 | `TryTranslateSetOperation`'s scope gate |
+| 13 | Post-terminal slot operator | 34 | 22 | `NativeSlotPopulator`'s `HasTerminalOperator` guard |
+| 14 | Correlated element predicates in `Any`/`All`/`Count(pred)` | not spec-visible | — | `ReferencesEnclosingScope`; needs `$expr`+`$filter`/`$anyElementTrue` for the quantifiers, a two-scope element translator for the count |
