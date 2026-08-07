@@ -28,19 +28,29 @@ TestContainers booted its own `mongodb/mongodb-atlas-local`.
    *exactly* (the 16-row decline-site table, its sole-cause column, and the `BARE 222 / WRAPPED_NEW 156 /
    WRAPPED_INIT 20` split). **15 of the 20 cited per-feature figures reproduce to the case.** The 8-case
    shortfall lives entirely in three classification boundaries, named in §3, none of which changes the shape of
-   the decomposition. MEASURED.
+   the decomposition. MEASURED. *(Basis note, added on review: §9.1's per-feature table is **not** disjoint —
+   its rows sum to **590**, and §9.1's own footnote reconciles that: "≈590 rather than exactly 588 because 2
+   VALUE_OK projection leaves are also joins cases and are counted in both views; the disjoint work-stream table
+   above is the authoritative partition." **My per-feature table IS disjoint** — every case is counted once, so
+   it sums to the same 580 as the site decomposition in §2. The like-for-like comparison is therefore
+   **580 vs 588 (−1.4%)**, disjoint against disjoint. Row-sum against row-sum would be 580 vs 590 (−1.7%), but
+   the two columns are not on the same basis, so −1.4% is the figure to use.)*
 2. **"One capability" is CONFIRMED for predicate ↔ projection-leaf and REFUTED for sort key.** Predicate and
    projection-leaf converge on the *same method* — `TranslateOperand`, reached from `TranslateComparison` and
    from `TryTranslateValue`, differing only by the `allowNumericWidening` flag — and both bottom out in
    `TryResolveMember`. Sort key does not: `TryTranslateField` returns a `MongoFieldExpression`, and
    `MongoPipelineFactory.RenderSort` **throws** for any other node, because MQL `$sort` accepts only field
-   paths. **≥92 of the 104 sort-key cases therefore need a computed-sort capability (`$set`/`$addFields` +
-   `$sort`), which is IR + lowerer + renderer work, not a translator arm.** READ + MEASURED. §4.
-3. **Stream 1's realistic yield is 474, not 588** — that is the MEASURED sole-cause count. A further **62** need
-   stream 1 **and** stream 2 (set ops 32, `Distinct` 26, scalar aggregate 4); **34** need two stream-1 features
-   at once; **12** are additionally blocked by deferred work (joins / composite-PK / entity leaf) and cannot
-   convert this release. There is **no double-count** between streams 1 and 2 — the buckets are partitioned by
-   *first* decline site — but there is a **dependency**, and the plan does not record it. MEASURED. §5.
+   paths. **92 of the 104 sort-key cases therefore need a computed-sort capability (`$set`/`$addFields` +
+   `$sort`), which is IR + lowerer + renderer work, not a translator arm** — 92 is a floor, 98 a ceiling; the
+   6-case gap is itemized in §4.3. READ + MEASURED. §4.
+3. **Stream 1's realistic yield is 474, not 588 — and only 400 of that 474 is deliverable without the
+   computed-sort slice.** MEASURED sole-cause. **74 of the 474 are slice-B-dependent** (their single decline is
+   a sort-position one that no translator arm can reach), spread across six groups and *not* confined to the
+   ones §7 originally caveated — see §5.1, corrected on review. Beyond the 474: **62** need stream 1 **and**
+   stream 2 (set ops 32, `Distinct` 26, scalar aggregate 4); **34** need two stream-1 features at once; **12**
+   are additionally blocked by deferred work (joins / composite-PK / entity leaf) and cannot convert this
+   release. There is **no double-count** between streams 1 and 2 — the buckets are partitioned by *first*
+   decline site — but there is a **dependency**, and the plan does not record it. MEASURED. §5.
 4. **`MongoExpressionTranslator.cs` should be split BEFORE slice 1, as a mechanical `partial class` file
    move.** The measurement hands you the split for free: the ~20 features land in exactly three of its regions,
    and ~10 slices will all edit `TranslateOperand`. Extracting *types* would be wrong — the private scope state
@@ -140,31 +150,43 @@ Selector-body shapes at the projection site: **BARE 222, WRAPPED_NEW 156, WRAPPE
 
 MEASURED. `pred` / `sort` / `proj` are the three positions; **sole-cause** is the count whose query recorded
 exactly one decline site *and* one feature — i.e. the honest "opening this gate alone turns it green" figure.
-`cited` is the figure in the merge-plan spec / status-doc §9.1.
+**`solB`** (added on review) is the sub-count of `sole-cause` whose single decline is a sort-position one that
+no translator arm can reach, so it needs **slice B** (§4.3) as well; `sole−solB` is what the group delivers
+without slice B. `cited` is the figure in the merge-plan spec / status-doc §9.1.
 
-| # | feature group | pred | sort | proj | **total** | **sole-cause** | cited | reproduced? |
-|---|---|---:|---:|---:|---:|---:|---:|---|
-| 1 | cast / `Convert` operand | 50 | 8 | 14 | **72** | 56 | 72 | **yes, exact** |
-| 2 | translator already resolves it as a VALUE (reverted tier 2) | — | — | 54 | **54** | 28 | 54 | **yes, exact** |
-| 3 | `EF.Property` leaf | 38 | 6 | 6 | **50** | 44 | 48 | +2 |
-| 4 | constructed value (tuple / anon / DTO / list) | 16 | 2 | 24 | **42** | 36 | 50 | **−8** |
-| 5 | bare constant / query parameter | 30 | 10 | — | **40** | 40 | 40 | **yes, exact** |
-| 6 | `Nullable.HasValue` / `.Value` | 10 | — | 28 | **38** | 36 | 38 | **yes, exact** |
-| 7 | `Contains` over a client collection | 18 | 18 | — | **36** | 36 | 36 | **yes, exact** |
-| 8 | `Coalesce` (`??`) | 2 | 22 | 8 | **32** | 18 | 32 | **yes, exact** |
-| 9 | `Add` (string concat / arithmetic) | 10 | 4 | 18 | **32** | 16 | 32 | **yes, exact** |
-| 10 | entity equality (`o == someOrder`) | 30 | — | — | **30** | 22 | 34 | −4 |
-| 11 | other client / BCL method call | 8 | — | 22 | **30** | 30 | 30 | **yes, exact** |
-| 12 | `Conditional` (`?:`) | 2 | 10 | 14 | **26** | 26 | 26 | **yes, exact** |
-| 13 | other arithmetic / comparison operator | 16 | 4 | 2 | **22** | 22 | 18 | +4 |
-| 14 | unary `Negate` | — | — | 18 | **18** | 8 | 18 | **yes, exact** |
-| 15 | `Not` over a non-native operand | — | 18 | — | **18** | 18 | 18 | **yes, exact** |
-| 16 | `Equals(...)` method | 16 | — | — | **16** | 16 | 16 | **yes, exact** |
-| 17 | `GetType` / type test | 8 | — | — | **8** | 8 | 8 | **yes, exact** |
-| 18 | array literal | 2 | — | 4 | **6** | 6 | 10 | −4 |
-| 19 | other member access | — | 2 | 4 | **6** | 4 | 6 | **yes, exact** |
-| 20 | `EF.Functions.Like` | 4 | — | — | **4** | 4 | 4 | **yes, exact** |
-| | **total** | **260** | **104** | **216** | **580** | **474** | ≈588 | −8 |
+**This table is disjoint** — every case appears in exactly one row, so the `total` column sums to the same 580
+as §2's site decomposition. **The `cited` column is not**: it sums to **590**, and §9.1's own footnote
+reconciles that — *"≈590 rather than exactly 588 because 2 VALUE_OK projection leaves are also joins cases and
+are counted in both views; the disjoint work-stream table above is the authoritative partition."* The
+like-for-like comparison is 580 against the disjoint **588**.
+
+| # | feature group | pred | sort | proj | **total** | **sole** | solB | cited | reproduced? | what the translator needs |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | cast / `Convert` operand | 50 | 8 | 14 | **72** | 56 | 6 | 72 | **yes, exact** | `TranslateOperand`'s `Convert` branch: admit a type-changing cast via `$convert`/`$toX` **without** relaxing the narrowing-divergence guard |
+| 2 | translator already resolves it as a VALUE (reverted tier 2) | — | — | 54 | **54** | 28 | 0 | 54 | **yes, exact** | *nothing* — the translator already succeeds; the gate needs a synthetic projection alias |
+| 3 | `EF.Property` leaf | 38 | 6 | 6 | **50** | 44 | 0 | 48 | +2 | `TryResolveMember` / `TryGetMemberOrEFProperty`: accept a top-level `EF.Property(param, "name")`, not only owned chains |
+| 4 | constructed value (tuple / anon / DTO / list) | 16 | 2 | 24 | **42** | 36 | 0 | 50 | **−8** | decompose the construction: per-member comparison in predicate, nested `$project` document in projection |
+| 5 | bare constant / query parameter | 30 | 10 | — | **40** | 40 | 10 | 40 | **yes, exact** | no new node kind — admit a whole-node `Constant`/`QueryParameterExpression` at each gate |
+| 6 | `Nullable.HasValue` / `.Value` | 10 | — | 28 | **38** | 36 | 0 | 38 | **yes, exact** | `TryResolveMember`: peel `Nullable<>.Value`; map `.HasValue` to `$ne: null` |
+| 7 | `Contains` over a client collection | 18 | 18 | — | **36** | 36 | 18 | 36 | **yes, exact** | `TryMatchContainsMethod`: accept a client-collection source into the existing `MongoInExpression` |
+| 8 | `Coalesce` (`??`) | 2 | 22 | 8 | **32** | 18 | 8 | 32 | **yes, exact** | **new node kind** — `$ifNull` in `TranslateOperand`, plus renderer + `IsQueryDialectRenderable` + negator |
+| 9 | `Add` (string concat / arithmetic) | 10 | 4 | 18 | **32** | 16 | 0 | 32 | **yes, exact** | `$add` already exists for numerics; string operands need `$concat` |
+| 10 | entity equality (`o == someOrder`) | 30 | — | — | **30** | 22 | 0 | 34 | −4 | decompose to a primary-key comparison before `TranslateComparison`; no new node kind |
+| 11 | other client / BCL method call | 8 | — | 22 | **30** | 30 | 0 | 30 | **yes, exact** | per-method recognizers (`ToString`→`$toString`, `Abs`→`$abs`, `IndexOf`→`$indexOfCP`); `ToList`/`ToArray`/`AsEnumerable` are strippable wrappers |
+| 12 | `Conditional` (`?:`) | 2 | 10 | 14 | **26** | 26 | 10 | 26 | **yes, exact** | **new node kind** — `$cond`, plus renderer + `IsQueryDialectRenderable` + negator |
+| 13 | other arithmetic / comparison operator | 16 | 4 | 2 | **22** | 22 | 4 | 18 | +4 | widen `MapArithmeticOperator` / `MapComparisonOperator` coverage |
+| 14 | unary `Negate` | — | — | 18 | **18** | 8 | 0 | 18 | **yes, exact** | `$multiply: [-1, x]` (or `$subtract` from 0) in `TranslateOperand` |
+| 15 | `Not` over a non-native operand | — | 18 | — | **18** | 18 | 18 | 18 | **yes, exact** | `MongoExpressionNegator` over a **computed** operand — and slice B, since all 18 are sort |
+| 16 | `Equals(...)` method | 16 | — | — | **16** | 16 | 0 | 16 | **yes, exact** | map `a.Equals(b)` onto `Equal` in `TranslateComparison`; no new node kind |
+| 17 | `GetType` / type test | 8 | — | — | **8** | 8 | 0 | 8 | **yes, exact** | reuse the discriminator predicate `TranslateOfType` already builds |
+| 18 | array literal | 2 | — | 4 | **6** | 6 | 0 | 10 | −4 | `NewArrayInit` → a `$literal` array (already partly works as an `$in` right-hand side) |
+| 19 | other member access | — | 2 | 4 | **6** | 4 | 0 | 6 | **yes, exact** | `TryResolveMember` for the residual member shapes |
+| 20 | `EF.Functions.Like` | 4 | — | — | **4** | 4 | 0 | 4 | **yes, exact** | route to the existing `MongoRegexExpression` (SQL-pattern → regex translation) |
+| | **total** | **260** | **104** | **216** | **580** | **474** | **74** | 590 (≡588 disjoint) | −8 | |
+
+**The "what the translator needs" column is INFERRED** — it names the decline site (READ) and the *shape* of the
+fix, not a committed design. Each slice still owns its own design decision; the column exists so the
+implementation plan can size a slice without re-reading the translator.
 
 **Fifteen of twenty rows reproduce exactly, and every per-position cell of those fifteen matches too**
 (e.g. `Convert` 50/8/14, `Coalesce` 2/22/8, `Add` 10/4/18, `Conditional` 2/10/14, `Nullable` 10/—/28).
@@ -271,7 +293,13 @@ sort key requires `$set`/`$addFields` of a synthetic field, `$sort` on it, and (
 | | cases | needs |
 |---|---:|---|
 | `??` 22, `Not` 18, `Contains` 18, `?:` 10, bare const 10, `Convert`-over-comparison 4, `Add` 4, other operator 4, constructed value 2 | **92** | **computed-sort capability**, in addition to any translator arm |
-| `EF.Property` 6, `Convert` 4, other member 2 | 12 | translator only (result is a field ref) |
+| `EF.Property` 6 | 6 | translator only — **certain**: the fix is in `TryResolveMember` and its result *is* a `MongoFieldExpression` |
+| `Convert`-node 4, other member 2 | 6 | **ambiguous** — the minimal failing node is a cast / a member, but whether the enclosing sort key resolves to a field ref was not established |
+
+**Justification for "≥92" (finding 3 on review).** The 92-row is exhaustive of the cases *proven* to need a
+non-field sort key, so 92 is a **floor**. The ceiling is **98**: the 6 ambiguous cases could go either way, and
+resolving them needs a mutation of `RenderSort` that this spike did not run. Only the `EF.Property` 6 are
+certainly translator-only. So: **92 ≤ N ≤ 98**, best estimate 92. UNVERIFIED above 92.
 
 **Verdict.** Stream 1 is **not one capability, it is two**:
 
@@ -279,8 +307,9 @@ sort key requires `$set`/`$addFields` of a synthetic field, `$sort` on it, and (
   260 + projection 216 + the ≤12 field-shaped sort cases). The spec's "one place has to learn them" is **exactly
   right for this part**, and the predicate↔projection identity is stronger than the spec claims: it is the same
   *method*, not two similar ones.
-- **Capability B — computed sort keys.** ≥92 cases. Not a `MongoExpressionTranslator` change at all. It is not
-  named anywhere in the merge plan.
+- **Capability B — computed sort keys.** 92 cases (floor; ceiling 98). Not a `MongoExpressionTranslator` change
+  at all. It was not named anywhere in the merge plan when this spike ran. *(Update: the owner has since ruled
+  it into the plan on the strength of this section — see `17c5525f`.)*
 
 This does not invalidate merging the 368 and 220 buckets — the merge is correct for the 480-odd cases that
 matter most — but **a stream-1 implementation plan written as "20 translator slices" will silently under-deliver
@@ -288,7 +317,53 @@ by ~92 cases unless capability B is scheduled as its own slice.**
 
 ---
 
-## 5. Stream 1's realistic yield is 474, not 588
+## 5. Stream 1's realistic yield is 474, not 588 — and 400 without slice B
+
+### 5.1 The slice-B split of the 474 (added on review — finding 2)
+
+MEASURED, by re-querying the retained round-2 sweep. Applying the rule *"a sole-cause case whose single decline
+is in sort position and is not `EF.Property` needs slice B"*:
+
+| | cases |
+|---|---:|
+| stream-1 sole-cause | **474** |
+| …of which **slice-B-dependent** | **74** |
+| **…deliverable without slice B** | **400** |
+
+Which groups carry it — **six, not the four §7 originally caveated**:
+
+| group | sole-cause | slice-B-dependent | without slice B |
+|---|---:|---:|---:|
+| A13 `Not` | 18 | **18** | **0** |
+| A6 client-collection `Contains` | 36 | 18 | 18 |
+| A3 bare constant / query parameter | 40 | **10** | 30 |
+| A9 `?:` | 26 | 10 | 16 |
+| A12 `??` | 18 | 8 | 10 |
+| A1 casts | 56 | **6** | 50 |
+| A11 other arithmetic / comparison | 22 | 4 | 18 |
+| all other groups (13) | 258 | 0 | 258 |
+| **total** | **474** | **74** | **400** |
+
+**This corrects two claims made in the first version of this document.**
+
+1. §7's "**Slices A1–A5 are 204 sole-cause … none of which needs slice B**" was **wrong**. Measured, A1 carries
+   **6** slice-B-dependent cases and A3 carries **10**, so A1–A5 is **204 sole-cause of which 16 need slice B →
+   188 without it**. A1's exposure was not visible from §4.2's prose, which described A1's 8 sort cases as split
+   4 field-shaped / 4 not; the sole-cause split is different from the total split — of A1's 8 sort cases,
+   4 (`Convert`-over-comparison) are all sole-cause and 2 of the other 4 (`Convert`-node) are too, giving 6.
+2. A3 was never caveated at all, yet it is 100% sole-cause, so **every one of its 10 sort cases is a direct
+   loss** if slice B does not ship.
+
+**Residual uncertainty:** 2 of the 74 are the ambiguous `Convert`-node sort cases of §4.3, which might turn out
+field-shaped. The honest range is **72–74 slice-B-dependent / 400–402 without slice B**. UNVERIFIED at that
+precision; 74/400 is the conservative reading.
+
+**Why this matters for sequencing, not just accuracy.** The "204 with zero slice-B risk" framing is what made
+A1–A5 look safe to run *before* slice B. It is not: running A1–A5 first still leaves 16 of their cases dark
+until slice B lands. A1, A2, A4 and A5 remain genuinely slice-B-independent at 50 / 44 / 28 / 36 = **158**, and
+that — not 204 — is the true "safe to start now" tranche.
+
+### 5.2 Beyond the sole-cause set
 
 MEASURED. Of the 582 cases whose first decline site is one of the three stream-1 sites and which carry at least
 one stream-1 feature:
@@ -308,8 +383,10 @@ so the 62 cases above are counted once, in stream 1. But there is an undocumente
 1's cases convert only once stream 2 has also landed, and 12 do not convert at all. The plan's §7 re-measurement
 checkpoint should therefore expect:
 
-- **after stream 1 alone: ≈474**, not 588 (and 474 is itself an upper bound — sole-cause means nothing else
-  declined at *population* time; the lowerer or renderer can still decline, as the 81 no-gate-site cases show);
+- **after stream 1 alone, with slice B: ≈474**, not 588 (and 474 is itself an upper bound — sole-cause means
+  nothing else declined at *population* time; the lowerer or renderer can still decline, as the 81 no-gate-site
+  cases show);
+- **after stream 1 alone, without slice B: ≈400** (§5.1);
 - **after streams 1 + 2 together: up to ≈570** from stream 1's bucket.
 
 If the checkpoint measures ~474 after stream 1, **that is the expected result, not a shortfall** — reading it as
@@ -359,7 +436,7 @@ Ordered by yield-per-unit-of-work, with the two hard prerequisites first.
 The `partial class` move of §6. Pure mechanical; gate is a green three-EF-version build and a zero-delta spec
 sweep.
 
-### Slice B — computed sort keys (≥92 cases enabled, 0 delivered alone)
+### Slice B — computed sort keys (92 cases enabled, of which **74 are stream-1 sole-cause**; 0 delivered alone)
 `$set`/`$addFields` + `$sort` + `$unset`, a new `MongoAddFieldsStage`, `RenderSort` accepting a non-field
 `KeySelector`, and `NativeSlotPopulator`'s `OrderBy`/`ThenBy` arms calling `TryTranslate`/`TryTranslateValue`
 instead of only `TryTranslateField`. **Delivers nothing on its own** — it is the multiplier that lets the sort
@@ -369,31 +446,36 @@ the spike this slice must open with.
 
 ### Capability-A slices, by measured yield
 
-| slice | feature | total | **sole-cause** | notes |
-|---|---|---:|---:|---|
-| A1 | cast / `Convert` operand | 72 | **56** | `TranslateOperand`'s `Convert` branch. Highest single yield. Narrowing casts are the documented divergence risk — do not simply relax the guard. |
-| A2 | `EF.Property` leaf | 50 | **44** | `TryResolveMember` / `TryGetMemberOrEFProperty`. Lowest-risk slice on the board — pure resolution, no new node kind, lands in all three positions. **Best first slice after slice 0.** |
-| A3 | bare constant / query parameter | 40 | **40** | 100% sole-cause. Predicate/sort only; the projection half is A4. |
-| A4 | VALUE_OK / reverted tier 2 (projection) | 54 | **28** | **Has a recorded prerequisite** — see the step-3a note in `Query/AGENTS.md`: tier 2 was built, measured and reverted because the late-fallback path inherits the driver's bare `$size`. Do not re-attempt without that fixed. |
-| A5 | `Nullable.HasValue` / `.Value` | 38 | **36** | `TryResolveMember` peel. Pairs naturally with A2. |
-| A6 | client-collection `Contains` | 36 | **36** | 18 predicate (existing `MongoInExpression`), 18 sort (**needs slice B**). |
-| A7 | constructed value (tuple / anon / DTO / list) | 42 | **36** | Predicate half is tuple comparison; projection half is a nested construction. Check whether these are really one slice before committing. |
-| A8 | other client / BCL method call | 30 | **30** | Long tail: `ToString`, `Abs`, `IndexOf`, `ToList`/`ToArray`/`AsEnumerable`, `FirstOrDefault`, a client method. Split per method if it does not fit one slice. |
-| A9 | `Conditional` (`?:`) | 26 | **26** | New `$cond` node ⇒ renderer + `IsQueryDialectRenderable` + negator, all three. 10 of 26 need slice B. |
-| A10 | entity equality | 30 | **22** | Decompose to key comparison; all 30 in `NorthwindMiscellaneous`. No new node kind. |
-| A11 | other arithmetic / comparison operator | 22 | **22** | |
-| A12 | `Coalesce` (`??`) | 32 | **18** | New `$ifNull` node. **22 of 32 need slice B** — without it this slice yields ~10. |
-| A13 | `Not` over a non-native operand | 18 | **18** | **All 18 are sort position** — yields **zero** without slice B. |
-| A14 | `Add` (string concat / arithmetic) | 32 | **16** | `$concat` for the string case. |
-| A15 | `Equals(...)` method | 16 | **16** | Map to `Equal`; no new node kind. Cheap. |
-| A16 | `GetType` / type test | 8 | **8** | Reuse `TranslateOfType`'s discriminator machinery. |
-| A17 | unary `Negate` | 18 | **8** | Projection only. |
-| A18 | array literal | 6 | **6** | |
-| A19 | other member access | 6 | **4** | |
-| A20 | `EF.Functions.Like` | 4 | **4** | Reuse `MongoRegexExpression`. All 4 in one class. |
+`sole` is the sole-cause yield **with** slice B; `−B` is what the slice delivers **without** it (§5.1).
 
-**Totals: 580 upper bound, 474 sole-cause.** Slices A1–A5 alone are **204 sole-cause** — 43% of the realistic
-yield in five slices, none of which needs slice B.
+| slice | feature | total | **sole** | **−B** | notes |
+|---|---|---:|---:|---:|---|
+| A1 | cast / `Convert` operand | 72 | **56** | 50 | `TranslateOperand`'s `Convert` branch. Highest single yield. Narrowing casts are the documented divergence risk — do not simply relax the guard. **6 of the 56 need slice B** (corrected on review; 2 of those 6 are the ambiguous cases of §4.3). |
+| A2 | `EF.Property` leaf | 50 | **44** | 44 | `TryResolveMember` / `TryGetMemberOrEFProperty`. Lowest-risk slice on the board — pure resolution, no new node kind, lands in all three positions **including sort**. **Best first slice after slice 0.** |
+| A3 | bare constant / query parameter | 40 | **40** | 30 | 100% sole-cause. **10 of the 40 are sort position and need slice B** (corrected on review — this slice was previously uncaveated). |
+| A4 | VALUE_OK / reverted tier 2 (projection) | 54 | **28** | 28 | **Has a recorded prerequisite** — see the step-3a note in `Query/AGENTS.md`: tier 2 was built, measured and reverted because the late-fallback path inherits the driver's bare `$size`. Do not re-attempt without that fixed. |
+| A5 | `Nullable.HasValue` / `.Value` | 38 | **36** | 36 | `TryResolveMember` peel. Pairs naturally with A2. |
+| A6 | client-collection `Contains` | 36 | **36** | 18 | 18 predicate (existing `MongoInExpression`), 18 sort (**needs slice B**). |
+| A7 | constructed value (tuple / anon / DTO / list) | 42 | **36** | 36 | Predicate half is tuple comparison; projection half is a nested construction. Check whether these are really one slice before committing. |
+| A8 | other client / BCL method call | 30 | **30** | 30 | Long tail: `ToString`, `Abs`, `IndexOf`, `ToList`/`ToArray`/`AsEnumerable`, `FirstOrDefault`, a client method. Split per method if it does not fit one slice. |
+| A9 | `Conditional` (`?:`) | 26 | **26** | 16 | New `$cond` node ⇒ renderer + `IsQueryDialectRenderable` + negator, all three. 10 of 26 need slice B. |
+| A10 | entity equality | 30 | **22** | 22 | Decompose to key comparison; all 30 in `NorthwindMiscellaneous`. No new node kind. |
+| A11 | other arithmetic / comparison operator | 22 | **22** | 18 | 4 need slice B. |
+| A12 | `Coalesce` (`??`) | 32 | **18** | 10 | New `$ifNull` node. **22 of the 32 cases are sort position** — without slice B this slice yields 10. |
+| A13 | `Not` over a non-native operand | 18 | **18** | **0** | **All 18 are sort position** — yields **zero** without slice B. |
+| A14 | `Add` (string concat / arithmetic) | 32 | **16** | 16 | `$concat` for the string case. |
+| A15 | `Equals(...)` method | 16 | **16** | 16 | Map to `Equal`; no new node kind. Cheap. |
+| A16 | `GetType` / type test | 8 | **8** | 8 | Reuse `TranslateOfType`'s discriminator machinery. |
+| A17 | unary `Negate` | 18 | **8** | 8 | Projection only. |
+| A18 | array literal | 6 | **6** | 6 | |
+| A19 | other member access | 6 | **4** | 4 | |
+| A20 | `EF.Functions.Like` | 4 | **4** | 4 | Reuse `MongoRegexExpression`. All 4 in one class. |
+| | **total** | **580** | **474** | **400** | |
+
+**Totals: 580 upper bound, 474 sole-cause with slice B, 400 without.** Slices A1–A5 are **204 sole-cause**, but
+**16 of those need slice B**, so they deliver **188** on their own — and the genuinely slice-B-independent
+tranche is **A1, A2, A4, A5 = 158**. *(Corrected on review: the first version of this document claimed
+"A1–A5 … 204, none of which needs slice B", which is false — see §5.1.)*
 
 **Per-slice obligation, for every slice that introduces a new `MongoExpression` node kind** (A9, A12, A14, and
 possibly A1): `MongoQueryLanguageRenderer.IsQueryDialectRenderable`, `MongoQueryLanguageRenderer.RenderNode` /
@@ -448,8 +530,10 @@ Then regex `\|\|INSTR first=(\S*) sites=(\S*) detail=(.*?)\|\|` on the (a) messa
 
 - Whether a synthetic `$set` sort field survives the whole-entity DOM and streaming shapers untouched (slice B's
   opening spike must answer it).
-- The field-shapedness split of the 104 sort cases (92 / 12) is INFERRED from the feature classification plus
-  `RenderSort`'s contract; it was not measured by mutating `RenderSort`.
+- The field-shapedness split of the 104 sort cases (92 certain / 6 certain-field / 6 ambiguous) is INFERRED from
+  the feature classification plus `RenderSort`'s contract; it was not measured by mutating `RenderSort`. The
+  same ambiguity puts §5.1's slice-B-dependent sole-cause figure in the range **72–74** (74 quoted, the
+  conservative end).
 - Whether the `EF.Property` fix in `TryResolveMember` really lands in all three positions was established by
   READING the call graph, not by shipping it.
 - Whether the 4 ambiguous `NorthwindAggregateOperatorsQueryMongoTest` cases are composite-PK or breadth (the ±4
