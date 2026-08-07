@@ -226,8 +226,10 @@ EF-358 fix (`7c199e4`) → slice 8 (`33fdc58`) → slice 9 (`229294f`) → **the
 (`9dd6fc15`) → EF-379 (`9065acfc`, the current tip)**. *(The pre-joins portion of this chain is pre-rebase
 hashes — see the header warning; the joins portion is post-rebase and is on the branch.)* **The "as of
 2026-07-31 there is no unsquashed work in flight" statement still holds at `9065acfc`** — every slice,
-including all seven joins slices, is one squashed commit on the branch and pushed. Nothing is merged to `main`
-yet — the whole native stack lands at parity/cutover.
+including all seven joins slices, is one squashed commit on the branch and pushed. ~~Nothing is merged to
+`main` yet — the whole native stack lands at parity/cutover.~~ **SUPERSEDED 2026-08-07 — that was the
+withdrawn cutover plan.** Nothing is merged to `main` yet, but per §8's plan of record the stack now lands at
+**merge** (~80% coverage, driver path shipping alongside it), not at parity with driver-LINQ retired.
 
 ---
 
@@ -562,7 +564,11 @@ the four derivation sites plus the fifth reader, and why there is deliberately *
   streaming, and **reference-Include** streaming — the last blocked behind making reference `Include` native at
   all. Those shapes still route through the DOM shaper, not the streaming one. Also minor: delete the
   now-dead `RawBsonDocument` branch + `BsonRowReader`, which Phase 1 made unreachable.
-- **Parity cutover.** Once native reaches parity: retire the driver-LINQ fallback and delete the delegation code.
+- ~~**Parity cutover.** Once native reaches parity: retire the driver-LINQ fallback and delete the delegation
+  code.~~ **SUPERSEDED 2026-08-07 — that was the withdrawn cutover plan.** §8 states the plan of record: the
+  driver path **ships** in this release regardless of coverage, and retiring it is decoupled from reaching
+  parity — it becomes a separate, later-phase project scheduled independently (§9 is now that project's
+  inventory, not this epic's next step).
 - **Minor SelectMany follow-ons (EF-347 leftovers):** cross-scope computed leaf (`o.Discount * i.Price`),
   the inner-`Select`-form computed-leaf binder.
 - **Owned-collection follow-ons (EF-322), as they stand after slices 4–9 — in the order they are actually
@@ -1050,7 +1056,9 @@ predicate and sort-key position 368**, **projection long tail 290** (3b 52 / 3c 
 **EF-395**), **GroupBy 130** (deferred, **EF-393**), **composite-PK member access 116** (deferred, **EF-394**),
 `Distinct` 84, scalar-aggregate binder 82, set operations 42, no-binder operators 40, post-terminal 34, regex
 19 (deferred, **EF-247**, JIRA status `Blocked`), the rest ≤ 8 each (`Not` over an unsupported subtree,
-deferred as **EF-396**; the remaining stragglers, deferred as **EF-397**). Two of those rows are the news.
+deferred as **EF-396**; of the remaining stragglers, the reducer binder and set-op-with-collection-`Include`
+items — 8 cases — are deferred as **EF-397**, and the `VectorSearch` pre-filter item — 4 cases — keeps its
+pre-existing **EF-382**, per §9.1 row 13). Two of those rows are the news.
 First, **translator breadth is one capability appearing in three positions** — the same ~20 features (casts,
 `??`, `?:`, `EF.Property`, `Nullable.Value`, string concat, entity equality, `Contains` over a client
 collection, …) account for the 368 *and* for the 220 in the projection column, so **≈588 cases (37% of the
@@ -1070,7 +1078,9 @@ sole-cause tranche (282 cases), **stream 3** slice 3b / the EF-356 fix (52 cases
 a targeted correctness fix, contributing 0 cases (its cases sit inside the deferred joins bucket and stay
 failing either way). Deferred and tracked: joins **373 (EF-392)**, GroupBy **130 (EF-393)**, composite-PK
 **116 (EF-394)**, slice 3d **18 (EF-395)**, non-constant regex **19 (EF-247**, `Blocked`**)**, `Not` over an
-unsupported subtree **8 (EF-396)**, stragglers **~12 (EF-397)**. Two tickets are explicitly *not* deferred and
+unsupported subtree **8 (EF-396)**, and the remaining stragglers **8 (EF-397)** plus the pre-existing
+**EF-382** **4** (the `VectorSearch` pre-filter item; §9.1 row 13 — EF-397 does **not** cover it, avoiding a
+duplicate ticket) — together the ~12-case "rest ≤ 8 each" bucket above. Two tickets are explicitly *not* deferred and
 *not* "correctness gaps that ship" either, because they are being fixed in this plan: **EF-356** (fixed by
 stream 3) and **EF-375** (fixed by stream 4, pulled in 2026-08-07 after the Task-1 ticket audit found its
 throw fires on an ordinary self-referencing model shape — ordinary, not uncommon, so it failed the bar for a
@@ -1553,8 +1563,10 @@ withdrawal, stated plainly so neither is missed:
 
 1. **File the deferral tickets** (§4, §5, §8 above) — a merge-bar item ("good tracking"), and cheapest done
    first: **EF-392** (joins, 373), **EF-393** (GroupBy, 130), **EF-394** (composite-PK, 116), **EF-395** (slice
-   3d, 18), **EF-396** (`Not` over an unsupported subtree, 8), **EF-397** (residual single-shape gaps, ~12);
-   **EF-247** (non-constant regex, 19) already exists — JIRA status `Blocked`, check what it is blocked on
+   3d, 18), **EF-396** (`Not` over an unsupported subtree, 8), **EF-397** (residual single-shape gaps — the
+   reducer binder and set-op-with-collection-`Include` items, 8; **not** the `VectorSearch` pre-filter item,
+   which keeps its existing **EF-382**, 4 — §9.1 row 13); **EF-247** (non-constant regex, 19) already exists —
+   JIRA status `Blocked`, check what it is blocked on
    before scheduling.
 2. **Stream 1 — translator breadth**, as several slices split by feature group (**588** cases: casts 72,
    tuple/anonymous comparison 50, `EF.Property` 48, bare constant/parameter 40, `Nullable.Value` 38,
