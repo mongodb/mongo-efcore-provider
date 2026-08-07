@@ -486,7 +486,9 @@ it is a per-slice obligation (§7 below), not a structural problem.
 > sole-cause). **The two orderings are different, and they collide in the worst possible way: the same small
 > integer means different features in each.** Examples: **§3 group 3 is `EF.Property`, but A3 is bare constant
 > / query parameter**; **§3 group 5 is bare constant, but A5 is `Nullable.HasValue`/`.Value`**; §3 group 9 is
-> `Add`, A9 is `?:`. Only **group 1 → A1** is a fixed point; every other number moves.
+> `Add`, A9 is `?:`. Five numbers are fixed points — where the group number equals its slice number — and the
+> rest move; check this against the mapping printed two lines below rather than trusting the claim: **1→A1,
+> 10→A10, 18→A18, 19→A19, 20→A20**.
 > **Stream 1's implementation plan is written one slice per group from these two tables**, so a bare "slice 5"
 > or "group 9" is ambiguous and has already produced one wrong list in this document (see the correction under
 > slice B). **Always write the `A`-prefix when you mean a slice, and say "§3 group N" when you mean a group.**

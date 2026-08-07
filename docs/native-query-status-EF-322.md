@@ -1104,7 +1104,9 @@ retired later, as a separate, out-of-scope project (full detail:
 (`docs/superpowers/specs/2026-08-07-stream1-translator-breadth-spike.md`), whose revised figures had not
 reached this document at all. Four streams deliver 81.7% (3331/4075 of the addressable surface):**
 **stream 1** translator breadth (**580** measured, not the cited 588 — and its *realistic* yield is **580 total
-/ 474 sole-cause**, of which **74 depend on the computed-sort slice**, leaving **400** without it; it
+/ 474 sole-cause**, of which **74 depend on the computed-sort slice**, leaving **400** without it and
+**≈508 after all of stream 1 with slice B** (474 + 34 that close within stream 1 once the sort-key multiplier
+is in) — judged against **≈570** after streams 1 and 2 together; it
 contributes **+570** to the projection, after stream 2 has also landed), **stream 2** the
 sole-cause tranche (282 cases), **stream 3** slice 3b / the EF-356 fix (52 cases), and **stream 4** EF-375 —
 a targeted correctness fix, contributing 0 cases (its cases sit inside the deferred joins bucket and stay
