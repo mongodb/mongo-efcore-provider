@@ -85,7 +85,8 @@ booted its own `mongodb/mongodb-atlas-local`.
    18 declining `Convert`-rooted sort keys, all of them `Convert` over a **query parameter** (10) or over a
    **transparent identifier** (8) — not one over a bare mapped member. So the probe's representative was
    unrepresentative of the cases being sized, and the narrowing to 92–94 that the first version of this document
-   claimed is **WITHDRAWN**. §5.2, §10. That same `Unwrap` raises a separate, pre-existing question about
+   claimed is **WITHDRAWN**. §5.1.1, §10. *(This citation read "§5.2" until a review caught it: the 18-declining-
+   `Convert` measurement is §5.1.1's table row, not §5.2, which is entirely about `CanRender` obligations.)* That same `Unwrap` raises a separate, pre-existing question about
    narrowing casts in sort position — §8, UNVERIFIED, not a slice-B concern.
 
 6. **A computed sort key is a COLLSCAN, and — the part that is not obvious — merely emitting a `$set` before a
@@ -290,7 +291,7 @@ prototype live and once with `MONGODB_EF_SPIKE_B=0`. The second column is what m
 | bare parameter — `OrderBy(x => k)` (A3) | declines | **native, `$set`** | **slice B alone** |
 | `Add` arithmetic — `x.A + x.B` (A11/A14, 4+4) | declines | **native, `$set`** | **slice B alone** |
 | `Multiply` — `x.A * x.B` | declines | **native, `$set`** | **slice B alone** |
-| `Convert` over a bare member, widening — `(double)x.A` | **native, PLAIN `$sort`** | native, PLAIN `$sort` | already native — but **this shape does not occur in the declining population**, see §5.2 |
+| `Convert` over a bare member, widening — `(double)x.A` | **native, PLAIN `$sort`** | native, PLAIN `$sort` | already native — but **this shape does not occur in the declining population**, see §5.1.1 *(read "§5.2" until a review caught it — §5.2 is about `CanRender`)* |
 | `Convert` over a bare member, narrowing — `(int)x.D` | **native, PLAIN `$sort`** | native, PLAIN `$sort` | as above; the narrowing question is §8 |
 | `??` — `x.Score ?? x.A` (A12, 22 in the 92) | declines | declines | needs **A12 + B** |
 | `Not` — `!x.Flag` (A13, 18) | declines | declines | needs **A13 + B** |
@@ -371,6 +372,16 @@ the root, and are G's operands themselves supported?)*
 | `?:` `Conditional` | 52 | 52 | 0 | **mostly NO** — 16 × `IIF(c.CustomerID.StartsWith("S"), 1, 2)` (method-call test); 32 × `IIF((o.Inner != null), o.Inner.City/CustomerID, "")` (transparent identifier — a join shape, a different blocker entirely); 2 with a `Convert` in the test; only 2 × `IIF((c.Region == null), "ZZ", c.Region)` over plainly-supported operands. 16 + 32 + 2 + 2 = 52 |
 | bare constant | 24 | 24 | 0 | n/a — this is the group slice B already converts (§4) |
 | `Convert` | 18 | 18 | 0 | **NO** — 10 × `Convert(<param>, …)`, 8 × `Convert(o.Outer.OrderID/OrderDate, Object)` (transparent identifier). §5.2 |
+
+**How much of the 692 this table covers, stated because the headline figure and the table do not match.** The
+six rows sum to `38 + 18 + 36 + 52 + 24 + 18` = **186**, of which the `Contains` row's 18 *enclosed* entries are
+the operands of the 18 `Not` keys rather than separate logged occurrences — so the table classifies
+`18 + 18 + 38 + 52 + 24 + 18` = **168 distinct declining occurrences, 24.3% of the 692**, leaving **524
+unclassified**. The rows above are the groups the ≈80 question needed answered, selected on that basis and not
+as a partition; **what the remaining 524 consist of is NOT established by this spike — UNVERIFIED.** The
+population is per-executed-case (async twins count twice) and includes keys inside cases whose first decline
+site is elsewhere, so the remainder is expected to be dominated by shapes outside stream 1's scope, but that
+expectation was not measured and no count is claimed for it.
 
 **The literal A5 failure mode — an enclosure above the labelled node — is measured at ZERO for `??`, `Not`,
 `?:` and `Convert`, and at 18 of 36 for `Contains` (all 18 enclosed in the `Not` keys).** So the classifier's

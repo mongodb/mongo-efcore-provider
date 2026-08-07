@@ -1,10 +1,27 @@
 # Native LINQ Translation (EF-322) — Status Report
 
-*Generated 2026-07-26 · **last updated 2026-08-07** · currently on `NativeQueryOngoing` at or above `2431bbf0`,
-stacked on `main` and unmerged. (The header said `99d74735` until this revision, and the document had been
-edited three times since that tip — by `5aae38ca`, `a4af07dd` and `2431bbf0`, the stream-1-spike corrections.
-Before that it said `EF-322-step3a` @ `1c470704` above tip `9065acfc`. **The §9 measurements below were taken
-at `99d74735` and that provenance is unchanged** — only the header's "where the branch is" claim moved.)*
+*Generated 2026-07-26 · **last updated 2026-08-08** · currently on `NativeQueryOngoing` at or above `2ad8524a`,
+stacked on `main` and unmerged. (The header said `2431bbf0` until this revision; stream 1 tranche 1 has landed
+four commits since — `16bf9a20`, `1d164597`, `4adafc2c`, `2ad8524a` — see §2. Before that it said `99d74735`,
+and before that `EF-322-step3a` @ `1c470704` above tip `9065acfc`. **The §9 measurements below were taken at
+`99d74735` and that provenance is unchanged** — only the header's "where the branch is" claim moved, and §8
+records where the two spec axes now stand.)*
+
+> **UPDATED 2026-08-08 — STREAM 1 TRANCHE 1 HAS LANDED (EF-398).** Slice 0 (the `partial` split), **A2**
+> (`EF.Property` leaf, **34** `NativeOnly` wins MEASURED) and **A5** (`Nullable.Value`/`HasValue`, **0** wins
+> MEASURED), plus the slice-B spike. `NativeOnly` **2427/2166/17 → 2461/2132/17**; default `Native`
+> **4593/0/17**, unmoved. New material is in **§2** (the tranche table and three findings), **§8** (the running
+> position against the checkpoint) and **§9.8** (steps 2 and 3, corrected in place). **Three things to carry
+> away before planning the next tranche:**
+> 1. **The spike's "sole-cause" figure is unreliable for any feature group whose feature is an INNER node** —
+>    A5 sized 36 sole-cause and converted 0, because fixing an inner node RELABELS cases instead of closing
+>    them. The merge plan's **≈508** post-stream-1 checkpoint is a sum of those figures and is inflated by an
+>    unmeasured amount. §2 finding (1).
+> 2. **Slice B delivers 12 on its own, but that is a RE-ATTRIBUTION of cases already inside the 474** — ≈508
+>    and ≤3257 do not move and the 12 must **not** be added to them. §2 finding (2).
+> 3. **At least 36 sort-position cases need an AGGREGATION-dialect renderer arm that no document named** —
+>    A6 (18) and A13 (18) introduce no new node kind, so the stream-1 spike's existing obligation misses them.
+>    §2 finding (3).
 
 > **UPDATED 2026-08-07 — §9 REWRITTEN AS-MEASURED (EF-391, first half).** Every count in §9 was re-derived at
 > `99d74735` by instrumenting the *decline sites* rather than bucketing failure messages, and reproducing the
@@ -232,6 +249,78 @@ findings from that task survive the revert: the `_v` collision is **measured unr
 tier-conditional fallback strip is proven in both directions (forcing it on breaks only tier 2, forcing it off
 breaks only tier 1).
 
+### Stream 1, tranche 1 — translator breadth (the merge plan's stream 1), 2026-08-08
+
+*This is the first tranche of §9.8's merge-plan **step 2**. All SHAs in this table are post-rebase and **are** on
+the current branch. The umbrella JIRA key for the tranche is **EF-398**.*
+
+| Slice | Scope | Commit | Status |
+|---|---|---|---|
+| 0 | **Split `MongoExpressionTranslator` into three `partial` files** (**EF-398**) — a pure file move ahead of the feature slices, so the per-feature diffs are readable | `16bf9a20` | ✅ Done. **0 cases won, by design.** `Native` 4593/0/17 and `NativeOnly` 2427/2166/17 both unmoved. Proven a pure move by a **sorted-line diff showing zero removed and zero modified lines**, not by "the tests still pass". No `BREAKING-CHANGES.md` entry (the type is `internal`) |
+| A2 | **A top-level `EF.Property<T>(param, "Name")` leaf resolves as a field**, in predicate, sort-key *and* projection position (**EF-399**) | `1d164597` | ✅ Done. **34 `NativeOnly` wins MEASURED, 0 regressions**, against a **CITED** estimate of 44. `Native` 4593/0/17 unmoved; `NativeOnly` 2427/2166/17 → **2461/2132/17**. **Six** specification `AssertMql` baselines re-based — four where the `$project` alias moved from the driver's `_v` to the element name, two where the predicate dialect moved from `$expr` to the query dialect — all six independently verified as correct and expected. **No `BREAKING-CHANGES.md` entry**, confirmed by **executing** a probe against the published `v10.0.2` / `v9.1.2` / `v8.4.2` packages rather than inferring it from the branch |
+| A5 | **`Nullable<T>.Value` peels to the underlying field and `Nullable<T>.HasValue` becomes the `!= null` node**, in the same three positions (**EF-400**) | `4adafc2c` | ✅ Done. **0 `NativeOnly` wins MEASURED, 0 regressions**, against a **CITED** estimate of 36. Both axes byte-identical across the slice: `Native` 4593/0/17, `NativeOnly` 2461/2132/17. The feature itself is correct and pinned by its own tests; the zero is a property of the *sizing metric*, not of the fix — see finding (1) below. **No `BREAKING-CHANGES.md` entry**, confirmed by executing against the same three published packages |
+| — | *(not a slice — the **slice-B spike**, documentation only)* The computed-sort-key capability: emission site, shaper survival, standalone yield, and the per-group conversion question (**EF-401**) | `2ad8524a` | ✅ Done. Findings doc: `docs/superpowers/specs/2026-08-08-computed-sort-key-spike.md`. No `src/` change, no spec movement, no `BREAKING-CHANGES.md` entry |
+
+**Re-summed from the table above rather than restated from a report.** Wins: `0 + 34 + 0 + 0` = **34**. The
+`NativeOnly` triple moves **2427/2166/17 → 2461/2132/17**, i.e. **+34 passed / −34 failed / skipped unchanged**,
+which agrees with the win column exactly — unlike step 3a, this tranche has no `Failed→Passed` transition that
+is not a feature win. (A2 also produced **2** `Failed→Failed` transitions with a *different* message —
+`NorthwindQueryFiltersQueryMongoTest.Find`, both `async` cases, advanced to their next blocker, a parameterized
+regex term. Those are progress, not wins, and they move neither the triple nor the win count.) The default
+`Native` axis reads **4593 / 0 / 17** in every row, so the tranche's `Native` delta is **0**.
+`BREAKING-CHANGES.md` entries added: **0 of 4 rows**. Against the CITED estimates the tranche realized
+**34 of `44 + 36` = 34 of 80**.
+
+**Three findings from this tranche, recorded here because each one changes how a later slice should be planned
+or sized.**
+
+**(1) The stream-1 spike's "sole-cause" metric is structurally unreliable for any feature group whose feature
+is an INNER node of the expression tree — and A5 is the proof.** MEASURED. That spike's classifier is a
+minimal-failing-subtree search: it descends to the first failing child, stops, and records **one** decline site
+and **one** feature — which is exactly what makes the figure "sole-cause". It structurally cannot see that the
+*enclosing* construct is also unsupported. A5 sized **38 total / 36 sole-cause** and converted **zero**, because
+Northwind's `Nullable.Value` occurrences are abundant but universally *enclosed* (`o.OrderDate.Value.Year` and
+kin). The arithmetic that clinches it: `NorthwindSelectQueryTestBase.cs:1019–1082` holds **ten** bare
+DateTime-component projection siblings, and `10 × 2` (the `[Theory]` async/sync pair) = **20** — exactly the
+spike's own `` `Nullable.Value` | `NorthwindSelect` 20 `` concentration figure; the eleventh sibling,
+`Select_datetime_DayOfWeek_component` (`:1067`), carries an `(int)` cast and is counted in the `casts` group
+instead, which is why the figure is 20 and not 22. **The consequence, and it is the one that outlives the
+slice: fixing an inner-node group RELABELS its cases into another group rather than closing them.** The spike's
+disjoint partition is therefore **not stable under fixes** and its per-group figures are **not additive**, so
+the merge plan's **≈508** post-stream-1 checkpoint is inflated by every inner-node group's sole-cause count.
+Realized against estimate so far: **A2 34/44, A5 0/36 — `34 + 0` = 34 of `44 + 36` = 80.** Treat any inner-node
+group's figure as an upper bound on shapes PRESENT, never as a count of cases that will turn green. Full detail
+is in the slice-A5 as-built note in `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md`; the consequence for the
+checkpoint is carried into §8 and §9.8 step 3.
+
+**(2) Slice B is NOT "0 delivered alone" — it delivers 12 — but that is a RE-ATTRIBUTION, not an addition.**
+MEASURED by the slice-B spike (§4), by *message transition* across a four-run A/B: on the `NativeOnly` axis the
+counts are byte-identical before and after, and yet exactly **12** cases move from
+`NativeTranslationNotSupportedException` to an `AssertMql` baseline mismatch — they go native with correct data,
+and only a stale committed baseline keeps them red. The 12 are **10** A3 bare-constant/parameter cases plus
+**2** arithmetic cases (`10 + 2` = 12), and **all 12 are already counted inside the spike's 474 sole-cause**.
+So **≈508 and ≤3257 do not move, and the 12 must not be added to them.** What *does* change is a sequencing
+figure: if slice B ships first, **A3's marginal yield is `40 − 10` = 30, not 40** — corrected in §9.8 step 2.
+Three further slice-B facts worth carrying: a synthetic `$set` sort field **survives all five shaper shapes**
+(MEASURED, per shaper); the `$unset` is **not required** for materialization (MEASURED both ways — it should
+still ship, for set-op hygiene); and emitting a `$set` in front of a `$sort` **disqualifies index-backed sorting
+even for a plain field key** (MEASURED with `queryPlanner`: `{$sort: {A: 1}}` alone is `IXSCAN A_1`, the same
+sort preceded by an unrelated `$set` is `COLLSCAN`), so the design must not emit the `$set` when no key is
+computed.
+
+**(3) A merge-plan obligation nobody had named: at least 36 of the 92 sort-position cases need an
+AGGREGATION-dialect renderer arm ON TOP OF their predicate work.** READ (`MongoAggregationExpressionRenderer.
+CanRender` at `4adafc2c`) plus MEASURED declines: the aggregation dialect admits field/element refs,
+constants/parameters, binary operators over 13 listed operators and the two size nodes — and **not**
+`MongoInExpression`, `MongoRegexExpression`, `MongoElemMatchExpression` or `MongoUnaryExpression`. A `$set` body
+is an aggregation expression, so a node kind that lives only in the query dialect can serve a predicate but can
+**never** serve a computed sort key. The stream-1 spike's §7 already imposes this obligation on slices that
+introduce a **new node kind**, which covers **A9** (10) and **A12** (22) — `10 + 22` = 32 already covered. It
+does **not** cover **A6** (18, `Contains` → `MongoInExpression`) or **A13** (18, `Not` → `MongoUnaryExpression`),
+because both node kinds **already exist** and so neither slice introduces one; `18 + 18` = **36 genuinely
+unnamed**, and a reader following the existing note would ship both with their sort columns silently dead. The
+total needing an aggregation arm is at least `36 + 32` = **68 of the 92** — a floor, not a total.
+
 Refactor interludes (not user-facing): EF-330 (extract `MongoSelectDefinition`), EF-332 (separate the
 native-translation layer from QMTEV), EF-334 (centralize the is-native gate into `ClassifyNativeDisposition`).
 
@@ -240,10 +329,13 @@ commit each: SP1 → SP2 → SP3 → SP4 → SP5 → SP6 (GroupBy / set-ops / Di
 slices → `1dd7862` → SP7 Phase 1 (`e38587f`) → owned-data slices 1–6 → `1b4c1d6` → slice 7 (`cfe873e`) →
 EF-358 fix (`7c199e4`) → slice 8 (`33fdc58`) → slice 9 (`229294f`) → **the joins work stream: EF-366
 (`0162b737`) → EF-367 (`5dfb1653`) → EF-370 (`7af4190b`) → EF-368 (`34a02067`) → EF-372 (`6a7a5f3c`) → EF-373
-(`9dd6fc15`) → EF-379 (`9065acfc`, the current tip)**. *(The pre-joins portion of this chain is pre-rebase
-hashes — see the header warning; the joins portion is post-rebase and is on the branch.)* **The "as of
-2026-07-31 there is no unsquashed work in flight" statement still holds at `9065acfc`** — every slice,
-including all seven joins slices, is one squashed commit on the branch and pushed. ~~Nothing is merged to
+(`9dd6fc15`) → EF-379 (`9065acfc`)** → *(cutover steps 2 and 3a)* → **stream 1 tranche 1: EF-398
+(`16bf9a20`) → EF-399 (`1d164597`) → EF-400 (`4adafc2c`) → EF-401 (`2ad8524a`, the current tip)**. *(This chain
+read "EF-379 (`9065acfc`, the current tip)" until tranche 1 landed.)* *(The pre-joins portion of this chain is
+pre-rebase hashes — see the header warning; the joins portion and everything after it is post-rebase and is on
+the branch.)* **The "as of 2026-07-31 there is no unsquashed work in flight" statement still holds at
+`2ad8524a`** — every slice, including all seven joins slices and all four tranche-1 commits, is one squashed
+commit on the branch. ~~Nothing is merged to
 `main` yet — the whole native stack lands at parity/cutover.~~ **SUPERSEDED 2026-08-07 — that was the
 withdrawn cutover plan.** Nothing is merged to `main` yet, but per §8's plan of record the stack now lands at
 **merge** (~80% coverage, driver path shipping alongside it), not at parity with driver-LINQ retired.
@@ -1073,6 +1165,15 @@ stream's coverage gains are proven by the functional `Native*` suites, not by th
 number does not mean a slice achieved nothing — but, per §9, it does mean the owned-data stream is not on the
 cutover's critical path.
 
+**MOVED ON 2026-08-08 by stream 1 tranche 1 (§2), corrected here rather than annotated beside the stale text:
+the tip triple above is no longer current.** At `2ad8524a` the `NativeOnly` axis is **2461/2132/17** and the
+default `Native` axis is **4593/0/17**, unmoved. So **2132**, not 2166, EF10 spec cases now lean on the
+fallback — `2166 − 34` = 2132, the 34 being slice A2's measured wins. **The (a)/(b)/(c) split above has NOT
+been re-derived at this tip** and is still the `99d74735` decline-site measurement; the 34 are all (a)-type
+coverage gaps by construction (they went from an exception to data), so (a) is **1564** on that basis alone —
+`1598 − 34` — and (b) 518 / (c) 50 are unchanged. That subtraction is **INFERRED** from the win-type, not
+re-measured; the re-derivation belongs to §9.8 step 3's checkpoint.
+
 **And the headline of the 2026-08-07 re-attribution.** Partitioned into disjoint owning work streams, the
 1598 ranks: **joins / cross-collection 373** (deferred, **EF-392**), **`MongoExpressionTranslator` breadth in
 predicate and sort-key position 368**, **projection long tail 290** (3b 52 / 3c 220 / 3d 18 — 3d deferred,
@@ -1128,6 +1229,28 @@ deferred correctness gap). The correctness gaps that **do** ship, deferred but a
 well-defined/uncommon/tracked bar: **EF-380, EF-390, EF-355** (§9.5). Retiring driver-LINQ — everything §9
 enumerates — is **not part of this release**; §9 remains accurate but is now a later-phase document, not the
 plan of record. See §9.8 for the sequence.
+
+**2026-08-08 — the running position against the checkpoint, after stream 1 tranche 1.** The measured axes at
+`2ad8524a` are `Native` **4593 / 0 / 17** (unmoved for the whole tranche) and `NativeOnly` **2461 / 2132 / 17**,
+up from 2427/2166/17. **Cumulative stream-1 wins so far: 34** — re-summed from §2's tranche table
+(`0 + 34 + 0 + 0`), not carried from a report — realized against a CITED estimate of `44 + 36` = **80** for the
+two feature slices shipped. **The checkpoint this is measured against is §9.8 step 3's, and it expects ≈508
+after ALL of stream 1 with slice B, ≈400 without slice B, and ≈570 after streams 1 and 2 together.** State
+plainly, because it has already been got wrong once in these docs and caught in review: **≈508 at the
+post-stream-1 checkpoint is SUCCESS, not a shortfall.** The **588** is the superseded CITED figure, and judging
+stream 1 against it would score a normal, expected outcome as an ~80-case miss and expand scope wrongly — do
+not do it. **What tranche 1 adds to that picture is that ≈508 is now itself in question**, from a direction the
+checkpoint did not anticipate: per §2 finding (1), ≈508 was built by summing sole-cause figures, and an
+inner-node feature group's sole-cause figure counts cases that a fix RELABELS rather than closes (A5: 36
+sole-cause, 0 converted). Every inner-node group in stream 1 inflates ≈508 by an amount nobody has measured.
+**No revised projection is offered here on purpose** — re-deriving it is the checkpoint's own job, using §9.0's
+method, and inventing a number now would replace one unmeasured figure with another. What is known: the base
+term of §9.8's projection has moved **2427 → 2461**, so **2427 + 570 + 282 + 52 = 3331** holds only if stream
+1's remaining contribution is `570 − 34` = **536**, and the 570 rests on the same sole-cause basis finding (1)
+undermines. The bar (`0.80 × 4075 = 3260`), the 71-case margin, and slice B's load-bearing role (without it
+**≤3257/4075 = ≤79.9%**, below the bar) are all unchanged by this tranche — and per §2 finding (2), slice B's
+newly measured standalone yield of **12** is a **re-attribution of cases already inside the 474**, so it must
+**not** be added to ≈508 or to ≤3257.
 
 ---
 
@@ -1642,10 +1765,37 @@ withdrawal, stated plainly so neither is missed:
    Predicate and projection-leaf do pay in together — more strongly than this step claimed, since they are
    literally the same method (`TranslateOperand`) — **but sort key is a SEPARATE CAPABILITY.** ~92 of the 104
    sort-key cases need a **computed-sort slice ("slice B")**: `$set`/`$addFields` + `$sort` + `$unset`, i.e.
-   IR, lowerer and renderer work, not a translator arm. It **delivers nothing on its own**, **74 of the 474
+   IR, lowerer and renderer work, not a translator arm. ~~It **delivers nothing on its own**~~ — **CORRECTED
+   2026-08-08 by the slice-B spike (`docs/superpowers/specs/2026-08-08-computed-sort-key-spike.md` §4), which
+   MEASURED it delivering 12** (10 A3 bare-constant/parameter + 2 arithmetic, `10 + 2` = 12), invisible to a
+   raw pass/fail count because slice B re-bases the very `AssertMql` baselines of the tests it converts.
+   **This is a RE-ATTRIBUTION, not an addition: all 12 are already inside the 474, so ≈508 and ≤3257 do not
+   move and the 12 must not be added to them.** The one figure it does change is a sequencing one: **if slice B
+   ships first, A3's marginal yield is `40 − 10` = 30, not the 40 listed above.** The rest stands —
+   **74 of the 474
    sole-cause cases depend on it** (spread across seven groups — A1, A3, A6, A9, A11, A12, A13), and without
    it the whole plan lands **≤3257/4075 = ≤79.9%, below the bar**. **Schedule it early, and do not plan this
    stream as 20 independently-shippable features.**
+
+   **A NEW OBLIGATION ON THE A SLICES, added 2026-08-08 from the slice-B spike §5.2 — nothing named it before,
+   and missing it ships a slice with its sort column silently dead.** `MongoAggregationExpressionRenderer.
+   CanRender` admits field/element refs, constants/parameters, binary operators over 13 listed operators and the
+   two size nodes — **not** `MongoInExpression`, `MongoRegexExpression`, `MongoElemMatchExpression` or
+   `MongoUnaryExpression` (READ). A `$set` body is an aggregation expression, so a node kind that exists only in
+   the query dialect can serve a predicate but **can never serve a computed sort key**. The stream-1 spike's §7
+   already imposes this on slices introducing a **new node kind**, covering **A9** (10) and **A12** (22) —
+   `10 + 22` = 32. It does **not** cover **A6** (18) or **A13** (18), whose node kinds already exist, so
+   `18 + 18` = **36 cases carry a genuinely unnamed aggregation-arm obligation** and at least `36 + 32` = **68
+   of the 92** need one in total (a floor: A7 and possibly A11 add more).
+
+   **STATUS 2026-08-08: tranche 1 of this stream has shipped** — slice 0 (`EF-398`), **A2** (`EF-399`, 34 wins
+   MEASURED) and **A5** (`EF-400`, 0 wins MEASURED), plus the slice-B spike (`EF-401`); see §2. The
+   measured slice-B-independent tranche is `A1 + A2 + A4 + A5` = **158** sole-cause (spike §5.1), of which this
+   tranche shipped `A2 + A5` = `44 + 36` = **80** as SIZED — and realized **34** of it. What is left of that
+   tranche is **A1** (casts, 56 sole-cause, of which 6 need slice B, so `56 − 6` = 50 slice-B-independent — the
+   highest single yield, and the one whose narrowing guard must **not** simply be relaxed) and **A4** (the
+   reverted tier 2, 28 sole-cause, which must not be re-attempted before the late-fallback path can emit
+   `$ifNull` itself — the step-3a note in `Query/AGENTS.md`): `50 + 28` = **78**, which is `158 − 80`.
 3. **Checkpoint: re-measure**, using §9.0's method, before committing to the rest. "Sole-cause" is a leverage
    proxy, not a guarantee — the lowerer or renderer can still fail once a gate opens. ~~If stream 1's yield
    comes in materially under 588, that is the moment to pull joins or GroupBy back in, not after stream 2 has
@@ -1663,6 +1813,18 @@ withdrawal, stated plainly so neither is missed:
      post-stream-1 figure, which is structurally incomplete by those 62.
    All three are upper bounds. And the margin available to absorb a shortfall is **71** cases
    (3331 − 3260), **not ~90** — that figure was computed from the superseded 3349.
+
+   **AMENDED 2026-08-08 by stream 1 tranche 1 (§2 finding (1)) — the ≈508 above is now itself in question, and
+   this checkpoint is the thing that has to answer it.** ≈508 is a SUM of per-group sole-cause figures, and the
+   spike's sole-cause classifier is a minimal-failing-subtree search: for a group whose feature is an INNER node
+   it labels cases that a fix RELABELS into another group rather than closing. MEASURED: **A5 sized 36
+   sole-cause and converted 0**; A2 sized 44 and converted 34; realized so far `34 + 0` = **34 of `44 + 36`
+   = 80**. So the sole-cause partition is **not stable under fixes** and its rows are **not additive**, and ≈508
+   is inflated by every inner-node group's count by an amount **nobody has measured (UNVERIFIED)**. Two
+   instructions follow. First, **this checkpoint must re-derive its own expectation, not just its result** — a
+   measured yield below ≈508 is not evidence of under-delivery until the expectation has been rebuilt on a basis
+   that separates "shapes present" from "cases that turn green". Second, **do not add slice B's newly measured
+   standalone 12 to ≈508**: per §2 finding (2) those 12 are already inside the 474.
 4. **Stream 3 — slice 3b** (fixes EF-356 rather than pinning it — the standing ruling above; **52** cases),
    **then stream 4 — EF-375**, spike first, to answer the separability question before committing to the fix.
 5. **Stream 2 — the sole-cause tranche** (**282** cases, 250 of them sole-cause: scalar-aggregate binder 82
