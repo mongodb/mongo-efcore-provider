@@ -43,15 +43,30 @@ TestContainers booted its own `mongodb/mongodb-atlas-local`.
    paths. **92 of the 104 sort-key cases therefore need a computed-sort capability (`$set`/`$addFields` +
    `$sort`), which is IR + lowerer + renderer work, not a translator arm** — 92 is a floor, 98 a ceiling; the
    6-case gap is itemized in §4.3. READ + MEASURED. §4.
-3. **Stream 1's realistic yield is 474, not 588 — and only 400 of that 474 is deliverable without the
+3. **Stream 1's sole-cause yield is 474, not 588 — and only 400 of that 474 is deliverable without the
    computed-sort slice.** MEASURED sole-cause. **74 of the 474 are slice-B-dependent** (their single decline is
    a sort-position one that no translator arm can reach), spread across **seven** groups — the four §7
    originally caveated (A6, A9, A12, A13) plus **three it did not** (A1, A3, A11) — see §5.1, corrected on
    review. Beyond the 474: **62** need stream 1 **and**
-   stream 2 (set ops 32, `Distinct` 26, scalar aggregate 4); **34** need two stream-1 features at once; **12**
-   are additionally blocked by deferred work (joins / composite-PK / entity leaf) and cannot convert this
-   release. There is **no double-count** between streams 1 and 2 — the buckets are partitioned by *first*
+   stream 2 (set ops 32, `Distinct` 26, scalar aggregate 4); **34** need two stream-1 features at once (32) or
+   are co-blocked at the `ThenBy` arm (2); **12**
+   are additionally blocked by deferred work (joins / composite-PK / entity leaf). There is **no double-count**
+   between streams 1 and 2 — the buckets are partitioned by *first*
    decline site — but there is a **dependency**, and the plan does not record it. MEASURED. §5.
+
+   **CORRECTED on the final whole-phase review — the number the checkpoint is held against is ≈508, not 474.**
+   This finding originally read "after stream 1 alone, ≈474". That understates it by **34**: §5.2 classifies the
+   32 "two stream-1 features at the same site" and the 2 "co-blocked at the `ThenBy` arm" as closing **within
+   stream 1**, and then rolled both into the post-stream-2 figure anyway. Both convert once *all* of stream 1
+   has shipped — which is precisely when the checkpoint runs. The corrected expectations are
+   **≈508 after all of stream 1 with slice B** (474 + 34), **≈400 after all of stream 1 without slice B**
+   (the sole-cause tranche only — the slice-B exposure of the 34 was not measured, so no larger
+   without-slice-B figure is claimed here; **UNVERIFIED**), and **≈570 after streams 1 and 2 together**
+   (unchanged: 474 + 34 + 62). See §5.2.
+
+   **Also corrected there: the 12 are not all deferred.** They are blocked by joins *or* composite-PK *or* the
+   **entity leaf** — and the entity leaf is slice 3b, i.e. **stream 3**, which is in the plan. Only the
+   joins/composite-PK subset is "never, this release". See §5.2.
 4. **`MongoExpressionTranslator.cs` should be split BEFORE slice 1, as a mechanical `partial class` file
    move.** The measurement hands you the split for free: the ~20 features land in exactly three of its regions,
    and ~10 slices will all edit `TranslateOperand`. Extracting *types* would be wrong — the private scope state
@@ -318,7 +333,11 @@ by ~92 cases unless capability B is scheduled as its own slice.**
 
 ---
 
-## 5. Stream 1's realistic yield is 474, not 588 — and 400 without slice B
+## 5. Stream 1's realistic yield is 474 sole-cause / ≈508 all-in, not 588 — and 400 without slice B
+
+*(Heading corrected on the final whole-phase review. It read "…is 474, not 588 — and 400 without slice B",
+which conflated the **sole-cause** figure with the **post-stream-1** figure. 474 is sole-cause; **≈508** is what
+all of stream 1 delivers, because §5.2's 34 also close within stream 1. §5.2 states both.)*
 
 ### 5.1 The slice-B split of the 474 (added on review — finding 2)
 
@@ -375,24 +394,54 @@ one stream-1 feature:
 | exactly one decline site, one feature | **474** | that feature's slice ships |
 | co-blocked at `TryTranslateSetOperation:2448` | 32 | **stream 1 + stream 2** (set ops) |
 | co-blocked at `TranslateDistinct:1318` | 26 | **stream 1 + stream 2** (`Distinct`) |
-| two stream-1 features at the same site | 32 | two stream-1 slices |
-| co-blocked at the `ThenBy` arm (`:128`) only | 2 | within stream 1 |
+| two stream-1 features at the same site | 32 | **within stream 1** — when both slices ship |
+| co-blocked at the `ThenBy` arm (`:128`) only | 2 | **within stream 1** |
 | co-blocked at `BindAggregateOrFallback:1368` | 4 | **stream 1 + stream 2** (scalar aggregate) |
-| additionally blocked by joins / composite-PK / entity leaf | **12** | **never, this release** (all deferred) |
+| additionally blocked by joins / composite-PK / **entity leaf** | **12** | joins/composite-PK subset: **never, this release**; entity-leaf subset: **stream 3** (see below) |
+
+**The ±2 against §2 and §3, added on the final whole-phase review.** This section's population is **582**; §2's
+site decomposition and §3's disjoint per-feature table both total **580**. The document reconciles 580-vs-588
+and 580-vs-590 at length and never mentions this one, so it is recorded here rather than left to be
+re-discovered. The two populations are *not* defined identically — §2/§3 count the cases the classifier assigned
+to the **stream-1** column of the site decomposition, whereas §5.2 counts cases whose *first* decline site is one
+of the three stream-1 sites **and** which carry at least one stream-1 feature, which admits cases the site
+decomposition assigned to the joins / composite-PK / entity-leaf columns (the 12 row is exactly such a set).
+**The cause of the 2-case difference was not established** — the ±2 fuzz §2 already documents (2 VALUE_OK
+projection leaves that are also joins cases, counted in both views) is a candidate of the right size, but it was
+not confirmed, and no other candidate was tested. **UNVERIFIED.** It is ≤0.4% and does not move any figure this
+document plans against; do not treat it as reconciled.
 
 **There is no double-count between streams 1 and 2** — the two buckets are partitioned by *first* decline site,
 so the 62 cases above are counted once, in stream 1. But there is an undocumented **dependency**: 62 of stream
-1's cases convert only once stream 2 has also landed, and 12 do not convert at all. The plan's §7 re-measurement
-checkpoint should therefore expect:
+1's cases convert only once stream 2 has also landed.
 
-- **after stream 1 alone, with slice B: ≈474**, not 588 (and 474 is itself an upper bound — sole-cause means
-  nothing else declined at *population* time; the lowerer or renderer can still decline, as the 81 no-gate-site
-  cases show);
-- **after stream 1 alone, without slice B: ≈400** (§5.1);
-- **after streams 1 + 2 together: up to ≈570** from stream 1's bucket.
+**The 12 are not all deferred — corrected on the final whole-phase review.** This row originally read
+"**never, this release** (all deferred)". That is wrong for one of its three blockers: the **entity leaf** is
+slice 3b, which is **stream 3** of the merge plan (52 cases) and is explicitly scheduled. Any of the 12 blocked
+*only* by the entity leaf therefore converts when stream 3 lands. This spike did not break the 12 down by
+blocker, so **the corrected figure is not derivable from this report and none is invented here**: only the
+joins/composite-PK-blocked subset is "never, this release", the entity-leaf-blocked subset converts with
+stream 3, and **the split is UNVERIFIED**. The consequence for the plan is one-directional and safe —
+**≈570 and the 3331 projection built on it are conservative by exactly that subset**, never optimistic.
 
-If the checkpoint measures ~474 after stream 1, **that is the expected result, not a shortfall** — reading it as
-one and pulling joins back in would be an error. INFERRED from the MEASURED table above.
+The plan's §7 re-measurement checkpoint should therefore expect:
+
+- **after all of stream 1, with slice B: ≈508** — the 474 sole-cause **plus** the 34 that §5.2 classifies as
+  closing within stream 1 (32 needing a second stream-1 feature, 2 at the `ThenBy` arm). *(Corrected on the
+  final whole-phase review: this bullet read "**after stream 1 alone, with slice B: ≈474**", which is the
+  sole-cause figure, not the post-stream-1 figure — the 34 were classified as closing within stream 1 in the
+  table above and then rolled into the post-stream-2 figure anyway. Understated by 34.)* ≈508 is still an
+  **upper bound** — sole-cause means nothing else declined at *population* time; the lowerer or renderer can
+  still decline, as the 81 no-gate-site cases show;
+- **after all of stream 1, without slice B: ≈400** (§5.1) — the sole-cause tranche only. Whether any of the 34
+  is itself slice-B-dependent was **not measured**, so no larger without-slice-B figure is claimed.
+  **UNVERIFIED**;
+- **after streams 1 + 2 together: up to ≈570** from stream 1's bucket (474 + 34 + 62) — unchanged by the
+  correction above, which only moves cases between the two earlier lines.
+
+If the checkpoint measures ~508 after stream 1, **that is the expected result, not a shortfall** — reading it as
+one and pulling joins back in would be an error. Judging it against 588 would be the same error, one size
+larger. INFERRED from the MEASURED table above.
 
 ---
 
@@ -431,6 +480,19 @@ it is a per-slice obligation (§7 below), not a structural problem.
 
 ## 7. Proposed slice split
 
+> **⚠ NUMBERING COLLISION — read this before citing a number from either table (added on the final
+> whole-phase review).** §3's feature groups are numbered **1–20 by descending group total**; this section's
+> slices are lettered **A1–A20 by yield-per-unit-of-work** (roughly, but not exactly, by descending
+> sole-cause). **The two orderings are different, and they collide in the worst possible way: the same small
+> integer means different features in each.** Examples: **§3 group 3 is `EF.Property`, but A3 is bare constant
+> / query parameter**; **§3 group 5 is bare constant, but A5 is `Nullable.HasValue`/`.Value`**; §3 group 9 is
+> `Add`, A9 is `?:`. Only **group 1 → A1** is a fixed point; every other number moves.
+> **Stream 1's implementation plan is written one slice per group from these two tables**, so a bare "slice 5"
+> or "group 9" is ambiguous and has already produced one wrong list in this document (see the correction under
+> slice B). **Always write the `A`-prefix when you mean a slice, and say "§3 group N" when you mean a group.**
+> The full mapping, §3 group → slice: 1→A1, 2→A4, 3→A2, 4→A7, 5→A3, 6→A5, 7→A6, 8→A12, 9→A14, 10→A10, 11→A8,
+> 12→A9, 13→A11, 14→A17, 15→A13, 16→A15, 17→A16, 18→A18, 19→A19, 20→A20.
+
 Sized by **sole-cause** (the yield if that slice ships alone) with the group **total** as the upper bound.
 Ordered by yield-per-unit-of-work, with the two hard prerequisites first.
 
@@ -442,9 +504,22 @@ sweep.
 `$set`/`$addFields` + `$sort` + `$unset`, a new `MongoAddFieldsStage`, `RenderSort` accepting a non-field
 `KeySelector`, and `NativeSlotPopulator`'s `OrderBy`/`ThenBy` arms calling `TryTranslate`/`TryTranslateValue`
 instead of only `TryTranslateField`. **Delivers nothing on its own** — it is the multiplier that lets the sort
-column of slices 5, 8, 9, 12, 13 count. Schedule it early or accept that ~92 of the 588 will not convert.
+column of slices **A1, A3, A6, A9, A11, A12 and A13** count. Schedule it early or accept that **~92 of the 104
+sort-key cases** (inside the measured 580) will not convert.
 UNVERIFIED: whether a synthetic sort field survives the whole-entity DOM/streaming shapers untouched; that is
 the spike this slice must open with.
+
+*(Both figures corrected on the final whole-phase review, and they are the residual of the miscount that
+commit `2431bbf0` was raised to fix.* **(i)** *The slice list read "slices 5, 8, 9, 12, 13" — **five**, where
+§5.1 measured **seven**, and ambiguous between §3's group numbering and §7's A-numbering (see the collision
+warning at the head of §7). It is wrong under either reading: under §3 numbering it names bare-const, `??`,
+`Add`, `?:` and other-operator, omitting casts, `Contains` and `Not` and wrongly including `Add`; under
+A-numbering it names `Nullable`, other-BCL, `?:`, `??` and `Not`, two of which have no sort cases at all. The
+seven above are §5.1's measured slice-B-dependent* **sole-cause** *carriers. At the level of* total *sort cases
+rather than sole-cause, §4.3 also puts 4 `Add` (A14) and 2 constructed-value (A7) cases inside the 92 — neither
+carries any sole-cause exposure, which is why neither is in the seven.* **(ii)** *"~92 of the 588" mixed two
+bases: 92 is a subset of the **104 sort-key cases**, and 588 is the superseded cited total. The measured total
+is 580.)*
 
 ### Capability-A slices, by measured yield
 
