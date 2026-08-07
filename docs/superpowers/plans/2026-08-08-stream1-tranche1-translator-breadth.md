@@ -1,5 +1,30 @@
 # Stream 1, tranche 1 — translator breadth (slice 0, A2, A5) + the slice-B spike
 
+> **⚠ HISTORICAL EXECUTION RECORD — EXECUTED AND COMPLETE. DO NOT PLAN FROM ITS NUMBERS.** *(Note added
+> 2026-08-08 on the final whole-tranche review.)* All six tasks shipped: slice 0 (**EF-398**, `16bf9a20`),
+> **A2** (**EF-399**, `1d164597`), **A5** (**EF-400**, `4adafc2c`) and the slice-B spike (**EF-401**,
+> `2ad8524a`). The **50 unticked `- [ ]` checkboxes below are not outstanding work** — the plan is deliberately
+> left as written, so the record of what was commissioned stays intact and legible beside what was measured.
+>
+> **Two of its figures are now measured false, and both are corrected here rather than in place:**
+>
+> 1. **"Slice B delivers 0 on its own" (the goal statement above, Task 1 step 3, and Task 5) is WRONG. It
+>    delivers 12.** MEASURED by trx set-diff in the spike this plan commissioned —
+>    `docs/superpowers/specs/2026-08-08-computed-sort-key-spike.md` §3 — where the raw `NativeOnly` pass/fail
+>    count reads 0 **only because slice B re-bases the very MQL baselines of exactly the tests it converts**
+>    (2461/2132/17 before and after, byte-identical, while 12 cases move from
+>    `NativeTranslationNotSupportedException` to an `AssertMql` mismatch, i.e. they now go native with correct
+>    data). The 12 is a **re-attribution inside the already-counted 474**, not an addition to it, so the ≈508
+>    checkpoint does not move upward on its account.
+> 2. **The per-group sole-cause figures this plan sizes against are not additive.** A2 realized **34 of 44**
+>    and A5 **0 of 36** — 34 against the 80 this plan sized. The sole-cause classifier descends to the first
+>    failing child, so for a group whose feature is an INNER expression-tree node (A5 is one) it cannot see that
+>    the ENCLOSING construct is also unsupported; fixing such a group RELABELS its cases rather than closing
+>    them.
+>
+> **The current record is `docs/native-query-status-EF-322.md` §2** (per-slice as-built, with both corrections);
+> the slice-B measurement is `docs/superpowers/specs/2026-08-08-computed-sort-key-spike.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
@@ -1160,11 +1185,17 @@ same reason stream 1's decomposition could not be written before its own spike: 
 an emission site and a shaper contract.
 
 Then, per the merge plan's §9 sequence, the rest of stream 1 as further tranches. The measured slice-B-independent
-tranche is **A1, A2, A4, A5 = 158 sole-cause** (spike §5.1) — this plan ships **A2 + A5 = 80** of it, leaving
-**A1** (casts, 56 sole-cause, of which 6 need slice B — the highest single yield, and the one whose narrowing
+tranche is **A1, A2, A4, A5 = 158 SLICE-B-INDEPENDENT** (spike §5.1) — **not** 158 sole-cause, which is what this
+sentence used to say: sole-cause for those four is `56 + 44 + 28 + 36` = **164**, and 158 is that figure less the
+**6** of A1's 56 that need slice B. Getting the label right is what makes the residual add up — this plan ships
+**A2 + A5 = 80** of it, leaving
+**A1** (casts, 56 sole-cause of which 6 need slice B, so **50** slice-B-independent — the highest single yield,
+and the one whose narrowing
 guard must **not** simply be relaxed) and **A4** (the reverted tier 2, 28 sole-cause, which has a recorded
 prerequisite: the late-fallback path must be able to emit `$ifNull` itself rather than inheriting the driver's
-bare `$size` — see the step-3a note in `Query/AGENTS.md`; **do not re-attempt A4 without that fixed**).
+bare `$size` — see the step-3a note in `Query/AGENTS.md`; **do not re-attempt A4 without that fixed**) —
+i.e. `50 + 28` = **78**, which is `158 − 80`. (Summing the two SOLE-CAUSE figures instead gives `56 + 28` = 84
+against a stated 78; that mismatch is what the mislabel above produced, and it is why the label matters.)
 
 After all of stream 1: the **mandatory re-measurement checkpoint** (merge plan §7), then stream 3 (slice 3b,
 which must FIX EF-356), then stream 4 (EF-375, spike first), then stream 2, then the architecture record and

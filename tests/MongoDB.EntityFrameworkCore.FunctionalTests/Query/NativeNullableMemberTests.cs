@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
@@ -59,6 +60,18 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         public int Rank { get; set; }
         public int? Score { get; set; }
         public bool? Flag { get; set; }
+    }
+
+    /// <summary>
+    /// A SEPARATE entity, deliberately not folded into <see cref="Item"/>: the whole point of this fixture is a
+    /// property carrying a VALUE-TRANSFORMING converter, and adding one to <see cref="Item"/> would change the
+    /// model every other test in this class runs against.
+    /// </summary>
+    public class ConvertedItem
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; } = "";
+        public int? Converted { get; set; }
     }
 
     // ── 1. Predicate position ──────────────────────────────────────────────────────
@@ -386,6 +399,110 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             .ToList().Select(a => $"{a.Title}={a.H}").ToList());
     }
 
+    // ── 8. EF-400 fix wave: a VALUE-CONVERTED `.Value` projection leaf must not read the RAW stored value ──
+
+    /// <summary>
+    /// The defect this slice's final fix wave closed, and the tripwire for the follow-up that will reopen the
+    /// shape properly (**EF-402**).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Mechanism.</b> The EMIT side peels <c>.Value</c> (this slice's own change to
+    /// <c>MongoExpressionTranslator.TryResolveMember</c>), so <c>x.Converted.Value</c> addresses the same field
+    /// as <c>x.Converted</c>. The READ side does not:
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.TryResolveFieldAccessSource</c> recognises a
+    /// <c>StructuralTypeShaperExpression</c> but not a <c>MemberExpression</c> wrapping one, so <c>Property</c>
+    /// comes back null and the read falls to <c>BsonBinding.GetElementValue&lt;T&gt;</c>, which builds a DEFAULT
+    /// type serializer and discards the converter. <c>NativeProjectionBinder</c>'s pre-existing converter guard
+    /// keyed on a DOTTED element path, and a top-level <c>.Value</c> leaf has no dot, so it did not fire.
+    /// </para>
+    /// <para>
+    /// <b>Measured before the fix</b> (stored 14, correct CLR 7): <c>new { V = x.Converted.Value }</c> and the
+    /// bare <c>x.Converted.Value</c> both returned <b>14</b> under <c>Native</c> AND <c>NativeOnly</c> —
+    /// silently, under the default mode — while <c>new { V = x.Converted }</c> and a whole-entity read both
+    /// returned the correct 7.
+    /// </para>
+    /// <para>
+    /// <b>The fix is a DECLINE, not a repair</b> — the projection falls back to driver-LINQ, which for this
+    /// mapping throws, exactly as it does under explicit <c>DriverLinq</c> and exactly as the released packages
+    /// do. Teaching the read side to peel <c>.Value</c> so emit and read agree by construction is <b>EF-402</b>;
+    /// when it lands, the guard's <c>.Value</c> disjunct goes away and this test is replaced by one asserting
+    /// the shape goes native and returns 7.
+    /// </para>
+    /// <para>
+    /// Assertions are written as an outcome STRING rather than <c>Assert.Throws</c> so a regression's failure
+    /// message shows the values that came back ("returned 14,4") instead of only naming a missing exception.
+    /// The scope is a value-TRANSFORMING converter: <c>HasBsonRepresentation</c> and re-encoding converters
+    /// survive the raw read because the driver's default scalar deserializers are lenient about encoding, which
+    /// is luck rather than design — so the guard is deliberately keyed on
+    /// <c>HasDefaultKeySerialization</c>, not on a narrower "transforming converter" test.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Value_converted_nullable_Value_projection_leaf_declines_instead_of_reading_the_raw_stored_value()
+    {
+        var collection = SeedConverted(
+            nameof(Value_converted_nullable_Value_projection_leaf_declines_instead_of_reading_the_raw_stored_value));
+
+        // CONTROLS FIRST, and they are load-bearing: they prove the converter is actually live on this fixture,
+        // so the two decline assertions below cannot pass vacuously against a model where nothing is converted.
+        // Stored 14/4 → CLR 7/2 on both the plain-member projection leaf and a whole-entity read.
+        using (var db = CreateConvertedContext(collection, MongoQueryMode.Native))
+        {
+            Assert.Equal("returned 7,2", Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                .Select(x => new {x.Title, V = x.Converted}).ToList().Select(a => a.V).ToList()));
+
+            Assert.Equal("returned 7,2", Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                .ToList().Select(x => x.Converted).ToList()));
+        }
+
+        // NativeOnly: the guard DECLINES the projection, so the gate refuses the driver-LINQ fallback and
+        // throws. Pre-fix this returned 14,4.
+        using (var db = CreateConvertedContext(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Equal("threw NativeTranslationNotSupportedException",
+                Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                    .Select(x => new {x.Title, V = x.Converted!.Value}).ToList().Select(a => a.V).ToList()));
+
+            Assert.Equal("threw NativeTranslationNotSupportedException",
+                Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                    .Select(x => x.Converted!.Value).ToList()));
+        }
+
+        // Native and DriverLinq must now AGREE, which is this slice's declared oracle. Both throw
+        // NullReferenceException: the decline falls back to driver-LINQ, whose own LINQ v3 translation of
+        // `.Value` over a value-converted nullable serializer fails. The exception TYPE is not the point and is
+        // not contract (the rubric excludes the exception type of an unsupported shape) — the point is that
+        // Native no longer answers 14 where DriverLinq refuses to answer at all. Pre-fix, Native returned 14,4
+        // here while DriverLinq threw exactly as it does now.
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateConvertedContext(collection, mode);
+
+            Assert.Equal("threw NullReferenceException",
+                Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                    .Select(x => new {x.Title, V = x.Converted!.Value}).ToList().Select(a => a.V).ToList()));
+
+            Assert.Equal("threw NullReferenceException",
+                Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                    .Select(x => x.Converted!.Value).ToList()));
+        }
+    }
+
+    // Describes an outcome as a string so a regression reports the VALUES it returned rather than only the
+    // absence of an expected throw — the difference between "Assert.Throws failed" and "returned 14,4".
+    private static string Outcome<T>(Func<List<T>> query)
+    {
+        try
+        {
+            return "returned " + string.Join(",", query());
+        }
+        catch (Exception ex)
+        {
+            return "threw " + ex.GetType().Name;
+        }
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────────
 
     // Runs the same query under Native and DriverLinq and asserts they agree — the oracle for this slice.
@@ -460,6 +577,40 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         return database.MongoDatabase.GetCollection<Item>(raw.CollectionNamespace.CollectionName);
     }
+
+    // Three rows for the value-converted fixture. The converter is v => v * 2 (to store) / v => v / 2 (to read),
+    // so a STORED 14 is a CLR 7 — a value-TRANSFORMING converter, which is the class this guard is about
+    // (HasBsonRepresentation and re-encoding converters happen to survive the raw read because the driver's
+    // default scalar deserializers are lenient about encoding; that is luck, not design). The stored numbers
+    // are all even and all differ from their CLR values, so a raw read is never mistakable for a correct one.
+    private IMongoCollection<ConvertedItem> SeedConverted(string name)
+    {
+        var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        raw.InsertMany(
+        [
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"Title", "c1"}, {"Converted", 14}},
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"Title", "c2"}, {"Converted", 4}}
+        ]);
+
+        var stored = raw.Find(FilterDefinition<BsonDocument>.Empty).ToList().ToDictionary(d => d["Title"].AsString);
+        Assert.Equal(14, stored["c1"]["Converted"].AsInt32);
+        Assert.Equal(4, stored["c2"]["Converted"].AsInt32);
+
+        return database.MongoDatabase.GetCollection<ConvertedItem>(raw.CollectionNamespace.CollectionName);
+    }
+
+    private static SingleEntityDbContext<ConvertedItem> CreateConvertedContext(
+        IMongoCollection<ConvertedItem> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<ConvertedItem>()
+                .Property(x => x.Converted)
+                .HasConversion(new ValueConverter<int, int>(v => v * 2, v => v / 2)),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
 
     private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
         => SingleEntityDbContext.Create(

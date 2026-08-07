@@ -163,7 +163,16 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
     public void Parameterized_where_leg()
     {
         var collection = Seed(nameof(Parameterized_where_leg));
-        var prefix = "a"; // captured local — the mandatory late-decline leg for this test family.
+
+        // "b", NOT "a", and that choice is the whole point of this test. The seed's "a_one" row leaves BOTH
+        // nullable columns unset, so `Assert.Null(Note)` / `Assert.Null(Score)` passed identically whether the
+        // alias resolved or MISSED — an alias miss on a nullable leaf returns null, which is exactly what the
+        // row stores. Only the non-nullable Rank leaf discriminated, and Rank is precisely the leaf that fails
+        // LOUDLY anyway, so the two assertions written to cover the SILENT half had no power over it.
+        // "b_two" carries Note = "n2" and Score = 20, so a miss now shows up as a null where a value is
+        // required. (A5's equivalent, NativeNullableMemberTests.Parameterized_where_leg, asserts
+        // [10, null, null, 3] for the same reason — that is the standard this now meets.)
+        var prefix = "b"; // captured local — the mandatory late-decline leg for this test family.
 
         // Default Native mode, deliberately: a parameterized string.StartsWith term has no native regex
         // rendering (the pattern must be known at render time), so the native factory declines LATE and the
@@ -182,13 +191,14 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
             })
             .ToList();
 
-        // Only "a_one" starts with "a" in the seed.
+        // Only "b_two" starts with "b" in the seed.
         Assert.Single(results);
         // The two nullable leaves are asserted first — only the non-nullable Rank leaf below fails loudly on an
-        // alias miss; a nullable leaf would silently come back null instead.
-        Assert.Null(results[0].Note);
-        Assert.Null(results[0].Score);
-        Assert.Equal(1, results[0].Rank);
+        // alias miss; a nullable leaf would silently come back null instead. Both now carry a real stored value,
+        // so a silent miss is a visible failure rather than an identical pass.
+        Assert.Equal("n2", results[0].Note);
+        Assert.Equal(20, results[0].Score);
+        Assert.Equal(2, results[0].Rank);
     }
 
     // ── 5. Parity with driver-LINQ ─────────────────────────────────────────────────

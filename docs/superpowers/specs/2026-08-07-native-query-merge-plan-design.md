@@ -123,6 +123,8 @@ renderer work — `$set` + `$sort` + `$unset` — **not** a translator arm, and 
 that is not translator breadth at all. It **enables ≥92 cases and delivers none by itself**, so it must be
 sequenced before the sort-position feature slices rather than measured on its own.
 
+> **SUPERSEDED** — see `docs/native-query-status-EF-322.md` §2 and `docs/superpowers/specs/2026-08-08-computed-sort-key-spike.md` §3: slice B delivers **12** cases by itself (MEASURED; the raw pass/fail count reads 0 only because slice B re-bases the very MQL baselines of the tests it converts), and those 12 are a RE-ATTRIBUTION inside the already-counted 474 rather than an addition to it.
+
 **Measured yield, replacing the 588 above as the number to plan against:**
 
 | | cases | closes when |
@@ -343,6 +345,7 @@ which is when this checkpoint runs.
 **The trigger, as it stands:**
 
 - expect **≈508 after all of stream 1 with slice B landed** — 474 sole-cause + 34;
+  > **SUPERSEDED** — see `docs/native-query-status-EF-322.md` §2: ≈508 is inflated, because it sums per-group sole-cause figures that are **not additive** for any group whose feature is an INNER expression-tree node (fixing such a group relabels its cases into another group rather than closing them). Tranche 1 measured **A2 34 of 44** and **A5 0 of 36** — **34 realized against 80 sized**.
 - expect **≈400 after all of stream 1 without slice B** — the sole-cause tranche only; the slice-B exposure of
   the 34 was not measured (**UNVERIFIED**), so no higher without-slice-B figure is claimed;
 - expect **≈570 after streams 1 and 2 together**;

@@ -251,11 +251,17 @@ The 12, by test and by feature group (MEASURED from the emitted `$set` body):
 | `NorthwindMiscellaneousQueryMongoTest.OrderBy_integer` | `{"__sortN": 3}` | A3 bare constant |
 | `NorthwindMiscellaneousQueryMongoTest.OrderBy_arithmetic` | `{"__sortN": {"$subtract": …}}` | arithmetic (A11/A14) |
 
-**10 A3 cases + 2 arithmetic = 12.** The 10 is an exact match for §5.1's independently-derived *"A3 carries 10
-of them while being 100% sole-cause"*, and for §4.3's *"bare const 10"* row inside the 92 — two measurements
+**10 A3 cases + 2 arithmetic = 12.** The 10 is an exact match for the independently-derived *"A3 carries 10
+of them while being 100% sole-cause"* — **which is the MERGE-PLAN spec's sentence**
+(`docs/superpowers/specs/2026-08-07-native-query-merge-plan-design.md`, §3 stream 1), not this document's own
+§5.1, as this line used to imply; the same figure also appears as this spike's §5.1 A3 row and as the stream-1
+spike's §7 A3 row — and for §4.3's *"bare const 10"* row inside the 92 — measurements
 from different instruments agreeing to the case.
 
-**Consequence for the plan.** §7's *"Slice B — 92 cases enabled … 0 delivered alone"* is **false as measured**:
+**Consequence for the plan.** **The stream-1 spike's** §7 (`2026-08-07-stream1-translator-breadth-spike.md`,
+*not* this document's §7 — the two are disambiguated here because this paragraph and the one below cite
+different documents by the same section number) says *"Slice B — 92 cases enabled … 0 delivered alone"*, and
+that is **false as measured**:
 **12 are delivered by slice B alone**, because a bare constant, a bare query parameter and numeric arithmetic
 are already inside `TranslateOperand`'s acceptance set — the only thing that was missing for them was the sort
 position's ability to carry a non-field key.
@@ -267,7 +273,8 @@ counterfactual are both **unchanged**. What moves is the per-slice attribution: 
 rather than 0, and A3's marginal yield once slice B has shipped first is 30, not 40.** Taking both at their
 headline numbers double-counts those 10 cases. The sequencing consequence is real in the other direction too:
 **slice B is not a pure multiplier and has a non-zero gate of its own**, which makes it a far better-instrumented
-slice than "expect zero" implies. See §7 for the same statement in the task-split context.
+slice than "expect zero" implies. See **this document's own §7** (the task split — again, not the stream-1
+spike's §7 cited three paragraphs above) for the same statement in the task-split context.
 
 **Corollary about instrumentation, which is the durable part.** Judging slice B on the `NativeOnly` pass count
 alone would have reported **0 of 92** and could plausibly have got the slice cancelled. Slice B changes emitted
@@ -371,7 +378,7 @@ the root, and are G's operands themselves supported?)*
 | `Contains` | 36 | 18 | **18** | the 18 enclosed ones are exactly the operands of the 18 `Not` keys above |
 | `?:` `Conditional` | 52 | 52 | 0 | **mostly NO** — 16 × `IIF(c.CustomerID.StartsWith("S"), 1, 2)` (method-call test); 32 × `IIF((o.Inner != null), o.Inner.City/CustomerID, "")` (transparent identifier — a join shape, a different blocker entirely); 2 with a `Convert` in the test; only 2 × `IIF((c.Region == null), "ZZ", c.Region)` over plainly-supported operands. 16 + 32 + 2 + 2 = 52 |
 | bare constant | 24 | 24 | 0 | n/a — this is the group slice B already converts (§4) |
-| `Convert` | 18 | 18 | 0 | **NO** — 10 × `Convert(<param>, …)`, 8 × `Convert(o.Outer.OrderID/OrderDate, Object)` (transparent identifier). §5.2 |
+| `Convert` | 18 | 18 | 0 | **NO** — 10 × `Convert(<param>, …)`, 8 × `Convert(o.Outer.OrderID/OrderDate, Object)` (transparent identifier). **§8** *(this pointer read "§5.2" until the final fix wave — the third and last of the three stale `§5.2` references, after the two corrected at §2 finding 5 and in §5.2's own probe table. §5.2 is about `CanRender` obligations, and the measurement the reference appeared to cite is **this very row**, so a self-reference is not useful; the live open question these 18 raise is the narrowing-cast one, which is §8.)* |
 
 **How much of the 692 this table covers, stated because the headline figure and the table do not match.** The
 six rows sum to `38 + 18 + 36 + 52 + 24 + 18` = **186**, of which the `Contains` row's 18 *enclosed* entries are

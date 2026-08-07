@@ -166,6 +166,7 @@ Selector-body shapes at the projection site: **BARE 222, WRAPPED_NEW 156, WRAPPE
 
 MEASURED. `pred` / `sort` / `proj` are the three positions; **sole-cause** is the count whose query recorded
 exactly one decline site *and* one feature — i.e. the honest "opening this gate alone turns it green" figure.
+**SUPERSEDED** — see `docs/native-query-status-EF-322.md` §2: sole-cause is **not** that figure for any group whose feature is an INNER expression-tree node; the classifier descends to the first failing child and cannot see that the ENCLOSING construct is also unsupported, so fixing such a group RELABELS its cases into another group instead of closing them (MEASURED: A5 realized **0** of its 36 sole-cause, A2 **34** of 44). Treat a per-group figure as an upper bound on shapes PRESENT, and do not sum them.
 **`solB`** (added on review) is the sub-count of `sole-cause` whose single decline is a sort-position one that
 no translator arm can reach, so it needs **slice B** (§4.3) as well; `sole−solB` is what the group delivers
 without slice B. `cited` is the figure in the merge-plan spec / status-doc §9.1.
@@ -503,9 +504,10 @@ The `partial class` move of §6. Pure mechanical; gate is a green three-EF-versi
 sweep.
 
 ### Slice B — computed sort keys (92 cases enabled, of which **74 are stream-1 sole-cause**; 0 delivered alone)
+**SUPERSEDED** — see `docs/native-query-status-EF-322.md` §2: slice B delivers **12**, not 0, alone (`docs/superpowers/specs/2026-08-08-computed-sort-key-spike.md` §3 — masked because slice B re-bases the MQL baselines of exactly the tests it converts); those 12 are a re-attribution inside the already-counted 474, not an addition.
 `$set`/`$addFields` + `$sort` + `$unset`, a new `MongoAddFieldsStage`, `RenderSort` accepting a non-field
 `KeySelector`, and `NativeSlotPopulator`'s `OrderBy`/`ThenBy` arms calling `TryTranslate`/`TryTranslateValue`
-instead of only `TryTranslateField`. **Delivers nothing on its own** — it is the multiplier that lets the sort
+instead of only `TryTranslateField`. **Delivers nothing on its own** *(**SUPERSEDED** — see `docs/native-query-status-EF-322.md` §2: it delivers **12** on its own, masked by its own baseline re-basing)* — it is the multiplier that lets the sort
 column of slices **A1, A3, A6, A9, A11, A12 and A13** count. Schedule it early or accept that **~92 of the 104
 sort-key cases** (inside the measured 580) will not convert.
 UNVERIFIED: whether a synthetic sort field survives the whole-entity DOM/streaming shapers untouched; that is

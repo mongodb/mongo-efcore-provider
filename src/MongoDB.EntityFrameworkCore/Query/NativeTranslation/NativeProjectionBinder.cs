@@ -295,13 +295,35 @@ internal static class NativeProjectionBinder
                 || (leafExpression is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
             && translator.TryTranslateField(leafExpression, out var field))
         {
-            // A dotted (owned single-ref) leaf is read back RAW by the DOM shaper (the shaper's field-access
-            // resolver is single-hop and cannot apply the converter for a nested owned chain), so a
-            // value-converted or non-default-BsonRepresentation owned leaf would diverge from the CLR value.
-            // Decline it → the projection falls back to driver-LINQ (which resolves it correctly). Top-level
-            // leaves have no dot and are unaffected (they already round-trip converters correctly).
-            if (field.ElementName.Contains('.')
-                && !NativeGroupByBinder.HasDefaultKeySerialization(field.Property))
+            // A non-default-serialized leaf (a value converter, or a non-default BsonRepresentation) is only
+            // read back correctly when the DOM shaper can resolve the leaf expression to its own IProperty and
+            // therefore to its own serializer. Two SPELLINGS defeat that resolution, and both must decline here
+            // or the projection returns the RAW STORED value, silently, under the default Native mode:
+            //
+            //  (a) A DOTTED (owned single-ref) leaf — MongoProjectionBindingRemovingExpressionVisitor's
+            //      field-access resolver is single-hop and cannot walk a nested owned chain.
+            //
+            //  (b) A `Nullable<T>.Value` leaf (EF-322 slice A5 / EF-400) — even at TOP level. The EMIT side
+            //      peels `.Value` (MongoExpressionTranslator.TryResolveMember), so `x.Score.Value` addresses
+            //      the same field as `x.Score`; the READ side does NOT — TryResolveFieldAccessSource
+            //      recognises a StructuralTypeShaperExpression but not a MemberExpression wrapping one, so
+            //      Property comes back null and the read falls to BsonBinding.GetElementValue<T>, which builds
+            //      a DEFAULT type serializer and discards the converter. Measured with
+            //      ValueConverter<int,int>(v => v*2, v => v/2), stored 14, correct CLR value 7: both
+            //      `new { V = x.Converted.Value }` and the bare `x.Converted.Value` returned 14.
+            //
+            // This comment USED TO ASSERT that "top-level leaves have no dot and are unaffected (they already
+            // round-trip converters correctly)". Slice A5 invalidated that premise: the `.Value` spelling is a
+            // top-level leaf whose read side cannot find the property. Hence the second disjunct.
+            //
+            // The `.Value` disjunct is a DECLINE, not a fix — the projection falls back to driver-LINQ, which
+            // for this mapping throws exactly as the released packages do. Teaching TryResolveFieldAccess to
+            // peel `.Value` so emit and read agree BY CONSTRUCTION is the real answer and is tracked as
+            // EF-402; REMOVE this second disjunct when that lands.
+            if (!NativeGroupByBinder.HasDefaultKeySerialization(field.Property)
+                && (field.ElementName.Contains('.')
+                    || (leafExpression is MemberExpression {Member.Name: nameof(Nullable<int>.Value), Expression: { } valueReceiver}
+                        && Nullable.GetUnderlyingType(valueReceiver.Type) is not null)))
             {
                 result = null!;
                 return false;
