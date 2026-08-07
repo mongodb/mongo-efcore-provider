@@ -1,0 +1,209 @@
+# EF-322 — plan reset: what ships in the first native-query release
+
+*Written 2026-08-07 against `NativeQueryOngoing` at `95162c86`. This supersedes the "land at parity/cutover"
+plan recorded in draft PR #324 and in `docs/native-query-status-EF-322.md` §9.8.*
+
+*Every number here is **MEASURED** at `95162c86` unless tagged otherwise. The measurement method is recorded in
+status-doc §9.0 and must be reused for the checkpoint in §7 — this project has twice had a plan built on a
+bucket label that was wrong by 40%, so a number's provenance is part of the number.*
+
+---
+
+## 1. What changed, and why this document exists
+
+The branch has been built toward a single event: reach parity with driver-LINQ, retire it, merge. That plan is
+withdrawn. Two owner decisions replace it:
+
+1. **Merge early, at reasonable coverage, and track the rest.** The bar is **~80% coverage, no major
+   architectural issues, and good tracking of the remaining work.** Correctness gaps are acceptable *if* they
+   are well-defined, uncommon, and tracked.
+2. **The driver path is not removed in this release.** It ships, probably obsoleted in some form, and is
+   retired later.
+
+Decision 2 is the one that reshapes the engineering, and its consequences are easy to miss — see §6.
+
+---
+
+## 2. Where native actually stands
+
+| | Cases |
+|---|---:|
+| EF10 specification cases run | 4593 |
+| Passing under `MONGODB_EF_NATIVE_ONLY=1` | **2427** |
+| Failing | 2166 |
+
+The 2166 partitions three ways (MEASURED by decline-site instrumentation, five sweeps, each reproducing the
+baseline exactly):
+
+| Partition | Cases | Meaning |
+|---|---:|---|
+| **(a) genuine coverage gaps** | **1598** | needs driver-LINQ for correct *results* — the only partition that gates coverage |
+| (b) fails in every mode | 518 | unsupported in native *and* driver-LINQ; closing them is not native work |
+| (c) bookkeeping | 50 | `AssertMql` baseline diffs a re-baseline resolves |
+
+**Addressable surface = 4593 − 518 = 4075. Native handles 2427 of it — 59.6%.**
+
+Reaching 80% needs **+833**. The plan below delivers **+922 → 82.2%**, deliberately leaving ~90 cases of margin
+(§7 explains why the margin is not optional).
+
+---
+
+## 3. What ships: three streams
+
+### Stream 1 — translator breadth (**588 cases**)
+
+The largest single item on the board, and it has had no ticket, no slice and no place in the execution order —
+because it was split across two buckets that looked like separate work.
+
+The same ~20 features recur in **predicate**, **sort-key** and **projection-leaf** position: casts (72),
+tuple/anonymous comparison (50), `EF.Property` (48), bare constant/parameter (40), `Nullable.Value` (38),
+client-collection `Contains` (36), entity equality (34), `??` (32), string concat (32), `?:` (26), and a tail.
+The bucket labels attributed them to "predicate breadth" (368) and "the projection long tail" (220)
+respectively. **They are one capability**, and `MongoExpressionTranslator` is the one place that has to learn
+them.
+
+588 is 37% of the entire coverage gap.
+
+### Stream 2 — the sole-cause tranche (**282 cases**)
+
+Five small gaps, chosen because **250 of the 282 are sole-cause**: nothing else declines them, so opening one
+gate is expected to convert the whole group. Cheapest cases on the board per unit of work.
+
+| Gap | Cases | Sole-cause |
+|---|---:|---:|
+| Scalar-aggregate binder | 82 | **82** |
+| `Distinct` | 84 | 64 |
+| Set operations | 42 | 42 |
+| No-binder operators | 40 | 40 |
+| Post-terminal guards | 34 | 22 |
+
+### Stream 3 — slice 3b, the entity leaf in a projection (**52 cases**)
+
+Already designed as part of step 3. It is in the plan for a correctness reason rather than a coverage one:
+**EF-356 lives in the mixed shaper and is silent wrong data on a mainstream projection shape.** The owner's
+policy admits deferred correctness gaps only when they are *uncommon*; this one is not. 3b **fixes** EF-356
+rather than pinning it (a standing ruling from 2026-08-06).
+
+**Total: 588 + 282 + 52 = +922 → 3349/4075 = 82.2%.**
+
+---
+
+## 4. What is deferred, and tracked
+
+Per the "few cases → ticket" rule, plus two large streams the arithmetic says are not needed for 80%:
+
+| Deferred | Cases | Note |
+|---|---:|---|
+| **Joins / cross-collection** | 373 | the biggest deferral, and the largest departure from the old plan, which ranked it first |
+| **GroupBy breadth** | 130 | |
+| Composite-PK member access | 116 | only 12 sole-cause, so its real yield is much smaller than 116 |
+| Slice 3d — composition relaxations | 18 | depends on 3a, already landed |
+| Non-constant regex | 19 | EF-247, JIRA status `Blocked` — check what it is blocked on before scheduling |
+| `Not` over an unsupported subtree | 8 | |
+| Stragglers | ~12 | 4 each |
+
+**Every row above needs a ticket before merge** — that is a merge-bar item ("good tracking"), not
+housekeeping. Existing: EF-382, EF-390, EF-391. The joins stream also carries EF-375/376/377/380/381.
+
+### Correctness gaps that ship
+
+Admitted under the owner's policy — **well-defined, uncommon, tracked**. Each needs a ticket carrying a
+reproduction and an explicit statement that it is *silent* rather than loud:
+
+- **EF-380** — silent wrong data under the default mode (from the EF-379 slice's residuals).
+- **EF-375** — join-key weakness.
+- **EF-390** — dotted owned-hop scalar leaf returns `null`; pinned by a test asserting today's wrong behaviour,
+  which must be **inverted** when fixed, not deleted.
+- **EF-355** — carried.
+
+**EF-356 is explicitly NOT in this list** — see §3 stream 3.
+
+---
+
+## 5. Architecture — the "no major issues" half of the bar
+
+Three items. None blocks merge; all need a decision recorded rather than a ticket filed and forgotten.
+
+1. **The bulk path calls `TranslateQuery` directly.** `BuildIdDocumentQuery` does not build its own bridge; it
+   calls the fallback's own entry point and then uses `MongoExecutableQuery.Query`/`.Provider` — two members
+   status-doc §9.4 had written off as dead. So EF9+ `ExecuteUpdate`/`ExecuteDelete` runs through the query
+   gate. **Under decision 2 this is no longer a blocker** (the bridge stays), but it is real coupling and
+   should be recorded as known debt with an owner.
+2. **The parity oracle.** The primary correctness instrument today is `Native == DriverLinq`. Retiring the
+   driver path deletes it. **Decision 2 defers this entirely** — but it must be scheduled *before* retirement
+   is scheduled, because it has the longest lead time of anything on the board.
+3. **`ProjectionAliasTier.Synthetic` is unreachable** after the tier-2 revert. Housekeeping, but a reviewer
+   will ask; either remove it or comment it as deliberate.
+
+### New, from decision 2: how the driver path is obsoleted
+
+The first release ships both paths with the driver path "obsoleted in some way". That is **public surface** and
+needs a decision: what carries `[Obsolete]` (`MongoQueryMode.DriverLinq`? `UseQueryMode`? neither, just docs?),
+what the message says, and whether it warns or errors.
+
+**Measured, tag-side:** `git grep -c QueryMode` returns **zero** at `v10.0.2`, `v9.1.2` and `v8.4.2` — the
+entire query-mode surface is additive within this unreleased cycle and has never shipped. So this is a
+free choice today and becomes a compatibility commitment the moment it ships. **This is the one API decision
+that cannot be deferred past merge.**
+
+---
+
+## 6. What decision 2 changes, stated plainly
+
+Because it is easy to carry the old plan's assumptions forward:
+
+- **Retiring driver-LINQ is no longer the goal of this work.** Status-doc §9 is titled "what must be done
+  before driver-LINQ can be retired without regression"; it remains accurate and becomes a *later-phase*
+  document rather than the plan of record.
+- **Coverage gaps are not correctness risks.** Every one of the 1598 falls back and returns correct results
+  today. This is why merging at 82% is safe at all.
+- **The bulk-path coupling and the oracle replacement both leave the critical path** (§5.1, §5.2).
+- **The testing strategy does not change**, and does not need to. The `Native`/`NativeOnly`/`DriverLinq`
+  three-axis method stays available for as long as the driver path ships.
+
+---
+
+## 7. Risk, and the one checkpoint that is not optional
+
+**"Sole-cause" is a leverage proxy, not a guarantee.** It means nothing else declined at *population* time. The
+lowerer or the renderer can still fail once a gate opens, so stream 2's 282 is an upper bound, not a promise.
+Stream 1's 588 carries the same risk in smaller proportion.
+
+**Therefore: re-measure after stream 1, using the §9.0 method, before committing to the rest.** If stream 1's
+yield comes in materially under 588, that is the moment to pull joins or GroupBy back in — not after stream 2
+has also under-delivered. The ~90 cases of margin above 80% exist to absorb a small shortfall; they do not
+absorb a large one.
+
+---
+
+## 8. Verification bar
+
+Unchanged from the last two slices, and non-negotiable:
+
+- Full solution green on **EF8, EF9 and EF10**.
+- Both axes compared against a base worktree. **Measure wins by message TRANSITION, not by failing-name set** —
+  a name-set diff reported 2 wins where there were 74 in slice 3a, because most wins move from one failure
+  message to another.
+- **Classify `Assert.Throws` failures FIRST** when bucketing; their message quotes the inner exception and a
+  naive match over-counted by 149.
+- **Zero `#if` lines added or removed in `.cs` under `src/`.**
+- Every guard test **mutation-verified**.
+- **A parameterized-`Where` leg for every shape**, and attention to **execution order inside tests** — an eager
+  `ToList()` on a throwing leg masks a silent one that runs later. Both lessons were learned by shipping
+  falsely-green tests in this branch.
+- Breaking changes measured by **executing against the published packages**, never inferred from the branch.
+
+---
+
+## 9. Sequence
+
+1. **File the deferral tickets** (§4) — merge-bar item, and cheapest done first.
+2. **Stream 1 — translator breadth**, as several slices split by feature group.
+3. **Checkpoint: re-measure** (§7).
+4. **Stream 3 — slice 3b** (fixes EF-356).
+5. **Stream 2 — the sole-cause tranche.**
+6. **Obsoletion decision + architecture record** (§5).
+7. **Final measurement, status-doc update, merge.**
+
+Streams 2 and 3 are independent of each other; 3b is placed before stream 2 only so the silent-wrong-data fix
+lands earlier.
