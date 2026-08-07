@@ -1,5 +1,16 @@
 # Native-query merge, phase 1 — deferral tracking and the stream-1 spike
 
+> **⚠ HISTORICAL EXECUTION RECORD — EXECUTED AND COMPLETE. DO NOT PLAN FROM ITS NUMBERS.** *(Note added
+> 2026-08-07 on the final whole-phase review.)* This plan was written **before** the stream-1 spike it
+> commissions in Task 3, and it is deliberately left as written so the record of what was executed stays
+> intact. Consequently its figures are the pre-spike ones and are **stale by design** — "three streams" (there
+> are four), "+922 → 82.2%" (measured: **+904 → 3331/4075 = 81.7%**), "588 cases" (measured: **580**, with a
+> realistic yield of **474 sole-cause / ≈508 after all of stream 1 / ≈570 after streams 1 and 2**), and the
+> straggler row's "~12" (**12 = 8 to EF-397 + 4 to EF-382**). **The current plan of record is
+> `docs/superpowers/specs/2026-08-07-native-query-merge-plan-design.md`; the current measurement is
+> `docs/superpowers/specs/2026-08-07-stream1-translator-breadth-spike.md`; the resuming agent's entry point is
+> `docs/native-query-status-EF-322.md`.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 

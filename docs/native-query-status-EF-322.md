@@ -1,8 +1,10 @@
 # Native LINQ Translation (EF-322) — Status Report
 
-*Generated 2026-07-26 · **last updated 2026-08-07** · currently on `NativeQueryOngoing` @ `99d74735`, stacked
-on `main` and unmerged. (The previous header said `EF-322-step3a` @ `1c470704` above tip `9065acfc`; both
-slices have since been squashed onto the rolling branch.)*
+*Generated 2026-07-26 · **last updated 2026-08-07** · currently on `NativeQueryOngoing` at or above `2431bbf0`,
+stacked on `main` and unmerged. (The header said `99d74735` until this revision, and the document had been
+edited three times since that tip — by `5aae38ca`, `a4af07dd` and `2431bbf0`, the stream-1-spike corrections.
+Before that it said `EF-322-step3a` @ `1c470704` above tip `9065acfc`. **The §9 measurements below were taken
+at `99d74735` and that provenance is unchanged** — only the header's "where the branch is" claim moved.)*
 
 > **UPDATED 2026-08-07 — §9 REWRITTEN AS-MEASURED (EF-391, first half).** Every count in §9 was re-derived at
 > `99d74735` by instrumenting the *decline sites* rather than bucketing failure messages, and reproducing the
@@ -13,6 +15,11 @@ slices have since been squashed onto the rolling branch.)*
 >    lever is `MongoExpressionTranslator` **expression breadth** — ≈588 of the 1598 real gaps, spanning
 >    predicates, sort keys and projection leaves as one capability — and it has no slice, no ticket and no
 >    place in the execution order. §9.7 is re-ranked and §9.8 gains steps 4–11.
+>    ***AMENDED 2026-08-07 by the stream-1 spike***
+>    (`docs/superpowers/specs/2026-08-07-stream1-translator-breadth-spike.md`)***: the measured figure is 580;
+>    its realistic yield is 474 sole-cause, ≈508 after all of stream 1, ≈570 once stream 2 has also landed;
+>    and it is TWO capabilities, not one — sort key needs a computed-sort slice no translator arm can reach.
+>    Plan from §8's plan-of-record paragraph and §9.8's sequence, not from the ≈588.***
 > 3. **Two long-standing labels measured out FALSE**: the "66 `ArgumentOutOfRangeException` — a
 >    materialization/shaper gap" bucket is 48 `AssertMql` baseline failures and *zero* shaper bugs, and
 >    "composite-PK member access … Northwind does not cover it" is 116 measured cases, 112 of them inside the
@@ -64,9 +71,19 @@ is now an ancestor of the tip.*
 
 Epic **EF-322 — "Native LINQ query provider (ground-up rebuild)"** replaces the *translation* half of
 the Query subsystem: the provider builds MongoDB aggregation pipelines (MQL) itself from a canonical query
-AST and uses the C# driver only to *execute* them (BSON, cursors, sessions, transactions). Driver-LINQ
+AST and uses the C# driver only to *execute* them (BSON, cursors, sessions, transactions). ~~Driver-LINQ
 remains as a gated fallback (`MongoQueryMode.DriverLinq`) until native reaches parity, then the delegation
-code is deleted.
+code is deleted.~~
+
+**CORRECTED 2026-08-07 on the final whole-phase review — that last clause is a flat restatement of the
+withdrawn parity/cutover plan, and it is the FOURTH such survivor found in this document.** It survived here,
+unqualified, in the very first section a resuming agent reads, while §5, §8 and §9 were all corrected around
+it. What replaced it: **driver-LINQ remains as a gated fallback (`MongoQueryMode.DriverLinq`) and SHIPS in
+this release.** The plan of record is to merge at **~80% coverage** with the driver path intact and the
+remaining gaps tracked — not to reach parity first. Retiring the fallback and deleting the delegation code is
+a **separate, later, out-of-scope project** with no date attached to it. Full detail in §8 ("the plan of
+record, stated once") and `docs/superpowers/specs/2026-08-07-native-query-merge-plan-design.md`; §9 remains
+accurate but describes that later phase, not this release.
 
 **Native is already the default execution path.** Per the provider's versioning rubric this is *not* a
 breaking change: query results are unchanged, any shape native does not support falls back automatically,
@@ -934,8 +951,14 @@ Reconciling with the previous revision's numbers, so the differences are not mis
 - **651 differ only in *failure shape*** (559 exception-type + 26 message + 66 index). These features are
   unsupported in *every* mode (no correct data is produced either way); the tests pass under `Native` only
   because the override pins the *driver-LINQ* exception type/message. Strictly they "require driver-LINQ to
-  pass as written," but they aren't lost functionality — at parity cutover these overrides get re-baselined
-  to assert the native exception. **This is bookkeeping at cutover, not coverage work**, but at 651 tests it
+  pass as written," but they aren't lost functionality — ~~at parity cutover these overrides get re-baselined
+  to assert the native exception. **This is bookkeeping at cutover, not coverage work**~~ **— STALE ON PLAN
+  FRAMING, corrected 2026-08-07 on the final whole-phase review. The banner at the head of §7.3 scopes itself
+  to the numbers and one label; this clause is neither, and it outlived both.** The re-baselining does **not**
+  happen at this release's merge: under the 2026-08-07 merge plan the driver path **ships**, so these
+  overrides keep passing exactly as they do today and nothing is re-baselined. The work is real but belongs to
+  the later, separate project that retires driver-LINQ (§8, §9.3). **This is bookkeeping at *retirement*, not
+  coverage work, and not a merge-blocker** — but at 651 tests it
   is large enough to schedule deliberately rather than discover.
 - **2 are neither** — the `Throws_on_concurrent_query_first` MQL-string assertions.
 
@@ -1063,7 +1086,10 @@ First, **translator breadth is one capability appearing in three positions** —
 `??`, `?:`, `EF.Property`, `Nullable.Value`, string concat, entity equality, `Contains` over a client
 collection, …) account for the 368 *and* for the 220 in the projection column, so **≈588 cases (37% of the
 1598) are reachable by one translator work stream** that has no slice, no ticket and no place in §9.8's
-execution order. Second, **composite-PK member access is 116 measured cases, 112 of them inside the four
+execution order. *(The 2026-08-07 stream-1 spike —
+`docs/superpowers/specs/2026-08-07-stream1-translator-breadth-spike.md` — re-derived this disjointly and
+measured **580**, −1.4%, reproducing every structural row of §9.1 exactly. It also found that "one work
+stream" is **two capabilities**, not one: see the correction to the plan-of-record paragraph below.)* Second, **composite-PK member access is 116 measured cases, 112 of them inside the four
 reference-`Include` suites** — §9.1 has listed it for weeks as "not in the table at all, because Northwind
 does not cover it", and that is FALSE: Northwind's `OrderDetail` has a composite key, and the
 `Include_references_*` / `Include_multiple_references_*` families walk straight into it. See §9.1 and §9.7.
@@ -1072,11 +1098,23 @@ does not cover it", and that is FALSE: Northwind's `OrderDetail` has a composite
 retire it, merge." **That plan is withdrawn.** The owner's replacement: merge at **~80% coverage** with no
 major architectural issues and good tracking of the rest; the driver path **ships** in this release and is
 retired later, as a separate, out-of-scope project (full detail:
-`docs/superpowers/specs/2026-08-07-native-query-merge-plan-design.md`). Four streams deliver **82.2%**
-(3349/4075 of the addressable surface): **stream 1** translator breadth (588 cases), **stream 2** the
+`docs/superpowers/specs/2026-08-07-native-query-merge-plan-design.md`). ~~Four streams deliver **82.2%**
+(3349/4075 of the addressable surface): **stream 1** translator breadth (588 cases)~~ — **CORRECTED
+2026-08-07 on the final whole-phase review, from the stream-1 spike
+(`docs/superpowers/specs/2026-08-07-stream1-translator-breadth-spike.md`), whose revised figures had not
+reached this document at all. Four streams deliver 81.7% (3331/4075 of the addressable surface):**
+**stream 1** translator breadth (**580** measured, not the cited 588 — and its *realistic* yield is **580 total
+/ 474 sole-cause**, of which **74 depend on the computed-sort slice**, leaving **400** without it; it
+contributes **+570** to the projection, after stream 2 has also landed), **stream 2** the
 sole-cause tranche (282 cases), **stream 3** slice 3b / the EF-356 fix (52 cases), and **stream 4** EF-375 —
 a targeted correctness fix, contributing 0 cases (its cases sit inside the deferred joins bucket and stay
-failing either way). Deferred and tracked: joins **373 (EF-392)**, GroupBy **130 (EF-393)**, composite-PK
+failing either way). The arithmetic is **2427 + 570 + 282 + 52 = 3331 → 81.7%**, against a bar of
+`0.80 × 4075 = 3260` — a margin of **71** cases, not the ~90 the merge plan claimed before the spike ran.
+**Stream 1 is not "each feature ships independently" as this document has described it** (see §9.8 step 2):
+the spike found it is **two capabilities**, and the second — the **computed-sort slice ("slice B")**, which
+is IR/lowerer/renderer work rather than a translator arm — **delivers nothing on its own and is load-bearing
+for the bar.** Without it the projection is **≤3257/4075 = ≤79.9%**, i.e. **below 80%**. The owner ruled it
+into stream 1 on 2026-08-07. Deferred and tracked: joins **373 (EF-392)**, GroupBy **130 (EF-393)**, composite-PK
 **116 (EF-394)**, slice 3d **18 (EF-395)**, non-constant regex **19 (EF-247**, `Blocked`**)**, `Not` over an
 unsupported subtree **8 (EF-396)**, and the remaining stragglers **8 (EF-397)** plus the pre-existing
 **EF-382** **4** (the `VectorSearch` pre-filter item; §9.1 row 13 — EF-397 does **not** cover it, avoiding a
@@ -1396,7 +1434,13 @@ environment on 2026-08-07, so the statuses below are **CITED from §6**, not re-
   (bare same-typed pair), a **silently null navigation**, and **silently wrong values**
   (`TARGET-B|TARGET-B` for `TARGET-A|TARGET-B`). A fix addressing only the first site converts a throw into
   silent wrong data. `Employee.Include(Manager).Include(Mentor)` is enough, and same-typed siblings are
-  guaranteed by construction on any self-referencing model.
+  guaranteed by construction on any self-referencing model. **This one is FIXED BY THE MERGE PLAN — it does
+  not ship broken.** It is **stream 4** (§8, §9.8), pulled in on 2026-08-07 precisely because the Task-1
+  audit found its trigger is an ordinary self-referencing model shape and so it fails the "uncommon" half of
+  the bar for a *deferred* correctness gap. Its slice opens with a separability spike. *(Note added
+  2026-08-07 on the final whole-phase review: §8 points at this section as the list of gaps that **ship**, so
+  without this sentence — sitting beside EF-356's "3b must FIX it" — §9.5 read alone implied EF-375 ships
+  broken. It does not.)*
 - **EF-355** — filtered reference `SelectMany` can silently drop a `!= null` inner filter. **Latent** today
   (EF emits the nested, not folded, shape) but the mechanism sits in code the cutover makes load-bearing.
 
@@ -1449,13 +1493,22 @@ recorded beneath so the change is visible.*
 
 Ranked by how much of the 1598 each gates:
 
-1. **`MongoExpressionTranslator` expression breadth — ≈588 (37%).** The single largest lever, and **it appears
+1. **`MongoExpressionTranslator` expression breadth — ≈588 (37%); re-measured as 580 by the 2026-08-07
+   stream-1 spike** (`docs/superpowers/specs/2026-08-07-stream1-translator-breadth-spike.md`, −1.4%, disjoint
+   against disjoint). **Its realistic yield is smaller than either headline: 474 sole-cause, of which 74 need
+   the computed-sort slice; ≈508 after all of stream 1; ≈570 once stream 2 has also landed.** The single
+   largest lever, and **it appears
    nowhere in the previous ranking, nowhere in §9.8, and has no ticket.** One work stream (casts, `??`, `?:`,
    `EF.Property`, `Nullable.Value`, string concat, entity equality, `Contains` over a client collection,
    constructed-value comparison, `Equals`, `GetType`, array literals) pays into predicates (368 incl. sort
    keys) *and* projection leaves (220) at once, because they are the same `TranslateNode` /
-   `TryTranslateLeaf` surface. It is also unusually well-suited to incremental delivery: each feature is
-   independently testable and independently shippable.
+   `TryTranslateLeaf` surface. ~~It is also unusually well-suited to incremental delivery: each feature is
+   independently testable and independently shippable.~~ **CORRECTED by the spike:** predicate and
+   projection-leaf really are the same method (`TranslateOperand`), which is *stronger* than this claimed —
+   but **sort key is a separate capability** that no translator arm can reach, so ~92 of the 104 sort-key
+   cases need a **computed-sort slice** (`$set`/`$addFields` + `$sort` + `$unset` — IR, lowerer and renderer
+   work). A plan written as "20 independently shippable translator features" **silently under-delivers**;
+   the computed-sort slice must be scheduled as its own slice, early.
 2. **Joins / cross-collection — 373 (23%). Deferred under the 2026-08-07 merge plan; tracked as EF-392.**
    Partly closed: single-level reference `Include` is native (EF-368), transitive-hop scoping and
    interleaved-operator positioning are fixed (EF-372, EF-373), and root-vs-transitive classification is fixed
@@ -1543,7 +1596,8 @@ withdrawal, stated plainly so neither is missed:
 
 - **Old steps 7 and 8 — joins-resumed (373) and GroupBy breadth (130) — are DEFERRED, not scheduled.** This
   reverses step 1 at the very top of this section, which put joins first of everything the epic had left. The
-  reversal is not a change of opinion, it is the arithmetic in §9.7: the four streams below reach **82.2%** —
+  reversal is not a change of opinion, it is the arithmetic in §9.7: the four streams below reach ~~**82.2%**~~
+  **81.7%** (corrected on the final whole-phase review from the stream-1 spike; see the sequence below) —
   past the 80% merge bar — without touching joins or GroupBy at all. Tracked: joins **EF-392** (373 cases),
   GroupBy **EF-393** (130 cases). Composite-PK, previously bundled into old step 7 as "its first task", is
   decoupled from joins and deferred on its own terms: **EF-394** (116 cases, but only **12** sole-cause on its
@@ -1557,7 +1611,8 @@ withdrawal, stated plainly so neither is missed:
   under EF-392 regardless of what this stream finds. Its slice opens with a spike that must confirm the fix is
   actually separable from the joins machinery — **UNVERIFIED**, and a finding to bring back rather than push
   through if it is not. It adds correctness, not coverage: its cases sit inside the already-deferred joins
-  bucket, so **82.2% does not move**.
+  bucket, so **the projected total does not move** (this read "**82.2% does not move**"; the projection is
+  **81.7%** on the spike's measurement — the claim that stream 4 moves it by zero is unaffected).
 
 **The merge-plan sequence, replacing the superseded table above:**
 
@@ -1568,15 +1623,44 @@ withdrawal, stated plainly so neither is missed:
    which keeps its existing **EF-382**, 4 — §9.1 row 13); **EF-247** (non-constant regex, 19) already exists —
    JIRA status `Blocked`, check what it is blocked on
    before scheduling.
-2. **Stream 1 — translator breadth**, as several slices split by feature group (**588** cases: casts 72,
+2. **Stream 1 — translator breadth**, as several slices split by feature group. ~~(**588** cases: casts 72,
    tuple/anonymous comparison 50, `EF.Property` 48, bare constant/parameter 40, `Nullable.Value` 38,
    client-collection `Contains` 36, entity equality 34, `??` 32, string concat 32, `?:` 26, and a tail). Pays
    into predicates, sort keys **and** 3c simultaneously, because they are the same `TranslateNode` /
-   `TryTranslateLeaf` surface; each feature ships independently.
+   `TryTranslateLeaf` surface; each feature ships independently.~~
+   **CORRECTED on the final whole-phase review — those figures are the pre-spike CITED ones and five of them
+   moved; and "each feature ships independently" is exactly the framing the spike says will silently
+   under-deliver.** MEASURED, `docs/superpowers/specs/2026-08-07-stream1-translator-breadth-spike.md` §3:
+   **580** cases, not 588 — casts 72, VALUE_OK/reverted-tier-2 54, `EF.Property` **50** (was 48),
+   constructed value **42** (was 50), bare constant/parameter 40, `Nullable.Value` 38, client-collection
+   `Contains` 36, `??` 32, string concat 32, entity equality **30** (was 34), other client/BCL call 30, `?:`
+   26, other arithmetic/comparison **22** (was 18), `Negate` 18, `Not` 18, `Equals()` 16, `GetType` 8, array
+   literal **6** (was 10), other member access 6, `EF.Functions.Like` 4. The five bolded moves net −10, which
+   is the whole 590→580 delta. **Sole-cause is 474 of the 580.**
+   Predicate and projection-leaf do pay in together — more strongly than this step claimed, since they are
+   literally the same method (`TranslateOperand`) — **but sort key is a SEPARATE CAPABILITY.** ~92 of the 104
+   sort-key cases need a **computed-sort slice ("slice B")**: `$set`/`$addFields` + `$sort` + `$unset`, i.e.
+   IR, lowerer and renderer work, not a translator arm. It **delivers nothing on its own**, **74 of the 474
+   sole-cause cases depend on it** (spread across seven groups — A1, A3, A6, A9, A11, A12, A13), and without
+   it the whole plan lands **≤3257/4075 = ≤79.9%, below the bar**. **Schedule it early, and do not plan this
+   stream as 20 independently-shippable features.**
 3. **Checkpoint: re-measure**, using §9.0's method, before committing to the rest. "Sole-cause" is a leverage
-   proxy, not a guarantee — the lowerer or renderer can still fail once a gate opens. If stream 1's yield comes
-   in materially under 588, that is the moment to pull joins or GroupBy back in, not after stream 2 has also
-   under-delivered; the ~90-case margin above 80% absorbs a small shortfall, not a large one.
+   proxy, not a guarantee — the lowerer or renderer can still fail once a gate opens. ~~If stream 1's yield
+   comes in materially under 588, that is the moment to pull joins or GroupBy back in, not after stream 2 has
+   also under-delivered; the ~90-case margin above 80% absorbs a small shortfall, not a large one.~~
+   **CORRECTED on the final whole-phase review — that trigger is verbatim the one the merge-plan spec
+   explicitly corrects (its §7), and the correction never propagated here. Reading a ~508 result against 588
+   would score a normal, expected outcome as an 80-case shortfall and expand scope wrongly.** The trigger, as
+   it stands:
+   - expect **≈508 after all of stream 1 with slice B** (474 sole-cause + 34 that close within stream 1 —
+     32 needing a second stream-1 feature, 2 at the `ThenBy` arm), and **≈400 without slice B** (the
+     sole-cause tranche only; the slice-B exposure of the 34 was not measured — UNVERIFIED);
+   - expect **≈570 after streams 1 and 2 together** (474 + 34 + 62, the 62 being set ops 32, `Distinct` 26,
+     scalar aggregate 4 — they are stream 1's cases but wait on stream 2);
+   - **pull deferred work back in only if the POST-STREAM-2 figure lands materially under ≈570.** Not on the
+     post-stream-1 figure, which is structurally incomplete by those 62.
+   All three are upper bounds. And the margin available to absorb a shortfall is **71** cases
+   (3331 − 3260), **not ~90** — that figure was computed from the superseded 3349.
 4. **Stream 3 — slice 3b** (fixes EF-356 rather than pinning it — the standing ruling above; **52** cases),
    **then stream 4 — EF-375**, spike first, to answer the separability question before committing to the fix.
 5. **Stream 2 — the sole-cause tranche** (**282** cases, 250 of them sole-cause: scalar-aggregate binder 82
@@ -1589,8 +1673,13 @@ withdrawal, stated plainly so neither is missed:
 7. **Final measurement, status-doc update, merge.**
 
 Streams 2 and 3 are independent of each other; 3b is placed before stream 2 only so the silent-wrong-data
-EF-356 fix lands earlier. **Total: 588 + 282 + 52 = +922 → 3349/4075 = 82.2%** (stream 4 contributes
-correctness, not cases — see §8).
+EF-356 fix lands earlier. ~~**Total: 588 + 282 + 52 = +922 → 3349/4075 = 82.2%**~~ **CORRECTED on the final
+whole-phase review — that sum used stream 1's CITED headline (588) where the number to plan against is its
+MEASURED realistic yield. Total: 570 + 282 + 52 = +904 → 2427 + 904 = 3331/4075 = 81.7%** (stream 4
+contributes correctness, not cases — see §8). The **570** is stream 1's bucket *after stream 2 has also
+landed*, per the checkpoint in step 3; sequencing stream 2 last (step 5) is what makes 570 the right term to
+sum, but it also means the post-stream-1 checkpoint sees ≈508, not 570. Bar: `0.80 × 4075 = 3260`, margin
+**71**. Without slice B: **≤3257 = ≤79.9%**, below the bar.
 
 **The owned-data work stream is still not on this list.** Nine slices landed and it is *not* on the merge
 critical path (nor was it on the cutover critical path this section used to track) — the spec number was flat
