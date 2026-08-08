@@ -182,6 +182,8 @@ internal sealed class MongoPipelineFactory
                     })
                     : (BsonValue)("$" + replaceRoot.NewRoot))),
             MongoProjectStage project => RenderProject(project, placeholders),
+            MongoAddFieldsStage addFields => RenderAddFields(addFields, placeholders),
+            MongoUnsetStage unset => RenderUnset(unset),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
             // The $vectorSearch score companion: a fixed document, so nothing about it is deferred. It is a
             // payload-free marker stage precisely so this BSON lives here rather than in the lowerer.
@@ -303,12 +305,20 @@ internal sealed class MongoPipelineFactory
         var body = new BsonDocument();
         foreach (var ordering in stage.Orderings)
         {
-            if (ordering.KeySelector is not MongoFieldExpression field)
-                throw new NativeTranslationNotSupportedException(
-                    $"$sort key selector must be a MongoFieldExpression; got '{ordering.KeySelector.GetType().Name}'. "
-                    + "Non-field sort keys should have been rejected by the translator.");
+            // A COMPUTED key arrives here already rewritten by the lowerer into a MongoElementRefExpression
+            // naming the synthetic field its $set wrote (EF-401 slice B). $sort takes field PATHS, so both
+            // arms contribute a bare path — never a "$"-prefixed aggregation field reference.
+            var path = ordering.KeySelector switch
+            {
+                MongoFieldExpression field => field.ElementName,
+                MongoElementRefExpression elementRef => elementRef.Path,
+                _ => throw new NativeTranslationNotSupportedException(
+                    $"$sort key selector must be a MongoFieldExpression or a MongoElementRefExpression; got "
+                    + $"'{ordering.KeySelector.GetType().Name}'. A computed sort key should have been rewritten "
+                    + "onto a synthetic field by MongoSelectLowerer.")
+            };
 
-            body.Add(field.ElementName, ordering.Ascending ? BsonInt32.Create(1) : BsonInt32.Create(-1));
+            body.Add(path, ordering.Ascending ? BsonInt32.Create(1) : BsonInt32.Create(-1));
         }
 
         return new BsonDocument("$sort", body);
@@ -330,6 +340,59 @@ internal sealed class MongoPipelineFactory
 
         return new BsonDocument("$project", body);
     }
+
+    // $set (a.k.a. $addFields) — adds computed fields, leaving existing ones alone. Unlike $project, a BARE
+    // scalar here is a LITERAL, not an inclusion flag, which is what lets a constant sort key
+    // (OrderBy(x => 1)) render as { "__sort0" : 1 } and mean it. The placeholder table is threaded through
+    // because a sort key may be a query parameter (OrderBy(x => capturedLocal)).
+    //
+    // A top-level bare MongoConstantExpression/MongoParameterExpression body is $literal-WRAPPED (EF-401
+    // fix round 1, Important 1) — MongoAggregationExpressionRenderer.Render emits it UNWRAPPED (a bare
+    // BsonValue, or a bare parameter sentinel that substitutes to a bare BsonValue), and MongoDB reads an
+    // unwrapped STRING VALUE STARTING WITH '$' as a FIELD PATH, not a literal: OrderBy(x => "$Label"), or
+    // OrderBy(x => capturedString) where the runtime value happens to start with '$', would silently sort
+    // by the named field instead of tying every row on the literal string — a silent-wrong-ORDER hole,
+    // under the default Native mode, where the pre-slice fallback was correct. This wrap is scoped to
+    // RenderAddFields ONLY — MongoAggregationExpressionRenderer itself is unchanged, since RenderProject
+    // and the predicate ($expr) path share it and a bare constant is never their WHOLE body (RenderProject
+    // requires a binary-arithmetic/size top node to admit a computed leaf at all; a predicate constant only
+    // ever appears as a comparison operand, never as the entire rendered document).
+    //
+    // Substitution survives the wrap: MongoPipelineFactory.Build's SubstituteValue walk tests EVERY BsonValue
+    // for a placeholder sentinel BEFORE recursing into it as a document, so a parameter sentinel nested one
+    // level inside { "$literal": <sentinel> } is still found and replaced — Build produces
+    // { "$literal": <the runtime value> }, exactly as a constant would render directly.
+    //
+    // COVERAGE, corrected (EF-401 Task 4): an earlier revision of this comment cited
+    // NativeComputedSortTests.Parameterized_computed_sort_key_value_is_correctly_substituted as verifying
+    // substitution THROUGH the wrap. It does NOT — that test's sort key is `x.A * factor`, a
+    // MongoBinaryExpression, so the `field.Expression is MongoConstantExpression or MongoParameterExpression`
+    // test below is FALSE for it and its sentinel is never wrapped; it proves substitution in general, not
+    // substitution inside a $literal. The wrapped-parameter path is pinned instead by
+    // MongoPipelineFactoryTests.Build_substitutes_a_parameter_sentinel_nested_inside_a_literal_wrap, which
+    // asserts the built stage is exactly { "$set" : { "__sort0" : { "$literal" : <value> } } }, and — at the
+    // functional level, through the whole translator — by the re-based specification baseline
+    // NorthwindMiscellaneousQueryMongoTest.OrderBy_parameter. .Dollar_prefixed_string_sort_key_does_not_get_
+    // interpreted_as_a_field_path covers the CONSTANT half of the wrap (it was also mutation-verified).
+    private static BsonDocument RenderAddFields(MongoAddFieldsStage stage, PlaceholderTable placeholders)
+    {
+        var body = new BsonDocument();
+        foreach (var field in stage.Fields)
+        {
+            var rendered = MongoAggregationExpressionRenderer.Render(field.Expression, placeholders);
+            if (field.Expression is MongoConstantExpression or MongoParameterExpression)
+            {
+                rendered = new BsonDocument("$literal", rendered);
+            }
+
+            body.Add(field.Alias, rendered);
+        }
+
+        return new BsonDocument("$set", body);
+    }
+
+    private static BsonDocument RenderUnset(MongoUnsetStage stage)
+        => new("$unset", new BsonArray(stage.FieldNames));
 
     private static BsonDocument RenderGroup(MongoGroupAccumulatorStage stage, PlaceholderTable placeholders)
         => new BsonDocument("$group", new BsonDocument

@@ -13,7 +13,12 @@
  * limitations under the License.
  */
 
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
@@ -58,6 +63,8 @@ internal sealed class MongoSelectLowerer
     {
         var select = query.Select;
         var stages = new List<MongoPipelineStage>();
+        var sortFields = new SyntheticSortFieldAllocator(
+            TopLevelElementNames(query.CollectionExpression.EntityType));
 
         // 0. $vectorSearch MUST be the first stage in the pipeline — the server rejects it anywhere else
         // (Location40602), for every preceding-stage shape. This is why it lives in a dedicated slot rather
@@ -73,7 +80,7 @@ internal sealed class MongoSelectLowerer
 
         // 1. $match / $sort / $skip / $limit ops, emitted verbatim in the order they were recorded
         // (Select.PipelineOps — EF-347: no fixed canonical order; arrival order IS emission order).
-        AppendSelectOpStages(select.PipelineOps, stages);
+        AppendSelectOpStages(select.PipelineOps, stages, sortFields);
 
         // 2. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
         // A projected collection-navigation Count (NativeProjectionBinder.TryTranslateProjectedCollectionCount)
@@ -100,7 +107,7 @@ internal sealed class MongoSelectLowerer
             }
 
             var operandStages = new List<MongoPipelineStage>();
-            AppendSelectOpStages(setOp.OperandSelect.PipelineOps, operandStages);
+            AppendSelectOpStages(setOp.OperandSelect.PipelineOps, operandStages, sortFields);
             if (setOp.OperandsProjected)
             {
                 operandStages.Add(new MongoProjectStage(setOp.OperandSelect.Projection));
@@ -122,7 +129,7 @@ internal sealed class MongoSelectLowerer
             // emitted here as a $project after the set-op stage and TrailingOps) and the Cardinality block
             // (post-set-op aggregate/reducer). UnwindSource/Grouping stay empty for a set-op query and their
             // blocks are skipped.
-            AppendSelectOpStages(select.TrailingOps, stages);
+            AppendSelectOpStages(select.TrailingOps, stages, sortFields);
             // NB: no early return — control continues to the Cardinality block.
         }
 
@@ -228,20 +235,78 @@ internal sealed class MongoSelectLowerer
     /// (<see cref="MongoSetOperation.OperandSelect"/>, a plain whole-entity select), and the outer query's
     /// post-set-op <see cref="MongoSelectDefinition.TrailingOps"/> (EF-347 slice B).
     /// </summary>
-    private static void AppendSelectOpStages(IReadOnlyList<MongoSelectOp> ops, List<MongoPipelineStage> stages)
+    private static void AppendSelectOpStages(
+        IReadOnlyList<MongoSelectOp> ops,
+        List<MongoPipelineStage> stages,
+        SyntheticSortFieldAllocator sortFields)
     {
         foreach (var op in ops)
         {
+            if (op is MongoSortOp sortOp)
+            {
+                AppendSortStages(sortOp, stages, sortFields);
+                continue;
+            }
+
             stages.Add(op switch
             {
                 MongoMatchOp m => new MongoMatchStage(m.Predicate),
-                MongoSortOp s => new MongoSortStage(s.Orderings),
                 MongoSkipOp k => new MongoSkipStage(k.Count),
                 MongoLimitOp l => new MongoLimitStage(l.Count),
                 _ => throw new NativeTranslationNotSupportedException(
                     $"Unknown select op '{op.GetType().Name}'.")
             });
         }
+    }
+
+    /// <summary>
+    /// Emits one <see cref="MongoSortOp"/>. A key that is already a field path is emitted as-is; a COMPUTED
+    /// key is materialized into a synthetic field by a preceding <c>$set</c> and removed again by a following
+    /// <c>$unset</c>, because MQL <c>$sort</c> accepts field paths only (EF-401, stream 1 slice B).
+    /// </summary>
+    /// <remarks>
+    /// <b>ONE <c>$set</c> and ONE <c>$unset</c> per sort STAGE, carrying every computed key of that stage</b> —
+    /// a <see cref="MongoSortOp"/> already holds a whole <c>OrderBy</c>/<c>ThenBy</c> chain's orderings as one
+    /// op (EF-347), so the three stages bracket the whole sort.
+    /// <para>
+    /// <b>The no-computed-key early return is LOAD-BEARING, not tidiness.</b> MEASURED (spike §6.2) with a
+    /// <c>queryPlanner</c> explain: <c>{$sort: {A: 1}}</c> over an indexed <c>A</c> is an <c>IXSCAN</c>, and
+    /// the IDENTICAL sort preceded by an unrelated <c>$set</c> is a <c>COLLSCAN</c>. Emitting the <c>$set</c>
+    /// unconditionally would silently cost every existing field sort its index. (It follows that a MIXED sort
+    /// does not keep its field key index-usable either — that cost is accepted, since the alternative is not
+    /// supporting computed sort keys at all; a <c>$match</c> ahead of the sort keeps its own index normally.)
+    /// </para>
+    /// </remarks>
+    private static void AppendSortStages(
+        MongoSortOp sortOp, List<MongoPipelineStage> stages, SyntheticSortFieldAllocator sortFields)
+    {
+        List<MongoProjection>? computed = null;
+        var orderings = new List<MongoOrdering>(sortOp.Orderings.Count);
+
+        foreach (var ordering in sortOp.Orderings)
+        {
+            if (ordering.KeySelector is MongoFieldExpression)
+            {
+                orderings.Add(ordering);
+                continue;
+            }
+
+            var name = sortFields.Allocate();
+            (computed ??= []).Add(new MongoProjection(name, ordering.KeySelector));
+            orderings.Add(new MongoOrdering(
+                new MongoElementRefExpression(name, ordering.KeySelector.Type), ordering.Ascending));
+        }
+
+        if (computed is null)
+        {
+            // Byte-identical to the pre-slice-B emission: the ORIGINAL ordering list, not the rebuilt one.
+            stages.Add(new MongoSortStage(sortOp.Orderings));
+            return;
+        }
+
+        stages.Add(new MongoAddFieldsStage(computed));
+        stages.Add(new MongoSortStage(orderings));
+        stages.Add(new MongoUnsetStage(computed.Select(f => f.Alias).ToList()));
     }
 
     /// <summary>
@@ -299,4 +364,88 @@ internal sealed class MongoSelectLowerer
             }
         }
     }
+
+    // The synthetic field a computed sort key is materialized into. Double-underscore prefix, matching the
+    // established sentinel convention — MongoVectorSearchScoreStage.ScoreField "__score",
+    // MongoReplaceRootStage.OwnerKeyField "__ownerKey" / .OrdinalField "__ord".
+    private const string SyntheticSortFieldPrefix = "__sort";
+
+    /// <summary>
+    /// Allocates the synthetic field names a computed sort key is materialized into, for ONE
+    /// <see cref="Lower"/> invocation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Per-invocation, deliberately — a process-global counter is a measured defect, not a style choice.</b>
+    /// The slice-B prototype used one and emitted <c>__sort3</c> for a specification test and <c>__sort4</c>
+    /// for its <c>async</c> twin, which would make every committed <c>AssertMql</c> baseline unstable across
+    /// runs.
+    /// </para>
+    /// <para>
+    /// <b>The reserved set is a collision guard, not decoration.</b> <c>$set</c> OVERWRITES a same-named
+    /// existing field silently — the same hazard the owned bare-element path guards against for
+    /// <c>$mergeObjects</c> (see <c>IsWholeElementRepresentable</c>'s sentinel-collision check). A model may
+    /// map a property to any element name, including one of these, via <c>HasElementName</c>.
+    /// </para>
+    /// <para>
+    /// <b>Two KNOWN, ACCEPTED gaps in the reserved set, both UNVERIFIED (not reachable until Task 3 lands):</b>
+    /// (1) a set-op operand of a DIFFERENT entity type (only reachable via a projected different-collection
+    /// operand, EF-347 slice C1) is not covered — the reserved set is built once, from the ROOT entity type,
+    /// and <see cref="MongoSetOperation"/> exposes only <c>OperandSelect</c>/<c>OperandCollectionName</c>, not
+    /// the operand's own <see cref="IEntityType"/>, so covering it means widening that IR (out of scope here).
+    /// (2) a TPH DERIVED type's own members are not covered — <see cref="IEntityType.GetProperties"/> and
+    /// <see cref="IEntityType.GetNavigations"/> on the root return declared and INHERITED members only, not
+    /// derived ones, yet every derived type in a TPH hierarchy occupies the SAME top-level document namespace,
+    /// so a derived-only property renamed to a synthetic name would collide identically. Recorded as a
+    /// documented limitation rather than swept via <c>GetDerivedTypes()</c> — narrower surface for this task,
+    /// consistent with this file's own precedent of declining-and-documenting a narrow edge case rather than
+    /// fixing the underlying gap immediately (see the owned bare-element notes in this file's AGENTS.md).
+    /// </para>
+    /// </remarks>
+    private sealed class SyntheticSortFieldAllocator(IReadOnlyCollection<string> reservedElementNames)
+    {
+        private int _next;
+
+        public string Allocate()
+        {
+            while (true)
+            {
+                var name = SyntheticSortFieldPrefix + _next++;
+                if (!reservedElementNames.Contains(name))
+                    return name;
+            }
+        }
+    }
+
+    // Top-level element names of the root entity type: every mapped property, plus the containing element
+    // name of each owned navigation (an owned sub-document occupies a top-level element too), plus the
+    // element name of each complex property (a ComplexProperty occupies its own top-level document slot too
+    // — GetProperties() does not see it, mirroring the precedent at
+    // MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable's third guard arm).
+    private static IReadOnlyCollection<string> TopLevelElementNames(IEntityType entityType)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in entityType.GetProperties())
+            names.Add(property.GetElementName());
+
+        foreach (var navigation in entityType.GetNavigations())
+        {
+            if (navigation.IsEmbedded() && navigation.TargetEntityType.GetContainingElementName() is { } elementName)
+                names.Add(elementName);
+        }
+
+        foreach (var complexProperty in entityType.GetComplexProperties())
+            names.Add(GetComplexPropertyElementName(complexProperty));
+
+        return names;
+    }
+
+    // The document element name a complex property occupies at its own declaring type's top level. Mirrors
+    // MongoQueryableMethodTranslatingExpressionVisitor.GetComplexPropertyElementName: there is no
+    // IReadOnlyComplexProperty overload of GetElementName in this provider (no builder API renames a complex
+    // property's own element name), so this reads the shared Mongo:ElementName annotation directly, with the
+    // identical CLR-member-name fallback GetElementName itself uses for a plain property.
+    private static string GetComplexPropertyElementName(IReadOnlyComplexProperty complexProperty)
+        => (string?)complexProperty[MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.ElementName]
+           ?? complexProperty.Name;
 }

@@ -7,9 +7,11 @@ and before that `EF-322-step3a` @ `1c470704` above tip `9065acfc`. **The §9 mea
 `99d74735` and that provenance is unchanged** — only the header's "where the branch is" claim moved, and §8
 records where the two spec axes now stand.)*
 
-> **UPDATED 2026-08-08 — STREAM 1 TRANCHE 1 HAS LANDED (EF-398).** Slice 0 (the `partial` split), **A2**
-> (`EF.Property` leaf, **34** `NativeOnly` wins MEASURED) and **A5** (`Nullable.Value`/`HasValue`, **0** wins
-> MEASURED), plus the slice-B spike. `NativeOnly` **2427/2166/17 → 2461/2132/17**; default `Native`
+> **UPDATED 2026-08-08 — STREAM 1 TRANCHE 1 HAS LANDED (EF-398), INCLUDING SLICE B (EF-401).** Slice 0 (the
+> `partial` split), **A2** (`EF.Property` leaf, **34** `NativeOnly` wins MEASURED), **A5**
+> (`Nullable.Value`/`HasValue`, **0** wins MEASURED), the slice-B spike, and **slice B itself** (computed sort
+> keys via `$set`/`$sort`/`$unset`, **12** wins MEASURED — a RE-ATTRIBUTION inside the 474, so ≈508 does not
+> move). `NativeOnly` **2427/2166/17 → 2473/2120/17**; default `Native`
 > **4593/0/17**, unmoved. New material is in **§2** (the tranche table and three findings), **§8** (the running
 > position against the checkpoint) and **§9.8** (steps 2 and 3, corrected in place). **Three things to carry
 > away before planning the next tranche:**
@@ -261,16 +263,21 @@ the current branch. The umbrella JIRA key for the tranche is **EF-398**.*
 | A5 | **`Nullable<T>.Value` peels to the underlying field** in the same three positions, and **`Nullable<T>.HasValue` becomes the `!= null` node** in **predicate position only** (**EF-400**) — "the same three positions" for `HasValue` was wrong: the `HasValue` arm lives in `TranslateNode`, the predicate entry point, so a `HasValue` PROJECTION leaf deliberately declines, and that decline is pinned by `NativeNullableMemberTests.HasValue_as_a_projection_leaf_still_declines_and_is_unchanged_by_this_slice` | `4adafc2c` | ✅ Done. **0 `NativeOnly` wins MEASURED, 0 regressions**, against a **CITED** estimate of 36. Both axes byte-identical across the slice: `Native` 4593/0/17, `NativeOnly` 2461/2132/17. The zero is a property of the *sizing metric*, not of the fix — see finding (1) below. **One defect shipped and was closed by the tranche's final fix wave** (see the row below): a **value-converted** `.Value` PROJECTION leaf read the RAW stored value, silently, under the default `Native` mode — the peel makes the emit side address the field, but the read side cannot see through a `.Value` receiver, so the property (and its converter) came back null. **No `BREAKING-CHANGES.md` entry**, confirmed by executing against the same three published packages |
 | — | *(not a slice — the **slice-B spike**, documentation only)* The computed-sort-key capability: emission site, shaper survival, standalone yield, and the per-group conversion question (**EF-401**) | `2ad8524a` | ✅ Done. Findings doc: `docs/superpowers/specs/2026-08-08-computed-sort-key-spike.md`. No `src/` change, no spec movement, no `BREAKING-CHANGES.md` entry |
 | — | *(not a slice — the tranche's **final fix wave**)* Declines a value-converted `Nullable<T>.Value` projection leaf so it can no longer read the raw stored value; plus the documentation corrections propagated into this section, the plan, the two upstream spikes and `Query/AGENTS.md` | *the tranche's final commit — `EF-400: decline a value-converted nullable .Value projection leaf`* | ✅ Done. MEASURED with `ValueConverter<int,int>(v => v*2, v => v/2)`, stored `14`, correct CLR `7`: both `new { V = x.Converted.Value }` and the bare spelling returned **14** under `Native` **and** `NativeOnly` before the fix, while the plain-member control and a whole-entity read both returned 7. The fix is a **DECLINE** to driver-LINQ (which throws for that mapping, exactly as the released packages do), keyed on the existing `NativeGroupByBinder.HasDefaultKeySerialization`; the root fix — teaching the read side to peel `.Value` so emit and read agree by construction — is **EF-402**, and the guard is to be removed when it lands. Mutation-verified: deleting the new disjunct turns exactly **1 of 91** cases red with `returned 14,4`. Both axes unmoved: `Native` 4593/0/17, `NativeOnly` 2461/2132/17. No `BREAKING-CHANGES.md` entry |
+| B | **A COMPUTED sort key goes native**, via `$set` → `$sort` → `$unset` over a synthetic `__sortN` field (**EF-401**) — arithmetic, a bare constant, a captured parameter or an owned-collection `Count` in `OrderBy`/`OrderByDescending`/`ThenBy`/`ThenByDescending`. A bare constant/parameter body is `$literal`-wrapped (a `$`-prefixed string would otherwise read as a FIELD PATH — silent wrong ORDER under the default `Native` mode) | *the slice's squashed commit — `EF-401: sort by a computed key via $set/$sort/$unset (stream 1, slice B)`* | ✅ Done. **12 `NativeOnly` wins MEASURED (6 tests × 2 async), 0 regressions** — `Failed→Passed` = those 12, `Passed→Failed` = **empty**. `NativeOnly` **2461/2132/17 → 2473/2120/17**; `Native` returns to **4593/0/17** after re-baselining. **12 `AssertMql` re-bases**, the SAME 6 overrides on **all three** EF majors (their baselines are single un-`#if`'d literals, and the 12 *Actual* strings are byte-identical across EF8/EF9/EF10, so ONE `EF_TEST_REWRITE_BASELINES` pass re-bases all three). **THE 12 ARE A RE-ATTRIBUTION INSIDE THE ALREADY-COUNTED 474, NOT AN ADDITION — do NOT add them to the ≈508 checkpoint, which does not move.** Checkable: 10 of the 12 are the `$literal`-wrapped bare constant/parameter cases, i.e. exactly group **A3**, whose §5.1 row is 40 sole-cause **of which 10 need slice B** — so **A3's marginal yield once slice B has shipped is `40 − 10` = 30, not 40**; the other 2 are `OrderBy_arithmetic` × async. **ACCEPTANCE-GATE TRAP:** the `NativeOnly` pass count was **byte-identical before and after the slice landed** (2461/2132/17 both sides) because the slice re-bases the baselines of exactly the tests it converts — only 12 failure MESSAGES changed. A count-only gate reads this slice as delivering nothing; compare `(testName → outcome, message)` as SETS. **No `BREAKING-CHANGES.md` entry**, confirmed against the release TAGS (`MongoQueryMode` does not exist at `v10.0.2`/`v9.1.2`/`v8.4.2`, so a released package ran all six through driver-LINQ; the change is fallback → native with unchanged results **and unchanged row order**, plus changed emitted MQL) |
 
-**Re-summed from the table above rather than restated from a report.** Wins, one term per row: `0 + 34 + 0 + 0 + 0` = **34** (the two non-slice rows — the slice-B spike and the final fix wave — win nothing by construction; the fix wave's own change is a DECLINE, and it moved neither axis). The
-`NativeOnly` triple moves **2427/2166/17 → 2461/2132/17**, i.e. **+34 passed / −34 failed / skipped unchanged**,
-which agrees with the win column exactly — unlike step 3a, this tranche has no `Failed→Passed` transition that
-is not a feature win. (A2 also produced **2** `Failed→Failed` transitions with a *different* message —
-`NorthwindQueryFiltersQueryMongoTest.Find`, both `async` cases, advanced to their next blocker, a parameterized
-regex term. Those are progress, not wins, and they move neither the triple nor the win count.) The default
-`Native` axis reads **4593 / 0 / 17** in every row, so the tranche's `Native` delta is **0**.
-`BREAKING-CHANGES.md` entries added: **0 of 4 rows**. Against the CITED estimates the tranche realized
-**34 of `44 + 36` = 34 of 80**.
+**Re-summed from the table above rather than restated from a report.** Wins, one term per row:
+`0 + 34 + 0 + 0 + 0 + 12` = **46** (the two non-slice rows — the slice-B spike and the final fix wave — win
+nothing by construction; the fix wave's own change is a DECLINE, and it moved neither axis). The
+`NativeOnly` triple moves **2427/2166/17 → 2473/2120/17**, i.e. **+46 passed / −46 failed / skipped
+unchanged**, which agrees with the win column exactly — unlike step 3a, this tranche has no `Failed→Passed`
+transition that is not a feature win. (A2 also produced **2** `Failed→Failed` transitions with a *different*
+message — `NorthwindQueryFiltersQueryMongoTest.Find`, both `async` cases, advanced to their next blocker, a
+parameterized regex term. Those are progress, not wins, and they move neither the triple nor the win count.)
+The default `Native` axis reads **4593 / 0 / 17** in every row, so the tranche's `Native` delta is **0**.
+`BREAKING-CHANGES.md` entries added: **0 of 5 rows**. Against the CITED estimates the two SIZED feature slices
+realized **34 of `44 + 36` = 34 of 80**; slice B is deliberately **excluded from that ratio**, because its 12
+are a re-attribution of cases the ≈508 checkpoint has already counted elsewhere (see the row above and finding
+(2) below) — adding them to a realized-vs-estimate ratio would double-count them.
 
 **Three findings from this tranche, recorded here because each one changes how a later slice should be planned
 or sized.**
@@ -1231,11 +1238,15 @@ well-defined/uncommon/tracked bar: **EF-380, EF-390, EF-355** (§9.5). Retiring 
 enumerates — is **not part of this release**; §9 remains accurate but is now a later-phase document, not the
 plan of record. See §9.8 for the sequence.
 
-**2026-08-08 — the running position against the checkpoint, after stream 1 tranche 1.** The measured axes at
-`2ad8524a` are `Native` **4593 / 0 / 17** (unmoved for the whole tranche) and `NativeOnly` **2461 / 2132 / 17**,
-up from 2427/2166/17. **Cumulative stream-1 wins so far: 34** — re-summed from §2's tranche table
-(`0 + 34 + 0 + 0`), not carried from a report — realized against a CITED estimate of `44 + 36` = **80** for the
-two feature slices shipped. **The checkpoint this is measured against is §9.8 step 3's, and it expects ≈508
+**2026-08-08 — the running position against the checkpoint, after stream 1 tranche 1 (including slice B).** The
+measured axes after slice B are `Native` **4593 / 0 / 17** (unmoved for the whole tranche, once slice B's 12
+`AssertMql` baselines are re-based) and `NativeOnly` **2473 / 2120 / 17**, up from 2427/2166/17. **Cumulative
+stream-1 wins so far: 46** — re-summed from §2's tranche table (`0 + 34 + 0 + 0 + 0 + 12`), not carried from a
+report. Of those, **34** are realized against a CITED estimate of `44 + 36` = **80** for the two SIZED feature
+slices; slice B's **12** are excluded from that ratio because they are a **re-attribution** of cases the ≈508
+checkpoint already counts inside the 474 (§2 finding (2)) — **≈508 does not move, and 12 must not be added to
+it**. The one sizing figure slice B DOES change is A3's: its marginal yield once slice B has shipped is
+`40 − 10` = **30**, not 40. **The checkpoint this is measured against is §9.8 step 3's, and it expects ≈508
 after ALL of stream 1 with slice B, ≈400 without slice B, and ≈570 after streams 1 and 2 together.** State
 plainly, because it has already been got wrong once in these docs and caught in review: **≈508 at the
 post-stream-1 checkpoint is SUCCESS, not a shortfall.** The **588** is the superseded CITED figure, and judging
@@ -1246,9 +1257,11 @@ inner-node feature group's sole-cause figure counts cases that a fix RELABELS ra
 sole-cause, 0 converted). Every inner-node group in stream 1 inflates ≈508 by an amount nobody has measured.
 **No revised projection is offered here on purpose** — re-deriving it is the checkpoint's own job, using §9.0's
 method, and inventing a number now would replace one unmeasured figure with another. What is known: the base
-term of §9.8's projection has moved **2427 → 2461**, so **2427 + 570 + 282 + 52 = 3331** holds only if stream
-1's remaining contribution is `570 − 34` = **536**, and the 570 rests on the same sole-cause basis finding (1)
-undermines. The bar (`0.80 × 4075 = 3260`), the 71-case margin, and slice B's load-bearing role (without it
+term of §9.8's projection has moved **2427 → 2473**, so **2427 + 570 + 282 + 52 = 3331** holds only if stream
+1's remaining contribution is `570 − 46` = **524**, and the 570 rests on the same sole-cause basis finding (1)
+undermines. (That subtraction uses **46**, the full measured `NativeOnly` movement, precisely BECAUSE the base
+term is a measured axis reading rather than a checkpoint estimate — slice B's 12 really did move the axis, even
+though they must not be added to ≈508. Do not conflate the two: the axis moved by 46; the ESTIMATE moved by 0.) The bar (`0.80 × 4075 = 3260`), the 71-case margin, and slice B's load-bearing role (without it
 **≤3257/4075 = ≤79.9%**, below the bar) are all unchanged by this tranche — and per §2 finding (2), slice B's
 newly measured standalone yield of **12** is a **re-attribution of cases already inside the 474**, so it must
 **not** be added to ≈508 or to ≤3257.

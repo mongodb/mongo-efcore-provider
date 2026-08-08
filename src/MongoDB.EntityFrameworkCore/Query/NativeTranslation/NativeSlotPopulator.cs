@@ -13,10 +13,13 @@
  * limitations under the License.
  */
 
+using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -114,6 +117,8 @@ internal static class NativeSlotPopulator
             var ascending = methodDefinition == QueryableMethods.OrderBy;
             if (translator.TryTranslateField(keySelector.Body, out var keyNode))
                 mongoQ.Select.StartOrReplaceSort(new MongoOrdering(keyNode, ascending));
+            else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
+                mongoQ.Select.StartOrReplaceSort(new MongoOrdering(computedKey, ascending));
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
@@ -124,6 +129,8 @@ internal static class NativeSlotPopulator
             var ascending = methodDefinition == QueryableMethods.ThenBy;
             if (translator.TryTranslateField(keySelector.Body, out var keyNode))
                 mongoQ.Select.AppendThenBy(new MongoOrdering(keyNode, ascending));
+            else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
+                mongoQ.Select.AppendThenBy(new MongoOrdering(computedKey, ascending));
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
@@ -320,5 +327,183 @@ internal static class NativeSlotPopulator
             return new MongoParameterExpression(parameterName, forSerialization: null);
 
         return null;
+    }
+
+    /// <summary>
+    /// Attempts to translate a COMPUTED (non-field) sort key — EF-401, stream 1 slice B. MQL <c>$sort</c>
+    /// accepts field paths only, so <see cref="MongoSelectLowerer"/> materializes the result into a synthetic
+    /// field with <c>$set</c> and removes it again with <c>$unset</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The gate is <see cref="MongoAggregationExpressionRenderer.CanRender"/>, NOT
+    /// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>, and the difference is the whole point.</b>
+    /// A <c>$set</c> body is an AGGREGATION expression, so a node kind that exists only in the query dialect
+    /// can serve a predicate and can NEVER serve a computed sort key. Gating here turns that into a clean
+    /// translate-time decline instead of a render-time throw.
+    /// </para>
+    /// <para>
+    /// <b>Consequence for future capability-A slices, which no other document states:</b> a slice whose sort
+    /// column is to count must add an arm to <see cref="MongoAggregationExpressionRenderer"/>
+    /// (<c>Render</c> AND <c>CanRender</c>, which that file's own contract requires be changed together) —
+    /// not only to <c>MongoQueryLanguageRenderer</c>/<c>IsQueryDialectRenderable</c>. `CanRender` today admits
+    /// field/element refs, constants/parameters, binary operators over its 13 listed operators and the two
+    /// size nodes — <b>not</b> <c>MongoInExpression</c>, <c>MongoRegexExpression</c>,
+    /// <c>MongoElemMatchExpression</c> or <c>MongoUnaryExpression</c>. The stream-1 spike's §7 imposes this
+    /// only on slices introducing a NEW node kind, so A6 (<c>Contains</c>) and A13 (<c>Not</c>) — whose node
+    /// kinds already exist — fall outside it and would otherwise ship with their sort columns silently dead.
+    /// </para>
+    /// <para>
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> brings its own two guards with it: an
+    /// integer-result division is rejected (MongoDB's <c>$divide</c> is non-truncating), and so is an operand
+    /// whose property lacks default serialization — so a value-converted field cannot reach a computed sort
+    /// key and be sorted by its RAW stored order. (A plain FIELD sort key on such a property has no equivalent
+    /// guard and is unchanged by this slice — pre-existing, not introduced here.)
+    /// </para>
+    /// <para>
+    /// <b><see cref="MongoAggregationExpressionRenderer.CanRender"/> is VACUOUS at this call site today —
+    /// state this plainly so its presence is never later read as evidence a node kind was mutation-tested
+    /// against it.</b> <see cref="MongoExpressionTranslator.TryTranslateValue"/> (via its private
+    /// <c>TranslateOperand</c>) can only ever PRODUCE a node kind <c>CanRender</c> already admits (a field
+    /// ref, a constant/parameter, a size, or an arithmetic binary over admitted operands) — so the check can
+    /// never fail here, and forcing it to always return <see langword="true"/> turns no test red (mutation 2
+    /// reproduces mutation 1's exact red set; it does not add to it). It is kept anyway as the correct
+    /// FORWARD guard for the capability-A slices this file's remarks describe above (a count, a regex, an
+    /// <c>$in</c> test, a quantifier) — each of those DOES introduce a node kind <c>CanRender</c> currently
+    /// declines, and the gate is what turns that into a clean decline instead of a render-time throw once one
+    /// of them lands. Until then, this call has no discriminating power of its own.
+    /// </para>
+    /// <para>
+    /// <b>A bare top-level constant/parameter is a SEPARATE, value-level hazard <c>CanRender</c> cannot see
+    /// (EF-401 fix round 1, Important 1) — it is a NODE-KIND check only.</b> Two failure modes live here,
+    /// neither caught by <c>CanRender</c>: (1) <see cref="MongoPipelineFactory"/>'s <c>RenderAddFields</c> now
+    /// <c>$literal</c>-wraps a bare constant/parameter body, closing the silent-wrong-order hole where an
+    /// unwrapped <c>"$"</c>-prefixed string value renders as a field path instead of a literal — see that
+    /// method's own remarks; nothing here needed to change for that fix. (2) A bare constant whose CLR type
+    /// <see cref="MongoDB.Bson.BsonValue.Create(object)"/> rejects (a custom struct; an enum round-trips fine,
+    /// MEASURED) throws <see cref="ArgumentException"/> at pipeline-BUILD time, OUTSIDE
+    /// <c>MongoShapedQueryCompilingExpressionVisitor.TryBuildPipeline</c>'s typed
+    /// <c>catch (NativeTranslationNotSupportedException)</c> — a hard failure under <c>Native</c>/
+    /// <c>NativeOnly</c> where the pre-slice driver-LINQ fallback worked (unaffected: <c>DriverLinq</c> never
+    /// reaches the lowerer for an explicit-fallback query). <see cref="TryProbeBareValueRenders"/> below turns
+    /// that into a clean decline instead, by trial-rendering the actual constant value (exact — the render
+    /// path is deterministic in the value) or, for a parameter, a default instance of its declared
+    /// (nullable-unwrapped) VALUE type (a valid proxy — <c>BsonValue.Create</c>'s admission decision is keyed
+    /// on the CLR type, not the value, MEASURED against both a real and a default instance of the same
+    /// rejecting type).
+    /// </para>
+    /// <para>
+    /// <b>A parameter of a REFERENCE type is NOT a value-type-only hazard, and is handled by a narrow
+    /// ALLOWLIST rather than a probe (EF-401 Task 4).</b> An earlier revision of this remark claimed the
+    /// reachable failure "is a value-type shape"; that is MEASURED FALSE —
+    /// <c>BsonValue.Create</c> rejects <see cref="Uri"/>, <see cref="Version"/> and any ordinary user class
+    /// exactly as it rejects a custom struct, and a bare reference-type parameter sort key
+    /// (<c>OrderBy(x =&gt; capturedUri)</c>) therefore threw the same uncaught
+    /// <see cref="ArgumentException"/> — at EXECUTION time, inside
+    /// <c>MongoPipelineFactory.SerializeParameter</c>, i.e. outside ANY compile-time fallback — where the
+    /// pre-slice driver-LINQ fallback returned correct rows under <c>Native</c> (MEASURED at this slice's
+    /// base and at HEAD, all three modes). A default reference-type proxy is always <see langword="null"/>,
+    /// which renders unconditionally, so it cannot discriminate; and the reference types
+    /// <c>BsonValue.Create</c> DOES accept cannot be recognised from the declared type alone —
+    /// MEASURED against driver 3.10.0, it admits an array / <c>List&lt;T&gt;</c> / <c>IDictionary</c>
+    /// STRUCTURALLY, by mapping each element, so <c>int[]</c> renders while <c>Uri[]</c> throws on its
+    /// element. Admission is therefore restricted to the reference types measured to render for ANY value:
+    /// <see cref="string"/> and a <see cref="MongoDB.Bson.BsonValue"/>. Everything else declines, which
+    /// restores exactly the pre-slice behaviour (a clean decline to the driver-LINQ fallback, or
+    /// <see cref="NativeTranslationNotSupportedException"/> under <c>NativeOnly</c>). Declining an admissible
+    /// shape only costs nativeness, never correctness — which is why the allowlist is deliberately narrower
+    /// than the measured admitted set.
+    /// </para>
+    /// <para>
+    /// <b>KNOWN LIMITATION, recorded rather than fixed here: a FILTERED owned-collection count
+    /// (<c>b.Posts.Count(p =&gt; ...)</c>) sort key inherits the SAME unguarded operand-serialization gap a
+    /// filtered count already carries in predicate/projection position.</b> <c>CanRender</c> admits
+    /// <c>MongoFilteredSizeExpression</c> (it recurses into <c>ElementPredicate</c>), so this fall-through
+    /// happily lowers <c>OrderBy(b =&gt; b.Posts.Count(p =&gt; p.Code &gt; "5"))</c> into the same
+    /// <c>$set</c>/<c>$sort</c>/<c>$unset</c> bracket as any other computed key. But
+    /// <c>AllFieldsDefaultSerialized</c> (<see cref="MongoExpressionTranslator"/>, the guard
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> already applies to the OUTER expression)
+    /// recurses only through field and binary nodes and returns <see langword="true"/> for a filtered size
+    /// unconditionally — it never looks INSIDE the filtered size's own element predicate. So a
+    /// non-default-<c>BsonRepresentation</c> or value-converted operand used inside the element predicate
+    /// (e.g. an <c>int</c> stored as a string, compared numerically) is unguarded: the comparison runs against
+    /// the RAW stored representation, so the resulting count — and hence the sort order — can silently
+    /// diverge from what the CLR value would produce. This is pre-existing in predicate and projection
+    /// position (unaffected by this slice); this slice's only effect is to newly ROUTE it into a sort key too.
+    /// Not fixed here — the same operand-serialization gap would need closing at its one source, inside
+    /// <c>MongoExpressionTranslator</c>'s filtered-size element-predicate translation, for every position at
+    /// once.
+    /// </para>
+    /// </remarks>
+    private static bool TryTranslateComputedSortKey(
+        MongoExpressionTranslator translator,
+        Expression keySelectorBody,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (!translator.TryTranslateValue(keySelectorBody, out var translated))
+            return false;
+
+        if (!MongoAggregationExpressionRenderer.CanRender(translated))
+            return false;
+
+        if (!TryProbeBareValueRenders(translated, keySelectorBody.Type))
+            return false;
+
+        result = translated;
+        return true;
+    }
+
+    /// <summary>
+    /// Returns <see langword="false"/> only when <paramref name="translated"/> is a bare
+    /// <see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/> whose value would make
+    /// <see cref="MongoAggregationExpressionRenderer.Render"/> throw at pipeline-build time (see
+    /// <see cref="TryTranslateComputedSortKey"/>'s remarks). Anything else (a binary/size/field-ref node —
+    /// never a bare value) is trivially fine and returns <see langword="true"/> without probing.
+    /// </summary>
+    private static bool TryProbeBareValueRenders(MongoExpression translated, Type declaredType)
+    {
+        switch (translated)
+        {
+            case MongoConstantExpression constant:
+                // The actual value is already known at translate time, so render it for real — exact,
+                // no proxy needed.
+                return TryRender(constant);
+
+            case MongoParameterExpression:
+                // The runtime VALUE isn't known until execution, but BsonValue.Create's admission decision
+                // is keyed on the .NET TYPE alone (measured) — so a default instance of the parameter's
+                // declared (nullable-unwrapped) VALUE type is an exact proxy.
+                var underlying = Nullable.GetUnderlyingType(declaredType) ?? declaredType;
+                if (underlying.IsValueType)
+                {
+                    var sample = Activator.CreateInstance(underlying);
+                    return TryRender(new MongoConstantExpression(sample, forSerialization: null));
+                }
+
+                // A reference type cannot be probed (a default proxy is always null, which renders
+                // unconditionally) and cannot be admitted by container kind either — BsonValue.Create maps a
+                // collection STRUCTURALLY, element by element, so int[] renders and Uri[] throws. Admit only
+                // the reference types measured to render for ANY value; decline the rest, which is the
+                // pre-slice behaviour. See this method's caller's remarks.
+                return underlying == typeof(string) || typeof(BsonValue).IsAssignableFrom(underlying);
+
+            default:
+                return true;
+        }
+
+        static bool TryRender(MongoExpression node)
+        {
+            try
+            {
+                MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
     }
 }

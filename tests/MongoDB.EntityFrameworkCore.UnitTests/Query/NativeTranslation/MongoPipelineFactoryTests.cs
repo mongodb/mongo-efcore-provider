@@ -657,4 +657,93 @@ public class MongoPipelineFactoryTests
             BsonDocument.Parse("{ $unwind: { path: \"$_lookup_Child\", preserveNullAndEmptyArrays: true } }"),
             result[0]);
     }
+
+    // ------------------------------------------------------------------
+    // MongoAddFieldsStage / MongoUnsetStage / RenderSort widening — EF-401 (slice B)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void AddFields_stage_renders_a_set_with_one_aggregation_expression_per_field()
+    {
+        var sum = new MongoBinaryExpression(
+            MongoBinaryOperator.Add,
+            new MongoElementRefExpression("A", typeof(int)),
+            new MongoElementRefExpression("B", typeof(int)));
+
+        var stages = new MongoPipelineStage[]
+        {
+            new MongoAddFieldsStage([new MongoProjection("__sort0", sum)])
+        };
+
+        var pipeline = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()).Build(new Dictionary<string, object?>());
+
+        Assert.Single(pipeline);
+        Assert.Equal(
+            BsonDocument.Parse("""{ "$set" : { "__sort0" : { "$add" : ["$A", "$B"] } } }"""),
+            pipeline[0]);
+    }
+
+    // EF-401 Task 4, carried item (b): the $literal wrap around a BARE parameter body had ZERO coverage.
+    // The case that was cited for it (NativeComputedSortTests' `x.A * factor`) has a MongoBinaryExpression
+    // key, so its sentinel is never wrapped at all. This pins the wrapped-parameter path directly: the
+    // sentinel sits one level down, inside { "$literal": ... }, and Build must still find and replace it.
+    [Fact]
+    public void Build_substitutes_a_parameter_sentinel_nested_inside_a_literal_wrap()
+    {
+        var stages = new MongoPipelineStage[]
+        {
+            new MongoAddFieldsStage(
+                [new MongoProjection("__sort0", new MongoParameterExpression("p0", forSerialization: null))])
+        };
+
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var first = factory.Build(new Dictionary<string, object?> { ["p0"] = 5 });
+        var second = factory.Build(new Dictionary<string, object?> { ["p0"] = "$Label" });
+
+        // Both halves matter. The "$literal" wrap is what stops a '$'-prefixed STRING value being read as a
+        // field path (silent wrong order); the substituted VALUE inside it is what proves the wrap did not
+        // hide the sentinel from Build's SubstituteValue walk. An unwrapped body would be { "__sort0" : 5 }.
+        Assert.Equal(BsonDocument.Parse("""{ "$set" : { "__sort0" : { "$literal" : 5 } } }"""), first[0]);
+        Assert.Equal(BsonDocument.Parse("""{ "$set" : { "__sort0" : { "$literal" : "$Label" } } }"""), second[0]);
+    }
+
+    [Fact]
+    public void Unset_stage_renders_an_array_of_field_names()
+    {
+        var stages = new MongoPipelineStage[] { new MongoUnsetStage(["__sort0", "__sort1"]) };
+
+        var pipeline = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()).Build(new Dictionary<string, object?>());
+
+        Assert.Single(pipeline);
+        Assert.Equal(BsonDocument.Parse("""{ "$unset" : ["__sort0", "__sort1"] }"""), pipeline[0]);
+    }
+
+    [Fact]
+    public void Sort_stage_accepts_an_element_ref_key_and_renders_it_as_a_plain_path()
+    {
+        var stages = new MongoPipelineStage[]
+        {
+            new MongoSortStage([new MongoOrdering(new MongoElementRefExpression("__sort0", typeof(int)), Ascending: true)])
+        };
+
+        var pipeline = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()).Build(new Dictionary<string, object?>());
+
+        // "__sort0", NOT "$__sort0" — $sort takes field PATHS, not aggregation field references.
+        Assert.Equal(BsonDocument.Parse("""{ "$sort" : { "__sort0" : 1 } }"""), pipeline[0]);
+    }
+
+    [Fact]
+    public void Sort_stage_still_rejects_a_key_that_is_neither_a_field_nor_an_element_ref()
+    {
+        var stages = new MongoPipelineStage[]
+        {
+            new MongoSortStage([new MongoOrdering(new MongoConstantExpression(1, forSerialization: null), Ascending: true)])
+        };
+
+        // The lowerer is what turns a computed key into an element ref; a raw non-field key reaching the
+        // renderer means that rewrite did not happen, and must stay loud rather than emit a wrong $sort.
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()));
+    }
 }

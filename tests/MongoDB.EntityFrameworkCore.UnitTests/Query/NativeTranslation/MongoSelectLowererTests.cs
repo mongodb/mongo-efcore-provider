@@ -16,6 +16,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
@@ -33,6 +35,7 @@ public class MongoSelectLowererTests
     {
         public ObjectId Id { get; set; }
         public string Name { get; set; } = "";
+        public int A { get; set; }
     }
 
     private static MongoQueryExpression TestSelect()
@@ -40,6 +43,92 @@ public class MongoSelectLowererTests
         using var db = SingleEntityDbContext.Create<StubEntity>();
         var entityType = db.Model.GetEntityTypes().First();
         return new MongoQueryExpression(entityType);
+    }
+
+    // A query over the same StubEntity, but with a property mapped onto the FIRST synthetic sort field
+    // name the allocator would otherwise hand out — EF-401 slice B collision-guard fixture.
+    private static MongoQueryExpression TestSelectWithReservedElementName()
+    {
+        using var db = SingleEntityDbContext.Create<StubEntity>(
+            mb => mb.Entity<StubEntity>().Property(x => x.Name).HasElementName("__sort0"));
+        var entityType = db.Model.GetEntityTypes().First();
+        return new MongoQueryExpression(entityType);
+    }
+
+    // ── Fix round 1, Minor 1 / IMPORTANT: fixtures pinning the OTHER two arms of TopLevelElementNames ──
+
+    private class OwnedThing
+    {
+        public int Value { get; set; }
+    }
+
+    private class StubEntityWithOwned
+    {
+        public ObjectId Id { get; set; }
+        public int A { get; set; }
+        public OwnedThing Owned { get; set; } = new();
+    }
+
+    // A query whose entity type has an OWNED navigation whose containing element name is the FIRST
+    // synthetic sort field name the allocator would otherwise hand out — pins the EMBEDDED-NAVIGATION arm
+    // of TopLevelElementNames specifically (distinct from the scalar-property arm the fixture above pins).
+    private static MongoQueryExpression TestSelectWithReservedEmbeddedElementName()
+    {
+        using var db = SingleEntityDbContext.Create<StubEntityWithOwned>(
+            mb => mb.Entity<StubEntityWithOwned>().OwnsOne(x => x.Owned).HasElementName("__sort0"));
+        var entityType = db.Model.FindEntityType(typeof(StubEntityWithOwned))!;
+        return new MongoQueryExpression(entityType);
+    }
+
+    private class ComplexThing
+    {
+        public int Value { get; set; }
+    }
+
+    private class StubEntityWithComplex
+    {
+        public ObjectId Id { get; set; }
+        public int A { get; set; }
+        public ComplexThing Complex { get; set; } = new();
+    }
+
+    // A query whose entity type has a COMPLEX property renamed to the FIRST synthetic sort field name the
+    // allocator would otherwise hand out — pins the COMPLEX-PROPERTY arm of TopLevelElementNames (the
+    // IMPORTANT fix-round-1 finding: GetProperties() does not see a ComplexProperty's own top-level
+    // document slot, mirroring the precedent at IsWholeElementRepresentable's third guard arm).
+    private static MongoQueryExpression TestSelectWithReservedComplexElementName()
+    {
+        using var db = SingleEntityDbContext.Create<StubEntityWithComplex>(mb =>
+            mb.Entity<StubEntityWithComplex>().ComplexProperty(x => x.Complex)
+                .Metadata.SetAnnotation(MongoAnnotationNames.ElementName, "__sort0"));
+        var entityType = db.Model.FindEntityType(typeof(StubEntityWithComplex))!;
+        return new MongoQueryExpression(entityType);
+    }
+
+    // Resolves a real mapped property of the given query's entity type into a MongoFieldExpression —
+    // EF-401 slice B: a genuine field key, as opposed to the MongoConstantExpression placeholder several
+    // pre-existing tests in this file use.
+    private static MongoFieldExpression FieldRef(MongoQueryExpression query, string name)
+    {
+        var property = query.CollectionExpression.EntityType.FindProperty(name)!;
+        return new MongoFieldExpression(property, property.GetElementName());
+    }
+
+    private static MongoBinaryExpression Sum() => new(
+        MongoBinaryOperator.Add,
+        new MongoElementRefExpression("A", typeof(int)),
+        new MongoElementRefExpression("B", typeof(int)));
+
+    private static MongoBinaryExpression Product() => new(
+        MongoBinaryOperator.Multiply,
+        new MongoElementRefExpression("A", typeof(int)),
+        new MongoElementRefExpression("B", typeof(int)));
+
+    private static MongoQueryExpression BuildComputedSortQuery()
+    {
+        var query = TestSelect();
+        query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+        return query;
     }
 
     // ── Reference-collection fixture (EF-347 slice 5, Task 3) ───────────────────
@@ -89,7 +178,7 @@ public class MongoSelectLowererTests
     {
         var select = TestSelect();
         select.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
-        select.Select.StartOrReplaceSort(new MongoOrdering(new MongoConstantExpression(0, null), true));
+        select.Select.StartOrReplaceSort(new MongoOrdering(FieldRef(select, "A"), true));
         select.Select.AppendSkip(new MongoConstantExpression(5, null));
         select.Select.AppendLimit(new MongoConstantExpression(10, null));
 
@@ -137,8 +226,8 @@ public class MongoSelectLowererTests
     public void Only_orderings_lower_to_single_sort_stage()
     {
         var select = TestSelect();
-        select.Select.StartOrReplaceSort(new MongoOrdering(new MongoConstantExpression(0, null), true));
-        select.Select.AppendThenBy(new MongoOrdering(new MongoConstantExpression(1, null), false));
+        select.Select.StartOrReplaceSort(new MongoOrdering(FieldRef(select, "A"), true));
+        select.Select.AppendThenBy(new MongoOrdering(FieldRef(select, "Name"), false));
 
         var stages = new MongoSelectLowerer().Lower(select);
 
@@ -185,7 +274,7 @@ public class MongoSelectLowererTests
     public void Sort_stage_carries_orderings_from_the_slot()
     {
         var select = TestSelect();
-        var keyExpr = new MongoConstantExpression(0, null);
+        var keyExpr = FieldRef(select, "A");
         select.Select.StartOrReplaceSort(new MongoOrdering(keyExpr, Ascending: true));
 
         var stages = new MongoSelectLowerer().Lower(select);
@@ -498,7 +587,7 @@ public class MongoSelectLowererTests
             MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers");
         query.Select.IsSetOp = true;
         // post-set-op (trailing) sort — routes to TrailingOps because SetOperation is now attached:
-        query.Select.StartOrReplaceSort(new MongoOrdering(new MongoConstantExpression(0, null), true));
+        query.Select.StartOrReplaceSort(new MongoOrdering(FieldRef(query, "A"), true));
 
         var stages = new MongoSelectLowerer().Lower(query);
 
@@ -527,5 +616,214 @@ public class MongoSelectLowererTests
         Assert.Collection(stages,
             s => Assert.IsType<MongoSetDifferenceStage>(s),
             s => Assert.IsType<MongoCountStage>(s));
+    }
+
+    // ── EF-401 (stream 1, slice B): a computed sort key lowers to $set → $sort → $unset ─────────
+
+    [Fact]
+    public void Computed_sort_key_lowers_to_set_sort_unset()
+    {
+        var query = TestSelect();
+        var sum = new MongoBinaryExpression(
+            MongoBinaryOperator.Add,
+            new MongoElementRefExpression("A", typeof(int)),
+            new MongoElementRefExpression("B", typeof(int)));
+        query.Select.StartOrReplaceSort(new MongoOrdering(sum, Ascending: true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        var addFields = Assert.IsType<MongoAddFieldsStage>(stages[0]);
+        var sort = Assert.IsType<MongoSortStage>(stages[1]);
+        var unset = Assert.IsType<MongoUnsetStage>(stages[2]);
+
+        var synthetic = Assert.Single(addFields.Fields).Alias;
+        Assert.Same(sum, Assert.Single(addFields.Fields).Expression);
+        Assert.Equal(synthetic, Assert.IsType<MongoElementRefExpression>(Assert.Single(sort.Orderings).KeySelector).Path);
+        Assert.Equal(synthetic, Assert.Single(unset.FieldNames));
+        Assert.StartsWith("__sort", synthetic);
+    }
+
+    [Fact]
+    public void A_sort_with_only_field_keys_emits_a_bare_sort_and_no_set()
+    {
+        // LOAD-BEARING, not tidiness. MEASURED (spike §6.2): a $set in front of a $sort disqualifies
+        // index-backed sorting EVEN WHEN every sort key is a plain indexed field path — {$sort:{A:1}} is
+        // IXSCAN A_1, and the identical sort preceded by an unrelated $set is a COLLSCAN.
+        var query = TestSelect();
+        query.Select.StartOrReplaceSort(new MongoOrdering(FieldRef(query, "A"), Ascending: true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.IsType<MongoSortStage>(Assert.Single(stages));
+        Assert.DoesNotContain(stages, s => s is MongoAddFieldsStage or MongoUnsetStage);
+    }
+
+    [Fact]
+    public void A_mixed_sort_computes_only_the_computed_key_and_leaves_the_field_key_a_plain_path()
+    {
+        var query = TestSelect();
+        var product = new MongoBinaryExpression(
+            MongoBinaryOperator.Multiply,
+            new MongoElementRefExpression("A", typeof(int)),
+            new MongoElementRefExpression("B", typeof(int)));
+        query.Select.StartOrReplaceSort(new MongoOrdering(FieldRef(query, "A"), Ascending: true));
+        query.Select.AppendThenBy(new MongoOrdering(product, Ascending: false));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        var addFields = Assert.IsType<MongoAddFieldsStage>(stages[0]);
+        var sort = Assert.IsType<MongoSortStage>(stages[1]);
+        Assert.Single(addFields.Fields);                                   // only the computed key is materialized
+        Assert.Equal(2, sort.Orderings.Count);
+        Assert.IsType<MongoFieldExpression>(sort.Orderings[0].KeySelector);  // the field key stays a plain path
+        Assert.IsType<MongoElementRefExpression>(sort.Orderings[1].KeySelector);
+        Assert.False(sort.Orderings[1].Ascending);                          // direction is preserved per ordering
+    }
+
+    [Fact]
+    public void Two_computed_keys_in_one_sort_get_distinct_names_and_one_set_and_one_unset()
+    {
+        var query = TestSelect();
+        query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+        query.Select.AppendThenBy(new MongoOrdering(Product(), Ascending: true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        var addFields = Assert.IsType<MongoAddFieldsStage>(stages[0]);
+        Assert.Equal(2, addFields.Fields.Count);
+        Assert.Equal(2, addFields.Fields.Select(f => f.Alias).Distinct().Count());
+        Assert.IsType<MongoSortStage>(stages[1]);
+        Assert.Equal(2, Assert.IsType<MongoUnsetStage>(stages[2]).FieldNames.Count);
+        Assert.Equal(3, stages.Count);   // ONE $set and ONE $unset per sort stage, not one per ordering
+    }
+
+    [Fact]
+    public void Synthetic_names_are_stable_across_repeated_lowering_of_the_same_query()
+    {
+        // The prototype used a process-global counter and emitted __sort3 on one spec case and __sort4 on its
+        // async twin (MEASURED, spike §2.1) — which would make every committed AssertMql baseline unstable.
+        var first = new MongoSelectLowerer().Lower(BuildComputedSortQuery());
+        var second = new MongoSelectLowerer().Lower(BuildComputedSortQuery());
+
+        Assert.Equal(
+            Assert.IsType<MongoAddFieldsStage>(first[0]).Fields[0].Alias,
+            Assert.IsType<MongoAddFieldsStage>(second[0]).Fields[0].Alias);
+
+        // Minor 4 (fix round 1): the assertion above uses two DIFFERENT lowerer instances, so it would also
+        // pass for a counter promoted to an INSTANCE field on MongoSelectLowerer — it only pins per-run
+        // stability, not per-INVOCATION allocation. Calling Lower TWICE on the SAME instance pins the
+        // stronger, actually-intended property: the allocator is rebuilt fresh every Lower call.
+        var lowerer = new MongoSelectLowerer();
+        var third = lowerer.Lower(BuildComputedSortQuery());
+        var fourth = lowerer.Lower(BuildComputedSortQuery());
+
+        Assert.Equal(
+            Assert.IsType<MongoAddFieldsStage>(third[0]).Fields[0].Alias,
+            Assert.IsType<MongoAddFieldsStage>(fourth[0]).Fields[0].Alias);
+    }
+
+    [Fact]
+    public void A_synthetic_name_colliding_with_a_mapped_element_name_is_skipped()
+    {
+        // $set OVERWRITES a same-named field silently — the same hazard IsWholeElementRepresentable's
+        // sentinel-collision guard exists for on the owned bare-element path ($mergeObjects).
+        var query = TestSelectWithReservedElementName();   // maps a property to element name "__sort0"
+
+        query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.NotEqual("__sort0", Assert.Single(Assert.IsType<MongoAddFieldsStage>(stages[0]).Fields).Alias);
+    }
+
+    [Fact]
+    public void A_synthetic_name_colliding_with_an_owned_navigations_containing_element_name_is_skipped()
+    {
+        // Minor 1 (fix round 1): pins the EMBEDDED-NAVIGATION arm of TopLevelElementNames specifically.
+        // The sibling scalar-property collision test's own mutation (ignore the WHOLE reserved set) does
+        // not discriminate WHICH arm actually populates it — deleting only the navigation loop leaves this
+        // test red while the scalar-property test stays green, and vice versa.
+        var query = TestSelectWithReservedEmbeddedElementName();   // owned nav's containing element name is "__sort0"
+
+        query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.NotEqual("__sort0", Assert.Single(Assert.IsType<MongoAddFieldsStage>(stages[0]).Fields).Alias);
+    }
+
+    [Fact]
+    public void A_synthetic_name_colliding_with_a_complex_propertys_element_name_is_skipped()
+    {
+        // IMPORTANT (fix round 1): TopLevelElementNames originally omitted complex properties entirely —
+        // IEntityType.GetProperties() does not see a ComplexProperty's own top-level document slot, the
+        // same hazard IsWholeElementRepresentable's third guard arm
+        // (MongoQueryableMethodTranslatingExpressionVisitor) exists for on the owned $mergeObjects path.
+        // Not reachable today (the populator declines every computed key), but becomes reachable the moment
+        // Task 3 lands.
+        var query = TestSelectWithReservedComplexElementName();   // complex property's element name is "__sort0"
+
+        query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.NotEqual("__sort0", Assert.Single(Assert.IsType<MongoAddFieldsStage>(stages[0]).Fields).Alias);
+    }
+
+    // ── Minor 3 (fix round 1): the allocator must be SHARED across all three AppendSelectOpStages call
+    // sites — a regression passing a fresh allocator at either the set-op operand's PipelineOps or the
+    // post-set-op TrailingOps would produce a DUPLICATE "__sort0" that no existing test would catch (all
+    // six pre-round-1 slice-B tests drive only the outer query's own PipelineOps). ─────────────────────
+
+    [Fact]
+    public void Computed_sort_in_a_set_op_operand_gets_a_distinct_synthetic_name_from_the_outer_querys()
+    {
+        var query = TestSelect();
+        // Outer query's own PipelineOps (recorded BEFORE the set op is attached):
+        query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+
+        // The operand's own select, populated independently of the outer query:
+        var operand = new MongoSelectDefinition();
+        operand.StartOrReplaceSort(new MongoOrdering(Product(), Ascending: true));
+
+        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers");
+        query.Select.IsSetOp = true;
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        // Outer: $set, $sort, $unset, then $unionWith (whose own OperandStages are $set, $sort, $unset).
+        var outerAddFields = Assert.IsType<MongoAddFieldsStage>(stages[0]);
+        var union = Assert.IsType<MongoUnionWithStage>(stages[3]);
+        var operandAddFields = Assert.IsType<MongoAddFieldsStage>(union.OperandStages[0]);
+
+        var outerName = Assert.Single(outerAddFields.Fields).Alias;
+        var operandName = Assert.Single(operandAddFields.Fields).Alias;
+        Assert.NotEqual(outerName, operandName);
+    }
+
+    [Fact]
+    public void Computed_sort_in_TrailingOps_gets_a_distinct_synthetic_name_from_the_outer_querys()
+    {
+        var query = TestSelect();
+        // Outer query's own PipelineOps (recorded BEFORE the set op is attached):
+        query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+
+        query.Select.SetOperation = new MongoSetOperation(
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers");
+        query.Select.IsSetOp = true;
+
+        // Post-set-op (trailing) sort — routes to TrailingOps because SetOperation is now attached:
+        query.Select.StartOrReplaceSort(new MongoOrdering(Product(), Ascending: true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        // $set/$sort/$unset (outer) → $unionWith → $set/$sort/$unset (trailing).
+        var outerAddFields = Assert.IsType<MongoAddFieldsStage>(stages[0]);
+        Assert.IsType<MongoUnionWithStage>(stages[3]);
+        var trailingAddFields = Assert.IsType<MongoAddFieldsStage>(stages[4]);
+
+        var outerName = Assert.Single(outerAddFields.Fields).Alias;
+        var trailingName = Assert.Single(trailingAddFields.Fields).Alias;
+        Assert.NotEqual(outerName, trailingName);
     }
 }
