@@ -415,24 +415,51 @@ internal static class NativeSlotPopulator
     /// than the measured admitted set.
     /// </para>
     /// <para>
-    /// <b>KNOWN LIMITATION, recorded rather than fixed here: a FILTERED owned-collection count
-    /// (<c>b.Posts.Count(p =&gt; ...)</c>) sort key inherits the SAME unguarded operand-serialization gap a
-    /// filtered count already carries in predicate/projection position.</b> <c>CanRender</c> admits
-    /// <c>MongoFilteredSizeExpression</c> (it recurses into <c>ElementPredicate</c>), so this fall-through
-    /// happily lowers <c>OrderBy(b =&gt; b.Posts.Count(p =&gt; p.Code &gt; "5"))</c> into the same
-    /// <c>$set</c>/<c>$sort</c>/<c>$unset</c> bracket as any other computed key. But
-    /// <c>AllFieldsDefaultSerialized</c> (<see cref="MongoExpressionTranslator"/>, the guard
-    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> already applies to the OUTER expression)
-    /// recurses only through field and binary nodes and returns <see langword="true"/> for a filtered size
-    /// unconditionally — it never looks INSIDE the filtered size's own element predicate. So a
-    /// non-default-<c>BsonRepresentation</c> or value-converted operand used inside the element predicate
-    /// (e.g. an <c>int</c> stored as a string, compared numerically) is unguarded: the comparison runs against
-    /// the RAW stored representation, so the resulting count — and hence the sort order — can silently
-    /// diverge from what the CLR value would produce. This is pre-existing in predicate and projection
-    /// position (unaffected by this slice); this slice's only effect is to newly ROUTE it into a sort key too.
-    /// Not fixed here — the same operand-serialization gap would need closing at its one source, inside
-    /// <c>MongoExpressionTranslator</c>'s filtered-size element-predicate translation, for every position at
-    /// once.
+    /// <b>A FILTERED owned-collection count (<c>b.Posts.Count(p =&gt; ...)</c>) is DECLINED as a sort key —
+    /// and READ THE SECOND HALF OF THIS PARAGRAPH BEFORE CITING IT, because the obvious reading of the first
+    /// half is measured false.</b> The gap is real: <c>CanRender</c> admits
+    /// <c>MongoFilteredSizeExpression</c> (it recurses into <c>ElementPredicate</c>), while
+    /// <c>AllFieldsDefaultSerialized</c> (<see cref="MongoExpressionTranslator"/>, the operand-serialization
+    /// guard <see cref="MongoExpressionTranslator.TryTranslateValue"/> already applies to the OUTER expression)
+    /// recurses only through field and binary nodes — its catch-all returns <see langword="true"/> for a
+    /// filtered size unconditionally, so it never looks INSIDE that node's own element predicate. Without the
+    /// decline below, <c>OrderBy(b =&gt; b.Posts.Count(p =&gt; p.Code &gt; 5))</c> over a <c>Code</c> mapped
+    /// <c>HasBsonRepresentation(BsonType.String)</c> lowers into the ordinary <c>$set</c>/<c>$sort</c>/
+    /// <c>$unset</c> bracket and emits <c>cond: {$gt: ["$$e.Code", "5"]}</c>, comparing the RAW STORED STRINGS
+    /// lexicographically — <c>"10"</c> does not exceed <c>"5"</c> but <c>"6"</c> does — so each owner's count
+    /// diverges from CLR semantics and the rows come back in a different ORDER.
+    /// </para>
+    /// <para>
+    /// <b>What that divergence is NOT: a native-vs-fallback one. MEASURED, and this refutes the review finding
+    /// that prompted the decline.</b> Explicit <c>DriverLinq</c> returns the IDENTICAL server-side order
+    /// (<c>[cA, cB, cC]</c> where in-memory LINQ answers <c>[cB, cC, cA]</c>), because the driver's own LINQ
+    /// provider serializes the comparison constant through the very same property serializer. So native and the
+    /// fallback agree with each other and both differ from the CLR — the EF-359 accepted-divergence family —
+    /// and <b>this decline changes no value anywhere; it changes ROUTING only.</b> There is consequently no
+    /// order-based assertion that can discriminate it: the tripwire
+    /// (<c>NativeComputedSortTests.Filtered_owned_collection_count_sort_key_declines_instead_of_going_native</c>)
+    /// pins the decline through its <c>NativeOnly</c> leg (which SUCCEEDS with the clause removed — measured),
+    /// and carries the <c>DriverLinq</c> parity leg specifically so this paragraph cannot be re-read as a
+    /// wrong-data fix.
+    /// </para>
+    /// <para>
+    /// <b>Why decline at all, then.</b> The element predicate's operands are genuinely outside the guard this
+    /// method already applies to every other computed sort key, so admitting them is an inconsistency rather
+    /// than a decision; and declining costs NATIVENESS ONLY, never correctness — the query falls back to
+    /// driver-LINQ, whose answer is byte-identical (<see cref="NativeTranslationNotSupportedException"/> only
+    /// under <c>NativeOnly</c>). That is the same over-declining stance this method's reference-type allowlist
+    /// already takes ("deliberately narrower than the measured admitted set"). <b>The underlying gap is
+    /// PRE-EXISTING in predicate and projection position and is NOT closed here</b> — it is equally unguarded
+    /// in <c>Where(b =&gt; b.Posts.Count(pred) &gt; 2)</c> and <c>Select(b =&gt; new { N = b.Posts.Count(pred)
+    /// })</c>; closing it properly means guarding the element predicate's own operands at their one source,
+    /// inside <c>MongoExpressionTranslator</c>'s filtered-size translation, for every position at once.
+    /// <b>The decline is deliberately NARROW:</b> an UNFILTERED count is a <c>MongoSizeExpression</c>, carries
+    /// no element predicate and no operand serialization to diverge on, and stays native
+    /// (<c>OrderBy(x =&gt; x.Posts.Count)</c> — the paired control, case 17 of that test class). It does cost
+    /// one legitimate shape: a filtered count over DEFAULT-serialized operands declines too, accepted as the
+    /// price of a one-clause node-kind check over a new recursive serialization guard. The check recurses
+    /// through binary nodes because <c>TranslateOperand</c> admits a filtered count as an ordinary arithmetic
+    /// operand, so <c>OrderBy(b =&gt; b.Posts.Count(pred) * 2)</c> is the same shape one level down.
     /// </para>
     /// </remarks>
     private static bool TryTranslateComputedSortKey(
@@ -448,6 +475,15 @@ internal static class NativeSlotPopulator
         if (!MongoAggregationExpressionRenderer.CanRender(translated))
             return false;
 
+        // A FILTERED count's element predicate escapes AllFieldsDefaultSerialized, so a non-default-serialized
+        // operand inside it is compared in its RAW stored form and the resulting count — hence the row ORDER —
+        // diverges from CLR semantics. NOTE (measured): explicit DriverLinq diverges IDENTICALLY, so this is a
+        // routing decline, not a wrong-data fix — see this method's remarks before citing it as one. An
+        // UNFILTERED MongoSizeExpression is deliberately NOT caught here (no element predicate, nothing to
+        // diverge on) and stays native.
+        if (ContainsFilteredSize(translated))
+            return false;
+
         if (!TryProbeBareValueRenders(translated, keySelectorBody.Type))
             return false;
 
@@ -456,12 +492,34 @@ internal static class NativeSlotPopulator
     }
 
     /// <summary>
+    /// Returns whether <paramref name="node"/> is, or contains anywhere beneath an arithmetic/comparison binary
+    /// node, a <see cref="MongoFilteredSizeExpression"/> — the one node kind
+    /// <see cref="TryTranslateComputedSortKey"/> declines. Mirrors
+    /// <c>MongoExpressionTranslator.AllFieldsDefaultSerialized</c>'s own shape (field / binary / catch-all),
+    /// because those are exactly the node kinds <c>TryTranslateValue</c> can produce here; a
+    /// <see cref="MongoSizeExpression"/> falls into the catch-all deliberately.
+    /// </summary>
+    private static bool ContainsFilteredSize(MongoExpression node)
+        => node switch
+        {
+            MongoFilteredSizeExpression => true,
+            MongoBinaryExpression b => ContainsFilteredSize(b.Left) || ContainsFilteredSize(b.Right),
+            _ => false
+        };
+
+    /// <summary>
     /// Returns <see langword="false"/> only when <paramref name="translated"/> is a bare
     /// <see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/> whose value would make
     /// <see cref="MongoAggregationExpressionRenderer.Render"/> throw at pipeline-build time (see
     /// <see cref="TryTranslateComputedSortKey"/>'s remarks). Anything else (a binary/size/field-ref node —
     /// never a bare value) is trivially fine and returns <see langword="true"/> without probing.
     /// </summary>
+    /// <remarks>
+    /// The probe is EXACT for a <see cref="MongoConstantExpression"/> only — the value is known at translate
+    /// time, so the real render path runs on the real value. For a <see cref="MongoParameterExpression"/> it is
+    /// a type-keyed MODEL of that same path, not the path that actually executes; the case comment below states
+    /// precisely how far the two agree and where the model over-declines.
+    /// </remarks>
     private static bool TryProbeBareValueRenders(MongoExpression translated, Type declaredType)
     {
         switch (translated)
@@ -472,9 +530,19 @@ internal static class NativeSlotPopulator
                 return TryRender(constant);
 
             case MongoParameterExpression:
-                // The runtime VALUE isn't known until execution, but BsonValue.Create's admission decision
-                // is keyed on the .NET TYPE alone (measured) — so a default instance of the parameter's
-                // declared (nullable-unwrapped) VALUE type is an exact proxy.
+                // NOT an exact proxy — a MODEL, and the difference matters to anyone editing either side.
+                // What actually runs for this node at Build time is MongoPipelineFactory.SerializeParameter,
+                // not this render call; the two agree today only because a BARE value parameter carries no
+                // property serializer (ForSerialization is null => MongoValueRenderer records a
+                // serializer-less placeholder => SerializeParameter takes its `serializer is null` arm, which
+                // is BsonValue.Create — the same function the constant render below reaches). What is probed
+                // is therefore the right FUNCTION but not the right VALUE: a default instance stands in for a
+                // runtime value that is not knowable here, which is sound only because BsonValue.Create's
+                // admission decision is keyed on the .NET TYPE (measured). Where the declared type is looser
+                // than the runtime one (an `object`-typed parameter boxing an int, say) the probe DECLINES a
+                // shape that would have rendered — an over-decline, which costs nativeness only.
+                // If SerializeParameter ever stops routing a bare value through BsonValue.Create, this probe
+                // must be re-pointed at whatever replaces it.
                 var underlying = Nullable.GetUnderlyingType(declaredType) ?? declaredType;
                 if (underlying.IsValueType)
                 {
@@ -502,6 +570,17 @@ internal static class NativeSlotPopulator
             }
             catch (Exception)
             {
+                // The BROAD catch is deliberate, not laziness, and narrowing it would re-open the hole this
+                // probe exists to close. The question being asked is exactly "does rendering this value throw",
+                // and the answer for ANY throw is the same — decline, and let the query fall back. The two
+                // types measured today are ArgumentException (BsonValue.Create rejecting the CLR type) and
+                // NativeTranslationNotSupportedException (a property serializer refusing the value), but the
+                // renderer and the driver's BsonValue.Create are both free to add others, and an exception type
+                // this method did not anticipate would escape at TRANSLATE time — a crash where a decline is
+                // correct — or, worse, be caught only later at pipeline-BUILD time, outside any fallback, which
+                // is precisely the EF-401 fix-round-1 failure this probe was added for. Nothing is swallowed
+                // that matters: the node is discarded either way, and the caller's decline is loud under
+                // NativeOnly.
                 return false;
             }
         }

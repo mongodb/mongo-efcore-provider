@@ -796,6 +796,12 @@ public class MongoSelectLowererTests
         var union = Assert.IsType<MongoUnionWithStage>(stages[3]);
         var operandAddFields = Assert.IsType<MongoAddFieldsStage>(union.OperandStages[0]);
 
+        // The $unset must be INSIDE the operand's nested pipeline, and this is the one test that reaches a
+        // set-op operand at all — so it is the only place that can pin it. The $unset exists specifically for
+        // set-op hygiene: a synthetic field left on the operand's documents would fold into Union's own
+        // $group{_id:"$$ROOT"} dedup key and change set semantics.
+        Assert.IsType<MongoUnsetStage>(union.OperandStages[2]);
+
         var outerName = Assert.Single(outerAddFields.Fields).Alias;
         var operandName = Assert.Single(operandAddFields.Fields).Alias;
         Assert.NotEqual(outerName, operandName);
