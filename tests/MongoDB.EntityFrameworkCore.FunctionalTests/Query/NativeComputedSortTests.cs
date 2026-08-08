@@ -647,26 +647,31 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.NotEqual(MainInsertionOrderLabels, labels);
     }
 
-    // ── 21. A FILTERED owned-collection Count declines as a sort key ─────────────────────────────
-    // (Final fix wave.) TryTranslateComputedSortKey declines a MongoFilteredSizeExpression, because
-    // MongoExpressionTranslator.AllFieldsDefaultSerialized never looks INSIDE a filtered size's own element
-    // predicate — so an operand stored under a non-default BsonRepresentation is compared in its RAW stored
-    // form and the resulting COUNT, hence the row ORDER, diverges from CLR semantics. Case 17 is the paired
-    // control proving the decline is narrow: an UNFILTERED count (a MongoSizeExpression) still goes native.
+    // ── 21. A FILTERED owned-collection Count goes native as a sort key ──────────────────────────
+    // A DECLINE FOR THIS SHAPE WAS SHIPPED (commit e09fee45) AND THEN REVERTED. Read this before proposing
+    // another one. The decline's premise was that a filtered count's element predicate escapes
+    // MongoExpressionTranslator.AllFieldsDefaultSerialized, so an operand stored under a non-default
+    // BsonRepresentation compares in its RAW stored form and "silently reorders under Native where the
+    // pre-slice driver-LINQ fallback was correct". The first half is true; the CLAIM IS MEASURED FALSE, and
+    // legs 2-4 below are what pin the refutation:
     //
-    // READ THE THIRD LEG BEFORE CHANGING ANYTHING HERE. The review finding this test was written for claimed
-    // the divergence was native-vs-fallback — "silently reorders under Native where the pre-slice driver-LINQ
-    // fallback was correct". That is MEASURED FALSE and the third leg is what pins it: explicit DriverLinq
-    // returns the SAME server-side order as Native, because the driver's own LINQ provider serializes the
-    // comparison constant through the very same property serializer. So the divergence is from IN-MEMORY LINQ
-    // only (the EF-359 accepted-divergence family), the decline changes no answer, and NO order-based
-    // assertion can discriminate it — removing the decline leaves every value in this test unchanged and flips
-    // only the NativeOnly leg. That leg is therefore the discriminator, deliberately, not for want of trying.
+    //   native (no decline)  -> [cA, cB, cC]      explicit DriverLinq -> [cA, cB, cC]      in-memory -> [cB, cC, cA]
+    //
+    // The two SERVER-SIDE paths agree — the driver's own LINQ provider serializes the comparison constant
+    // through the very same property serializer — so this is the EF-359 accepted-divergence family, not wrong
+    // data, and this branch's oracle is Native == DriverLinq. EF-359 itself shipped this very node kind
+    // (MongoFilteredSizeExpression) NATIVE in predicate and projection position under an explicit owner ruling
+    // to "accept and document" the CLR divergence, so declining it in SORT position created an inconsistency
+    // rather than removing one, and cost the common case (a filtered count over default-serialized operands)
+    // for no measured correctness benefit. Case 17 is the unfiltered-count sibling; it was never in scope.
+    //
+    // KEEP LEGS 3 AND 4. They are the record of the refutation. Leg 1 is the routing pin: with a decline
+    // re-added it goes red there and NOWHERE ELSE, because a decline changes routing only and no value.
     [Fact]
-    public void Filtered_owned_collection_count_sort_key_declines_instead_of_going_native()
+    public void Filtered_owned_collection_count_sort_key_goes_native()
     {
         var collection = database.MongoDatabase.GetCollection<CodeOwner>(
-            UniqueCollectionName(nameof(Filtered_owned_collection_count_sort_key_declines_instead_of_going_native)));
+            UniqueCollectionName(nameof(Filtered_owned_collection_count_sort_key_goes_native)));
 
         // Code is stored as a STRING, and the seeded values are chosen so lexical and numeric order DISAGREE
         // for the predicate `Code > 5`:  "6" > "5" lexically AND 6 > 5 numerically (agree), but "10" < "5"
@@ -682,9 +687,9 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         //   IN-MEMORY (CLR)      asc : cB(1), cC(2), cA(3)  ->  [cB, cC, cA]
         //   SERVER-SIDE (raw)    asc : cA(0), cB(1), cC(2)  ->  [cA, cB, cC]
         //
-        // All three sequences are distinct. MEASURED: BOTH server-side paths — native (decline removed) and the
-        // driver's own LINQ provider — return the server-side sequence, so the two legs below assert THAT, and
-        // the in-memory sequence is asserted only as the divergence it is.
+        // All three sequences are distinct. MEASURED: BOTH server-side paths — native and the driver's own LINQ
+        // provider — return the server-side sequence, so the legs below assert THAT, and the in-memory sequence
+        // is asserted only as the divergence it is.
         //
         // Seeded through the EF context (SaveChanges), like case 17: the owned collection's shadow owner-key
         // element and the string BSON representation are both written by the PROVIDER's own serializer, which a
@@ -717,17 +722,19 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             .SelectMany(d => d["Posts"].AsBsonArray.Select(p => p["Code"])).ToList();
         Assert.All(storedCodes, c => Assert.Equal(BsonType.String, c.BsonType));
 
-        // LEG 1 — NativeOnly: the routing pin, and the ONLY leg that discriminates the decline. MEASURED: with
-        // the decline removed this same query SUCCEEDS here and returns ["cA","cB","cC"].
+        // LEG 1 — NativeOnly: the routing pin, and the ONLY leg that discriminates a decline. MEASURED: with a
+        // decline re-added this query throws NativeTranslationNotSupportedException here, and every other leg
+        // stays green — a decline changes routing only, never a value.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, CodeOwnerModel))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => nativeOnly.Entities.AsNoTracking()
-                    .OrderBy(x => x.Posts.Count(p => p.Code > 5))
-                    .Select(x => x.Label).ToList());
+            var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
+                .OrderBy(x => x.Posts.Count(p => p.Code > 5))
+                .Select(x => x.Label).ToList();
+
+            Assert.Equal(["cA", "cB", "cC"], nativeOnlyLabels);
         }
 
-        // LEG 2 — default Native: declines and falls back, returning the server-side order.
+        // LEG 2 — default Native: the same server-side order.
         List<string> nativeLabels;
         using (var native = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
         {
@@ -740,8 +747,9 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         // LEG 3 — explicit DriverLinq, THE LOAD-BEARING LEG. It is what refutes the "native reorders where the
         // fallback was correct" reading: the driver's own LINQ provider serializes the comparison constant
-        // through the SAME property serializer, so it answers identically, and the decline therefore changes no
-        // value anywhere. Delete this leg and the decline looks like a wrong-data fix, which it is not.
+        // through the SAME property serializer, so it answers identically. This is the branch's oracle
+        // (Native == DriverLinq). Delete this leg and the shipped-then-reverted decline looks like a wrong-data
+        // fix that was undone, which it is not.
         using (var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq, CodeOwnerModel))
         {
             var driverLabels = driverLinq.Entities.AsNoTracking()
@@ -755,7 +763,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         // in-memory LINQ over the very same expression, which is the EF-359 accepted-divergence family (native
         // and DriverLinq agree with each other; both differ from the CLR). Not something this slice introduced
         // — a filtered count's element predicate is equally unguarded in predicate and projection position —
-        // and not something the decline fixes.
+        // and not something a sort-position decline would have fixed.
         using (var oracleDb = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
         {
             var inMemory = oracleDb.Entities.AsNoTracking().ToList()

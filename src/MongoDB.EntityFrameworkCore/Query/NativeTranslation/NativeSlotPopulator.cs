@@ -415,51 +415,49 @@ internal static class NativeSlotPopulator
     /// than the measured admitted set.
     /// </para>
     /// <para>
-    /// <b>A FILTERED owned-collection count (<c>b.Posts.Count(p =&gt; ...)</c>) is DECLINED as a sort key —
-    /// and READ THE SECOND HALF OF THIS PARAGRAPH BEFORE CITING IT, because the obvious reading of the first
-    /// half is measured false.</b> The gap is real: <c>CanRender</c> admits
+    /// <b>A FILTERED owned-collection count (<c>b.Posts.Count(p =&gt; ...)</c>) GOES NATIVE as a sort key. A
+    /// decline for this shape WAS SHIPPED and was then REVERTED — read this before proposing another one.</b>
+    /// The mechanism that motivated the decline is real (MEASURED): <c>CanRender</c> admits
     /// <c>MongoFilteredSizeExpression</c> (it recurses into <c>ElementPredicate</c>), while
     /// <c>AllFieldsDefaultSerialized</c> (<see cref="MongoExpressionTranslator"/>, the operand-serialization
     /// guard <see cref="MongoExpressionTranslator.TryTranslateValue"/> already applies to the OUTER expression)
     /// recurses only through field and binary nodes — its catch-all returns <see langword="true"/> for a
-    /// filtered size unconditionally, so it never looks INSIDE that node's own element predicate. Without the
-    /// decline below, <c>OrderBy(b =&gt; b.Posts.Count(p =&gt; p.Code &gt; 5))</c> over a <c>Code</c> mapped
-    /// <c>HasBsonRepresentation(BsonType.String)</c> lowers into the ordinary <c>$set</c>/<c>$sort</c>/
-    /// <c>$unset</c> bracket and emits <c>cond: {$gt: ["$$e.Code", "5"]}</c>, comparing the RAW STORED STRINGS
-    /// lexicographically — <c>"10"</c> does not exceed <c>"5"</c> but <c>"6"</c> does — so each owner's count
-    /// diverges from CLR semantics and the rows come back in a different ORDER.
+    /// filtered size unconditionally, so it never looks INSIDE that node's own element predicate. Over a
+    /// <c>Code</c> mapped <c>HasBsonRepresentation(BsonType.String)</c>,
+    /// <c>OrderBy(b =&gt; b.Posts.Count(p =&gt; p.Code &gt; 5))</c> therefore emits
+    /// <c>cond: {$gt: ["$$e.Code", "5"]}</c> and compares the RAW STORED STRINGS lexicographically
+    /// (<c>"10"</c> does not exceed <c>"5"</c>, but <c>"6"</c> does).
     /// </para>
     /// <para>
-    /// <b>What that divergence is NOT: a native-vs-fallback one. MEASURED, and this refutes the review finding
-    /// that prompted the decline.</b> Explicit <c>DriverLinq</c> returns the IDENTICAL server-side order
-    /// (<c>[cA, cB, cC]</c> where in-memory LINQ answers <c>[cB, cC, cA]</c>), because the driver's own LINQ
-    /// provider serializes the comparison constant through the very same property serializer. So native and the
-    /// fallback agree with each other and both differ from the CLR — the EF-359 accepted-divergence family —
-    /// and <b>this decline changes no value anywhere; it changes ROUTING only.</b> There is consequently no
-    /// order-based assertion that can discriminate it: the tripwire
-    /// (<c>NativeComputedSortTests.Filtered_owned_collection_count_sort_key_declines_instead_of_going_native</c>)
-    /// pins the decline through its <c>NativeOnly</c> leg (which SUCCEEDS with the clause removed — measured),
-    /// and carries the <c>DriverLinq</c> parity leg specifically so this paragraph cannot be re-read as a
-    /// wrong-data fix.
+    /// <b>Why that is not a decline-worthy hazard — MEASURED three ways on that exact fixture.</b> Native
+    /// without the decline and explicit <c>DriverLinq</c> return the IDENTICAL order (<c>[cA, cB, cC]</c>);
+    /// only IN-MEMORY LINQ over the same expression answers <c>[cB, cC, cA]</c>. Both SERVER-SIDE paths agree,
+    /// because the driver's own LINQ provider serializes the comparison constant through the very same property
+    /// serializer — so this is the <b>EF-359 accepted-divergence family</b>, not wrong data, and this branch's
+    /// oracle is <c>Native == DriverLinq</c>. <b>The refuted story — "native silently reorders where a correct
+    /// driver-LINQ fallback existed" — must not be repeated except as the thing that was measured FALSE.</b>
+    /// The decline changed ROUTING only, no value anywhere, so no order-based assertion could discriminate it;
+    /// and it cost the common case (a filtered count over ordinary, DEFAULT-serialized operands) for no measured
+    /// correctness benefit.
     /// </para>
     /// <para>
-    /// <b>Why decline at all, then.</b> The element predicate's operands are genuinely outside the guard this
-    /// method already applies to every other computed sort key, so admitting them is an inconsistency rather
-    /// than a decision; and declining costs NATIVENESS ONLY, never correctness — the query falls back to
-    /// driver-LINQ, whose answer is byte-identical (<see cref="NativeTranslationNotSupportedException"/> only
-    /// under <c>NativeOnly</c>). That is the same over-declining stance this method's reference-type allowlist
-    /// already takes ("deliberately narrower than the measured admitted set"). <b>The underlying gap is
-    /// PRE-EXISTING in predicate and projection position and is NOT closed here</b> — it is equally unguarded
-    /// in <c>Where(b =&gt; b.Posts.Count(pred) &gt; 2)</c> and <c>Select(b =&gt; new { N = b.Posts.Count(pred)
-    /// })</c>; closing it properly means guarding the element predicate's own operands at their one source,
-    /// inside <c>MongoExpressionTranslator</c>'s filtered-size translation, for every position at once.
-    /// <b>The decline is deliberately NARROW:</b> an UNFILTERED count is a <c>MongoSizeExpression</c>, carries
-    /// no element predicate and no operand serialization to diverge on, and stays native
-    /// (<c>OrderBy(x =&gt; x.Posts.Count)</c> — the paired control, case 17 of that test class). It does cost
-    /// one legitimate shape: a filtered count over DEFAULT-serialized operands declines too, accepted as the
-    /// price of a one-clause node-kind check over a new recursive serialization guard. The check recurses
-    /// through binary nodes because <c>TranslateOperand</c> admits a filtered count as an ordinary arithmetic
-    /// operand, so <c>OrderBy(b =&gt; b.Posts.Count(pred) * 2)</c> is the same shape one level down.
+    /// <b>Going native is also what EF-359 already ruled for this same node kind.</b> EF-359 shipped
+    /// <c>MongoFilteredSizeExpression</c> NATIVE in PREDICATE and PROJECTION position under an explicit owner
+    /// ruling to "accept and document" the CLR divergence — recorded in this area's <c>AGENTS.md</c> as the
+    /// "ACCEPTED AGGREGATION-DIALECT DIVERGENCE" block. Declining the same node in SORT position created an
+    /// inconsistency rather than removing one. An UNFILTERED count (<c>MongoSizeExpression</c>) was never in
+    /// scope either way and stays native (<c>OrderBy(x =&gt; x.Posts.Count)</c> — case 17 of the test class).
+    /// </para>
+    /// <para>
+    /// <b>The residual, stated honestly and UNVERIFIED: only <c>HasBsonRepresentation</c> was measured, NOT a
+    /// <c>ValueConverter</c> on an element operand.</b> "Native and driver-LINQ always agree" is NOT a law in
+    /// this codebase — the <c>OfType</c> discriminator is a documented case where they genuinely DO diverge
+    /// (driver-LINQ serializes the discriminator value RAW, native serializes it THROUGH the property
+    /// serializer), which is exactly why that path carries a converter guard of its own. If a divergence is
+    /// ever MEASURED here, the right fix is to extend the operand-serialization guard INTO the element
+    /// predicate, at its one source inside <c>MongoExpressionTranslator</c>'s filtered-size translation — that
+    /// preserves the default-serialized common case and closes PREDICATE and PROJECTION position at the same
+    /// time. It is NOT to re-add a node-kind decline in sort position only.
     /// </para>
     /// </remarks>
     private static bool TryTranslateComputedSortKey(
@@ -475,37 +473,12 @@ internal static class NativeSlotPopulator
         if (!MongoAggregationExpressionRenderer.CanRender(translated))
             return false;
 
-        // A FILTERED count's element predicate escapes AllFieldsDefaultSerialized, so a non-default-serialized
-        // operand inside it is compared in its RAW stored form and the resulting count — hence the row ORDER —
-        // diverges from CLR semantics. NOTE (measured): explicit DriverLinq diverges IDENTICALLY, so this is a
-        // routing decline, not a wrong-data fix — see this method's remarks before citing it as one. An
-        // UNFILTERED MongoSizeExpression is deliberately NOT caught here (no element predicate, nothing to
-        // diverge on) and stays native.
-        if (ContainsFilteredSize(translated))
-            return false;
-
         if (!TryProbeBareValueRenders(translated, keySelectorBody.Type))
             return false;
 
         result = translated;
         return true;
     }
-
-    /// <summary>
-    /// Returns whether <paramref name="node"/> is, or contains anywhere beneath an arithmetic/comparison binary
-    /// node, a <see cref="MongoFilteredSizeExpression"/> — the one node kind
-    /// <see cref="TryTranslateComputedSortKey"/> declines. Mirrors
-    /// <c>MongoExpressionTranslator.AllFieldsDefaultSerialized</c>'s own shape (field / binary / catch-all),
-    /// because those are exactly the node kinds <c>TryTranslateValue</c> can produce here; a
-    /// <see cref="MongoSizeExpression"/> falls into the catch-all deliberately.
-    /// </summary>
-    private static bool ContainsFilteredSize(MongoExpression node)
-        => node switch
-        {
-            MongoFilteredSizeExpression => true,
-            MongoBinaryExpression b => ContainsFilteredSize(b.Left) || ContainsFilteredSize(b.Right),
-            _ => false
-        };
 
     /// <summary>
     /// Returns <see langword="false"/> only when <paramref name="translated"/> is a bare
