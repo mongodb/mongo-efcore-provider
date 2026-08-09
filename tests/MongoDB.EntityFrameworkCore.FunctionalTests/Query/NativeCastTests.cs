@@ -1369,12 +1369,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     private static SingleEntityDbContext<QuantBlog> CreateQuantContext(
-        IMongoCollection<QuantBlog> collection, MongoQueryMode mode)
+        IMongoCollection<QuantBlog> collection, MongoQueryMode mode, List<string>? logs = null)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: QuantBlogModel,
             optionsBuilderAction: b =>
             {
+                if (logs is not null)
+                    b.LogTo(logs.Add).EnableSensitiveDataLogging();
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
@@ -1983,6 +1985,412 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     private static SingleEntityDbContext<PlainWeightPairRow> CreatePlainPairContext(
         IMongoCollection<PlainWeightPairRow> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    // ── 34. C1 (EF-403 fix wave): a RELATIONAL cast comparison over a NULLABLE property must NOT leave ──
+    //        the TYPE-BRACKETED query dialect
+    //
+    // THE DEFECT. Task 7's site-B fall-through moved a `member <op> constant` comparison out of the
+    // type-bracketed query dialect and into $expr. MongoDB's query dialect TYPE-BRACKETS a relational operator:
+    // {Price: {$lt: 100}} matches neither a stored BSON null nor a MISSING element. The $expr form does not --
+    // $toInt/$toDouble map both of those to null, and BSON TOTAL ORDER puts Null BELOW every number, so a
+    // null/missing row satisfies $lt and $lte. MEASURED end to end on a live server, over the fixture below:
+    //
+    //   {Price: {$lt: 100}}                        -> [p1_50]                        <- released packages
+    //   {$expr: {$lt: [{$toInt: "$Price"}, 100]}}  -> [p1_50, p3_null, p4_missing]    <- the fall-through
+    //
+    // This is the invariant MongoExpressionNegator's class remarks already record ("silent wrong data, under
+    // default Native, on an extremely ordinary input"), re-opened from the other direction: there it is about
+    // NEGATING a type-bracketed comparison, here about a comparison that WAS bracketed and stopped being so.
+    //
+    // *** THE SPELLING MATTERS, AND THAT IS THE EXPENSIVE FACT TO RE-DERIVE. *** Whether the DRIVER (i.e. the
+    // released behaviour, since MongoQueryMode does not exist at v10.0.2/v9.1.2/v8.4.2) type-brackets this
+    // comparison depends on HOW THE CAST IS SPELLED, and it is not predictable from the property alone.
+    // MEASURED, same fixture, same server, driver-LINQ emission:
+    //
+    //   LIFTED   (int?)x.Price < 100   ->  {Price: {$lt: 100}}                      cast DROPPED, bracketed
+    //   UNLIFTED (int)x.Price  < 100   ->  {$expr: {$lt: [{$toInt: "$Price"}, 100]}} cast RENDERED, NOT bracketed
+    //
+    // The LIFTED spelling is the one Northwind uses (its pre-slice baseline for Decimal_cast_to_double_works is
+    // {"UnitPrice": {"$gt": 100.0}}), and it is the only one on which this guard is OBSERVABLE at all: for the
+    // unlifted spelling the fallback the guard routes to emits the very $expr form the guard is avoiding, so
+    // rows are unchanged either way. A test written against the unlifted spelling would therefore be VACUOUS --
+    // it would pass with the guard deleted. Every legged assertion below is deliberately LIFTED.
+    //
+    // The provider cannot key the guard on which spelling the driver happens to drop -- that is the driver's own
+    // per-shape behaviour, unknowable at translation time -- so it must instead never emit a form that admits
+    // null/missing for an operator whose query-dialect form excludes them. That is exactly what the guard does.
+    //
+    // WHY ALL FOUR RELATIONAL OPERATORS AND NOT JUST < AND <=. Only < and <= measurably differ: because Null
+    // sorts below every number, $gt/$gte happen to exclude the ragged rows too, so they happen to agree. That
+    // agreement is an ACCIDENT of collation order, not a property of the rendering. The alternative fix --
+    // emitting a {Price: {$ne: null}} conjunct -- is NOT the exact complement either (type bracketing also
+    // excludes every foreign BSON type; $ne: null does not), and this codebase's recorded rule for exactly this
+    // family is MongoExpressionNegator's: EXACT COMPLEMENT OR DECLINE, NEVER AN APPROXIMATION. Declining is the
+    // only exact option available, so it is the one taken.
+    //
+    // WHAT IT COSTS, stated rather than hidden: NorthwindWhereQueryMongoTest.Decimal_cast_to_double_works is
+    // exactly this shape over Product.UnitPrice (decimal?), so the slice's ONLY specification conversion from
+    // the fall-through reverts to driver-LINQ and its baseline returns to {"UnitPrice": {"$gt": 100.0}}. It was
+    // NOT returning wrong rows (it uses $gt); it reverts because the guard is keyed on a property of the
+    // RENDERING, not on which operators luck out.
+    //
+    // TWO CONTROLS keep the guard from being satisfied by over-declining: EQUALITY over the same nullable
+    // property still goes native ($eq/$ne partition every BSON value including null and missing, so moving one
+    // into $expr changes nothing), and a RELATIONAL comparison over a NON-NULLABLE property still goes native
+    // (that is the owner-ruled CLR-correct divergence of case 27, which this guard must not revoke).
+
+    private class NullablePriceRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public double? Price { get; set; }
+        public decimal? Amount { get; set; }
+        public double Weight { get; set; }
+    }
+
+    [Fact]
+    public void Relational_cast_comparison_over_a_nullable_property_declines_instead_of_untype_bracketing()
+    {
+        var collection = SeedNullablePrices(
+            nameof(Relational_cast_comparison_over_a_nullable_property_declines_instead_of_untype_bracketing));
+
+        // All four relational operators DECLINE (NativeOnly throws) and fall back to the type-bracketed rows
+        // under Native -- identical to explicit DriverLinq. The expected sets are asserted PER OPERATOR, not
+        // just for parity: parity alone would pass if BOTH paths returned the ragged rows.
+        AssertRelationalCastDeclines(collection, x => (int?)x.Price < 100, "returned p1_50");
+        AssertRelationalCastDeclines(collection, x => (int?)x.Price <= 100, "returned p1_50");
+        AssertRelationalCastDeclines(collection, x => (int?)x.Price > 100, "returned p2_150");
+        AssertRelationalCastDeclines(collection, x => (int?)x.Price >= 100, "returned p2_150");
+
+        // The mirrored branch (member on the RIGHT) has its own separate CanFallThroughToExpr call site.
+        AssertRelationalCastDeclines(collection, x => 100 > (int?)x.Price, "returned p1_50");
+
+        // decimal? -> double?, the exact Northwind Decimal_cast_to_double_works shape.
+        AssertRelationalCastDeclines(collection, x => (double?)x.Amount < 100, "returned p1_50");
+        AssertRelationalCastDeclines(collection, x => (double?)x.Amount > 100, "returned p2_150");
+
+        // CONTROL 1 -- equality over the SAME nullable property still falls through and goes native.
+        using (var eqNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Equal(
+                ["p1_50"],
+                eqNativeOnly.Entities.AsNoTracking().Where(x => (int?)x.Price == 50)
+                    .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+        }
+
+        // CONTROL 2 -- a relational cast comparison over a NON-NULLABLE property still goes native (case 27's
+        // owner-ruled shape). Weight: p1 = 1.6, p2 = 0.5, p3 = 2.5, p4 = MISSING -> (int) 1, 0, 2, null.
+        using (var relNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Equal(
+                ["p1_50", "p3_null"],
+                relNativeOnly.Entities.AsNoTracking().Where(x => (int)x.Weight > 0)
+                    .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+        }
+    }
+
+    // ── 34b. The RESIDUAL this guard deliberately does NOT close, pinned as MEASURED — not as correct ──
+    //
+    // The same un-type-bracketing reaches a NON-NULLABLE property through a MISSING element: p4_missing has no
+    // Weight at all, so $toInt yields null, and null < 2 is true under BSON total order. MEASURED:
+    //
+    //   Native / NativeOnly : {$expr: {$lt: [{$toInt: "$Weight"}, 2]}} -> p1_50, p2_150, p4_missing
+    //   DriverLinq          : {Weight: {$lt: 2}}                       -> p1_50, p2_150
+    //
+    // NOT CLOSED HERE, deliberately, and the reason is scope rather than taste: gating a relational cast on the
+    // OPERATOR alone (dropping the nullability conjunct) would revoke case 27's owner-ruled CLR-correct
+    // divergence -- `(int)x.D > 0` is exactly a relational cast comparison -- i.e. it would undo the
+    // fall-through for relational comparisons entirely, which is a far larger change than this fix wave's
+    // remit. And the document it affects VIOLATES THE MODEL: an absent element for a required non-nullable
+    // property is a state the provider's own read path rejects ("Document element 'Weight' is missing for
+    // required non-nullable property"), so there is no in-memory CLR oracle for it at all -- materializing the
+    // entity throws before any comparison happens.
+    //
+    // Pinned so it cannot change silently in either direction, and so the next person to touch this guard finds
+    // the measurement rather than re-deriving it.
+
+    [Fact]
+    public void Missing_element_on_a_NON_nullable_property_still_reaches_the_untype_bracketed_expr_form()
+    {
+        var collection = SeedNullablePrices(
+            nameof(Missing_element_on_a_NON_nullable_property_still_reaches_the_untype_bracketed_expr_form));
+
+        using var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly);
+        Assert.Equal(
+            ["p1_50", "p2_150", "p4_missing"],
+            nativeOnly.Entities.AsNoTracking().Where(x => (int)x.Weight < 2)
+                .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+
+        using var driverLinq = CreateNullablePriceContext(collection, MongoQueryMode.DriverLinq);
+        Assert.Equal(
+            ["p1_50", "p2_150"],
+            driverLinq.Entities.AsNoTracking().Where(x => (int)x.Weight < 2)
+                .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+
+        // The premise: there IS no CLR oracle here, because materializing p4_missing throws first.
+        using var oracle = CreateNullablePriceContext(collection, MongoQueryMode.Native);
+        Assert.Throws<InvalidOperationException>(() => oracle.Entities.AsNoTracking().ToList());
+    }
+
+    private void AssertRelationalCastDeclines(
+        IMongoCollection<NullablePriceRow> collection,
+        Expression<Func<NullablePriceRow, bool>> predicate,
+        string expectedOutcome)
+    {
+        // Every leg -- including the routing one -- goes through DescribeOutcome and projects LABELS rather than
+        // whole entities, for two reasons that were both found the hard way. (a) Outcome STRINGS make a
+        // regression NAME the ragged rows it wrongly admitted ("returned p1_50,p3_null,p4_missing") instead of
+        // only reporting a missing exception, which is what an Assert.Throws routing leg would have said.
+        // (b) A WHOLE-ENTITY read of this fixture throws on its own, because p4_missing omits the non-nullable
+        // Weight -- so a .Where(predicate).ToList() routing leg fails with InvalidOperationException under the
+        // very mutation it is meant to catch, hiding the rows. See case 34b, which asserts that materialization
+        // throw as its own premise.
+        using var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly);
+        var nativeOnlyOutcome = DescribeOutcome(
+            () => nativeOnly.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label)
+                .ToList(),
+            l => l);
+        Assert.Equal("threw NativeTranslationNotSupportedException", nativeOnlyOutcome);
+
+        using var native = CreateNullablePriceContext(collection, MongoQueryMode.Native);
+        var nativeOutcome = DescribeOutcome(
+            () => native.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList(),
+            l => l);
+
+        using var driverLinq = CreateNullablePriceContext(collection, MongoQueryMode.DriverLinq);
+        var driverLinqOutcome = DescribeOutcome(
+            () => driverLinq.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label)
+                .ToList(),
+            l => l);
+
+        Assert.Equal(expectedOutcome, nativeOutcome);
+        Assert.Equal(nativeOutcome, driverLinqOutcome);
+    }
+
+    // Four rows, three states for the nullable properties: a value (twice, so an assertion is never a one-row
+    // accident), an explicit BSON null, and a MISSING element. Weight is NON-nullable and is also absent on the
+    // fourth row, which is what case 34b needs. The seed SELF-CHECKS the stored shape, because "missing" and
+    // "present but null" are indistinguishable from results alone and an un-self-checked seed could silently
+    // degrade to two states -- which is exactly the axis these cases exist to exercise.
+    private IMongoCollection<NullablePriceRow> SeedNullablePrices(string name)
+    {
+        var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        var typed = database.MongoDatabase.GetCollection<NullablePriceRow>(raw.CollectionNamespace.CollectionName);
+
+        // The three well-formed rows go in TYPED so decimal? gets whatever representation the driver's own
+        // mapping produces, rather than one hand-picked here; the fourth is raw, since a missing element cannot
+        // be expressed through the typed writer at all.
+        typed.InsertMany(
+        [
+            new NullablePriceRow { Label = "p1_50", Price = 50.0, Amount = 50m, Weight = 1.6 },
+            new NullablePriceRow { Label = "p2_150", Price = 150.0, Amount = 150m, Weight = 0.5 },
+            new NullablePriceRow { Label = "p3_null", Price = null, Amount = null, Weight = 2.5 }
+        ]);
+        raw.InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "p4_missing" } });
+
+        var stored = raw.Find(FilterDefinition<BsonDocument>.Empty).ToList().ToDictionary(d => d["Label"].AsString);
+        Assert.Equal(4, stored.Count);
+        Assert.Equal(50.0, stored["p1_50"]["Price"].AsDouble);
+        Assert.Equal(150.0, stored["p2_150"]["Price"].AsDouble);
+        Assert.True(stored["p3_null"]["Price"].IsBsonNull);
+        Assert.True(stored["p3_null"]["Amount"].IsBsonNull);
+        Assert.False(stored["p4_missing"].Contains("Price"));
+        Assert.False(stored["p4_missing"].Contains("Amount"));
+        Assert.False(stored["p4_missing"].Contains("Weight"));
+
+        return typed;
+    }
+
+    private static SingleEntityDbContext<NullablePriceRow> CreateNullablePriceContext(
+        IMongoCollection<NullablePriceRow> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    // ── 35. I2 (EF-403 fix wave): an owned-collection .Count compared against a NON-INTEGRAL threshold ──
+    //
+    // MongoQueryLanguageRenderer.TryRenderSizeComparison's remarks used to carry a MEASURED claim that this
+    // shape "falls back to driver-LINQ before this method is ever reached", because TranslateOperand's convert
+    // guard "rejects that convert outright". THIS SLICE FALSIFIED IT: Convert(count, Double) now matches the
+    // new MongoConvertExpression branch, the operand resolves to a MongoSizeExpression,
+    // AllFieldsDefaultSerialized admits it on its catch-all (a size node carries no IProperty to check), and
+    // the query goes NATIVE. The OUTPUT is correct, so this is an unrecorded INCIDENTAL WIDENING plus a
+    // now-false MEASURED claim, not a bug -- recorded deliberately, because this repo's own record says four
+    // earlier slices had to retro-fit an unnoticed widening.
+    //
+    // The MQL leg is what makes this case discriminating rather than decorative: it pins that the comparison
+    // takes the $expr TIER and NOT the query-dialect array-index form, which would answer the WRONG question
+    // (an array-index $exists test can only express an integral threshold).
+
+    [Fact]
+    public void Count_compared_against_a_non_integral_threshold_goes_native_via_expr()
+    {
+        var collection = database.MongoDatabase.GetCollection<QuantBlog>(
+            UniqueCollectionName(nameof(Count_compared_against_a_non_integral_threshold_goes_native_via_expr)));
+        collection.InsertMany(
+        [
+            new QuantBlog { Title = "b0", Posts = [] },
+            new QuantBlog { Title = "b2", Posts = [new QuantPost(), new QuantPost()] },
+            new QuantBlog { Title = "b3", Posts = [new QuantPost(), new QuantPost(), new QuantPost()] }
+        ]);
+
+        // Routing proof plus the answer: Count > 2.5 selects only the 3-post blog.
+        using var nativeOnly = CreateQuantContext(collection, MongoQueryMode.NativeOnly);
+        Assert.Equal(
+            ["b3"],
+            nativeOnly.Entities.AsNoTracking().Where(b => b.Posts.Count > 2.5)
+                .OrderBy(b => b.Title).Select(b => b.Title).ToList());
+
+        var logs = new List<string>();
+        using (var native = CreateQuantContext(collection, MongoQueryMode.Native, logs))
+        {
+            Assert.Equal(
+                ["b3"],
+                native.Entities.AsNoTracking().Where(b => b.Posts.Count > 2.5)
+                    .OrderBy(b => b.Title).Select(b => b.Title).ToList());
+        }
+
+        var mql = MqlPipeline(logs);
+        Assert.Contains("$expr", mql);
+        Assert.Contains("$toDouble", mql);
+        // NOT the array-index tier: {"Posts.2": {$exists: true}} answers Count > 2, a different question.
+        Assert.DoesNotContain("Posts.2", mql);
+
+        // In-memory LINQ over the same expression, and explicit DriverLinq, both agree -- so the widening is
+        // value-preserving, which is what makes it benign rather than a second owner ruling.
+        using var oracle = CreateQuantContext(collection, MongoQueryMode.Native);
+        Assert.Equal(
+            ["b3"],
+            oracle.Entities.AsNoTracking().ToList().Where(b => b.Posts.Count > 2.5)
+                .OrderBy(b => b.Title).Select(b => b.Title).ToList());
+
+        using var driverLinq = CreateQuantContext(collection, MongoQueryMode.DriverLinq);
+        Assert.Equal(
+            ["b3"],
+            driverLinq.Entities.AsNoTracking().Where(b => b.Posts.Count > 2.5)
+                .OrderBy(b => b.Title).Select(b => b.Title).ToList());
+    }
+
+    // ── 36. M4 (EF-403 fix wave): $toInt's ROUNDING MODE is pinned — it truncates toward zero ─────────
+    //
+    // Case 27's fixture cannot discriminate this: every one of its values gives the same answer whether MQL
+    // truncates, floors or rounds. Both assertions below are chosen so that exactly one rounding rule survives.
+    //
+    //   d: D = -1.5  ->  truncate-toward-zero -1 | floor -2 | round-half-even -2 | round-half-away -2
+    //   a: D =  1.6  ->  truncate 1             | floor 1  | round 2
+    //   c: D =  2.5  ->  truncate 2             | floor 2  | round-half-even 2 | round-half-away 3
+    //
+    // (1) A threshold of -1.5 lies strictly BETWEEN the truncated (-1) and floored (-2) results, so d is in the
+    //     result set under truncation and absent under floor/round -- d's presence IS the discriminator.
+    // (2) (int)D == 2 selects only c under truncation; under round-half-even it would ALSO select a (1.6 -> 2).
+    //
+    // The oracle here is IN-MEMORY LINQ, not driver-LINQ: this is case 27's owner-ruled divergence, so explicit
+    // DriverLinq drops the cast and answers a different question ({D: {$gt: -1.5}} excludes d, whose D is
+    // exactly -1.5; {D: {$eq: 2}} matches nothing). C# truncates toward zero, and native agrees with C#.
+
+    [Fact]
+    public void Cast_truncates_toward_zero_rather_than_flooring_or_rounding()
+    {
+        var collection = Seed(nameof(Cast_truncates_toward_zero_rather_than_flooring_or_rounding));
+
+        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+
+        Assert.Equal(
+            ["a", "b", "c", "d", "e"],
+            nativeOnly.Entities.AsNoTracking().Where(x => (int)x.D > -1.5)
+                .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+
+        Assert.Equal(
+            ["c"],
+            nativeOnly.Entities.AsNoTracking().Where(x => (int)x.D == 2)
+                .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+
+        // The CLR oracle, over the same expressions and the same rows.
+        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        var materialized = oracle.Entities.AsNoTracking().ToList();
+        Assert.Equal(
+            ["a", "b", "c", "d", "e"],
+            materialized.Where(x => (int)x.D > -1.5).OrderBy(x => x.Label).Select(x => x.Label).ToList());
+        Assert.Equal(
+            ["c"],
+            materialized.Where(x => (int)x.D == 2).OrderBy(x => x.Label).Select(x => x.Label).ToList());
+    }
+
+    // ── 37. I1 (EF-403 fix wave): an OUT-OF-RANGE value aborts the WHOLE query, not just its own row ──
+    //
+    // MongoConvertExpression's remarks used to tag this UNVERIFIED. MEASURED here, and the answer is worse than
+    // "the offending row errors": $expr is evaluated for every document the stage SCANS, so one unconvertible
+    // value aborts the entire aggregate -- including for documents that would never have matched, and even for
+    // a predicate that matches NOTHING. The released packages returned rows (they drop the cast).
+    //
+    // DISPOSITION, re-taken explicitly rather than inherited: KEEP the server error; do NOT add $convert's
+    // onError. Three answers are available and all three differ -- released returns rows (from a comparison the
+    // query did not ask for), unchecked C# produces an unspecified wrapped value, and onError:null would give a
+    // THIRD answer matching neither, because a converted-to-null operand then participates in a BSON-total-order
+    // comparison and quietly moves the row into or out of the result depending on the operator (the very
+    // silent, operator-dependent behaviour case 34's guard exists to prevent). A loud abort is the only one of
+    // the three that cannot be mistaken for an answer. Recorded in BREAKING-CHANGES.md.
+
+    private class BigRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public double D { get; set; }
+    }
+
+    [Fact]
+    public void Out_of_range_narrowing_cast_aborts_the_whole_query()
+    {
+        var collection = database.MongoDatabase.GetCollection<BigRow>(
+            UniqueCollectionName(nameof(Out_of_range_narrowing_cast_aborts_the_whole_query)));
+        collection.InsertMany(
+        [
+            new BigRow { Label = "small", D = 1.6 },
+            new BigRow { Label = "big", D = 1e30 }
+        ]);
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateBigContext(collection, mode);
+
+            var ex = Assert.Throws<MongoCommandException>(
+                () => db.Entities.AsNoTracking().Where(x => (int)x.D > 0)
+                    .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+            Assert.Contains("overflow", ex.Message);
+
+            // THE BLAST-RADIUS LEG, and the reason this case is not just "an overflow throws": the predicate
+            // below matches NO document under any rounding rule ((int)1.6 = 1, and 1e30 overflows), so a
+            // per-ROW failure would simply have produced an empty result. It aborts anyway.
+            Assert.Throws<MongoCommandException>(
+                () => db.Entities.AsNoTracking().Where(x => (int)x.D < 0)
+                    .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+        }
+
+        // The released behaviour, still available through the documented escape hatch: the driver drops the
+        // cast, so both queries answer and neither aborts.
+        using var driverLinq = CreateBigContext(collection, MongoQueryMode.DriverLinq);
+        Assert.Equal(
+            ["big", "small"],
+            driverLinq.Entities.AsNoTracking().Where(x => (int)x.D > 0)
+                .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+        Assert.Empty(
+            driverLinq.Entities.AsNoTracking().Where(x => (int)x.D < 0)
+                .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+    }
+
+    private static SingleEntityDbContext<BigRow> CreateBigContext(
+        IMongoCollection<BigRow> collection, MongoQueryMode mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>

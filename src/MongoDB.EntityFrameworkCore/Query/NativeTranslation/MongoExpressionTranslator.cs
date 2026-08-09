@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -566,6 +566,14 @@ internal sealed partial class MongoExpressionTranslator
     /// from both the member-left and the mirrored member-right branch.
     /// </para>
     /// <para>
+    /// <b>The fall-through is NOT unconditional, and the condition is a correctness one:</b> see
+    /// <see cref="CanFallThroughToExpr"/>. A RELATIONAL comparison (<c>&lt;</c> <c>&lt;=</c> <c>&gt;</c>
+    /// <c>&gt;=</c>) over a NULLABLE property keeps declining the whole comparison, because the query dialect
+    /// TYPE-BRACKETS such an operator (it matches neither a stored <c>null</c> nor a missing element) and
+    /// <c>$expr</c> does not — MEASURED as extra rows for <c>&lt;</c>/<c>&lt;=</c>, silently, under the default
+    /// <c>Native</c> mode. Equality still falls through in both directions.
+    /// </para>
+    /// <para>
     /// <b>THIS CHANGES RESULTS FOR A NARROWING CAST AGAINST A CONSTANT, DELIBERATELY, BY OWNER RULING. Do not
     /// "correct" it toward the driver.</b> MEASURED: for <c>(int)x.D &gt; 0</c> the driver's own LINQ provider
     /// DROPS the cast on this shape and answers as though the comparison were <c>x.D &gt; 0</c>; the native
@@ -593,10 +601,12 @@ internal sealed partial class MongoExpressionTranslator
             // semantics, so it declines THIS BRANCH and — as of Task 7 — falls THROUGH to the general $expr
             // path below instead of declining the whole comparison, where the cast renders as an explicit
             // MongoConvertExpression ($toX). See HasNumericConvert for the three-outcome classification; this
-            // site only consumes it, it does not alter it.
+            // site only consumes it, it does not alter it. CanFallThroughToExpr carries the fall-through's own
+            // two preconditions — default serialization, and NOT a relational operator over a nullable property
+            // (which would un-type-bracket the comparison and admit null/missing rows).
             if (HasNumericConvert(be.Left, leftProperty!.ClrType, out var leftWideningTarget, out var leftIdentityLike))
             {
-                if (!CanFallThroughToExpr(leftProperty))
+                if (!CanFallThroughToExpr(leftProperty, be.NodeType))
                     return null;
             }
             else
@@ -623,7 +633,9 @@ internal sealed partial class MongoExpressionTranslator
         {
             if (HasNumericConvert(be.Right, rightProperty!.ClrType, out var rightWideningTarget, out var rightIdentityLike))
             {
-                if (!CanFallThroughToExpr(rightProperty))
+                // be.NodeType, NOT the mirrored operator: the four relational operators are closed under
+                // Mirror, so which side the member sits on cannot change the guard's answer.
+                if (!CanFallThroughToExpr(rightProperty, be.NodeType))
                     return null;
             }
             else
@@ -680,6 +692,65 @@ internal sealed partial class MongoExpressionTranslator
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>TWO independent conjuncts, and only the SECOND of them is netted by a test. Do not read a measurement
+    /// of one as a measurement of the other.</b> (1) the operand's stored form must be default-serialized
+    /// (<see cref="NativeGroupByBinder.HasDefaultKeySerialization"/>) — measured VACUOUS at this site, kept as an
+    /// early-out, see the paragraphs below; (2) EF-403 fix wave — a RELATIONAL comparison over a NULLABLE
+    /// property must not leave the type-bracketed query dialect at all.
+    /// </para>
+    /// <para>
+    /// <b>CONJUNCT 2, AND IT IS A LIVE-WRONG-DATA FIX, NOT A SCOPE PREFERENCE. The query dialect
+    /// TYPE-BRACKETS a relational comparison; <c>$expr</c> does not, and the difference is silent rows.</b>
+    /// <c>{UnitPrice: {$lt: 100}}</c> matches neither a stored BSON <c>null</c> nor a MISSING element — a
+    /// relational operator matches only values of a comparable BSON type. The <c>$expr</c> form the
+    /// fall-through emits, <c>{$expr: {$lt: [{$toDouble: "$UnitPrice"}, 100.0]}}</c>, converts <c>null</c> and
+    /// missing alike to <c>null</c> and then compares by BSON TOTAL ORDER, where <c>Null</c> sorts BELOW every
+    /// number — so those documents match. MEASURED against a live server over three documents
+    /// (<c>UnitPrice</c> = 50, 150, and BSON <c>null</c>): the query dialect returned the 50 row, the
+    /// <c>$expr</c> form returned the 50 row AND the null row. The 50-row answer is also what in-memory LINQ
+    /// gives (<c>(double?)null &lt; 100</c> is <see langword="false"/>) and what the released
+    /// <c>v10.0.2</c>/<c>v9.1.2</c>/<c>v8.4.2</c> packages give, so the fall-through was returning rows BOTH
+    /// oracles exclude, silently, under the DEFAULT <c>Native</c> mode.
+    /// </para>
+    /// <para>
+    /// <b>This is the invariant <see cref="MongoExpressionNegator"/>'s class remarks already record, re-opened
+    /// from the other direction.</b> That file's rule — a relational operator is type-bracketed and matches
+    /// neither a missing nor an explicitly-null field, so treating it otherwise is "silent wrong data, under
+    /// default <c>Native</c>, on an extremely ordinary input" — is stated there about NEGATING such a
+    /// comparison. Here the same fact bites a comparison that WAS type-bracketed and stopped being so.
+    /// </para>
+    /// <para>
+    /// <b>WHY ALL FOUR RELATIONAL OPERATORS, when only <c>&lt;</c> and <c>&lt;=</c> measurably differ.</b>
+    /// Because <c>Null</c> sorts below every number, <c>$gt</c>/<c>$gte</c> happen to exclude the ragged rows
+    /// too and so happen to agree with the query dialect — MEASURED (see
+    /// <c>NativeCastTests.Relational_cast_comparison_over_a_nullable_property_declines_instead_of_untype_bracketing</c>,
+    /// whose mutation run records all four answers). That agreement is an ACCIDENT of BSON collation order, not
+    /// a property of the rendering, and <c>$ne: null</c> is likewise NOT the exact complement of type bracketing
+    /// (bracketing also excludes every foreign BSON type; the conjunct does not). This codebase's recorded rule
+    /// for exactly this family is <see cref="MongoExpressionNegator"/>'s: <b>exact complement or decline, never
+    /// an approximation</b>. Declining all four is the only option here that is exact, so it is the one taken —
+    /// deliberately over-declining two operators rather than encoding a collation accident.
+    /// </para>
+    /// <para>
+    /// <b>What it costs, stated rather than hidden:</b> the slice's ONLY specification conversion from this
+    /// fall-through reverts. <c>NorthwindWhereQueryMongoTest.Decimal_cast_to_double_works</c> is
+    /// <c>Where(p =&gt; (double)p.UnitPrice &gt; 100)</c> over <c>Product.UnitPrice</c>, which is
+    /// <c>decimal?</c> — a relational operator over a nullable property, i.e. exactly this shape — so it falls
+    /// back to driver-LINQ again and its baseline returns to <c>{"UnitPrice":{"$gt":100.0}}</c>. It was NOT
+    /// returning wrong rows (it uses <c>$gt</c>); it reverts because the guard is keyed on the property of the
+    /// rendering, not on which operators luck out.
+    /// </para>
+    /// <para>
+    /// <b>Why NULLABILITY is the right key, and why the guard is not simply "every relational cast".</b> For a
+    /// NON-nullable property a missing or null element is a schema violation the read path already rejects
+    /// ("Document element … is missing for required non-nullable property"), and gating on it would revoke the
+    /// owner-ruled CLR-correct divergence this fall-through exists for (<c>(int)x.D &gt; 0</c> over a
+    /// non-nullable <c>double</c> — see this method's caller remarks). Equality is unaffected in either
+    /// direction and deliberately still falls through: <c>$eq</c>/<c>$ne</c> partition every BSON value
+    /// including null and missing, which is the same reason
+    /// <see cref="MongoExpressionNegator"/> may invert that one pair and must <c>$not</c>-wrap the other four.
+    /// </para>
+    /// <para>
     /// <b>This is Guard B, reached from a third site — the same
     /// <see cref="NativeGroupByBinder.HasDefaultKeySerialization"/> predicate the GroupBy key, the
     /// <c>OfType</c> discriminator, and <see cref="AllFieldsDefaultSerialized"/> (Task 6's projection-leaf
@@ -719,36 +790,53 @@ internal sealed partial class MongoExpressionTranslator
     /// than quietly replaced.
     /// </para>
     /// <para>
-    /// <b>Relationship to that deeper guard, measured rather than assumed.</b> Once
-    /// <see cref="TranslateOperand"/> refuses to build a <see cref="MongoConvertExpression"/> over a
-    /// non-default-serialized field, this early check is SUBSUMED for every shape reachable here: a member-side
-    /// convert that <see cref="HasNumericConvert"/> declines is exactly a convert
-    /// <see cref="TranslateOperand"/> would then build (or already refuse, for an unrenderable target).
-    /// <b>MEASURED, and the number is stated rather than softened: forcing this method to return
-    /// <see langword="true"/> unconditionally turns ZERO tests red — 0 of 33 in <c>NativeCastTests</c> and 0 of
-    /// 121 in <c>MongoExpressionTranslatorTests</c>.</b> The same mutation applied to the deeper guard turns 1
-    /// red (<c>NativeCastTests.Field_to_field_cast_over_a_value_converted_property_still_declines</c>, with
+    /// <b>Relationship to that deeper guard, measured rather than assumed — and this paragraph is about
+    /// CONJUNCT 1 ONLY.</b> Once <see cref="TranslateOperand"/> refuses to build a
+    /// <see cref="MongoConvertExpression"/> over a non-default-serialized field, the serialization check here is
+    /// SUBSUMED for every shape reachable here: a member-side convert that <see cref="HasNumericConvert"/>
+    /// declines is exactly a convert <see cref="TranslateOperand"/> would then build (or already refuse, for an
+    /// unrenderable target). <b>MEASURED, and the number is stated rather than softened: forcing the
+    /// SERIALIZATION conjunct to <see langword="true"/> turns ZERO tests red — 0 of 33 in
+    /// <c>NativeCastTests</c> and 0 of 121 in <c>MongoExpressionTranslatorTests</c>.</b> The same mutation
+    /// applied to the deeper guard turns 1 red
+    /// (<c>NativeCastTests.Field_to_field_cast_over_a_value_converted_property_still_declines</c>, with
     /// <c>returned p</c> — the wrong row — in the assertion message), which is what shows the two are not
-    /// symmetric: the deeper guard is netted, this one is not.
+    /// symmetric: the deeper guard is netted, the serialization conjunct here is not. <b>Conjunct 2 is a
+    /// different story entirely and IS netted</b> — removing it turns
+    /// <c>NativeCastTests.Relational_cast_comparison_over_a_nullable_property_declines_instead_of_untype_bracketing</c>
+    /// red ON ROWS, naming the ragged rows the <c>$expr</c> form wrongly admits.
     /// </para>
     /// <para>
-    /// <b>It is kept anyway, as an EARLY-OUT, and that word is load-bearing: it is NOT an independent
+    /// <b>Conjunct 1 is kept anyway, as an EARLY-OUT, and that word is load-bearing: it is NOT an independent
     /// protection and must not be cited as a second line of defence.</b> Two reasons to keep it: it declines
     /// BEFORE translation, so a doomed comparison never builds a node it discards; and it states the site-B
     /// fall-through's own precondition AT the fall-through, rather than leaving it to a guard two call levels
     /// away that a future edit to <see cref="TranslateOperand"/> could move. If a later change makes that
-    /// double statement a liability rather than an aid, DELETE this method — do not add a test to "cover" it,
-    /// which would only pin the redundancy in place.
+    /// double statement a liability rather than an aid, DELETE that conjunct — do not add a test to "cover" it,
+    /// which would only pin the redundancy in place. (Conjunct 2 has no such caveat: nothing else in the tree
+    /// keeps a relational cast comparison inside the type-bracketed dialect.)
     /// </para>
     /// <para>
-    /// <b>What is still unguarded, stated narrowly:</b> a PLAIN field-to-field / arithmetic comparison with no
-    /// cast (<c>o.EncWeight &gt; o.Other</c>). That path predates this slice, has shipped, and its own question
-    /// needs its own measurement. Neither this method nor the guard in <see cref="TranslateOperand"/> is a
-    /// general statement about the <c>$expr</c> dialect's safety.
+    /// <b>What is still unguarded, stated narrowly — tracked as EF-404:</b> a PLAIN field-to-field /
+    /// arithmetic comparison with no cast (<c>o.EncWeight &gt; o.Other</c>) still reaches the general
+    /// <c>$expr</c> path with no default-serialization check at all. That path predates this slice and HAS
+    /// SHIPPED, so changing it is a change to released behaviour and needs its own measurement (native vs.
+    /// explicit <c>DriverLinq</c> for a value-converted operand) — which is why it is ticketed rather than
+    /// fixed here, and why "the cast subset needed fixing now" is NOT a reason the plain subset needs no
+    /// ticket. Neither this method nor the guard in <see cref="TranslateOperand"/> is a general statement about
+    /// the <c>$expr</c> dialect's safety.
     /// </para>
     /// </remarks>
-    private static bool CanFallThroughToExpr(IProperty property)
-        => NativeGroupByBinder.HasDefaultKeySerialization(property);
+    private static bool CanFallThroughToExpr(IProperty property, ExpressionType comparisonNodeType)
+        => NativeGroupByBinder.HasDefaultKeySerialization(property)
+           && !(property.IsNullable && IsRelationalComparison(comparisonNodeType));
+
+    // The four TYPE-BRACKETED comparison operators. Equality is deliberately absent: $eq/$ne partition every
+    // BSON value including null and missing, so moving one of those into $expr does not change which documents
+    // match. Kept as its own method rather than inlined so the set is stated once, next to the reason.
+    private static bool IsRelationalComparison(ExpressionType nodeType)
+        => nodeType is ExpressionType.LessThan or ExpressionType.LessThanOrEqual
+            or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual;
 
     /// <summary>
     /// Chooses the serialization context for the CONSTANT side of a query-native comparison: the property's

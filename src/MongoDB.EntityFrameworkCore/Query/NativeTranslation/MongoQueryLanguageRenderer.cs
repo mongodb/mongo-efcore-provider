@@ -348,14 +348,32 @@ internal sealed class MongoQueryLanguageRenderer
     /// index, never correctness.
     /// </para>
     /// <para>
-    /// <b>Reachability, measured (a non-integral threshold does NOT reach <c>$expr</c> via ordinary LINQ):</b>
-    /// <c>TryGetIntegerThreshold</c>'s rejection of a non-integral threshold (<c>C &gt; 2.5</c>) is real code,
-    /// but C# promotes the <c>int</c> count via a compiler-inserted <c>Convert(count, double)</c>, and
-    /// <c>TranslateOperand</c>'s convert guard — called with <c>allowNumericWidening: false</c> on the
-    /// comparison path — rejects that convert outright, so the whole predicate falls back to driver-LINQ
-    /// before this method is ever reached. The rejection is reachable only from a hand-built expression tree
-    /// (the same class of statement as the <c>Count() &gt; 0</c> upstream-rewrite finding recorded in
-    /// <c>Query/AGENTS.md</c>), not from a query written as ordinary C# LINQ.
+    /// <b>Reachability — CORRECTED IN PLACE (EF-403 fix wave). The claim that used to sit here was tagged
+    /// MEASURED and this slice FALSIFIED it; it is replaced rather than annotated, because a stale MEASURED
+    /// claim is worse than none.</b> It read: a non-integral threshold (<c>C &gt; 2.5</c>) never reaches
+    /// <c>$expr</c> via ordinary LINQ, because C# promotes the <c>int</c> count through a compiler-inserted
+    /// <c>Convert(count, double)</c> and "<c>TranslateOperand</c>'s convert guard … rejects that convert
+    /// outright", so the whole predicate falls back to driver-LINQ before this method is reached.
+    /// </para>
+    /// <para>
+    /// <b>It no longer rejects it.</b> EF-403 slice A1 gave <c>TranslateOperand</c>'s <c>Convert</c> branch a
+    /// <c>MongoConvertExpression</c> arm, so <c>Where(b =&gt; b.Posts.Count &gt; 2.5)</c> now translates end to
+    /// end: the count operand resolves to a <c>MongoSizeExpression</c>,
+    /// <c>MongoExpressionTranslator.AllFieldsDefaultSerialized</c> admits it on its catch-all (a size node
+    /// carries no <c>IProperty</c> to check), and the query goes NATIVE as
+    /// <c>{$expr: {$gt: [{$toDouble: {$size: {$ifNull: ["$Posts", []]}}}, 2.5]}}</c>. <b>The OUTPUT is
+    /// correct</b> — measured against in-memory LINQ and explicit <c>DriverLinq</c> — so this is an unrecorded
+    /// INCIDENTAL WIDENING plus a now-false MEASURED claim, not a bug. (The count comparison never reaches the
+    /// query-native member-vs-constant branch at all: <c>b.Posts.Count</c> is not a mapped scalar, so
+    /// <c>TryResolveMember</c> declines it and the general <c>$expr</c> path is the only one available.)
+    /// </para>
+    /// <para>
+    /// <b>What THIS method's own rejection still means.</b> <c>TryGetIntegerThreshold</c> declining a
+    /// non-integral threshold is now reached by ordinary LINQ and does exactly what its own remarks above say
+    /// it should: it loses the query-dialect array-index form and routes to <c>$expr</c>, which renders the
+    /// comparison correctly. Losing the index is the whole cost. Pinned by
+    /// <c>NativeCastTests.Count_compared_against_a_non_integral_threshold_goes_native_via_expr</c>, which also
+    /// asserts the emitted stage carries <c>$expr</c> and NOT an array-index <c>$exists</c> form.
     /// </para>
     /// </remarks>
     private static BsonDocument? TryRenderSizeComparison(MongoBinaryExpression binary)
@@ -449,6 +467,13 @@ internal sealed class MongoQueryLanguageRenderer
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoBinaryExpression cmp }
                 => IsQueryNativeComparison(cmp),
             MongoFieldExpression => true,
+            // EF-403: EXPLICIT, not left to the catch-all below, because this exclusion is a CORRECTNESS guard
+            // rather than a missing capability — a $toX has no query-dialect form at all, so admitting one here
+            // would put $expr inside $elemMatch, which is a hard server error (measured: "Command aggregate
+            // failed: $expr can only be applied to the top-level document"). See MongoConvertExpression's own
+            // remarks. A COMPARISON over a convert is excluded separately, by IsQueryNativeComparison's
+            // requirement that the left operand be a bare MongoFieldExpression.
+            MongoConvertExpression => false,
             // RenderInValues throws for any values node other than a constant enumerable or a parameter.
             MongoInExpression inExpr
                 => inExpr.Values is MongoConstantExpression { Value: System.Collections.IEnumerable }

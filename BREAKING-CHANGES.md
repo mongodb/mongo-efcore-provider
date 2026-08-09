@@ -150,6 +150,47 @@ modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress);
 
 (or `OwnsMany` for collection navigations). If you want the new separate-collection behavior, no change is required. Models whose embedded types never had their own `DbSet` are unaffected, and the stored documents for those types are unchanged.
 
+### Query results can differ for a numeric cast in a `Where` clause
+
+#### Old behavior
+
+A numeric cast applied to a mapped property inside a `Where` clause — `(int)x.D`, `(double)x.Price` — was translated by the MongoDB C# driver's LINQ provider, which for many shapes **silently dropped the cast** and filtered on the raw stored value instead:
+
+```c#
+context.Blogs.Where(x => (int)x.Score > 0);   // ran as though it were: x.Score > 0
+```
+
+#### New behavior
+
+The provider's own MQL translator now renders the cast explicitly, as `$toInt` / `$toLong` / `$toDouble` / `$toDecimal`, instead of handing the query to the driver's LINQ provider. Two observable consequences for a query that ran successfully in `10.0.2` / `9.1.2` / `8.4.2`:
+
+* **A narrowing cast compared against a constant now returns the C#-correct rows.** `Where(x => (int)x.D > 0)` over a document with `D = 0.5` previously matched (the cast was dropped, so `0.5 > 0` was evaluated); it no longer does, because `(int)0.5` is `0`. This is a deliberate correctness fix — the new result is the one C# itself produces for the same expression.
+
+* **A value outside the target type's range now raises a server error** where rows were previously returned. `Where(x => (int)x.D > 0)` over a document storing `D = 1e30` fails with `MongoDB.Driver.MongoCommandException: … Conversion would overflow target type in $convert with no onError value: 1e+30`. **The failure aborts the whole query, not just the offending document** — the conversion is evaluated for every document the query scans, including documents that would never have matched the predicate — so no rows are returned at all. Unchecked C# would instead have produced an unspecified truncated value for that document.
+
+#### Why
+
+Dropping a cast answers a different question from the one the query asked, and does so silently. Rendering it explicitly makes a filtered query agree with what the same expression means in C#.
+
+The overflow case is a deliberate choice between three answers that all differ: the previous behavior (rows, from a comparison the query did not ask for), unchecked C# (an unspecified value), and suppressing the error (a converted-to-`null` operand, which then participates in a BSON-ordering comparison and quietly moves the document into or out of the result depending on the operator). A loud failure is the only one of the three that cannot be mistaken for an answer, and a value that does not fit the cast's target type indicates a defect in the query or in the stored data.
+
+#### Mitigations
+
+In preference order:
+
+1. **Fix the expression or the data.** If the cast was incidental, remove it (`Where(x => x.D > 0)`) — that is the query the old behavior actually ran. If a stored value genuinely cannot fit the cast's target type, either widen the target (`(long)`, `(double)`) or correct the document.
+
+2. **Restore the previous behavior for the whole context** by opting out of the native translator:
+
+    ```c#
+    optionsBuilder.UseMongoDB(connectionString, databaseName)
+        .UseQueryMode(MongoQueryMode.DriverLinq);
+    ```
+
+    This routes every query through the driver's LINQ provider, as in earlier versions, and restores the old result for both consequences above.
+
+Queries with no numeric cast in their filter are unaffected, as are casts whose stored values all fit the target type and whose truncation does not change the comparison's outcome.
+
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 
 ### The element name for discriminators may have changed

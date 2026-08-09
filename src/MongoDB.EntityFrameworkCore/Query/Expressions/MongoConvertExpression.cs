@@ -40,16 +40,37 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// admitting it there would turn a clean decline into a runtime failure. See that classifier's own remarks.
 /// </para>
 /// <para>
-/// <b>Overflow/<c>ConvertChecked</c> semantics are UNVERIFIED, not silently assumed safe.</b>
+/// <b>Overflow/<c>ConvertChecked</c> semantics are MEASURED (EF-403 fix wave), and the answer is worse than
+/// the earlier UNVERIFIED tag assumed: ONE out-of-range document ABORTS THE ENTIRE QUERY.</b>
 /// <c>MongoExpressionTranslator</c>'s <c>TranslateOperand</c> maps both <c>Convert</c> and <c>ConvertChecked</c>
-/// to this SAME node — there is no separate "checked" flavor — yet the two diverge for an out-of-range value:
-/// unchecked C# produces an unspecified truncated/wrapped result, while MQL's <c>$toInt</c>/<c>$toLong</c>/
-/// <c>$toDecimal</c> raise a server error on a value that does not fit the target type. UNVERIFIED whether the
-/// driver's own LINQ provider emits the identical <c>$toX</c> for this exact overflow case (it does for the
-/// in-range shapes this task measured, per the spike's §3.1 table) — if it does, this joins the EF-359
-/// "accept and document" family (native and the driver agree with each other and both differ from unchecked
-/// C#, which is the divergence to accept); if it does not, the divergence needs its own decision. Neither
-/// direction has been measured here.
+/// to this SAME node — there is no separate "checked" flavor. Measured against a live server over two
+/// documents, <c>{D: 1.6}</c> and <c>{D: 1e30}</c>:
+/// </para>
+/// <para>
+/// <c>{$expr: {$gt: [{$toInt: "$D"}, 0]}}</c> → <c>MongoCommandException: Conversion would overflow target
+/// type in $convert with no onError value: 1e+30</c>; <c>{D: {$gt: 0}}</c> — what the released
+/// <c>v10.0.2</c>/<c>v9.1.2</c>/<c>v8.4.2</c> packages emit for the same LINQ, the cast dropped — returned BOTH
+/// rows.
+/// </para>
+/// <para>
+/// <b>BLAST RADIUS, which is the part the UNVERIFIED tag obscured: the failure is PER-QUERY, not per-row.</b>
+/// <c>$expr</c> is evaluated for every document the stage SCANS, so a single unconvertible value aborts the
+/// whole aggregate — including for documents that would never have matched the predicate, and including
+/// documents that were never going to be returned. It is not "the offending row errors"; it is "no rows at
+/// all, for anyone".
+/// </para>
+/// <para>
+/// <b>DISPOSITION, re-taken explicitly on that measurement rather than inherited: keep the server error. Do
+/// NOT add <c>$convert</c>'s <c>onError</c>.</b> Three answers are available and all three differ — released
+/// behaviour returns rows (the cast silently dropped, so it answers a different question); unchecked C#
+/// produces an unspecified wrapped value; <c>onError: null</c> would produce a THIRD answer, matching neither,
+/// because a converted-to-<c>null</c> operand then participates in a BSON-total-order comparison
+/// (<c>Null</c> below every number) and quietly moves the row into or out of the result depending on the
+/// operator — reintroducing exactly the silent, operator-dependent behaviour the relational/nullable guard in
+/// <c>MongoExpressionTranslator.CanFallThroughToExpr</c> exists to prevent. A loud abort is the only one of
+/// the three that cannot be mistaken for an answer, and out-of-range data reaching a narrowing cast is a
+/// genuine defect in the query or the data. Recorded in <c>BREAKING-CHANGES.md</c> as an observable delta from
+/// the released packages, with <c>UseQueryMode(MongoQueryMode.DriverLinq)</c> as the mitigation.
 /// </para>
 /// </remarks>
 internal sealed class MongoConvertExpression(MongoExpression operand, Type clrType) : MongoExpression

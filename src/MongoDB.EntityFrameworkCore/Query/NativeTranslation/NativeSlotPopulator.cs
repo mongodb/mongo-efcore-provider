@@ -347,8 +347,9 @@ internal static class NativeSlotPopulator
     /// column is to count must add an arm to <see cref="MongoAggregationExpressionRenderer"/>
     /// (<c>Render</c> AND <c>CanRender</c>, which that file's own contract requires be changed together) —
     /// not only to <c>MongoQueryLanguageRenderer</c>/<c>IsQueryDialectRenderable</c>. `CanRender` today admits
-    /// field/element refs, constants/parameters, binary operators over its 13 listed operators and the two
-    /// size nodes — <b>not</b> <c>MongoInExpression</c>, <c>MongoRegexExpression</c>,
+    /// field/element refs, constants/parameters, binary operators over its 13 listed operators, the two
+    /// size nodes and <c>MongoConvertExpression</c> (EF-403 slice A1) — <b>not</b> <c>MongoInExpression</c>,
+    /// <c>MongoRegexExpression</c>,
     /// <c>MongoElemMatchExpression</c> or <c>MongoUnaryExpression</c>. The stream-1 spike's §7 imposes this
     /// only on slices introducing a NEW node kind, so A6 (<c>Contains</c>) and A13 (<c>Not</c>) — whose node
     /// kinds already exist — fall outside it and would otherwise ship with their sort columns silently dead.
@@ -365,7 +366,9 @@ internal static class NativeSlotPopulator
     /// state this plainly so its presence is never later read as evidence a node kind was mutation-tested
     /// against it.</b> <see cref="MongoExpressionTranslator.TryTranslateValue"/> (via its private
     /// <c>TranslateOperand</c>) can only ever PRODUCE a node kind <c>CanRender</c> already admits (a field
-    /// ref, a constant/parameter, a size, or an arithmetic binary over admitted operands) — so the check can
+    /// ref, a constant/parameter, a size, a filtered size, a <c>MongoConvertExpression</c> — EF-403 slice A1
+    /// made that one producible, and <c>CanRender</c> gained an arm for it in the same slice — or an
+    /// arithmetic binary over admitted operands) — so the check can
     /// never fail here, and forcing it to always return <see langword="true"/> turns no test red (mutation 2
     /// reproduces mutation 1's exact red set; it does not add to it). It is kept anyway as the correct
     /// FORWARD guard for the capability-A slices this file's remarks describe above (a count, a regex, an
