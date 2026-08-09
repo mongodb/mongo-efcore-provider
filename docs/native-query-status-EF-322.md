@@ -276,12 +276,12 @@ message — `NorthwindQueryFiltersQueryMongoTest.Find`, both `async` cases, adva
 parameterized regex term. Those are progress, not wins, and they move neither the triple nor the win count.)
 The default `Native` axis reads **4593 / 0 / 17** in every row, so the tranche's `Native` delta is **0**.
 `BREAKING-CHANGES.md` entries added: **0 of 6 rows**. Against the CITED estimates the three SIZED feature
-slices realized **`34 + 0 + 30` = 64 of `44 + 36 + 56` = 136**; slice B is deliberately **excluded from that
+slices realized **`34 + 0 + 28` = 62 of `44 + 36 + 56` = 136**; slice B is deliberately **excluded from that
 ratio**, because its 12 are a re-attribution of cases the ≈508 checkpoint has already counted elsewhere (see
 the slice-B row above and finding (2) below) — adding them to a realized-vs-estimate ratio would double-count
-them. **A1's 30 carries the same "not the CITED figure" caveat as A2's 34 and A5's 0, and for a NEW reason
+them. **A1's 28 carries the same "not the CITED figure" caveat as A2's 34 and A5's 0, and for a NEW reason
 worth carrying into the next slice's planning: sole-cause has now under-delivered three times (A2 34/44,
-A5 0/36, A1 30/56), and A1 adds a second failure mode to finding (1)'s — the decomposition spike's classifier
+A5 0/36, A1 28/56), and A1 adds a second failure mode to finding (1)'s — the decomposition spike's classifier
 can point at the wrong DECLINE SITE entirely, not merely stop at the minimal failing subtree.** A1's yield
 lives at `TranslateComparison`/`HasNumericConvert`, which no A1 write-up named; a plan written against the site
 the documents pointed at (`TranslateOperand`'s `Convert` branch) would have delivered **0 of 28**. **Size a
@@ -1261,8 +1261,8 @@ up from 2427/2166/17. **Cumulative stream-1 wins so far: 74** — re-summed from
 (`0 + 34 + 0 + 0 + 0 + 12 + 28`), not carried from a report. Of those, **62** are realized against a CITED
 estimate of `44 + 36 + 56` = **136** for the three SIZED feature slices; slice B's **12** are excluded from
 that ratio because they are a **re-attribution** of cases the ≈508 checkpoint already counts inside the 474
-(§2 finding (2)) — **≈508 does not move, and 12 must not be added to it**. **A1's 30 against a CITED 56 is the
-third consecutive under-delivery against sole-cause (A2 34/44, A5 0/36, A1 30/56), and its shortfall is
+(§2 finding (2)) — **≈508 does not move, and 12 must not be added to it**. **A1's 28 against a CITED 56 is the
+third consecutive under-delivery against sole-cause (A2 34/44, A5 0/36, A1 28/56), and its shortfall is
 LOCATED rather than guessed:** the projection and sort columns (CITED 14 and 8) each delivered **zero**
 specification cases, so both are correctness/breadth work rather than scoreboard work. A1 also adds a second
 failure mode to finding (1)'s — the classifier can point at the **wrong decline site entirely**, and a plan

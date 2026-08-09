@@ -154,7 +154,7 @@ modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress);
 
 #### Old behavior
 
-A numeric cast applied to a mapped property inside a `Where` clause — `(int)x.D`, `(double)x.Price` — was translated by the MongoDB C# driver's LINQ provider, which for many shapes **silently dropped the cast** and filtered on the raw stored value instead:
+A numeric cast applied to a mapped property inside a `Where` clause — `(int)x.D`, `(double)x.Weight` — was translated by the MongoDB C# driver's LINQ provider, which for many shapes **silently dropped the cast** and filtered on the raw stored value instead:
 
 ```c#
 context.Blogs.Where(x => (int)x.Score > 0);   // ran as though it were: x.Score > 0
@@ -189,7 +189,7 @@ In preference order:
 
     This routes every query through the driver's LINQ provider, as in earlier versions, and restores the old result for both consequences above.
 
-Queries with no numeric cast in their filter are unaffected, as are casts whose stored values all fit the target type and whose truncation does not change the comparison's outcome.
+Queries with no numeric cast in their filter are unaffected, as are casts whose stored values all fit the target type and whose truncation does not change the comparison's outcome. A relational comparison (`<`, `<=`, `>`, `>=`) whose cast is applied to a **nullable** property is also unaffected: that shape still routes through the driver's LINQ provider, so it keeps the old behavior described above rather than either new consequence.
 
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 
