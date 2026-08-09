@@ -64,6 +64,11 @@ internal static class NativeProjectionBinder
         // "the emit gate opened for a bare body" and "the alias override exists" are one event rather than two
         // to keep ordered.
         string? bareProjectionAlias = null;
+        // EF-322 slice A4 (A4-1): which alias family the bare body was admitted under. Only meaningful when
+        // bareProjectionAlias is non-null, and deliberately carried alongside it rather than re-derived from the
+        // alias STRING at the commit block — see AddProjectionAliasOverride's own remarks for why the tier is
+        // data.
+        var bareProjectionTier = ProjectionAliasTier.DocumentPath;
         // EF-362: the (memberName, alias) pairs a WRAPPED body's leaves were admitted under, whenever the
         // alias could not be the member's own name. Collected here and registered on the select in the commit
         // block below, alongside AddProjection, for the same reason the bare override is: "the emit gate
@@ -120,14 +125,41 @@ internal static class NativeProjectionBinder
             // the TRANSLATED LEAF and registered as an override on the select, which every alias-reading site
             // then reads instead of deriving its own (see MongoSelectDefinition.AddProjectionAliasOverride).
             //
-            // Only TIER 1 is admitted here — a leaf with a root-relative DOCUMENT PATH, whose alias IS that
-            // path. That equality is what makes the alias-addressed read and the document-path read the SAME
-            // read, so the shaper built here stays correct when a LATE fallback hands it whole documents
-            // instead of the projected ones (see ShouldStripBareProjectionOnFallback). A COMPUTED leaf (a
-            // count, a filtered count, arithmetic, OR — EF-322 slice A1, Task 6 — a numeric CAST) has no
-            // document path and is declined below; admitting it needs the synthetic-alias tier, which is a
-            // separate change (see NativeCastTests.Bare_cast_projection_leaf_declines_and_returns_correct_values
-            // for the cast case specifically).
+            // TWO TIERS are admitted here, tried in that order, and each buys its correctness a DIFFERENT way.
+            //
+            // TIER 1 (TryDeriveDocumentPathAlias, EF-322 step 3a) — a leaf with a root-relative DOCUMENT PATH,
+            // whose alias IS that path. That equality is what makes the alias-addressed read and the
+            // document-path read the SAME read, so the shaper built here stays correct when a LATE fallback
+            // hands it whole documents instead of the projected ones (see ShouldStripBareProjectionOnFallback,
+            // which STRIPS for this tier precisely so that happens).
+            //
+            // TIER 2 (TryDeriveSyntheticAlias, EF-405 slice A4) — a COMPUTED leaf, which has no document path
+            // at all, under the reserved `_v` alias. It is correct for the mirror-image reason: `_v` is exactly
+            // what the DRIVER names a bare projection, so the late fallback is left UNSTRIPPED and the driver's
+            // own push-down writes the element the shaper is already reading by.
+            //
+            // TIER 2 HAS TWO ADMITTING ARMS, and their ASYMMETRY is the design rather than an oversight. This
+            // comment has been CORRECTED TWICE; read only this version.
+            //
+            //   ARM 1a (A4-2) — a MongoSizeExpression or MongoFilteredSizeExpression as the TOP node, i.e. the
+            //   bare body IS the count, AND a leaf whose un-stripped driver fallback cannot abort (see
+            //   IsFallbackSafeBareSizeLeaf, which is the ONE place the gate's admitted set and the rewrite's
+            //   reach are reconciled — by CALLING the rewrite's own matcher, not by restating it). NO subtree
+            //   check runs for this arm — "the body IS the count" is exactly what
+            //   NullCoalesceSyntheticBareCountBody rewrites into its $ifNull form, so the driver's un-stripped
+            //   push-down renders the same MQL native does.
+            //
+            //   ARM 1b (A4-1) — an arithmetic MongoBinaryExpression or a numeric-cast MongoConvertExpression as
+            //   the top node, AND IsArrayFreeComputedSubtree over the WHOLE subtree.
+            //
+            // STATE ARM 1b's BOUNDARY AS A SUBTREE FACT, NEVER A LEAF-KIND ONE: `b.Posts.Count * 2` is an
+            // arithmetic top node, so a top-node-only gate admits it, and it is exactly the shape that re-opened
+            // the defect that got tier 2 reverted (the driver's un-stripped push-down renders a bare $size). The
+            // rewrite does not save it either — it matches a body that IS the count, never one that merely
+            // CONTAINS one. So what arm 1b declines is any subtree containing a size node (`b.Posts.Count * 2`,
+            // `(int)(b.Posts.Count / 2.0)`), while `b.Posts.Count` and `b.Posts.Count(pred)` are ADMITTED by arm
+            // 1a. See TryDeriveSyntheticAlias's, IsFallbackSafeBareSizeLeaf's and IsArrayFreeComputedSubtree's
+            // remarks for the measurements.
             default:
             {
                 // A bare body appended onto an ALREADY-POPULATED projection is declined outright. Reaching
@@ -160,10 +192,27 @@ internal static class NativeProjectionBinder
                     return false;
                 }
 
-                // Steps 2 and 3 — derive the FINAL alias from the translated leaf rather than from the syntax,
-                // and decline anything that is not path-addressable. For the array branch the two agree by
-                // construction (an owned-collection array leaf's path IS the containing element name).
-                if (!TryDeriveDocumentPathAlias(bareLeaf, out var derivedAlias))
+                // Steps 2 and 3 — derive the FINAL alias from the translated leaf rather than from the syntax.
+                //
+                // TIER 1 FIRST, and the ordering is load-bearing rather than stylistic: a leaf that HAS a
+                // root-relative document path must take it, because that is what makes the alias-addressed read
+                // and the document-path read the same read and therefore what lets the late-fallback strip work
+                // for it. Tier 2 is the answer only for a leaf tier 1 cannot answer for — a COMPUTED leaf backed
+                // by no document element — and it buys its correctness the other way round, by choosing the very
+                // alias the DRIVER would emit for a bare body so that leaving the driver's push-down in place is
+                // the correct fallback (hence Synthetic, and hence the strip NOT firing).
+                string derivedAlias;
+                if (TryDeriveDocumentPathAlias(bareLeaf, out var documentPathAlias))
+                {
+                    derivedAlias = documentPathAlias;
+                    bareProjectionTier = ProjectionAliasTier.DocumentPath;
+                }
+                else if (TryDeriveSyntheticAlias(bareLeaf, selector, pendingLookups, out var syntheticAlias))
+                {
+                    derivedAlias = syntheticAlias;
+                    bareProjectionTier = ProjectionAliasTier.Synthetic;
+                }
+                else
                 {
                     return false;
                 }
@@ -240,12 +289,14 @@ internal static class NativeProjectionBinder
             mongoQ.Select.AddProjection(projection);
         // EF-322 step 3a: register the bare body's alias override in the SAME commit block as the projections
         // it describes, after every `return false` above — so a declined bare body leaves no override behind
-        // and the read side keeps behaving exactly as it did before this slice. The tier is DocumentPath by
-        // construction: TryDeriveDocumentPathAlias admits nothing else.
+        // and the read side keeps behaving exactly as it did before this slice. The tier used to be
+        // DocumentPath by construction; since A4-1 it is whichever of the two derivations above answered, and
+        // it is carried in a local rather than re-derived here (a second derivation of a fact the emit side
+        // already knows is exactly what the tier being DATA exists to prevent).
         if (bareProjectionAlias != null)
         {
             mongoQ.Select.AddProjectionAliasOverride(
-                MongoSelectDefinition.BareProjectionMemberKey, bareProjectionAlias, ProjectionAliasTier.DocumentPath);
+                MongoSelectDefinition.BareProjectionMemberKey, bareProjectionAlias, bareProjectionTier);
         }
 
         // EF-362: the same registration for a WRAPPED body's named members. DocumentPath by construction —
@@ -844,6 +895,356 @@ internal static class NativeProjectionBinder
             : memberName;
 
     /// <summary>
+    /// EF-322 slice A4 (A4-0): null-coalesces the pushed-down BARE collection-navigation <c>Count</c> body
+    /// inside <c>MongoQueryExpression.CapturedExpression</c> — <c>b.Posts.Count</c> becomes
+    /// <c>(b.Posts ?? new List&lt;Post&gt;()).Count</c> — for a bare projection committed under
+    /// <see cref="ProjectionAliasTier.Synthetic"/>. Returns <paramref name="captured"/> unchanged for every
+    /// other shape.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists.</b> <see cref="ProjectionAliasTier.Synthetic"/> is the tier for a COMPUTED bare leaf,
+    /// which has no document path — so the late-fallback strip deliberately does NOT fire for it (see
+    /// <c>MongoShapedQueryCompilingExpressionVisitor.ShouldStripBareProjectionOnFallback</c>): what makes the
+    /// alias-addressed shaper read correctly on a fallback is the DRIVER's own <c>_v</c>-keyed push-down being
+    /// left in place. But the driver renders a bare <c>{"$size": "$Posts"}</c> where native renders
+    /// <c>{"$size": {"$ifNull": ["$Posts", []]}}</c>, and <c>$size</c> against a MISSING or explicitly-null
+    /// array is a hard server error that aborts the whole aggregate. MEASURED: with the synthetic tier reachable
+    /// and no rewrite, <c>Where(b =&gt; b.Title.StartsWith(captured)).Select(b =&gt; b.Posts.Count)</c> throws
+    /// <c>MongoCommandException</c> under the DEFAULT <c>Native</c> mode, and <c>Select(b =&gt; b.Posts.Count)</c>
+    /// throws under explicit <c>DriverLinq</c> with no decline involved at all. This rewrite is what closes both
+    /// legs, and closing the <c>DriverLinq</c> leg is a versioning-rubric obligation, not a nicety.
+    /// </para>
+    /// <para>
+    /// <b>Why the <c>??</c> spelling and not <c>?:</c>.</b> MEASURED with no EF in the loop
+    /// (<c>collection.AsQueryable()</c>): the driver renders <c>(b.Posts ?? new List&lt;Post&gt;()).Count</c> as
+    /// <c>{"$size": {"$ifNull": ["$Posts", []]}}</c> — byte-identical to what native emits — while the
+    /// <c>b.Posts == null ? 0 : b.Posts.Count</c> spelling renders <c>$cond</c> and STILL aborts, because
+    /// MongoDB evaluates the untaken branch. The obvious first attempt is the one that does not work; it is
+    /// recorded here so it is not rediscovered.
+    /// </para>
+    /// <para>
+    /// <b>Where it is applied, and why not here.</b> The natural home would be the commit block above, beside
+    /// the alias-override registration. That is MEASURED IMPOSSIBLE:
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall</c> assigns
+    /// <c>CapturedExpression = _finalExpression</c> immediately after every translated <c>Queryable</c> call —
+    /// including the <c>Select</c> whose translation runs this binder — so a write from inside
+    /// <see cref="TryPopulateNativeProjection"/> is overwritten before anything can read it (probed with a
+    /// marker expression: the marker never reaches the driver-LINQ bridge). The rewrite is therefore applied at
+    /// that assignment, one statement later — still at TRANSLATION time, still unconditional, and NOT at the
+    /// decline site, which is what makes it cover the explicit-<c>DriverLinq</c> leg as well as the late-decline
+    /// one.
+    /// </para>
+    /// <para>
+    /// <b>Why an unconditional rewrite is nonetheless inert on the native route — and the SHORT reason for it is
+    /// FALSE, so do not repeat it.</b> The tempting one-liner is "only the driver-LINQ bridge reads
+    /// <c>CapturedExpression</c>". It does not hold: <c>ContainsVectorSearch</c> reads it on the NATIVE routing
+    /// path, <c>GetOnZeroResultsAction</c> reads it, the EF9+ bulk <c>ExecuteUpdate</c>/<c>ExecuteDelete</c> path
+    /// reads it through <c>MongoNonQueryExpression.UnwrapBulkOperator</c>, and five exception-message sites
+    /// <c>Print()</c> it. The real reason is that this rewrite's REACH is narrow enough that none of them can
+    /// observe it: it fires only for a <see cref="ProjectionAliasTier.Synthetic"/> bare projection, and even then
+    /// it replaces only the pushed-down <c>Select</c>'s own selector body with a <c>??</c>-coalesced form of the
+    /// same count. <c>ContainsVectorSearch</c> cannot see a vector search inside a
+    /// <c>Count(AsQueryable(nav))</c> body; <c>GetOnZeroResultsAction</c> reads the <c>Select</c>'s SOURCE
+    /// argument, which is passed through untouched; the bulk path's outermost node is not a
+    /// <see cref="Queryable"/> call at all, so this method returns before doing anything. Only an exception
+    /// MESSAGE could differ, and only once the tier-2 admission makes the tier reachable.
+    /// </para>
+    /// <para>
+    /// <b>Scope, deliberately narrow.</b> Only the UNFILTERED collection-navigation <c>Count</c> is rewritten,
+    /// and only as the body of the pushed-down bare <c>Select</c> itself. MEASURED (slice A4 spike §2.2): the
+    /// filtered count renders <c>{$sum: {$map: …}}</c>, arithmetic renders <c>$multiply</c> and a cast renders
+    /// <c>$toInt</c> — none of which touches an array, so none aborts; and a REFERENCE-collection count reads a
+    /// <c>$lookup</c> output, which always exists. A PRIMITIVE-collection bare <c>Count</c>
+    /// (<c>b.Tags.Count</c>) is <b>MEASURED</b> (EF-405 A4-2, base and head byte-identical) not to reach this
+    /// path at all: it is not natively representable, so the whole projection declines and the DRIVER renders a
+    /// bare <c>{"$size": "$Tags"}</c>, which <b>aborts</b> on a missing or explicitly-null array under
+    /// <c>Native</c> and <c>DriverLinq</c> alike. That abort is PRE-EXISTING and is deliberately NOT closed by
+    /// widening this rewrite, which could not reach the shape anyway; it is pinned as measured behaviour by
+    /// <c>NativeComputedBareProjectionTests.Primitive_collection_bare_count_is_NOT_admitted_and_still_aborts_on_a_ragged_array</c>.
+    /// A WRAPPED count leaf
+    /// (<c>new { N = b.Posts.Count }</c>) is deliberately NOT rewritten either — its fallback abort on a ragged
+    /// array is pinned as measured behaviour by
+    /// <c>NativeOwnedCollectionCountTests.Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_aborts_on_a_missing_array</c>,
+    /// and this is scoped to the bare body precisely so that pin is not silently flipped.
+    /// </para>
+    /// <para>
+    /// <b>Ordering against the two existing <c>CapturedExpression</c> mutations — MEASURED, not argued.</b>
+    /// <c>StripPushedDownSelect</c> is called on the MIXED projection path and on the TIER-1 late-decline path.
+    /// Instrumented run, one build, four probe queries: the mixed path fires alone for an entity-carrying
+    /// projection; the tier-1 late strip fires alone for a <c>DocumentPath</c> bare leaf; and for a
+    /// <c>Synthetic</c> bare leaf NEITHER fires (the strip is tier-conditional, and the mixed path is not
+    /// reached because <c>Route</c> is <c>Projection</c>). The three mutations are mutually exclusive on any one
+    /// <c>CapturedExpression</c>, and this one is also applied EARLIEST — at translation time, before either
+    /// strip can run.
+    /// </para>
+    /// </remarks>
+    internal static Expression? NullCoalesceSyntheticBareCountBody(
+        Expression? captured, MongoSelectDefinition select)
+    {
+        if (captured is null || select.BareProjectionTier != ProjectionAliasTier.Synthetic)
+        {
+            return captured;
+        }
+
+        // The same two chain shapes StripPushedDownSelect navigates — the pushed-down Select is either the
+        // outermost node or sits under a single no-arg cardinality terminator. Deliberately the same navigation
+        // rather than a free-form tree walk: a tree walk would also reach a WRAPPED count leaf and a count in a
+        // subquery, neither of which may be rewritten (see the scope paragraph above).
+        //
+        // MATCHING `Select` BY NAME rather than by QueryableMethods.Select is a deliberate mirror of
+        // StripPushedDownSelect, not an oversight of this area's "match MethodInfo canonically" pitfall. Two
+        // reasons, and the first is the operative one: these two methods must navigate to the SAME node for the
+        // same captured chain, because they are alternative mutations of it — a divergence between them is
+        // exactly the class of bug the mutation-ordering measurement above exists to rule out, and a second,
+        // independently-spelled matcher is how such a divergence gets introduced. Second, a name match here
+        // cannot admit a shape the canonical constant would exclude: the index-selector Select overload is ruled
+        // out by the arity check, and every body shape other than the recognized count is ruled out by
+        // TryRewriteSelect. If StripPushedDownSelect is ever moved onto QueryableMethods, move this with it.
+        if (captured is not MethodCallExpression {Method.DeclaringType: var declaring} call
+            || declaring != typeof(Queryable))
+        {
+            return captured;
+        }
+
+        if (call.Method.Name == nameof(Queryable.Select) && call.Arguments.Count == 2)
+        {
+            return TryRewriteSelect(call, out var rewrittenSelect) ? rewrittenSelect : captured;
+        }
+
+        if (call.Method.IsGenericMethod
+            && call.Method.GetParameters().Length == 1
+            && call.Method.Name is nameof(Queryable.Single) or nameof(Queryable.SingleOrDefault)
+                or nameof(Queryable.First) or nameof(Queryable.FirstOrDefault)
+                or nameof(Queryable.Last) or nameof(Queryable.LastOrDefault)
+            && call.Arguments is [MethodCallExpression {Method: {Name: nameof(Queryable.Select), DeclaringType: var st}} innerSelect]
+            && st == typeof(Queryable)
+            && innerSelect.Arguments.Count == 2
+            && TryRewriteSelect(innerSelect, out var rewrittenInner))
+        {
+            // The terminator is rebuilt with its generic argument UNCHANGED, and the contrast with
+            // StripPushedDownSelect is the point: that method REMOVES the Select, so its terminator has to be
+            // retargeted from the projected element type to the source element type. This one KEEPS the Select
+            // and rewrites only its selector BODY, and the body's type is unchanged (a count is still an int/long
+            // after being null-coalesced) — so the Select still returns IQueryable<TResult> and First<TResult> is
+            // still the right method. Retargeting here would be wrong, not merely unnecessary.
+            return call.Update(call.Object, [rewrittenInner]);
+        }
+
+        return captured;
+    }
+
+    /// <summary>
+    /// Rewrites <paramref name="selectCall"/>'s selector body when it is an unfiltered collection-navigation
+    /// <c>Count</c>/<c>LongCount</c> over a navigation rooted at the selector's own parameter.
+    /// </summary>
+    /// <remarks>
+    /// The captured (post-nav-expansion) spelling is MEASURED, not assumed: EF lowers
+    /// <c>Select(b =&gt; b.Posts.Count)</c> to
+    /// <c>Select(b =&gt; Queryable.Count(Queryable.AsQueryable(EF.Property&lt;List&lt;Post&gt;&gt;(b, "Posts"))))</c>.
+    /// Requiring the navigation to be rooted at the SELECTOR'S OWN PARAMETER is what excludes a
+    /// reference-collection count, whose captured body is an <c>EntityQueryRoot</c> subquery instead — and which
+    /// needs no rewrite, its <c>$lookup</c> output always being an array.
+    /// </remarks>
+    private static bool TryRewriteSelect(MethodCallExpression selectCall, out Expression rewritten)
+    {
+        rewritten = selectCall;
+
+        if (selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { } selector
+            || !TryMatchRewritableBareCountBody(selector, out var navigation, out var empty))
+        {
+            return false;
+        }
+
+        // Safe to re-cast: the matcher above validated both shapes and neither the count call nor the
+        // AsQueryable call is rebuilt anywhere between here and there.
+        var countCall = (MethodCallExpression)selector.Body;
+        var asQueryableCall = (MethodCallExpression)countCall.Arguments[0];
+
+        var coalesced = Expression.Coalesce(navigation, empty);
+        var newBody = countCall.Update(null, [asQueryableCall.Update(null, [coalesced])]);
+
+        var newSelector = Expression.Lambda(selector.Type, newBody, selector.Parameters);
+        rewritten = selectCall.Update(
+            selectCall.Object,
+            [
+                selectCall.Arguments[0],
+                // Preserve the original argument's QUOTING rather than relying on Expression.Call's implicit
+                // auto-quote, so the rewritten node is structurally identical to the original but for the body.
+                selectCall.Arguments[1] is UnaryExpression {NodeType: ExpressionType.Quote}
+                    ? Expression.Quote(newSelector)
+                    : newSelector
+            ]);
+        return true;
+    }
+
+    /// <summary>
+    /// The rewrite's OWN reachability test, factored out of <see cref="TryRewriteSelect"/> so the GATE can ASK
+    /// it instead of describing it: <see langword="true"/> when <paramref name="selector"/>'s body is an
+    /// unfiltered collection-navigation <c>Count</c>/<c>LongCount</c> that
+    /// <see cref="NullCoalesceSyntheticBareCountBody"/> can null-coalesce.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>ONE FUNCTION, ONE DEFINITION, TWO CALLERS — and that is the whole point.</b>
+    /// <see cref="TryRewriteSelect"/> calls it to decide whether to rewrite;
+    /// <see cref="IsFallbackSafeBareSizeLeaf"/> calls it to decide whether the tier-2 gate may ADMIT the leaf at
+    /// all. Those two decisions must agree, and the slice this method was extracted in is the THIRD time they
+    /// silently did not — each time because the gate carried its own paraphrase of this shape rather than
+    /// invoking it. A paraphrase can drift; a call cannot. <b>Do not re-introduce a second spelling of this
+    /// predicate anywhere.</b>
+    /// </para>
+    /// <para>
+    /// It answers only about the SELECTOR. The third reachability dimension —
+    /// <see cref="NullCoalesceSyntheticBareCountBody"/>'s captured-chain SHAPE — is deliberately not here,
+    /// because the chain is not available where the gate runs; see
+    /// <see cref="IsFallbackSafeBareSizeLeaf"/>'s remarks, which enumerate all three and say which two this
+    /// covers.
+    /// </para>
+    /// </remarks>
+    private static bool TryMatchRewritableBareCountBody(
+        LambdaExpression selector,
+        [NotNullWhen(true)] out Expression? navigation,
+        [NotNullWhen(true)] out Expression? empty)
+    {
+        navigation = null;
+        empty = null;
+
+        if (selector.Parameters is not [var parameter]
+            || selector.Body is not MethodCallExpression
+            {
+                Method: {DeclaringType: var countDeclaring} countMethod, Arguments: [var countArg]
+            }
+            || countDeclaring != typeof(Queryable)
+            || countMethod.Name is not (nameof(Queryable.Count) or nameof(Queryable.LongCount))
+            || countArg is not MethodCallExpression
+            {
+                Method: {DeclaringType: var asQueryableDeclaring, Name: nameof(Queryable.AsQueryable)},
+                Arguments: [var navigationArg]
+            }
+            || asQueryableDeclaring != typeof(Queryable)
+            || !IsNavigationOnParameter(navigationArg, parameter))
+        {
+            return false;
+        }
+
+        if (!TryCreateEmptyCollection(navigationArg.Type, out var emptyCollection))
+        {
+            return false;
+        }
+
+        navigation = navigationArg;
+        empty = emptyCollection;
+        return true;
+    }
+
+    /// <summary>
+    /// Builds the empty-collection expression the <c>??</c> substitutes for a null navigation, typed so it is
+    /// assignable to <paramref name="navigationType"/>. Returns <see langword="false"/> when no such expression
+    /// can be built, in which case the body is left un-rewritten.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A CONSTRUCTIBLE collection type (<c>List&lt;T&gt;</c>, <c>HashSet&lt;T&gt;</c>, a custom collection with a
+    /// public parameterless constructor) is constructed as ITSELF, which is the spelling whose rendering was
+    /// MEASURED (<c>{"$ifNull": ["$Posts", []]}</c>).
+    /// </para>
+    /// <para>
+    /// An INTERFACE-typed navigation — <c>ICollection&lt;T&gt;</c>, <c>IList&lt;T&gt;</c>,
+    /// <c>IEnumerable&lt;T&gt;</c> and the read-only pair — is NOT a hypothetical: EF's nav-expansion spells the
+    /// navigation <c>EF.Property&lt;TNavClrType&gt;(b, "…")</c> with the DECLARED property type, and this
+    /// provider's own test suite already models one (<c>OwnedEntityTests.PersonWithIEnumerableLocations</c>).
+    /// Declining it was the shipped behaviour for exactly one review round and it is a CORRECTNESS hole rather
+    /// than a coverage gap: an un-rewritten body is precisely the bare <c>$size</c> that aborts the whole
+    /// aggregate on a missing or explicitly-null array, so the shape this method exists to protect would have
+    /// gone unprotected the moment the tier-2 admission landed. Such a navigation is coalesced against
+    /// <c>new List&lt;TElement&gt;()</c>, which <see cref="Expression.Coalesce(Expression, Expression)"/> accepts
+    /// because <c>List&lt;TElement&gt;</c> is reference-assignable to the interface — the resulting node keeps
+    /// the navigation's own declared type. MEASURED to render identically to the <c>List&lt;T&gt;</c> case and to
+    /// answer correctly over all four array states.
+    /// </para>
+    /// <para>
+    /// What is still declined, and it is a decline rather than a guess: an ABSTRACT or interface type that
+    /// <c>List&lt;TElement&gt;</c> is not assignable to — <c>ISet&lt;T&gt;</c>, <c>IReadOnlySet&lt;T&gt;</c>, a
+    /// <c>Collection&lt;T&gt;</c>-derived abstract base — and any type with no element type at all.
+    /// </para>
+    /// <para>
+    /// <b>"Declining never produces a wrong value" WAS TRUE AT A4-0 AND BECAME FALSE AT A4-2; it is true again
+    /// now, and only because of what changed — read this before relying on it.</b> When this method shipped,
+    /// no size leaf was admitted by tier 2 yet, so a declined rewrite really was inert: the shape it left
+    /// un-rewritten was one that never went native. A4-2 admitted the two size kinds and did not revisit this
+    /// sentence, and from that moment "the shape exactly as it is without this rewrite" meant a bare
+    /// <c>$size</c> that ABORTS the aggregate on a missing or explicitly-null array in two of the three query
+    /// modes — an <c>ISet&lt;Post&gt;</c>-typed navigation being the measured instance. The restored guarantee
+    /// is NOT the old sentence: it is that
+    /// <see cref="IsFallbackSafeBareSizeLeaf"/> now consults this method (through
+    /// <see cref="TryMatchRewritableBareCountBody"/>), so a decline HERE also declines the tier-2 ADMISSION and
+    /// the un-rewritten bare <c>$size</c> is never committed in the first place. <b>Anything that widens the
+    /// gate must keep consulting this method, or that guarantee lapses again — silently.</b>
+    /// </para>
+    /// </remarks>
+    private static bool TryCreateEmptyCollection(Type navigationType, [NotNullWhen(true)] out Expression? empty)
+    {
+        if (!navigationType.IsInterface
+            && !navigationType.IsAbstract
+            && navigationType.GetConstructor(Type.EmptyTypes) is not null)
+        {
+            empty = Expression.New(navigationType);
+            return true;
+        }
+
+        var elementType = TryGetEnumerableElementType(navigationType);
+        if (elementType is not null)
+        {
+            var listType = typeof(List<>).MakeGenericType(elementType);
+            if (navigationType.IsAssignableFrom(listType))
+            {
+                empty = Expression.New(listType);
+                return true;
+            }
+        }
+
+        empty = null;
+        return false;
+    }
+
+    /// <summary>
+    /// The <c>T</c> of the <c>IEnumerable&lt;T&gt;</c> <paramref name="type"/> is or implements, or
+    /// <see langword="null"/>.
+    /// </summary>
+    private static Type? TryGetEnumerableElementType(Type type)
+    {
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+        {
+            return type.GetGenericArguments()[0];
+        }
+
+        foreach (var candidate in type.GetInterfaces())
+        {
+            if (candidate.IsGenericType && candidate.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                return candidate.GetGenericArguments()[0];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="expression"/> is a collection-navigation access on <paramref name="parameter"/>
+    /// itself — either the shadow-safe <c>EF.Property&lt;T&gt;(b, "Posts")</c> spelling EF's nav-expansion
+    /// produces or a plain <c>b.Posts</c> member access.
+    /// </summary>
+    private static bool IsNavigationOnParameter(Expression expression, ParameterExpression parameter)
+        => expression switch
+        {
+            MethodCallExpression call when call.Method.IsEFPropertyMethod()
+                => call.Arguments.Count == 2 && call.Arguments[0] == parameter,
+            MemberExpression member => member.Expression == parameter,
+            _ => false
+        };
+
+    /// <summary>
     /// EF-322 owned-data slice 8, Task 5 fix round 1: true when <paramref name="leaf"/> would read back the SAME, correct value if
     /// looked up by <paramref name="alias"/> against a WHOLE, un-projected document — the shape a late
     /// <see cref="Infrastructure.MongoQueryMode.DriverLinq"/> fallback (or EF's own client-side "mixed" shaper,
@@ -893,10 +1294,12 @@ internal static class NativeProjectionBinder
     /// EF-362's, and the decline here is its tripwire, not an oversight.
     /// </para>
     /// <para>
-    /// Everything else — a count, a filtered count, an arithmetic leaf — is backed by no document element at
-    /// all, so it has no path to use as an alias and is declined: the whole projection then falls back exactly
-    /// as it did before step 3a. Admitting those needs a synthetic alias AND the matching (non-stripping)
-    /// fallback disposition, which is deliberately a separate change rather than a widening of this method.
+    /// Everything else — a count, a filtered count, an arithmetic leaf, a cast — is backed by no document
+    /// element at all, so it has no path to use as an alias and is declined HERE. That was the end of the story
+    /// through step 3a; since EF-405 slice A4-1 the caller then tries <see cref="TryDeriveSyntheticAlias"/>,
+    /// which is a SEPARATE derivation with its own alias and its own (non-stripping) fallback disposition
+    /// rather than a widening of this method — the two tiers cannot share one rule, because their correctness
+    /// arguments are opposites.
     /// </para>
     /// </remarks>
     private static bool TryDeriveDocumentPathAlias(MongoExpression leaf, out string alias)
@@ -916,6 +1319,281 @@ internal static class NativeProjectionBinder
                 return false;
         }
     }
+
+    /// <summary>
+    /// The reserved <c>$project</c> output element name for a COMPUTED bare selector body (EF-322 slice A4,
+    /// tier 2). Chosen to be exactly what the driver's LINQ provider names a bare projection, so the emitted
+    /// alias and the driver's own are the SAME string.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// That coincidence is the tier's whole safety story and it is the mirror image of tier 1's. A
+    /// <see cref="ProjectionAliasTier.DocumentPath"/> alias survives a late fallback because the fallback is
+    /// STRIPPED back to whole documents and the alias is a real document path. A
+    /// <see cref="ProjectionAliasTier.Synthetic"/> alias names no document element at all, so stripping it
+    /// would be fatal (measured at step 3a: <c>Document element '_v' is missing but required</c>); it survives
+    /// instead by NOT being stripped — the driver's own push-down stays in place and writes <c>_v</c>, which is
+    /// what the alias-addressed shaper is already reading by.
+    /// </para>
+    /// <para>
+    /// <b>A collision with a real stored element named <c>_v</c> is MEASURED UNREACHABLE</b> (EF-322 step 3a,
+    /// Task 3), which is why there is no collision guard here: the emitted <c>$project</c> always REPLACES the
+    /// document with a single computed <c>_v</c>, so nothing downstream can still be looking for the stored
+    /// one. The arithmetic case even reads a stored <c>_v</c> as INPUT while writing <c>_v</c> as output, and
+    /// returns correct values.
+    /// </para>
+    /// </remarks>
+    private const string SyntheticBareProjectionAlias = "_v";
+
+    /// <summary>
+    /// Derives a COMPUTED bare selector body's projection alias (EF-322 slice A4, tier 2), admitting exactly
+    /// the leaf kinds that render as an aggregation-operator DOCUMENT and taking
+    /// <see cref="SyntheticBareProjectionAlias"/> as the alias.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is a NODE-KIND gate, not a "the leaf translated" gate, and the distinction is the whole point.</b>
+    /// A <c>$project</c> reads a BARE VALUE as an inclusion/exclusion FLAG rather than as a literal, so a
+    /// constant or captured-parameter leaf is not a value the projection can carry at all. An arithmetic
+    /// <see cref="MongoBinaryExpression"/> renders <c>{$multiply: […]}</c> and a
+    /// <see cref="MongoConvertExpression"/> renders <c>{$toInt: …}</c>; both are DOCUMENTS, so both are safe
+    /// exactly where a bare value is not. This mirrors the decision <see cref="TryTranslateLeaf"/>'s own
+    /// count/cast gate makes for a WRAPPED leaf.
+    /// </para>
+    /// <para>
+    /// <b>The CONSEQUENCE of relaxing it differs between the wrapped and bare spellings, and the two are easy to
+    /// conflate — both were MEASURED, separately.</b> A WRAPPED falsy leaf (<c>new { b.Title, X = 0 }</c>) hard-
+    /// FAILS under the default <c>Native</c> mode: the falsy flag sits beside an inclusion and <c>$project</c>
+    /// rejects the mix (<c>Cannot do exclusion on field X in inclusion projection</c>). A BARE falsy leaf has no
+    /// sibling, so nothing is mixed and MongoDB ACCEPTS the pipeline — it just isn't a value projection any
+    /// more. Measured on <c>Select(b =&gt; 0)</c>: declined (today) the DRIVER renders
+    /// <c>{"$project": {"_v": {"$literal": 0}, "_id": 0}}</c>; with the gate relaxed, native renders
+    /// <c>{"$project": {"_v": 0, "_id": 0}}</c>, a pure EXCLUSION that returns whole documents minus two fields.
+    /// The answers still come back correct there only because the shaper folds a constant client-side and never
+    /// needed the pipeline's output — an accident, not a contract. Pinned by
+    /// <c>NativeComputedBareProjectionTests.Bare_constant_leaf_is_not_admitted_by_the_tier_2_node_kind_gate</c>,
+    /// which asserts the emitted MQL precisely because a values-only assertion would be VACUOUS for this shape.
+    /// </para>
+    /// <para>
+    /// <b>The operator test is on <see cref="MongoBinaryExpression.Operator"/>, deliberately, and matching on
+    /// <c>NodeType</c> instead silently admits NOTHING</b> — every <see cref="MongoExpression"/> reports
+    /// <see cref="ExpressionType.Extension"/> as its node type, so a <c>MongoBinaryExpression { NodeType: … }</c>
+    /// pattern is vacuously false and the whole tier would quietly stop existing with every test still passing
+    /// on the fallback path. Both the slice A4 spike and its first implementation attempt hit exactly that.
+    /// </para>
+    /// <para>
+    /// <b>An array-touching node is excluded from the WHOLE SUBTREE of the ARITHMETIC/CAST arm, not just from
+    /// its top — and stating that exclusion as a LEAF-KIND fact is a mistake this gate shipped once and had to
+    /// fix.</b> A bare collection <c>.Count</c> is the shape that got tier 2 reverted at step 3a: on a LATE
+    /// native-factory decline the un-stripped fallback is the driver's push-down, and the driver renders a bare
+    /// <c>{"$size": "$Posts"}</c> where native renders <c>$size</c> over <c>$ifNull</c> — which aborts on a
+    /// MISSING or explicitly-null array under the default mode. Since EF-405 A4-2 that shape is ADMITTED, by
+    /// arm 1a, because <see cref="NullCoalesceSyntheticBareCountBody"/> rewrites the pushed-down body into its
+    /// <c>$ifNull</c> form; <see cref="IsFallbackSafeBareSizeLeaf"/> is what keeps arm 1a inside that rewrite's
+    /// reach, by asking <see cref="TryMatchRewritableBareCountBody"/> rather than describing it. The arithmetic/cast arm gets NO such protection — the rewrite matches a body that IS the count,
+    /// never one that merely CONTAINS one — so <c>$multiply</c> over <c>$size</c> must still decline, and
+    /// <see cref="IsArrayFreeComputedSubtree"/> is what declines it. Extending the rewrite to a NESTED count
+    /// would be the way to relax that, and is a separate change.
+    /// </para>
+    /// </remarks>
+    private static bool TryDeriveSyntheticAlias(
+        MongoExpression leaf,
+        LambdaExpression selector,
+        List<LookupExpression> pendingLookups,
+        out string alias)
+    {
+        alias = null!;
+
+        switch (leaf)
+        {
+            // GATE 1a (EF-405 slice A4-2) — a size kind as the TOP node, i.e. the bare body IS the count, AND
+            // a leaf whose un-stripped driver fallback cannot abort. Both halves are load-bearing; see
+            // IsFallbackSafeBareSizeLeaf, which is the ONE place the gate's admitted set and the rewrite's
+            // reach are reconciled — and which CALLS the rewrite's own matcher rather than restating it.
+            case MongoSizeExpression or MongoFilteredSizeExpression
+                when IsFallbackSafeBareSizeLeaf(leaf, selector, pendingLookups):
+                break;
+
+            // GATE 1b — an arithmetic/cast TOP node, and the operator test is what makes it a gate at all (see
+            // the remarks). GATE 2 then re-checks the whole SUBTREE, because gate 1b alone is not the boundary:
+            // it excludes the size kinds only as the TOP node, so `Select(b => b.Posts.Count * 2)` walks
+            // straight through it, and the A4-0 rewrite does NOT reach a nested count.
+            case MongoConvertExpression
+                or MongoBinaryExpression
+                {
+                    Operator: MongoBinaryOperator.Add or MongoBinaryOperator.Subtract
+                    or MongoBinaryOperator.Multiply or MongoBinaryOperator.Divide or MongoBinaryOperator.Modulo
+                } when IsArrayFreeComputedSubtree(leaf):
+                break;
+
+            default:
+                return false;
+        }
+
+        alias = SyntheticBareProjectionAlias;
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a bare size leaf is one whose UN-STRIPPED driver fallback cannot abort on a missing or
+    /// explicitly-null array — the precondition gate 1a exists to enforce (EF-405 slice A4-2, final fix round).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>THIS IS THE ONE PLACE THE GATE'S ADMITTED SET AND THE REWRITE'S REACH ARE RECONCILED, and the
+    /// reconciliation is a CALL, not a restatement.</b> The unfiltered arm below does not describe what
+    /// <see cref="NullCoalesceSyntheticBareCountBody"/> reaches; it asks it, through
+    /// <see cref="TryMatchRewritableBareCountBody"/> — the SAME matcher <see cref="TryRewriteSelect"/> uses to
+    /// decide whether to rewrite. One function, one definition, two callers. <b>That is deliberate and it is the
+    /// third fix of one defect class: TWICE this gate RESTATED a condition the rewrite enforces, and twice it
+    /// drifted from it</b> (A4-1 restated "no size node" as a top-node fact and admitted
+    /// <c>b.Posts.Count * 2</c>; A4-2 restated "the rewrite's reach" as a NON-DOTTED array path and admitted an
+    /// <c>ISet&lt;T&gt;</c>-typed navigation, which the rewrite declines on a dimension the path says nothing
+    /// about). A restatement can drift; a call cannot.
+    /// </para>
+    /// <para>
+    /// <b>THE REWRITE HAS THREE DIMENSIONS, NOT TWO — and the version of this remark that said "two" is what
+    /// let the third instance through.</b> <see cref="TryRewriteSelect"/> requires ALL of:
+    /// </para>
+    /// <list type="number">
+    /// <item><description>the ARRAY PATH / navigation ROOTING — <see cref="IsNavigationOnParameter"/> accepts
+    /// only a navigation whose receiver IS the selector parameter, which is exactly the captured spelling that
+    /// produces a non-dotted path (so a <c>b.Home.Notes.Count</c> hop is rejected);</description></item>
+    /// <item><description>the empty-collection CONSTRUCTIBILITY — <see cref="TryCreateEmptyCollection"/> must
+    /// be able to build a substitute assignable to the navigation's DECLARED CLR type. An
+    /// <c>ISet&lt;Post&gt;</c> or <c>IReadOnlySet&lt;Post&gt;</c> navigation — ordinary, EF-supported, and
+    /// carrying a perfectly non-dotted path — is one <c>List&lt;T&gt;</c> is NOT assignable to, so the rewrite
+    /// declines it;</description></item>
+    /// <item><description>the captured-chain SHAPE — the pushed-down <c>Select</c> must be the OUTERMOST
+    /// captured node or sit under a single no-arg cardinality terminator.</description></item>
+    /// </list>
+    /// <para>
+    /// This method gates (1) and (2), because both are decidable from the SELECTOR, which is what it is handed.
+    /// It cannot gate (3): the captured chain is not available at bind time. So read the result as "this leaf's
+    /// fallback is safe as far as the SELECTOR can tell", never as "this shape is fully covered".
+    /// </para>
+    /// <para>
+    /// <b>Dimension (2) is what the third instance was, and it was CONFIRMED BY EXECUTION at the slice base and
+    /// at head.</b> Model: <c>class SetBlog { ObjectId Id; string Title; ISet&lt;Post&gt; Posts; }</c>, seeded
+    /// over all four array states. With the gate testing only the array path, <c>Select(b =&gt; b.Posts.Count)</c>
+    /// went from <c>OK[2,0,0,0,1]</c> at base to
+    /// <c>MongoCommandException: The argument to $size must be an array, but was of type: missing</c> on THREE
+    /// routes at head — explicit <c>DriverLinq</c>, <c>DriverLinq</c> late-decline, and the <b>DEFAULT
+    /// <c>Native</c></b> late-decline. Identical signature to the other two instances, and the
+    /// <c>DriverLinq</c> half additionally breaks the versioning rubric's carve-out for the native default,
+    /// which is CONDITIONAL on <c>UseQueryMode(DriverLinq)</c> restoring the previous path. Pinned by
+    /// <c>NativeComputedBareProjectionTests.Set_typed_collection_navigation_bare_count_is_declined_and_answers_correctly</c>.
+    /// </para>
+    /// <para>
+    /// The two arms that do NOT consult the rewrite are protected STRUCTURALLY instead, and each says which
+    /// mechanism protects it:
+    /// </para>
+    /// <list type="table">
+    /// <item>
+    /// <term>reference collection via <c>$lookup</c> (alias <c>_lookup_Orders</c>)</term>
+    /// <description>a <c>$lookup</c> ALWAYS writes an array — never absent, never explicit null — so the
+    /// driver's bare <c>$size</c> cannot abort and no rewrite is needed (the rewrite could not reach it anyway:
+    /// a reference-collection count is captured as an <c>EntityQueryRoot</c> subquery, not as a navigation on
+    /// the selector parameter). It is recognized by matching the leaf against the lookup THIS leaf's own
+    /// translation registered — the write site's own answer — rather than by sniffing the
+    /// <c>_lookup_</c> name.</description>
+    /// </item>
+    /// <item>
+    /// <term>filtered count (<c>b.Posts.Count(pred)</c>)</term>
+    /// <description>the driver renders it <c>{$sum: {$map: …}}</c>, and <c>$map</c> over a missing or
+    /// explicitly-null array yields missing instead of aborting — MEASURED. It needs no rewrite of its own, and
+    /// indeed <see cref="TryRewriteSelect"/> matches only the one-argument <c>Count</c>, so it could not have
+    /// one. It is nevertheless held to a NON-DOTTED rule, deliberately: it COULD be admitted through a hop, and
+    /// keeping both size kinds inside one path rule is what makes the shipped set describable in a sentence.
+    /// Widening it is a deliberate choice, pinned by
+    /// <c>NativeComputedBareProjectionTests.Bare_FILTERED_count_leaf_through_an_owned_reference_HOP_is_declined_and_answers_correctly</c>.</description>
+    /// </item>
+    /// </list>
+    /// <para>
+    /// <b>The dimension NOT gated here, stated so it is not mistaken for covered.</b> A root-declared,
+    /// rewrite-reachable count under a REDUCING operator —
+    /// <c>Select(b =&gt; b.Posts.Count).Distinct()</c> / <c>.Sum()</c> / <c>.OrderBy(c =&gt; c)</c> — is admitted
+    /// by the unfiltered arm and protected by nothing, because the selector cannot be lifted past an operator
+    /// that consumes the projected value, so dimension (3) fails and the driver's un-stripped push-down renders
+    /// a bare <c>$size</c>. That abort is <b>PRE-EXISTING</b> — those operators force the driver to push the
+    /// projection down even when tier 2 declines the leaf, so it is byte-identical with and without tier 2 — and
+    /// it is pinned as measured behaviour by
+    /// <c>NativeComputedBareProjectionTests.Bare_count_leaf_under_a_REDUCING_operator_still_aborts_on_a_ragged_array</c>,
+    /// not closed. A composed SLOT operator (<c>.Skip(1)</c>) is NOT in that hole: EF's nav-expansion applies
+    /// the projection as a pending selector LAST, so the <c>Select</c> really is outermost and the rewrite fires
+    /// (MEASURED). <b>Closing it means widening the rewrite's chain navigation</b> — at which point this method
+    /// needs no edit at all, which is the point of asking the rewrite instead of describing it.
+    /// </para>
+    /// <para>
+    /// Every decline here is FAIL-CLOSED, the same call <see cref="IsArrayFreeComputedSubtree"/>'s allow-list
+    /// makes: the shape falls back gracefully with correct values in every mode, which is its base behaviour.
+    /// </para>
+    /// </remarks>
+    private static bool IsFallbackSafeBareSizeLeaf(
+        MongoExpression leaf, LambdaExpression selector, List<LookupExpression> pendingLookups)
+        => leaf switch
+        {
+            // Structural: reads a $lookup output, which is always an array. Keyed on the lookup this leaf's own
+            // translation just registered, so the read and the write cannot drift apart.
+            MongoSizeExpression lookupSize
+                when pendingLookups.Exists(l => l.As == lookupSize.FieldName) => true,
+
+            // Structural: $sum/$map tolerates a missing array. Held to the same non-dotted rule anyway.
+            MongoFilteredSizeExpression filtered => !filtered.ArrayPath.Contains('.'),
+
+            // Everything else must be inside the rewrite's reach — and THE REWRITE'S OWN MATCHER is what says so.
+            MongoSizeExpression => TryMatchRewritableBareCountBody(selector, out _, out _),
+
+            _ => false
+        };
+
+    /// <summary>
+    /// Whether every node in <paramref name="expression"/>'s subtree is one that renders without touching an
+    /// ARRAY (EF-405 slice A4-1, fix round 1). An ALLOW-LIST, so an unrecognised node kind is treated as unsafe.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This exists because the top-node gate is not the boundary it looks like.</b>
+    /// <c>Select(b =&gt; b.Posts.Count * 2)</c> translates to an arithmetic
+    /// <see cref="MongoBinaryExpression"/> over a <see cref="MongoSizeExpression"/>, so it satisfies the
+    /// node-kind gate while being exactly the shape the tier-2 revert was about: on a LATE decline the
+    /// un-stripped fallback is the DRIVER's push-down, and the driver renders a bare
+    /// <c>{"$size": "$Posts"}</c> where native renders <c>$size</c> over <c>$ifNull</c>. MEASURED on a ragged
+    /// fixture: with only the top-node gate the shape aborts with <c>MongoCommandException</c> ("The argument to
+    /// $size must be an array, but was of type: missing") under the DEFAULT <c>Native</c> mode on the
+    /// late-decline route, AND under explicit <c>DriverLinq</c> with no decline involved at all — the latter
+    /// also breaking the versioning rubric's carve-out for the native default, which is conditional on
+    /// <c>DriverLinq</c> restoring the previous path. <see cref="NullCoalesceSyntheticBareCountBody"/> cannot
+    /// cover it: that rewrite matches only a pushed-down bare <c>Select</c> whose body IS the count, not one
+    /// that merely contains one.
+    /// </para>
+    /// <para>
+    /// <b>Why an ALLOW-LIST rather than a "contains a size node" deny-list.</b> The two are equivalent for the
+    /// node kinds that exist today — <c>MongoExpressionTranslator.TranslateOperand</c> can only produce a field,
+    /// a constant, a parameter, a convert, an arithmetic binary, a size or a filtered size — but they differ for
+    /// the next one added. A deny-list admits an unknown node by default; this fails CLOSED, which is the same
+    /// call <see cref="MongoFilteredSizeExpression"/>'s "sibling, not a flag" argument makes for the three sites
+    /// that must never fire for it. The size kinds are consequently NOT named here at all: they fall into the
+    /// catch-all, and that catch-all is the thing to mutate to check this guard still has teeth.
+    /// </para>
+    /// <para>
+    /// Note the walk deliberately mirrors <c>MongoExpressionTranslator.AllFieldsDefaultSerialized</c>'s
+    /// recursion (binary ⇒ both operands, convert ⇒ operand) rather than inventing a second traversal, but
+    /// INVERTS its default: that one answers "nothing here objects" and so ends in <c>_ =&gt; true</c>, while
+    /// this one answers "everything here is known safe" and so ends in <c>_ =&gt; false</c>.
+    /// </para>
+    /// </remarks>
+    private static bool IsArrayFreeComputedSubtree(MongoExpression expression)
+        => expression switch
+        {
+            MongoBinaryExpression binary
+                => IsArrayFreeComputedSubtree(binary.Left) && IsArrayFreeComputedSubtree(binary.Right),
+            MongoConvertExpression convert => IsArrayFreeComputedSubtree(convert.Operand),
+            MongoFieldExpression or MongoConstantExpression or MongoParameterExpression => true,
+            // Everything else, INCLUDING MongoSizeExpression and MongoFilteredSizeExpression. See the remarks:
+            // the size kinds are excluded by this catch-all rather than by an arm of their own, deliberately.
+            _ => false
+        };
 
     /// <summary>
     /// Recognizes a projected collection-navigation <c>Count</c>/<c>LongCount</c> leaf

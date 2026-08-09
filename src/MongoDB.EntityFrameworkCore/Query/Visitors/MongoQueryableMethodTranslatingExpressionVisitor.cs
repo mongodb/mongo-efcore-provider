@@ -159,7 +159,26 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             if (newCardinality != shapedQueryExpression.ResultCardinality)
                 shapedQueryExpression = shapedQueryExpression.UpdateResultCardinality(newCardinality);
 
-            ((MongoQueryExpression)shapedQueryExpression.QueryExpression).CapturedExpression = _finalExpression;
+            // EF-322 slice A4 (A4-0): the pushed-down bare collection-navigation `Count` body is null-coalesced
+            // here, one statement after the capture, for a projection committed under
+            // ProjectionAliasTier.Synthetic. It reads as an odd home for a projection-binder concern and it is
+            // NOT a free choice: the binder's own commit block is the natural place, but the assignment on the
+            // line above overwrites anything it writes (MEASURED with a marker expression — the marker never
+            // reaches the driver-LINQ bridge), because _finalExpression is the whole captured chain and it is
+            // re-assigned after EVERY translated Queryable call, including the Select whose translation runs
+            // the binder. Applying it here keeps it at TRANSLATION time and unconditional, which is what covers
+            // the explicit-DriverLinq leg as well as the late-decline one; a decline-site rewrite would not.
+            //
+            // It is inert on the native route, but NOT for the tempting short reason that "only the driver-LINQ
+            // bridge reads CapturedExpression" — that is false (ContainsVectorSearch reads it on the native
+            // routing path, GetOnZeroResultsAction reads it, the bulk ExecuteUpdate/ExecuteDelete path reads it,
+            // and five exception-message sites Print it). The real reason is the rewrite's narrow REACH, which
+            // NullCoalesceSyntheticBareCountBody's remarks work through reader by reader, along with all of the
+            // measurements and the scope.
+            var capturingQueryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
+            capturingQueryExpression.CapturedExpression =
+                NativeProjectionBinder.NullCoalesceSyntheticBareCountBody(
+                    _finalExpression, capturingQueryExpression.Select);
             return shapedQueryExpression;
         }
 

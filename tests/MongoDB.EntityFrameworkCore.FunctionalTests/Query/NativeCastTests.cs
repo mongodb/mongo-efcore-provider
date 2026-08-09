@@ -1468,39 +1468,92 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             nullableResult.Select(r => (r.Label, r.X)), driverLinqNullableResult.Select(r => (r.Label, r.X)));
     }
 
-    // ── 22. Numeric-cast PROJECTION leaf — bare spelling declines gracefully ───────────────────────
+    // ── 22. Numeric-cast PROJECTION leaf — bare spelling goes NATIVE (EF-322 slice A4, tier 2) ─────
     //
-    // TryDeriveDocumentPathAlias admits only a non-dotted MongoFieldExpression/MongoElementRefExpression — a
-    // MongoConvertExpression has no document path to use as a bare alias, so the WHOLE bare Select declines at
-    // translate time (the same "tier 2 was built, measured, and reverted" boundary the bare arithmetic/count
-    // leaves hit — see the bare-projection-boundary note in Query/AGENTS.md). This asserts the decline is
-    // GRACEFUL — correct values under Native/DriverLinq — not merely that NativeOnly throws.
+    // FLIPPED BY A4-1, and the previous disposition is recorded rather than deleted because the two are one
+    // fact seen from either side. Through step 3a this shape DECLINED: the bare arm derived its alias only via
+    // TryDeriveDocumentPathAlias, which admits a non-dotted MongoFieldExpression/MongoElementRefExpression and
+    // nothing else, and a MongoConvertExpression is backed by no document element at all. A4-1 adds the SECOND
+    // derivation (TryDeriveSyntheticAlias) for exactly the computed leaf kinds that render as an
+    // aggregation-operator DOCUMENT rather than a bare value — an arithmetic MongoBinaryExpression and this
+    // MongoConvertExpression — under the reserved `_v` alias and the Synthetic tier. The VALUES are unchanged;
+    // only the route is, which is what makes this test worth keeping in its flipped form.
+    //
+    // ONE OF THE SIX A4 DECLINE TRIPWIRES, and the only one A4-1 flipped rather than A4-3.
+    //
+    // A4-3 LEFT THIS ON SEQUENTIAL ASSERTIONS, on the grounds that it "already asserts" all three legs. THAT
+    // DEFENCE DOES NOT ANSWER THE OBJECTION AND THE FINAL REVIEW WAS RIGHT: asserting three legs is not running
+    // them. The NativeOnly value assertion ran FIRST, so any routing regression failed there and the
+    // explicit-DriverLinq leg below it — the leg the versioning rubric MANDATES, because the native default's
+    // carve-out is conditional on UseQueryMode(DriverLinq) restoring the previous path — never executed at all,
+    // and the failure report named only the NativeOnly symptom. Converted to the collect-then-assert convention
+    // this slice uses everywhere else (see NativeComputedBareProjectionTests.LegOutcome's remarks for why it is
+    // not a style preference).
 
     [Fact]
-    public void Bare_cast_projection_leaf_declines_and_returns_correct_values()
+    public void Bare_cast_projection_leaf_goes_native_and_returns_correct_values()
     {
-        var collection = Seed(nameof(Bare_cast_projection_leaf_declines_and_returns_correct_values));
+        var collection = Seed(nameof(Bare_cast_projection_leaf_goes_native_and_returns_correct_values));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => nativeOnly.Entities.AsNoTracking().Select(x => (int)x.D).ToList());
+        // NativeOnly SUCCEEDING is the routing proof; the values it returns are the same ones the two fallback
+        // modes return, which is the actual contract. The DriverLinq leg is the rubric-level escape hatch:
+        // populating Projection flips ProjectionAnalyzer.CanPushDown, so under explicit DriverLinq the driver
+        // now renders this bare Select itself instead of folding it client-side — under its OWN `_v` alias,
+        // which is precisely the alias tier 2 reserved so that one alias-addressed shaper reads either pipeline.
+        var expected = "[1,1,2,-1,0]";
+        var legs = new List<(string Leg, string Outcome)>();
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
-        var nativeResult = native.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => (int)x.D).ToList();
-        Assert.Equal([1, 1, 2, -1, 0], nativeResult);
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateContext(collection, mode);
+            legs.Add(($"{mode}", LegOutcome(
+                () => db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => (int)x.D).ToList())));
+        }
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
-        var driverLinqResult = driverLinq.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => (int)x.D).ToList();
-        Assert.Equal(nativeResult, driverLinqResult);
+        Assert.Equal(
+            [("NativeOnly", expected), ("Native", expected), ("DriverLinq", expected)],
+            legs);
+    }
+
+    /// <summary>
+    /// Runs <paramref name="query"/> and describes what it did as a short string, so a caller can COLLECT every
+    /// leg's outcome and assert them together instead of aborting on the first.
+    /// </summary>
+    /// <remarks>
+    /// A local copy of <c>NativeComputedBareProjectionTests.LegOutcome</c> rather than a shared helper: the two
+    /// files have no common base and adding one for a six-line diagnostic would touch every case in both. The
+    /// duplication is deliberate and the two must stay behaviourally identical — a leg that DECLINES reports
+    /// <c>"declined"</c>, any other exception reports its type and first message line, and a sequence reports
+    /// its values, so a regression names what EVERY mode did rather than only the first one to fail.
+    /// </remarks>
+    private static string LegOutcome(Func<object?> query)
+    {
+        try
+        {
+            var result = query();
+            return result is System.Collections.IEnumerable values and not string
+                ? "[" + string.Join(",", values.Cast<object>()) + "]"
+                : result?.ToString() ?? "null";
+        }
+        catch (NativeTranslationNotSupportedException)
+        {
+            return "declined";
+        }
+        catch (Exception ex)
+        {
+            return ex.GetType().Name + ": " + ex.Message.Split('\n')[0];
+        }
     }
 
     // ── 23. Bare numeric-cast PROJECTION leaf behind a parameterized predicate ─────────────────────
     //
-    // The bare spelling's decline is decided at TRANSLATE time (case 22), never late — but this leg is still
-    // mandatory: the bare-projection alias mechanism's failure mode elsewhere in this codebase is a SILENT
-    // null/empty result with no exception (Query/AGENTS.md's "A READ-SIDE ALIAS MISMATCH IS SILENT" note), so
-    // asserting VALUES here — with a captured-local predicate composed alongside the decline — is what would
-    // catch a future regression that an absence-of-throw assertion could not.
+    // The MANDATORY late-decline leg, and A4-1 changes what it is a leg OF. Through step 3a the bare spelling
+    // declined at TRANSLATE time, so nothing here was ever late. Now the leaf IS admitted and the captured-local
+    // `StartsWith` is what declines — at RENDER time, after the alias-addressed shaper has already been
+    // committed. That is the only route in the suite where this slice's failure mode lives, and the failure mode
+    // is SILENT (Query/AGENTS.md's "A READ-SIDE ALIAS MISMATCH IS SILENT" note), so this asserts VALUES. It is
+    // correct only because the late-fallback strip is TIER-conditional and does NOT fire for a Synthetic
+    // override: the driver's own push-down stays in place and writes `_v`, which is what the shaper reads by.
 
     [Fact]
     public void Bare_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values()
@@ -1508,6 +1561,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var collection = Seed(nameof(Bare_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values));
         var prefix = "a";
 
+        // Still throws under NativeOnly, but for a different reason than it used to: the DECLINE moved from
+        // translate time to render time. NativeOnly has no fallback to land on, so a late decline surfaces.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking()

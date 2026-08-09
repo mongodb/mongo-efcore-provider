@@ -237,19 +237,45 @@ lenient deserializer. The entry is scoped to the **class**, covering the WRAPPED
 landed earlier in this same unreleased cycle and was undocumented. A whole-entity read of those documents
 already threw at every released version, so this makes the two read paths agree, and
 `UseQueryMode(MongoQueryMode.DriverLinq)` restores the old values. **Nothing else in 3a is a break**, and
-specifically no entry was added for tier 2 (below), which measured throw-before/throw-after.
+specifically no entry was added for tier 2 (below). ~~which measured throw-before/throw-after.~~ **CORRECTED
+2026-08-09 when tier 2 actually shipped as EF-405: the PREMISE is false and the conclusion survives.**
+Re-tested by EXECUTION against the same three tags over all four array states, every count spelling — bare,
+bare-in-arithmetic **and wrapped** — throws `ArgumentException` at every tag (a translation-time failure
+predating the data: the EF-357 crash owned-data slice 7 fixed, never released). **The AFTER half is
+spelling-dependent, and this paragraph's claim that "HEAD answers correctly in all three query modes" was
+CONTRADICTED BY THE REPO'S OWN PINNED TEST — corrected in place 2026-08-09 (final fix round), conclusion
+unchanged.** At HEAD: the bare `Select(b => b.Posts.Count)` answers `[2,0,0,0]` under `Native`, `DriverLinq` and
+`NativeOnly` alike; the bare `Select(b => b.Posts.Count * 2)` is a graceful decline that answers correctly in
+the two FALLBACK modes (`Native`, `DriverLinq`) and throws `NativeTranslationNotSupportedException` under `NativeOnly`, which has no
+fallback to land on — asserted by
+`NativeComputedBareProjectionTests.Bare_arithmetic_over_a_collection_count_is_declined_and_answers_correctly`; but the **WRAPPED `Select(b => new { N = b.Posts.Count })` ABORTS with `MongoCommandException` under
+explicit `DriverLinq` on a MISSING or explicitly-null array**, because the driver renders a bare `$size` there
+where native renders `$size` over `$ifNull` — asserted at length by
+`NativeOwnedCollectionCountTests.Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_aborts_on_a_missing_array`.
+So it is **throw-before / answers-after**, and **no entry is still right, now for a correctly stated reason**:
+every spelling threw at every published tag, so no released behaviour is lost whether a spelling now returns
+correct data or aborts on ragged data in one opt-in mode; the rubric carves out the exception type of an
+unsupported feature; and the wrapped spelling's `DriverLinq` divergence is a PRE-EXISTING, separately documented
+property of the driver's own rendering rather than something tier 2 introduced. The `x.A * 2` and cast rows of
+the same probe (`[2,4,6,8]` at every tag and at HEAD, byte-identical) were reported correctly and stand.
 
-**Tier 2 — computed bare leaves — was built, measured and REVERTED, and its real prerequisite is recorded so it
-is not re-attempted blind.** Widening the bare arm to size / filtered-size / arithmetic leaves under a reserved
+**Tier 2 — computed bare leaves — was built, measured and REVERTED at step 3a, and its real prerequisite is
+recorded so it is not re-attempted blind. ~~It has not returned.~~ IT HAS RETURNED: shipped as slice A4
+(**EF-405**), 2026-08-09 — see the A4 row in the tranche table below, which is the current record. The rest of
+this paragraph is the step-3a history and is kept because the prerequisite it names is what A4 shipped first.** Widening the bare arm to size / filtered-size / arithmetic leaves under a reserved
 `_v` alias won 6–7 further `NativeOnly` cases, but its cost was **not** confined to the explicit `DriverLinq`
 escape hatch as designed: a bare `.Count` over a missing or explicitly-null array aborts with
 `MongoCommandException` under the **default `Native` mode** whenever the native factory declines late, because
 the un-stripped fallback is the driver's push-down and **the driver renders a bare `$size` where native renders
 `$size` over `$ifNull`**. **The prerequisite for tier 2's return is therefore that the late-fallback path can
 emit `$ifNull` itself rather than inheriting the driver's bare `$size`** — not a wider node-kind gate. Two
-findings from that task survive the revert: the `_v` collision is **measured unreachable**, and the
-tier-conditional fallback strip is proven in both directions (forcing it on breaks only tier 2, forcing it off
-breaks only tier 1).
+findings from that task survive the revert: the `_v` collision is **measured unreachable** — **but the recorded
+REASON for that was incomplete and is corrected in `Query/AGENTS.md`: unreachability follows from the TIER
+CONDITIONAL, not from the alias choice; force the strip on and the late route silently returns the user's real
+stored `_v` values** — and the tier-conditional fallback strip is proven in both directions (forcing it on
+breaks only tier 2, forcing it off breaks only tier 1). **Every other "the reverted tier 2" phrase elsewhere in
+this document (§4, §5, §7, §9) is HISTORICAL as of 2026-08-09 and is superseded by the A4 row below**; the §7
+and §9 occurrences additionally sit inside point-in-time measurement snapshots that were never re-derived.
 
 ### Stream 1, tranche 1 — translator breadth (the merge plan's stream 1), 2026-08-08
 
@@ -265,24 +291,33 @@ the current branch. The umbrella JIRA key for the tranche is **EF-398**.*
 | — | *(not a slice — the tranche's **final fix wave**)* Declines a value-converted `Nullable<T>.Value` projection leaf so it can no longer read the raw stored value; plus the documentation corrections propagated into this section, the plan, the two upstream spikes and `Query/AGENTS.md` | *the tranche's final commit — `EF-400: decline a value-converted nullable .Value projection leaf`* | ✅ Done. MEASURED with `ValueConverter<int,int>(v => v*2, v => v/2)`, stored `14`, correct CLR `7`: both `new { V = x.Converted.Value }` and the bare spelling returned **14** under `Native` **and** `NativeOnly` before the fix, while the plain-member control and a whole-entity read both returned 7. The fix is a **DECLINE** to driver-LINQ (which throws for that mapping, exactly as the released packages do), keyed on the existing `NativeGroupByBinder.HasDefaultKeySerialization`; the root fix — teaching the read side to peel `.Value` so emit and read agree by construction — is **EF-402**, and the guard is to be removed when it lands. Mutation-verified: deleting the new disjunct turns exactly **1 of 91** cases red with `returned 14,4`. Both axes unmoved: `Native` 4593/0/17, `NativeOnly` 2461/2132/17. No `BREAKING-CHANGES.md` entry |
 | B | **A COMPUTED sort key goes native**, via `$set` → `$sort` → `$unset` over a synthetic `__sortN` field (**EF-401**) — arithmetic, a bare constant, a captured parameter or an owned-collection `Count` in `OrderBy`/`OrderByDescending`/`ThenBy`/`ThenByDescending`. A bare constant/parameter body is `$literal`-wrapped (a `$`-prefixed string would otherwise read as a FIELD PATH — silent wrong ORDER under the default `Native` mode) | *the slice's squashed commit — `EF-401: sort by a computed key via $set/$sort/$unset (stream 1, slice B)`* | ✅ Done. **12 `NativeOnly` wins MEASURED (6 tests × 2 async), 0 regressions** — `Failed→Passed` = those 12, `Passed→Failed` = **empty**. `NativeOnly` **2461/2132/17 → 2473/2120/17**; `Native` returns to **4593/0/17** after re-baselining. **12 `AssertMql` re-bases**, the SAME 6 overrides on **all three** EF majors (their baselines are single un-`#if`'d literals, and the 12 *Actual* strings are byte-identical across EF8/EF9/EF10, so ONE `EF_TEST_REWRITE_BASELINES` pass re-bases all three). **THE 12 ARE A RE-ATTRIBUTION INSIDE THE ALREADY-COUNTED 474, NOT AN ADDITION — do NOT add them to the ≈508 checkpoint, which does not move.** Checkable: 10 of the 12 are the `$literal`-wrapped bare constant/parameter cases, i.e. exactly group **A3**, whose §5.1 row is 40 sole-cause **of which 10 need slice B** — so **A3's marginal yield once slice B has shipped is `40 − 10` = 30, not 40**; the other 2 are `OrderBy_arithmetic` × async. **ACCEPTANCE-GATE TRAP:** the `NativeOnly` pass count was **byte-identical before and after the slice landed** (2461/2132/17 both sides) because the slice re-bases the baselines of exactly the tests it converts — only 12 failure MESSAGES changed. A count-only gate reads this slice as delivering nothing; compare `(testName → outcome, message)` as SETS. **No `BREAKING-CHANGES.md` entry**, confirmed against the release TAGS (`MongoQueryMode` does not exist at `v10.0.2`/`v9.1.2`/`v8.4.2`, so a released package ran all six through driver-LINQ; the change is fallback → native with unchanged results **and unchanged row order**, plus changed emitted MQL) |
 | A1 | **A cast / `Convert` operand goes native** — the four `$toX` targets `int`/`long`/`double`/`decimal` — in comparison operands, `$expr` field-to-field and arithmetic operands, and as a projection leaf, with a widening cast ABSORBED under a conditional constant rule, an identity-like cast (enum ↔ underlying, `char → int`, convert to `object`) admitted, and a narrowing cast against a constant falling through to `$expr` (**EF-403**) | `39a0ffdc` + its whole-branch-review **fix wave** as a second commit on top (`EF-403: type-bracket a relational cast comparison, and record two measured divergences`) | ✅ Done. **28 `NativeOnly` wins MEASURED AS SHIPPED, 0 regressions** (the slice measured **30** before its fix wave; the fix wave gives 2 back, deliberately — see below) — measured by MESSAGE TRANSITION over all 4610 results against a freshly re-measured baseline at the slice base `fd6bd8ba`: `Failed→Passed` = 28, `Passed→Failed` = **empty**, `Failed→Failed`-with-a-different-message = **0**, 0 added/removed. `NativeOnly` **2473/2120/17 → 2501/2092/17**; default `Native` **4593/0/17** at base and at HEAD, compared as a SET. **ZERO `AssertMql` literals re-based** in the slice as shipped — the one the slice moved (`NorthwindWhereQueryMongoTest.Decimal_cast_to_double_works`, both async cases) is moved BACK by the fix wave. **NOT the CITED 72 total / 56 sole-cause — 28 is ~50%, and the gap is CHARACTERISED rather than itemised** (the A1 spike's §5.5 predicted 28, or 30 with a two-case re-baseline, from a direct prototype A/B): the projection column (CITED 14) and the sort column (CITED 8) each deliver **zero** specification cases, so both are correctness/breadth work, and the predicate column's remainder sits behind blockers outside A1. **This slice also FIXED A LIVE SILENT-WRONG-ORDER DEFECT** — a cast-bearing sort key sorted by the RAW stored value, with `(uint)x.I`/`(short)x.I` genuine order REVERSALS and no exception under the default `Native` mode — and **found and closed a within-slice silent-wrong-data regression of its own** (the `$expr` fall-through read raw stored values for a value-converted property; default `Native` went from throwing to returning one wrong row, measured base-vs-HEAD). **A `BREAKING-CHANGES.md` ENTRY WAS ADDED BY THE FIX WAVE** ("Query results can differ for a numeric cast in a `Where` clause", under 8.5.0 / 9.2.0 / 10.1.0). Every touched type is `internal` and `MongoQueryMode` does not exist at `v10.0.2`/`v9.1.2`/`v8.4.2`, but the rubric's carve-out for the native default is a CONDITIONAL — results unchanged, unsupported shapes fall back, `DriverLinq` restores the previous path — and for this shape the first is false and the second inapplicable. The entry covers the two remaining observable deltas: a narrowing cast vs. a constant now returns the C#-correct rows, and an out-of-range value now raises a server error that ABORTS THE WHOLE QUERY (MEASURED; the released packages returned rows). **One divergence is recorded rather than carved out**: for a narrowing cast vs a constant native returns the CLR answer where the published packages return the driver's (`[a,b,c]` vs `[a,b,c,e]`, verified by EXECUTING a probe against all three published packages) — an owner ruling, restorable with `UseQueryMode(DriverLinq)`, and the one place the native default's "results are unchanged" justification does not hold. **FIX WAVE (one commit on top of `39a0ffdc`): it closed a LIVE silent-wrong-data defect** — the `$expr` fall-through un-type-bracketed a relational comparison, so `<`/`<=` over a NULLABLE property returned stored-`null` and MISSING-element rows that the type-bracketed query dialect (and the released packages) exclude; closed by declining the fall-through for the four relational operators over a nullable property, which is what costs the 2 cases above. It also corrected two claims the slice shipped as MEASURED (the overflow boundary, now measured and PER-QUERY in blast radius; and a `TryRenderSizeComparison` reachability claim this slice itself falsified, together with the incidental widening behind it), pinned `$toInt`'s truncate-toward-zero rounding, and filed **EF-404** for the pre-existing, shipped, cast-free field-to-field `$expr` path. See `Query/AGENTS.md` item 16 |
+| A4 | **The COMPUTED bare projection leaf goes native — "tier 2" returns** (**EF-405**): a terminal `Select` whose body IS the leaf and has no document path — arithmetic (`x.A * 2`), a numeric CAST, a bare `.Count` and a bare filtered `.Count(pred)` — under the reserved `_v` alias and `ProjectionAliasTier.Synthetic`. Ships its **prerequisite first** (A4-0): the pushed-down bare `.Count` body inside `MongoQueryExpression.CapturedExpression` is rewritten into its null-coalesced `(b.Posts ?? new List<Post>()).Count` form, which the driver renders as `{$size: {$ifNull: […]}}` — MEASURED **byte-identical to what native emits**. The `?:` spelling does **not** work (`$cond` evaluates the untaken branch) and is recorded as refuted | *the slice's squashed commit — `EF-405: the computed bare projection leaf goes native (stream 1, slice A4, tier 2)`* | ✅ Done. **6 `NativeOnly` wins MEASURED, 0 regressions** — measured BY MESSAGE TRANSITION over all 4610 results on both axes against a freshly re-measured baseline at the slice base `83803349`: `Failed→Passed` = 6 (`NorthwindSelectQueryMongoTest.Explicit_cast_in_arithmetic_operation_is_preserved`, `…Projecting_count_of_navigation_which_is_generic_list`, `…_generic_collection`, each × 2 `async` legs), `Passed→Failed` = **empty**, `Failed→Failed`-with-a-different-message = **0**, 0 added / 0 removed. `NativeOnly` **2501/2092/17 → 2507/2086/17**; default `Native` **4593/0/17** at base and at HEAD, compared as a SET (only-in-base 0, only-in-head 0). **2 `AssertMql` literals re-based**, both in `NorthwindSelectQueryMongoTest.cs`, covering 4 of the 6 cases, **stage order only** (`$sort` ahead of the `$lookup`); the `$project` is byte-identical. **NOT the CITED 54 total / 28 sole-cause, and the gap is LOCATED**: the cited bucket is a predicate on the LEAF (`TryTranslateValue` succeeds) that is blind to the selector-body shape, so it swept in WRAPPED bodies native since EF-347/EF-359/EF-403; and of the **86** genuinely bare tier-2-shaped translation firings measured by instrumenting the binder, **44 sit inside subqueries whose OUTER query is the blocker** — the same enclosing-blocker mechanism as A5. **This slice found and closed THREE criticals of one class — the gate admitted a wider set than the A4-0 rewrite reaches** (`b.Posts.Count * 2`; then the owned-reference-HOP `b.Home.Notes.Count`; then, at the final review, a bare count over an `ISet<Post>`/`IReadOnlySet<Post>` navigation, which carries a perfectly NON-DOTTED path and so slipped through the second fix's array-path test while `TryCreateEmptyCollection` declined it), each re-opening the default-mode `MongoCommandException` that got tier 2 reverted, each also breaking the rubric's `DriverLinq` carve-out, and each found by REVIEW after a green three-EF-version suite and a clean SET comparison on both spec axes. **The first two fixes were RESTATEMENTS of the rewrite's reach and both drifted; the third is STRUCTURAL** — `TryMatchRewritableBareCountBody` is extracted out of the rewrite and CALLED by the gate, so there is no second spelling left to drift. **The blind spot is now demonstrated rather than hypothetical:** the spec suite has no owned collection at all, so neither axis could ever move for these shapes, and no model anywhere in `src/` or `tests/` declared an `ISet<T>` navigation — for owned-collection work the functional fixtures ARE the measurement. **One unrecorded incidental widening, in the good direction:** `Select(count).Where(pred)` and `…FirstOrDefault(pred)` go from `MongoCommandException` at base to correct data at HEAD under the default `Native` mode (explicit `DriverLinq` aborts on both sides — pre-existing). **No `BREAKING-CHANGES.md` entry**, confirmed by EXECUTING a probe against `v10.0.2`/`v9.1.2`/`v8.4.2` over all four array states (see the corrected step-3a paragraph above). Every touched type is `internal`; zero `#if` lines added or removed under `src/` |
 
 **Re-summed from the table above rather than restated from a report.** Wins, one term per row:
-`0 + 34 + 0 + 0 + 0 + 12 + 28` = **74** (the two non-slice rows — the slice-B spike and the final fix wave —
+`0 + 34 + 0 + 0 + 0 + 12 + 28 + 6` = **80** (the two non-slice rows — the slice-B spike and the final fix wave —
 win nothing by construction; the fix wave's own change is a DECLINE, and it moved neither axis). The
-`NativeOnly` triple moves **2427/2166/17 → 2501/2092/17**, i.e. **+74 passed / −74 failed / skipped
+`NativeOnly` triple moves **2427/2166/17 → 2507/2086/17**, i.e. **+80 passed / −80 failed / skipped
 unchanged**, which agrees with the win column exactly — unlike step 3a, this tranche has no `Failed→Passed`
 transition that is not a feature win. (A2 also produced **2** `Failed→Failed` transitions with a *different*
 message — `NorthwindQueryFiltersQueryMongoTest.Find`, both `async` cases, advanced to their next blocker, a
 parameterized regex term. Those are progress, not wins, and they move neither the triple nor the win count.)
 The default `Native` axis reads **4593 / 0 / 17** in every row, so the tranche's `Native` delta is **0**.
-`BREAKING-CHANGES.md` entries added: **0 of 6 rows**. Against the CITED estimates the three SIZED feature
-slices realized **`34 + 0 + 28` = 62 of `44 + 36 + 56` = 136**; slice B is deliberately **excluded from that
-ratio**, because its 12 are a re-attribution of cases the ≈508 checkpoint has already counted elsewhere (see
+`BREAKING-CHANGES.md` entries added: **1 of 8 rows** — BOTH NUMBERS re-derived from the table, row by row, not restated. Denominator: 8 data rows (0, A2, A5, the slice-B spike, the final fix wave, B, A1, A4). Numerator: seven rows say no entry was added; **the A1 row records one** — *"Query results can differ for a numeric cast in a `Where` clause"*, added by EF-403's fix wave and present at `BREAKING-CHANGES.md` today. **This line has now been wrong three times, each time by carrying a number instead of deriving it:** it read 6, then 7 (reached by adding one to the 6 rather than re-counting), then `0 of 8` — where the denominator WAS re-derived and the numerator was restated with the excuse that "the 0 is what carries meaning". A number that is not re-derived is not measured, whichever half of the fraction it sits in. The win terms beside this line have always been **8**, one per row, and they do re-sum. Against the CITED estimates the four SIZED feature
+slices realized **`34 + 0 + 28 + 6` = 68 of `44 + 36 + 56 + 28` = 164**; slice B is deliberately **excluded from
+that ratio**, because its 12 are a re-attribution of cases the ≈508 checkpoint has already counted elsewhere (see
 the slice-B row above and finding (2) below) — adding them to a realized-vs-estimate ratio would double-count
 them. **A1's 28 carries the same "not the CITED figure" caveat as A2's 34 and A5's 0, and for a NEW reason
-worth carrying into the next slice's planning: sole-cause has now under-delivered three times (A2 34/44,
-A5 0/36, A1 28/56), and A1 adds a second failure mode to finding (1)'s — the decomposition spike's classifier
-can point at the wrong DECLINE SITE entirely, not merely stop at the minimal failing subtree.** A1's yield
+worth carrying into the next slice's planning: sole-cause has now under-delivered FOUR times (A2 34/44,
+A5 0/36, A1 28/56, A4 6/28), and A1 adds a second failure mode to finding (1)'s — the decomposition spike's
+classifier can point at the wrong DECLINE SITE entirely, not merely stop at the minimal failing subtree.**
+**A4 adds a THIRD failure mode, and it is the one that most inflates the remaining arithmetic: the classifier
+can count a bucket whose MEMBERSHIP is not the slice's scope at all.** A4's cited bucket is labelled *"the
+translator already resolves it as a VALUE"* — a predicate on the LEAF, blind to the selector-body shape, so it
+counts a computed leaf inside a `new {…}`/DTO construction identically to a bare one, and every wrapped
+computed leaf has been native since EF-347 / EF-359 / EF-403. **Re-rank before choosing the next slice:** the
+remaining capability-A citations (A6 `Contains` 18, A13 `Not` 18, A12 `??` 22, A9 `?:` 10) each inherit all
+three failure modes and should each get a prototype-A/B before an order is committed — and per finding (3),
+A6 and A13 additionally need an aggregation-dialect renderer arm that no plan document has budgeted for. A1's yield
 lives at `TranslateComparison`/`HasNumericConvert`, which no A1 write-up named; a plan written against the site
 the documents pointed at (`TranslateOperand`'s `Convert` branch) would have delivered **0 of 28**. **Size a
 slice by a prototype A/B, not by the table** — A1's own spike did exactly that and predicted 28 (30 with a
@@ -348,9 +383,10 @@ EF-358 fix (`7c199e4`) → slice 8 (`33fdc58`) → slice 9 (`229294f`) → **the
 (`0162b737`) → EF-367 (`5dfb1653`) → EF-370 (`7af4190b`) → EF-368 (`34a02067`) → EF-372 (`6a7a5f3c`) → EF-373
 (`9dd6fc15`) → EF-379 (`9065acfc`)** → *(cutover steps 2 and 3a)* → **stream 1 tranche 1: EF-398
 (`16bf9a20`) → EF-399 (`1d164597`) → EF-400 (`4adafc2c`) → EF-401 (`2ad8524a`) → **slice A1: EF-403
-(`39a0ffdc`), plus its whole-branch-review fix wave as a SECOND commit directly on top — the current tip**.
-*(This chain read "EF-401 (`2ad8524a`, the current tip)" until slice A1 landed, and "EF-379 (`9065acfc`, the
-current tip)" before tranche 1.)* *(The pre-joins portion of this chain is
+(`39a0ffdc`), plus its whole-branch-review fix wave as a SECOND commit directly on top** → **slice A4:
+EF-405 — the current tip**.
+*(This chain read "slice A1 … the current tip" until slice A4 landed, "EF-401 (`2ad8524a`, the current tip)"
+until slice A1 landed, and "EF-379 (`9065acfc`, the current tip)" before tranche 1.)* *(The pre-joins portion of this chain is
 pre-rebase hashes — see the header warning; the joins portion and everything after it is post-rebase and is on
 the branch.)* **The "as of 2026-07-31 there is no unsquashed work in flight" statement holds with ONE
 documented exception at the tip** — every slice through `39a0ffdc` is one squashed
@@ -575,13 +611,18 @@ withdrawn cutover plan.** Nothing is merged to `main` yet, but per §8's plan of
   matters because the old reason no longer exists.** This read "(bare-scalar projection bodies never populate
   `Projection`)". Since step 3a a bare body *does* populate `Projection` for a path-addressable leaf; a COUNT is
   a computed leaf with no document path to use as an alias, so it is declined by
-  `NativeProjectionBinder.TryDeriveDocumentPathAlias`. That is the reverted **tier 2** (§2) — so this shape moves
-  when tier 2 returns, not when some further bare-projection work lands. It takes
-  the fallback path — and there, as measured, the count is folded **client-side**: the emitted pipeline is
-  `aggregate([])`, no `$project` and no `$size`, so the whole document including the entire array is fetched
-  and counted in process. Results are **correct for every array state** — a missing or explicitly-null stored
+  `NativeProjectionBinder.TryDeriveDocumentPathAlias`. That was the reverted **tier 2** (§2). ~~so this shape
+  moves when tier 2 returns… It takes the fallback path — and there, as measured, the count is folded
+  **client-side**: the emitted pipeline is `aggregate([])`, no `$project` and no `$size` … `NativeOnly` declines
+  cleanly.~~ **CORRECTED A THIRD TIME, 2026-08-09 — THIS SHAPE IS NATIVE.** Tier 2 returned as slice A4
+  (**EF-405**): `TryDeriveSyntheticAlias`'s arm 1a admits the count under the reserved `_v` alias, emitting
+  `{"$project": {"_v": {"$size": {"$ifNull": ["$Posts", []]}}}}`, and `NativeOnly` SUCCEEDS rather than
+  declining. Results remain **correct for every array state** — a missing or explicitly-null stored
   array used to throw `ArgumentNullException` at materialization; the EF-358 fix (2026-07-29, see the standalone
-  fact below) closed that residual, so it now returns `0` like every other path. `NativeOnly` declines cleanly.
+  fact below) closed that residual, so it returns `0` like every other path. **Two neighbours did NOT move and
+  are the easy thing to over-read:** the same count through an owned-reference HOP (`b.Home.Notes.Count`, a
+  DOTTED array path) and a PRIMITIVE-collection count (`b.Tags.Count`) both still decline — the latter's
+  fallback aborts with `MongoCommandException` on a ragged array, which is pre-existing.
 
 **Hard-fails in every mode (no driver-LINQ oracle):** cross-collection SelectMany forms outside the native
 slice, three-level+ nested SelectMany, whole-outer SelectMany, and any operator composed *after* a native
@@ -611,10 +652,13 @@ precise disposition of what is left of the family, all of it NARROWER than the s
   `Posts.Where(pred).Count()` spelling, a bare spelling whose predicate closes over a captured local, and
   arithmetic over a *bare* count (`Select(b => b.Posts.Count(pred) * 2)` — the count call is not the root; the
   *wrapped* arithmetic form above is native).
-- **Not native, correct values:** the bare spelling `Select(b => b.Posts.Count(pred))` — folded client-side over
-  `aggregate([])`. **This read "the SP3-wide bare-projection boundary, not a count-specific one"; step 3a lifted
-  that boundary, so the current reason is the narrower one above** — a computed bare leaf has no document path
-  to alias, i.e. the reverted tier 2.
+- ~~**Not native, correct values:** the bare spelling `Select(b => b.Posts.Count(pred))` — folded client-side
+  over `aggregate([])`… i.e. the reverted tier 2.~~ **STRUCK 2026-08-09 — NATIVE since slice A4 (EF-405).**
+  The bare filtered spelling is admitted by the same arm 1a as the unfiltered one and emits
+  `{"$project": {"_v": {"$size": {"$filter": …}}}}` under the reserved `_v` alias; `NativeOnly` succeeds.
+  It needs no `$ifNull` rewrite of its own — the driver renders the filtered form as `{$sum: {$map: …}}`, and
+  `$map` tolerates a missing array where `$size` does not — but it is held to the same non-dotted array-path
+  rule anyway, so `b.Home.Notes.Count(pred)` still declines.
 
 **CLOSED (EF-358, 2026-07-29) — and the root cause is corrected here, not just the status.** This paragraph
 used to describe the gap as a whole-entity-vs-projection split: whole-entity materialization normalizes a
@@ -668,8 +712,10 @@ path-addressable leaf.** `Select(p => p.Name)`, `Select(o => o.OrderID)`, `Selec
 leaf's root-relative document path — which is what keeps one alias-addressed shaper correct against a projected
 document and an un-projected one alike, on the late-fallback route. **74 `NativeOnly` specification cases won,
 zero regressions**, and 78 `AssertMql` baselines re-based as the `$project` key moved from the driver's `_v` to
-the element name. **What still falls back from a bare body:** a **computed** leaf (a count, a filtered count,
-arithmetic — the reverted tier 2, §2); a **DOTTED** leaf (`Select(b => b.Home.City)`); a bare projected
+the element name. **What still falls back from a bare body:** ~~a **computed** leaf (a count, a filtered count,
+arithmetic — the reverted tier 2, §2)~~ **— CORRECTED 2026-08-09: a computed leaf is NATIVE since slice A4
+(EF-405). What still falls back from the computed family is the MIXTURE (an arithmetic or cast leaf whose
+subtree CONTAINS a count) and a count over a DOTTED array path**; a **DOTTED** leaf (`Select(b => b.Home.City)`); a bare projected
 **set-op operand** and a bare **`Distinct`**, both narrowed out by measured correctness guards rather than by
 scope preference (a bare operand changes what `$$ROOT` is for a set op's dedup/source-tag comparison — 12 MQL
 diffs and `Intersect_non_entity`/`Except_non_entity` flipping from throwing to *answering* without the guard;
@@ -726,9 +772,10 @@ the four derivation sites plus the fifth reader, and why there is deliberately *
      `{$project: {Posts: "$Posts"}}` and is read back by that alias.
   3. 🟡 **Bare-scalar projection pushdown** — **DONE for a path-addressable leaf** (step 3a; the same change as
      bullet 2). What is left of this bullet is narrower and is now two separate things, neither of them "the
-     boundary": a bare **computed** leaf (the reverted **tier 2** — §2 records its real prerequisite, that the
-     late-fallback path must emit `$ifNull` rather than inherit the driver's bare `$size`), and a bare **dotted**
-     leaf (`Select(b => b.Home.City)`, which additionally needs the dotted-SCALAR read below).
+     boundary": ~~a bare **computed** leaf (the reverted **tier 2** …)~~ — **DONE 2026-08-09 as slice A4
+     (EF-405), which shipped exactly the prerequisite §2 recorded: the late-fallback path now emits `$ifNull`
+     itself instead of inheriting the driver's bare `$size`** — and a bare **dotted**
+     leaf (`Select(b => b.Home.City)`, which additionally needs the dotted-SCALAR read below), **still open**.
   4. ✅ **`OwnsOne`-hop array leaf (EF-362)** — **DONE, step 3a Task 4, 2026-08-06.** This bullet's prediction of
      the mechanism was half right and is corrected rather than deleted. It read: "a path-preserving `$project`
      emitting `{"Home.Notes": "$Home.Notes"}` (which MongoDB renders as nested output) **plus keeping the
@@ -1158,7 +1205,8 @@ boundary (so the bare array projection is native) and its Task 4 shipped EF-362.
 **EF-365** (a
 non-renderable element predicate in a filtered-count projection hard-fails where a graceful fallback is
 measurably available), plus two things step 3a pinned rather than fixed: the **dotted-SCALAR read**
-(§5 bullet 4a, **EF-390**) and the reverted **tier 2** for bare computed leaves (§2). An arithmetic projection leaf containing a count already goes native as an incidental
+(§5 bullet 4a, **EF-390**) and ~~the reverted **tier 2** for bare computed leaves (§2)~~ — **STALE as of
+2026-08-09: tier 2 SHIPPED as slice A4 (EF-405), so only the dotted-scalar read remains from that pair.** An arithmetic projection leaf containing a count already goes native as an incidental
 widening — for a *filtered* count too, also incidentally, and only in the **wrapped** spelling. **This paragraph's parenthetical about the bare-count form was
 also STALE; corrected here.** It used to say the bare form "is a separate, pre-existing hard-fail predating this whole work stream" — true
 only before owned-data slice 7. Since slice 7 the bare form (`Select(b => b.Posts.Count)`) no longer fails
@@ -1188,12 +1236,14 @@ cutover's critical path.
 **MOVED ON 2026-08-08 by stream 1 tranche 1 (§2), corrected here rather than annotated beside the stale text:
 the tip triple above is no longer current.** **UPDATED AGAIN once the whole of tranche 1 had landed (slices B
 and A1), in place rather than beside — the intermediate `2ad8524a` reading of `NativeOnly` 2461/2132/17 was
-correct at that commit and is superseded.** At the tranche tip (slice A1's fix wave included) the `NativeOnly` axis is **2501/2092/17** and
-the default `Native` axis is **4593/0/17**, unmoved. So **2092**, not 2166, EF10 spec cases now lean on the
-fallback — `2166 − 74` = 2092, the 74 being the tranche's re-summed wins (§2). **The (a)/(b)/(c) split above
-has NOT been re-derived at this tip** and is still the `99d74735` decline-site measurement; all 74 are
+correct at that commit and is superseded.** **UPDATED AGAIN 2026-08-09 by slice A4 (EF-405), in place: the
+`2501/2092/17` reading was correct at slice A1's tip and is superseded.** At the tranche tip (slice A4
+included) the `NativeOnly` axis is **2507/2086/17** and
+the default `Native` axis is **4593/0/17**, unmoved. So **2086**, not 2166, EF10 spec cases now lean on the
+fallback — `2166 − 80` = 2086, the 80 being the tranche's re-summed wins (§2). **The (a)/(b)/(c) split above
+has NOT been re-derived at this tip** and is still the `99d74735` decline-site measurement; all 80 are
 (a)-type coverage gaps by construction (each went from an exception to data on the `NativeOnly` axis), so (a)
-is **1524** on that basis alone — `1598 − 74` — and (b) 518 / (c) 50 are unchanged. That subtraction is
+is **1518** on that basis alone — `1598 − 80` — and (b) 518 / (c) 50 are unchanged. That subtraction is
 **INFERRED** from the win-type, not re-measured; the re-derivation belongs to §9.8 step 3's checkpoint.
 
 **And the headline of the 2026-08-07 re-attribution.** Partitioned into disjoint owning work streams, the
@@ -1253,20 +1303,27 @@ enumerates — is **not part of this release**; §9 remains accurate but is now 
 plan of record. See §9.8 for the sequence.
 
 **2026-08-08 — the running position against the checkpoint, after stream 1 tranche 1 (including slice B and
-slice A1).** The measured axes after slice A1 are `Native` **4593 / 0 / 17** (unmoved for the whole tranche,
+slice A1). ~~The measured axes after slice A1 are…~~ UPDATED 2026-08-09 THROUGH SLICE A4 (EF-405), in place
+rather than beside: every figure below now reads through A4.** The measured axes after slice A4 are `Native` **4593 / 0 / 17** (unmoved for the whole tranche,
 once slice B's 12 `AssertMql` baselines are re-based — slice A1 as shipped re-bases NONE, its one moved
 baseline having been moved back by its fix wave — and for A1 the default axis was
-compared as a SET at the slice base and at its tip, not merely by count) and `NativeOnly` **2501 / 2092 / 17**,
-up from 2427/2166/17. **Cumulative stream-1 wins so far: 74** — re-summed from §2's tranche table
-(`0 + 34 + 0 + 0 + 0 + 12 + 28`), not carried from a report. Of those, **62** are realized against a CITED
-estimate of `44 + 36 + 56` = **136** for the three SIZED feature slices; slice B's **12** are excluded from
+compared as a SET at the slice base and at its tip, not merely by count — and A4 did the same, at its own base
+`83803349`) and `NativeOnly` **2507 / 2086 / 17**,
+up from 2427/2166/17. **Cumulative stream-1 wins so far: 80** — re-summed from §2's tranche table
+(`0 + 34 + 0 + 0 + 0 + 12 + 28 + 6`), not carried from a report. Of those, **68** are realized against a CITED
+estimate of `44 + 36 + 56 + 28` = **164** for the four SIZED feature slices; slice B's **12** are excluded from
 that ratio because they are a **re-attribution** of cases the ≈508 checkpoint already counts inside the 474
-(§2 finding (2)) — **≈508 does not move, and 12 must not be added to it**. **A1's 28 against a CITED 56 is the
-third consecutive under-delivery against sole-cause (A2 34/44, A5 0/36, A1 28/56), and its shortfall is
-LOCATED rather than guessed:** the projection and sort columns (CITED 14 and 8) each delivered **zero**
+(§2 finding (2)) — **≈508 does not move, and 12 must not be added to it**. **A1's 28 against a CITED 56 was the
+third consecutive under-delivery against sole-cause and A4's 6 against a CITED 28 is the FOURTH (A2 34/44,
+A5 0/36, A1 28/56, A4 6/28); both shortfalls are LOCATED rather than guessed:** the projection and sort columns (CITED 14 and 8) each delivered **zero**
 specification cases, so both are correctness/breadth work rather than scoreboard work. A1 also adds a second
 failure mode to finding (1)'s — the classifier can point at the **wrong decline site entirely**, and a plan
-written against the site A1's own documents named would have delivered 0 of 28. The one sizing figure slice B
+written against the site A1's own documents named would have delivered 0 of 28. **A4 adds a THIRD failure mode:
+the classifier can count a bucket whose MEMBERSHIP is not the slice's scope** — its cited bucket's predicate is
+on the LEAF and is blind to the selector-body shape, so it counted WRAPPED computed leaves that have been
+native since EF-347/EF-359/EF-403; and of the 86 genuinely bare tier-2-shaped firings measured by
+instrumentation, 44 sit inside subqueries whose OUTER query is the blocker — A5's mechanism again. **All three
+failure modes are now live at once for every remaining sole-cause figure in this document.** The one sizing figure slice B
 DOES change is A3's: its marginal yield once slice B has shipped is
 `40 − 10` = **30**, not 40. **The checkpoint this is measured against is §9.8 step 3's, and it expects ≈508
 after ALL of stream 1 with slice B, ≈400 without slice B, and ≈570 after streams 1 and 2 together.** State
@@ -1279,12 +1336,12 @@ inner-node feature group's sole-cause figure counts cases that a fix RELABELS ra
 sole-cause, 0 converted). Every inner-node group in stream 1 inflates ≈508 by an amount nobody has measured.
 **No revised projection is offered here on purpose** — re-deriving it is the checkpoint's own job, using §9.0's
 method, and inventing a number now would replace one unmeasured figure with another. What is known: the base
-term of §9.8's projection has moved **2427 → 2501**, so **2427 + 570 + 282 + 52 = 3331** holds only if stream
-1's remaining contribution is `570 − 74` = **496**, and the 570 rests on the same sole-cause basis finding (1)
-undermines. (That subtraction uses **74**, the full measured `NativeOnly` movement, precisely BECAUSE the base
+term of §9.8's projection has moved **2427 → 2507**, so **2427 + 570 + 282 + 52 = 3331** holds only if stream
+1's remaining contribution is `570 − 80` = **490**, and the 570 rests on the same sole-cause basis finding (1)
+undermines. (That subtraction uses **80**, the full measured `NativeOnly` movement, precisely BECAUSE the base
 term is a measured axis reading rather than a checkpoint estimate — slice B's 12 really did move the axis, even
-though they must not be added to ≈508. Do not conflate the two: the axis moved by 74; the ESTIMATE moved by
-`34 + 28` = 62 at most, and by 0 for slice B.) The bar (`0.80 × 4075 = 3260`), the 71-case margin, and slice B's load-bearing role (without it
+though they must not be added to ≈508. Do not conflate the two: the axis moved by 80; the ESTIMATE moved by
+`34 + 28 + 6` = 68 at most, and by 0 for slice B.) The bar (`0.80 × 4075 = 3260`), the 71-case margin, and slice B's load-bearing role (without it
 **≤3257/4075 = ≤79.9%**, below the bar) are all unchanged by this tranche — and per §2 finding (2), slice B's
 newly measured standalone yield of **12** is a **re-attribution of cases already inside the 474**, so it must
 **not** be added to ≈508 or to ≤3257.

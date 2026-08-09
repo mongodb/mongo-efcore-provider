@@ -1548,7 +1548,7 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
 """);
     }
 
@@ -1558,7 +1558,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "_v" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
 """);
     }
 

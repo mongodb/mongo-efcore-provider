@@ -79,6 +79,31 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
         => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
 
+    /// <summary>
+    /// Describes the emitted <c>$project</c> stage by which of the two aliases under test appear in it AS FIELD
+    /// NAMES — <c>"N"</c>, a member-name alias, and <c>"_v"</c>, the reserved <c>ProjectionAliasTier</c>
+    /// <c>Synthetic</c> one.
+    /// </summary>
+    /// <remarks>
+    /// <b>The scoping is the point (A4-3 review, M1).</b> The logged message is the WHOLE command, database and
+    /// collection names included, so a bare <c>Assert.DoesNotContain("_v", mql)</c> passes only as long as no
+    /// test name happens to contain a <c>_v</c> token — rename the test and it silently breaks, or reports a
+    /// failure for a reason that has nothing to do with the projection. Cutting to the <c>$project</c> stage and
+    /// matching the QUOTED key form is what makes the assertion mean "the projection's field name". Returning a
+    /// summary STRING rather than asserting in place is the other half: the caller folds it into its collected
+    /// leg set, so the pin cannot be skipped by an earlier leg's failure (A4-3 review, M2).
+    /// </remarks>
+    private static string ProjectAliasSummary(SpyLoggerProvider spyLogger)
+    {
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        var start = mql.IndexOf("$project", StringComparison.Ordinal);
+        if (start < 0)
+            return "no $project stage";
+
+        var stage = mql[start..];
+        return $"N={stage.Contains("\"N\"", StringComparison.Ordinal)} _v={stage.Contains("\"_v\"", StringComparison.Ordinal)}";
+    }
+
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
@@ -232,6 +257,51 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
         coll.InsertMany(rows);
         return database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
+    }
+
+    // SeedLengths' six rows with every title carrying a shared "c_" prefix. Added by EF-405 slice A4-3 so a
+    // parameterized-Where LATE-DECLINE leg (a captured-local StartsWith, which declines at RENDER time after
+    // the alias-addressed shaper has been committed) still covers ALL SIX rows — including the ragged
+    // missing/explicitly-null ones, which are the only rows that discriminate a bare $size from a $size over
+    // $ifNull. SeedLengths' own titles share no prefix, so a late-decline leg over that seed would silently
+    // drop exactly those rows. Ordered by title the counts are c_len0..c_len3 then c_missing, c_null =>
+    // 0,1,2,3,0,0.
+    private IMongoCollection<Blog> SeedPrefixedLengths(string name)
+        => Seed(name,
+            LenRow("c_len0", 0), LenRow("c_len1", 1), LenRow("c_len2", 2), LenRow("c_len3", 3),
+            Row("c_missing", posts: null), Row("c_null", BsonNull.Value));
+
+    /// <summary>
+    /// Runs <paramref name="query"/> and describes what it did as a short string, so a caller can COLLECT every
+    /// leg's outcome and assert them together instead of aborting on the first.
+    /// </summary>
+    /// <remarks>
+    /// The collect-then-assert shape is not a style preference: written as a loop of direct assertions, a
+    /// regression in the FIRST leg aborts the test and the remaining legs never execute — which is how the
+    /// mandatory explicit-<c>DriverLinq</c> leg went unexercised twice in this slice while it claimed "zero
+    /// MongoCommandException across all runs" (EF-405 A4-2 review, I2). Adopted as the convention in A4-2 and
+    /// applied to every leg set A4-3's flips introduce. Mirrors
+    /// <c>NativeComputedBareProjectionTests.LegOutcome</c> and
+    /// <c>NativeOwnedCollectionFilteredCountTests.LegOutcome</c> exactly, deliberately, so the three files
+    /// describe outcomes with the same vocabulary.
+    /// </remarks>
+    private static string LegOutcome(Func<object?> query)
+    {
+        try
+        {
+            var result = query();
+            return result is System.Collections.IEnumerable values and not string
+                ? "[" + string.Join(",", values.Cast<object>()) + "]"
+                : result?.ToString() ?? "null";
+        }
+        catch (NativeTranslationNotSupportedException)
+        {
+            return "declined";
+        }
+        catch (Exception ex)
+        {
+            return ex.GetType().Name + ": " + ex.Message.Split('\n')[0];
+        }
     }
 
     // Every array LENGTH state a cardinality predicate can distinguish, plus the three "no elements" states.
@@ -452,17 +522,19 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         // the $expr/aggregation dialect here (a $project leaf is not a $match), so the null-safe $size applies
         // and a missing/null array yields 0 rather than aborting the aggregate.
         //
-        // Contrast with the BARE embedded-collection projection, Select(b => b.Posts.Count): unlike this
-        // arithmetic leaf, it does NOT go native — a bare-scalar terminal projection never populates
-        // Select.Projection, so Route stays Fallback and the count is folded CLIENT-SIDE instead (over an
-        // aggregate([]) pipeline, no $size). EF-357 used to make it hard-fail in EVERY query mode
+        // CORRECTED IN PLACE BY EF-405 SLICE A4-3, because the contrast this comment drew no longer exists.
+        // It used to say the BARE embedded-collection projection, Select(b => b.Posts.Count), "does NOT go
+        // native — a bare-scalar terminal projection never populates Select.Projection, so Route stays Fallback
+        // and the count is folded CLIENT-SIDE instead (over an aggregate([]) pipeline, no $size)". Both halves
+        // are superseded: EF-322 step 3a made a bare body populate Projection, and EF-405 slice A4-2 admitted
+        // both size kinds as bare tier-2 leaves (arm 1a of TryDeriveSyntheticAlias, `_v` / Synthetic), so the
+        // bare form is now native too and emits its own $size over $ifNull — see
+        // Bare_embedded_collection_Count_projection_goes_native_for_present_arrays below, the flipped tripwire.
+        // The EF-357/EF-358 HISTORY still stands and is kept: this shape used to hard-fail in EVERY query mode
         // (ArgumentException, from a MongoProjectionBindingExpressionVisitor gap) long before the EF-322
-        // native-query work began; that translation-time crash is now fixed, and TRANSLATION now succeeds with
-        // CORRECT values for a document whose array is present — see
-        // Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays below. EF-357 is
-        // now FULLY closed: a missing or explicitly-null array used to throw ArgumentNullException at
-        // MATERIALIZATION (Enumerable.Count(null)) — EF-358 fixed that by normalizing the projection path's
-        // missing/null array to an empty collection — see
+        // native-query work began; owned-data slice 7 fixed that translation-time crash, and EF-358 fixed the
+        // residual materialization-time ArgumentNullException for a missing or explicitly-null array by
+        // normalizing the projection path's missing/null array to an empty collection — see
         // Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array below.
         var collection = SeedLengths(nameof(Arithmetic_projection_leaf_containing_a_count_goes_native));
 
@@ -664,53 +736,113 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         Assert.Contains("Posts", mql);
     }
 
+    // FLIPPED TRIPWIRE (EF-405 slice A4-3), renamed from
+    // `Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays` because that name
+    // said nothing about the route while the body's whole point was to LOCK it.
+    //
+    // WHAT IT LOCKED, and why it was worth locking. It asserted `aggregate([])` — an EMPTY pipeline, no $project
+    // and no $size — as the MEASURED proof that the whole document, array and all, was fetched and the count
+    // folded CLIENT-SIDE; plus a NativeOnly decline. That was true, and it was deliberate: through EF-322 step
+    // 3a a bare COMPUTED leaf had no document path to use as an alias, so TryDeriveDocumentPathAlias declined
+    // it. Locking it meant lifting it would have to be a VISIBLE edit rather than a silently-relaxed gate.
+    //
+    // WHY IT IS LIFTED, and by what. EF-405 slice A4-2 added the SECOND alias derivation,
+    // NativeProjectionBinder.TryDeriveSyntheticAlias, whose arm 1a admits a MongoSizeExpression or
+    // MongoFilteredSizeExpression as the TOP node of a bare selector body whose UN-STRIPPED DRIVER FALLBACK
+    // CANNOT ABORT (IsFallbackSafeBareSizeLeaf), under the reserved `_v` alias and ProjectionAliasTier.Synthetic.
+    // NOTE the admission rule is NOT "a non-dotted array path" — that was A4-2's first spelling of it and it
+    // drifted, admitting an ISet<T>-typed navigation the rewrite declines. For the UNFILTERED kind the gate now
+    // CALLS the A4-0 rewrite's own matcher (TryMatchRewritableBareCountBody); the non-dotted rule survives only
+    // for the FILTERED kind, which is protected structurally instead. Arm 1a runs
+    // NO subtree check, because "the body IS the count over a root-declared navigation" is exactly the reach
+    // NullCoalesceSyntheticBareCountBody (slice A4-0) has — which is what makes the un-stripped DriverLinq
+    // fallback emit $ifNull too rather than a bare $size that aborts on a ragged array. The lock is REPLACED,
+    // not deleted: the emitted-MQL assertion now pins the server-side rendering positively AND pins the absence
+    // of the old empty pipeline, so a silent revert to the fold reddens from both directions.
+    //
+    // WHAT IS STILL DECLINED, so this flip is not read as "every neighbouring shape converted": the same count
+    // through an owned-reference HOP (b.Home.Notes.Count) is STILL declined, deliberately, by that same
+    // IsFallbackSafeBareSizeLeaf — now because the rewrite's IsNavigationOnParameter rejects the two-hop chain,
+    // not because of a path test the gate carries; so is a count over a navigation type no empty substitute is
+    // assignable to (ISet<T>, IReadOnlySet<T>); a PRIMITIVE-collection count (b.Tags.Count) never reaches tier 2
+    // at all; and an arithmetic leaf CONTAINING a count (b.Posts.Count * 2) is declined by arm 1b's
+    // IsArrayFreeComputedSubtree. See that method's remarks for the authoritative statement, and
+    // NativeComputedBareProjectionTests for the pins.
+    //
+    // States exercised: PRESENT arrays only (len0..len3), which is what this test always covered — the ragged
+    // states are its companion's, immediately below.
+    //
+    // KNOWN AND ACCEPTED (A4-3 review), recorded so nobody later "simplifies" the wrong test away: because this
+    // seed is SeedWellFormed, the late-decline legs below EXERCISE the silent-alias route but cannot FAIL on it
+    // — an alias miss on the un-stripped driver push-down shows up as a bare {"$size": "$Posts"} aborting on a
+    // MISSING or explicitly-null array, and this seed has neither. Keeping the well-formed seed is deliberate
+    // (it is the seed this test always used, and its companion below owns the ragged states), so the
+    // DISCRIMINATION for that route rests entirely on the prefixed RAGGED seed in
+    // Bare_and_wrapped_count_projections_both_go_native_from_the_same_model above, and on
+    // NativeComputedBareProjectionTests' four-state net. Do not collapse either of those into this one.
     [Fact]
-    public void Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays()
+    public void Bare_embedded_collection_Count_projection_goes_native_for_present_arrays()
     {
-        // EF-357 is now FULLY closed — see
-        // Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array below, which pins
-        // the second half of that closure (EF-358's materialization-time fix).
-        //
-        // This shape used to throw ArgumentException in EVERY query mode — not a graceful fallback, no data at
-        // all — because the projection-binding shaper fold (which runs at TRANSLATION time, before
-        // MongoQueryMode is read) rebuilt Queryable.Count over a CollectionShaperExpression typed List<T> and BCL
-        // expression validation rejected the mismatch. It predates the whole EF-322 native work stream.
-        //
-        // It is deliberately NOT native: a bare-scalar terminal projection never populates Select.Projection — a
-        // pre-existing SP3-wide boundary, not a count-specific one — so Route stays Fallback and NativeOnly still
-        // declines cleanly. Closing EF-357 was about correct results, not about routing.
-        //
-        // MEASURED (Task 1 spike, not assumed): the count is folded CLIENT-SIDE over the fetched document — the
-        // emitted pipeline is aggregate([]), with no $size and no $project. The driver's LINQ provider is never
-        // asked to render the count, because the rebuilt Enumerable.Count runs over an already-materialized
-        // collection shaper. This seed is deliberately SeedWellFormed for the reason the companion test explains.
         var collection = SeedWellFormed(
-            nameof(Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays));
+            nameof(Bare_embedded_collection_Count_projection_goes_native_for_present_arrays));
+        var prefix = "len";
 
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.Native, BlogModel, out var spyLogger))
+        // Collect-then-assert: every leg runs before any is asserted. See LegOutcome's remarks.
+        const string expected = "[0,1,2,3]";
+        var legs = new List<(string Leg, string Outcome)>();
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
-            var counts = db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList().OrderBy(n => n).ToList();
-            Assert.Equal(new[] { 0, 1, 2, 3 }, counts);
-
-            // Pins the "client-side, over aggregate([])" claim made above: the emitted pipeline for the
-            // Native-mode run IS aggregate([]) exactly, with no $project and no $size stage anywhere in it.
-            var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
-            Assert.Contains("aggregate([])", mql);
-            Assert.DoesNotContain("$project", mql);
-            Assert.DoesNotContain("$size", mql);
+            using var db = CreateContext(collection, mode, BlogModel);
+            legs.Add(($"{mode} direct", LegOutcome(
+                () => db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Count).ToList())));
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        // THE MANDATORY LATE-DECLINE LEGS. A captured-local StartsWith has no native regex rendering, so the
+        // native factory declines at RENDER time — after the alias-addressed shaper has already been committed.
+        // That is the only route in this suite where a bare projection's alias miss is SILENT, and the
+        // explicit-DriverLinq one is the rubric-level obligation (the native default's carve-out is conditional
+        // on UseQueryMode(DriverLinq) restoring the previous path).
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
-            var counts = db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList().OrderBy(n => n).ToList();
-            Assert.Equal(new[] { 0, 1, 2, 3 }, counts);
+            using var db = CreateContext(collection, mode, BlogModel);
+            legs.Add(($"{mode} late-decline", LegOutcome(
+                () => db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
+                    .Select(b => b.Posts.Count).ToList())));
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        // The emitted-MQL half of the flip, replacing the `aggregate([])` lock the old version asserted —
+        // COLLECTED, not asserted after the set (A4-3 review, M2), and the alias half SCOPED to the $project
+        // stage's field names rather than matched against the whole logged command (M1).
+        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList());
+            legs.Add(("NativeOnly MQL", LegOutcome(() =>
+            {
+                _ = db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList();
+
+                var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+                return string.Join(
+                    " ",
+                    $"$project={mql.Contains("$project", StringComparison.Ordinal)}",
+                    $"$size={mql.Contains("$size", StringComparison.Ordinal)}",
+                    $"$ifNull={mql.Contains("$ifNull", StringComparison.Ordinal)}",
+                    // `_v` is the reserved Synthetic alias the bare arm commits under; pinning it as a $project
+                    // FIELD NAME ties the emitted key to the alias the shaper reads by.
+                    ProjectAliasSummary(spyLogger),
+                    $"empty={mql.Contains("aggregate([])", StringComparison.Ordinal)}");
+            })));
         }
+
+        Assert.Equal(
+            [
+                ("NativeOnly direct", expected),
+                ("Native direct", expected),
+                ("DriverLinq direct", expected),
+                ("Native late-decline", expected),
+                ("DriverLinq late-decline", expected),
+                ("NativeOnly MQL", "$project=True $size=True $ifNull=True N=False _v=True empty=False")
+            ],
+            legs);
     }
 
     [Fact]
@@ -725,25 +857,40 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         // corrected mechanism (a CLR field-initializer artifact, not a provider guarantee, was what made
         // whole-entity APPEAR to already normalize in some fixtures).
         //
-        // The shape is still NOT native: a bare-scalar projection body never populates Select.Projection, which
-        // is the SP3-wide bare-scalar boundary rather than anything count-specific, so the count is still folded
-        // client-side over aggregate([]) — see
-        // Bare_embedded_collection_Count_projection_returns_correct_counts_for_present_arrays, which pins that
-        // MQL. What changed is only that the client-side fold now receives an empty collection instead of null.
+        // CORRECTED IN PLACE BY EF-405 SLICE A4-3. This used to say "the shape is still NOT native: a bare-scalar
+        // projection body never populates Select.Projection ... so the count is still folded client-side over
+        // aggregate([])". Both halves are superseded — EF-322 step 3a made a bare body populate Projection, and
+        // A4-2 admitted the size kinds as bare tier-2 leaves — so the count is now computed SERVER-SIDE as
+        // {$size: {$ifNull: [...]}} under the reserved `_v` alias, and the sibling
+        // Bare_embedded_collection_Count_projection_goes_native_for_present_arrays pins that MQL (it used to pin
+        // the empty pipeline). The VALUES asserted here are unchanged by any of that, which is the point: a
+        // routing flip must not move a value, and the ragged rows are exactly where a wrong rendering would.
+        //
+        // A NativeOnly leg is added, so the ragged states are covered on the native route too rather than only
+        // on the two fallback ones. The full ragged tier-2 net — all four array states x three modes x the
+        // late-decline route — lives in NativeComputedBareProjectionTests and is deliberately not duplicated
+        // here; what this test keeps is the EF-357/EF-358 closure record over this file's own seed.
         //
         // The native WRAPPED form was always correct for all three states via $ifNull and is unaffected.
         var collection = SeedLengths(
             nameof(Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        // Collect-then-assert, so a regression in one mode cannot hide the others. See LegOutcome's remarks.
+        var legs = new List<(string Leg, string Outcome)>();
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
-
-            var counts = db.Entities.AsNoTracking()
-                .Select(b => b.Posts.Count).ToList().OrderBy(n => n).ToList();
-
-            Assert.Equal([0, 0, 0, 1, 2, 3], counts);
+            legs.Add(($"{mode}", LegOutcome(
+                () => db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList().OrderBy(n => n).ToList())));
         }
+
+        Assert.Equal(
+            [
+                ("Native", "[0,0,0,1,2,3]"),
+                ("DriverLinq", "[0,0,0,1,2,3]"),
+                ("NativeOnly", "[0,0,0,1,2,3]")
+            ],
+            legs);
     }
 
     [Fact]
@@ -1155,34 +1302,123 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             rows.Select(r => (r.Title, r.N, r.Doubled, r.Notes)).ToArray());
     }
 
+    // FLIPPED TRIPWIRE (EF-405 slice A4-3), renamed from
+    // `Bare_and_wrapped_count_projections_take_different_paths_from_the_same_model` because the fact that name
+    // asserts is no longer true.
+    //
+    // WHAT IT LOCKED. It was the (I)/(II) DISJOINTNESS proof for the owned-data slice-7 pair: the WRAPPED form
+    // populated Select.Projection (Route == Projection) and was pushed into $project, so NativeOnly SUCCEEDED;
+    // the BARE form never populated Projection (Route == Fallback), so NativeOnly DECLINED, and only the EF-357
+    // Enumerable.Count rebuild applied to it. Asserting both halves in ONE `using` block, one model, one seed,
+    // is what made it a disjointness proof rather than two unrelated assertions — the two shapes fire on the
+    // same LINQ construct and had to be shown not to collide.
+    //
+    // WHY THE LOCK IS LIFTED, and by what. EF-322 step 3a made a bare body populate Projection, and EF-405
+    // slice A4-2 admitted both size kinds as bare tier-2 leaves (arm 1a of
+    // NativeProjectionBinder.TryDeriveSyntheticAlias, for a leaf whose un-stripped driver fallback cannot abort
+    // per IsFallbackSafeBareSizeLeaf — the UNFILTERED kind by asking the A4-0 rewrite's own matcher, the FILTERED
+    // kind by a structural argument plus a non-dotted rule; committed under the reserved `_v` alias and
+    // ProjectionAliasTier.Synthetic).
+    // So the bare form now goes native too, and BOTH halves take the native route from the same model.
+    //
+    // WHAT REPLACES THE DISJOINTNESS CLAIM, because the underlying hazard has not gone away — it has only moved.
+    // The two shapes still differ in ALIAS: the wrapped form is committed under its own member name (`N`), the
+    // bare form under the reserved `_v`. That is the property that keeps the emit side and the alias-addressed
+    // shaper agreeing for each, and it is what this test now asserts — same model, same seed, same values, two
+    // DIFFERENT aliases in the emitted MQL. The mechanism the old comment cited is unchanged and still worth
+    // finding: see the "POSITION, precisely" comment on the count-leaf registration in
+    // MongoProjectionBindingExpressionVisitor.VisitMethodCall (cited by quoted text, not line number, because
+    // the last round of line-number citations here rotted when the target block was rewritten).
+    //
+    // States exercised: present (c_len0..c_len3), empty, element ABSENT, explicitly BSON null.
+    //
+    // NOTE ON THE MISSING "DriverLinq wrapped" LEG, which is deliberate rather than an omission: under explicit
+    // DriverLinq the WRAPPED form ABORTS on this ragged seed (the driver renders a bare $size with no $ifNull),
+    // and that divergence is already pinned, with its own well-formed/ragged/native three-leg measurement, by
+    // Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_aborts_on_a_missing_array above.
+    // Duplicating it here would restate a measured fact rather than net anything new; the rubric-level
+    // explicit-DriverLinq obligation belongs to the shape THIS slice admits, which is the bare one.
     [Fact]
-    public void Bare_and_wrapped_count_projections_take_different_paths_from_the_same_model()
+    public void Bare_and_wrapped_count_projections_both_go_native_from_the_same_model()
     {
-        // The (I)/(II) disjointness proof. The two halves of this slice fire on the same LINQ construct in the
-        // same model and must not collide: the WRAPPED form populates Select.Projection (Route == Projection) and
-        // is pushed into $project, so NativeOnly succeeds; the BARE form is a bare-scalar projection that never
-        // populates Projection (Route == Fallback), so NativeOnly declines — and only the EF-357 Enumerable.Count
-        // rebuild applies. The split is disjoint BY CONSTRUCTION: MongoProjectionBindingExpressionVisitor's
-        // Count/LongCount arm returns unconditionally whenever Route == Projection, so the switch arm the
-        // EF-357 rebuild lives in only ever sees Route != Projection. Cited by quoted text rather than line
-        // number, because the last round of line-number citations here rotted when the target block was rewritten:
-        // see the "POSITION, precisely" comment on the count-leaf registration in
-        // MongoProjectionBindingExpressionVisitor.VisitMethodCall, the bullet ending "the two arms are disjoint by
-        // construction, not by luck". This test asserts the observable ROUTING outcome (NativeOnly succeeds for
-        // the wrapped shape, throws for the bare one) — it does not exercise or depend on the relative ORDER of
-        // that visitor's internal blocks, which was measured NOT load-bearing for this split (same comment, the
-        // bullet beginning "It must come AFTER TryBindProjectedCollectionNavigationCount").
-        var collection = SeedLengths(nameof(Bare_and_wrapped_count_projections_take_different_paths_from_the_same_model));
+        var collection = SeedPrefixedLengths(
+            nameof(Bare_and_wrapped_count_projections_both_go_native_from_the_same_model));
+        var prefix = "c_";
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        // Collect-then-assert: every leg runs before any is asserted. See LegOutcome's remarks — written as
+        // sequential assertions, a regression in the wrapped half would abort before the bare half ran, and the
+        // bare half is the one this slice changed.
+        const string expected = "[0,1,2,3,0,0]";
+        var legs = new List<(string Leg, string Outcome)>();
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
         {
-            var wrapped = db.Entities.AsNoTracking()
-                .Select(b => new { N = b.Posts.Count }).ToList().Select(r => r.N).OrderBy(n => n).ToList();
-            Assert.Equal(new[] { 0, 0, 0, 1, 2, 3 }, wrapped);
+            using var db = CreateContext(collection, mode, BlogModel);
 
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList());
+            legs.Add(($"{mode} wrapped", LegOutcome(
+                () => db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                    .Select(b => new { N = b.Posts.Count }).ToList().Select(r => r.N).ToList())));
+
+            legs.Add(($"{mode} bare", LegOutcome(
+                () => db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                    .Select(b => b.Posts.Count).ToList())));
         }
+
+        // The bare form's own explicit-DriverLinq leg (the rubric obligation) and both late-decline legs — the
+        // route where a bare projection's alias miss is SILENT, and the only place the A4-0 $ifNull rewrite's
+        // reach over the driver's un-stripped push-down is actually exercised.
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        {
+            legs.Add(("DriverLinq bare", LegOutcome(
+                () => db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                    .Select(b => b.Posts.Count).ToList())));
+        }
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(collection, mode, BlogModel);
+            legs.Add(($"{mode} bare late-decline", LegOutcome(
+                () => db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
+                    .Select(b => b.Posts.Count).ToList())));
+        }
+
+        // THE ALIAS PINS ARE PART OF THE COLLECTED SET, not assertions after it (A4-3 review, M2): placed after
+        // the Assert.Equal below they would be unreachable the moment any leg above regressed, which is the
+        // exact defect class collect-then-assert was adopted to remove. The two shapes still take DIFFERENT
+        // aliases from the same model, and that is what the disjointness claim becomes now that both take the
+        // native route. A values-only assertion cannot see it: both aliases read back correctly, so an alias
+        // collapse is invisible in the legs above and visible only here.
+        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var wrappedSpy))
+        {
+            legs.Add(("NativeOnly wrapped alias", LegOutcome(() =>
+            {
+                _ = db.Entities.AsNoTracking().Select(b => new { N = b.Posts.Count }).ToList();
+                return ProjectAliasSummary(wrappedSpy);
+            })));
+        }
+
+        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var bareSpy))
+        {
+            legs.Add(("NativeOnly bare alias", LegOutcome(() =>
+            {
+                _ = db.Entities.AsNoTracking().Select(b => b.Posts.Count).ToList();
+                return ProjectAliasSummary(bareSpy);
+            })));
+        }
+
+        Assert.Equal(
+            [
+                ("NativeOnly wrapped", expected),
+                ("NativeOnly bare", expected),
+                ("Native wrapped", expected),
+                ("Native bare", expected),
+                ("DriverLinq bare", expected),
+                ("Native bare late-decline", expected),
+                ("DriverLinq bare late-decline", expected),
+                ("NativeOnly wrapped alias", "N=True _v=False"),
+                ("NativeOnly bare alias", "N=False _v=True")
+            ],
+            legs);
     }
 
     [Fact]
