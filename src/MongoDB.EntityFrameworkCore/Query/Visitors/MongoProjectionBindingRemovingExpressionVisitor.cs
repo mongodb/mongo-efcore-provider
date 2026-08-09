@@ -84,14 +84,44 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         return DocParameter;
                     }
 
+                    // EF-322 slice A1, Task 6 (the A2-lesson fix): a native numeric-cast projection leaf
+                    // (`new { X = (int)x.D }`) is registered on the WRITE side as the whole
+                    // UnaryExpression{Convert} node (see MongoProjectionBindingExpressionVisitor.Visit), and the
+                    // $project alias holds the CONVERTED value ($toInt/$toLong/$toDouble/$toDecimal), never the
+                    // underlying member's own raw stored representation. The comment immediately below this
+                    // block — "aliased projections that introduce a Convert... go through the LINQ V3 push-down
+                    // path and never reach this visitor" — predates this feature and is no longer true for a
+                    // NATIVELY-representable cast leaf specifically: TryResolveFieldAccess unconditionally calls
+                    // RemoveConvert(), which would strip this Convert, resolve the PRE-CAST member's own
+                    // property, and either mis-deserialise the converted value through that property's own
+                    // (pre-cast) serializer or trip the type-mismatch guard below and crash at shaper-compile
+                    // time in EVERY query mode (not merely under NativeOnly) — turning a legitimate, correct
+                    // native shape into a hard regression. Route it through the raw alias read instead, exactly
+                    // like an arithmetic/count computed leaf (the branch below this one, reached when
+                    // fieldAccess.Property is null).
+                    //
+                    // This branch is reachable ONLY for a leaf the EMIT side already admitted, and the emit
+                    // side (NativeProjectionBinder.TryTranslateLeaf) can never admit one backed by a
+                    // value-converted or non-default-BsonRepresentation field — TryTranslateValue's Guard B
+                    // (AllFieldsDefaultSerialized) recurses through the Convert into the field and declines it
+                    // at TRANSLATE time, so a converted property's cast never reaches this raw read with the
+                    // WRONG (converted) value in hand. See that gate's own comment for the full dependency;
+                    // it is recorded here too because this branch's own correctness rests on it.
+                    if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked })
+                    {
+                        return BsonBinding.CreateGetElementValue(DocParameter, projection.Alias, projectionBindingExpression.Type);
+                    }
+
                     // Resolve the source IProperty so we apply its serializer / nullability —
                     // not whatever EF property happens to share the alias name on the root entity.
                     // TryResolveFieldAccess unwraps Convert nodes, so in principle the binding's
                     // outer type could differ from the property's CLR type. In practice it never
                     // does at this call site: aliased projections that introduce a Convert (e.g.
                     // `new { X = (long)p.intProp }`) go through the LINQ V3 push-down path and
-                    // never reach this visitor — see ProjectionAnalyzer.CanPushDown. The assert
-                    // below pins the invariant so a future change that violates it fails loudly
+                    // never reach this visitor — see ProjectionAnalyzer.CanPushDown. (That claim now
+                    // holds only for a NON-natively-representable Convert leaf; the native cast case
+                    // is intercepted above, before this comment's invariant is ever consulted.) The
+                    // assert below pins the invariant so a future change that violates it fails loudly
                     // rather than mis-deserialising via the wrong property's serializer.
                     var fieldAccess = TryResolveFieldAccess(projection.Expression);
                     if (fieldAccess.Property != null)

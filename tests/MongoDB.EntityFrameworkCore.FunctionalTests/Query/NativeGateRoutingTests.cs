@@ -205,12 +205,15 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void A_enum_as_string_where_equals_routing()
     {
         var collection = SeedEnum(nameof(A_enum_as_string_where_equals_routing));
-        // Locked routing: an enum equality predicate falls BACK to driver-LINQ. EF emits the comparison as
-        // `(int)e.Status == (int)Status.Active`, i.e. a Convert of the member to the enum's underlying type;
-        // MongoExpressionTranslator.HasNumericConvert treats that cast as semantically significant and refuses
-        // the shape (conservative — worst case is a fallback, never a wrong result). Parity holds via fallback
-        // (see A_enum_as_string_where_equals_parity).
-        Assert.False(WentNative(collection, q => q.Where(e => e.Status == Status.Active).ToList(), EnumModel));
+        // UNLOCKED (EF-403 slice A1, Task 5): this used to lock the fallback by name. EF emits the comparison
+        // as `(int)e.Status == (int)Status.Active`, i.e. a Convert of the member to the enum's own underlying
+        // type. That is now recognized as an IDENTITY-LIKE convert (MongoExpressionTranslator.HasNumericConvert
+        // / IsIdentityLikeConvert): the comparison happens on the SAME stored value, so the field ref is the
+        // stored field unchanged and the constant KEEPS the property's own serializer (rendering "Active", not
+        // the raw underlying int) — which is what lets the query go native and still match the string-stored
+        // rows. Values are unaffected by the routing change; see A_enum_as_string_where_equals_parity, which
+        // must stay green either way.
+        Assert.True(WentNative(collection, q => q.Where(e => e.Status == Status.Active).ToList(), EnumModel));
     }
 
     [Fact]

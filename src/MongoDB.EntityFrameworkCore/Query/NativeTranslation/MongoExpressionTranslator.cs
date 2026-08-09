@@ -108,7 +108,7 @@ internal sealed partial class MongoExpressionTranslator
     public bool TryTranslateField(Expression keySelectorBody, [NotNullWhen(true)] out MongoFieldExpression? result)
     {
         result = null;
-        if (!TryResolveMember(Unwrap(keySelectorBody), out var property, out var path))
+        if (!TryResolveMember(UnwrapOrderPreserving(keySelectorBody), out var property, out var path))
             return false;
 
         result = new MongoFieldExpression(property, path);
@@ -247,6 +247,7 @@ internal sealed partial class MongoExpressionTranslator
         {
             MongoFieldExpression f => NativeGroupByBinder.HasDefaultKeySerialization(f.Property),
             MongoBinaryExpression b => AllFieldsDefaultSerialized(b.Left) && AllFieldsDefaultSerialized(b.Right),
+            MongoConvertExpression c => AllFieldsDefaultSerialized(c.Operand),
             // A MongoSizeExpression falls into the catch-all below, deliberately: an array COUNT carries no
             // property serialization, so there is no converter / BsonRepresentation for it to diverge on.
             _ => true
@@ -257,6 +258,77 @@ internal sealed partial class MongoExpressionTranslator
         => e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u
             ? Unwrap(u.Operand)
             : e;
+
+    /// <summary>
+    /// Strips only the <see cref="ExpressionType.Convert"/> layers that PRESERVE ORDER, for a sort key.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a sort key cannot use the general <see cref="Unwrap"/>.</b> That helper strips any
+    /// <c>Convert</c>/<c>ConvertChecked</c> unconditionally, so a narrowing or signed/unsigned cast in a sort
+    /// key was silently discarded and <c>$sort</c> ordered by the RAW STORED VALUE. MEASURED:
+    /// <c>OrderBy(x =&gt; (int)x.D)</c> over a <c>double</c> returned a different order from BOTH in-memory
+    /// LINQ and explicit <c>DriverLinq</c>, and <c>(uint)x.I</c> / <c>(short)x.I</c> were genuine order
+    /// REVERSALS — wrong rows in the wrong order, with no exception, under the default mode.
+    /// </para>
+    /// <para>
+    /// <b>What is ORDER-preserving (not necessarily value-preserving), and why each one is enough.</b> A
+    /// nullable ↔ underlying convert (which EF inserts freely) changes no value; a boxing convert to
+    /// <see cref="object"/> changes no value; and a WIDENING numeric convert is monotonic — <b>not</b> because
+    /// every entry of <see cref="WideningNumericConversions"/> is value-preserving (it is not: <c>(int, float)</c>,
+    /// <c>(long, float)</c>, <c>(long, double)</c>, <c>(ulong, float)</c> and <c>(ulong, double)</c> can collapse
+    /// two distinct integers onto the same float/double, e.g. <c>(float)16777217L == (float)16777216L</c>) — but
+    /// because IEEE round-to-nearest is monotone non-decreasing, so two source values that tie after rounding
+    /// were already adjacent in source order and their relative order among themselves is exactly what
+    /// "ties" means. Order preservation is the only property a sort key needs, so the weaker guarantee is
+    /// sufficient here even though it would not be for, say, a `GroupBy` key (grouping needs VALUE equality,
+    /// not order — see the caution below). Everything else stays in the tree, so <see cref="TryResolveMember"/>
+    /// declines it and the caller falls through to <see cref="TryTranslateValue"/>, which can render an
+    /// explicit <c>$toX</c> (or decline in turn).
+    /// </para>
+    /// <para>
+    /// <b><see cref="WideningNumericConversions"/> tracks the C# implicit-conversion table closely but not
+    /// exactly</b> — it omits <c>char</c>'s own widening conversions (<c>char</c> → <c>ushort</c>/<c>int</c>/
+    /// <c>uint</c>/<c>long</c>/<c>ulong</c>/<c>float</c>/<c>double</c>/<c>decimal</c>). That omission only makes
+    /// this method MORE conservative: an unrecognized widening still declines rather than mis-sorting, so a
+    /// <c>char</c> cast in a sort key falls through to <see cref="TryTranslateValue"/> instead of going native
+    /// here, which is safe, just not optimal.
+    /// </para>
+    /// <para>
+    /// <b>Every other <see cref="TryTranslateField"/> caller is unaffected by this helper's weaker (order-only,
+    /// not value) guarantee.</b> <see cref="TryTranslateField"/> has call sites beyond the sort key this helper
+    /// guards — <c>NativeGroupByBinder</c>, <c>NativeCardinalityBinder</c>, <c>NativeProjectionBinder</c>, and
+    /// <c>NativeSelectManyBinder</c> — but every one of them pre-filters its input to a <see cref="MemberExpression"/>
+    /// (or an <c>EF.Property</c> call) before calling in, so the <c>while</c> loop above never executes for
+    /// them and their behavior is byte-identical to the old blanket <see cref="Unwrap"/>. A FUTURE caller that
+    /// does NOT pre-filter would inherit this ORDER-preservation rule where VALUE preservation is what its own
+    /// semantics need — e.g. a <c>GroupBy</c> key over <c>(float)x.LongVal</c> would group by the raw
+    /// <c>long</c> values where in-memory LINQ collapses two of them onto the same <c>float</c> key.
+    /// </para>
+    /// <para>
+    /// <b>Do not "simplify" this back to <see cref="Unwrap"/>.</b> Doing so reintroduces the defect above; the
+    /// functional pins in <c>NativeCastTests</c> are what catch it.
+    /// </para>
+    /// </remarks>
+    private static Expression UnwrapOrderPreserving(Expression e)
+    {
+        while (e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u)
+        {
+            var fromType = Nullable.GetUnderlyingType(u.Operand.Type) ?? u.Operand.Type;
+            var toType = Nullable.GetUnderlyingType(u.Type) ?? u.Type;
+
+            if (fromType != toType
+                && toType != typeof(object)
+                && !IsWideningNumericConvert(fromType, toType))
+            {
+                return e; // order-changing: leave it in place so the caller declines and falls through
+            }
+
+            e = u.Operand;
+        }
+
+        return e;
+    }
 
     // Returns null for any unsupported node (the caller propagates null → false return).
     private MongoExpression? TranslateNode(Expression node)
@@ -483,6 +555,29 @@ internal sealed partial class MongoExpressionTranslator
     /// non-commutative comparisons need their original left/right order inside <c>$expr</c>).
     /// </item>
     /// </list>
+    /// <para>
+    /// <b>EF-403 (slice A1, Task 7) — the site-B fall-through.</b> The convert classification that
+    /// <see cref="HasNumericConvert"/> performs for the query-native branch used to be a VETO on the whole
+    /// comparison (<c>return null</c>). It is now a ROUTE: a cast the query-native branch cannot absorb no
+    /// longer declines the comparison, it declines only that BRANCH, and control falls through to the
+    /// <c>$expr</c> path below, where Task 3's <see cref="MongoConvertExpression"/> renders it as an explicit
+    /// <c>$toX</c> over the field ref. The three-outcome classification itself (widening numeric /
+    /// identity-like / decline) is UNCHANGED — this only changes what "decline" LANDS ON, and it is reached
+    /// from both the member-left and the mirrored member-right branch.
+    /// </para>
+    /// <para>
+    /// <b>THIS CHANGES RESULTS FOR A NARROWING CAST AGAINST A CONSTANT, DELIBERATELY, BY OWNER RULING. Do not
+    /// "correct" it toward the driver.</b> MEASURED: for <c>(int)x.D &gt; 0</c> the driver's own LINQ provider
+    /// DROPS the cast on this shape and answers as though the comparison were <c>x.D &gt; 0</c>; the native
+    /// rendering emits <c>{$expr: {$gt: [{$toInt: "$D"}, 0]}}</c> and answers what C# answers. The owner ruled:
+    /// take the CLR-correct answer and document the divergence. Two consequences follow, and both are recorded
+    /// rather than merely implemented — (1) "query results are unchanged" is no longer a blanket argument for
+    /// making the native path the default, and (2) <c>UseQueryMode(MongoQueryMode.DriverLinq)</c> no longer
+    /// restores the same answer for this shape. This is the OPPOSITE of the EF-359 accepted-divergence family
+    /// (where native and driver-LINQ agree with each other and both differ from the CLR): here native is
+    /// deliberately MORE correct than driver-LINQ. Pinned, three legs in one test, by
+    /// <c>NativeCastTests.Narrowing_cast_vs_constant_returns_the_CLR_answer_and_diverges_from_driver_linq</c>.
+    /// </para>
     /// </remarks>
     private MongoBinaryExpression? TranslateComparison(BinaryExpression be)
     {
@@ -493,37 +588,59 @@ internal sealed partial class MongoExpressionTranslator
 
         if (TryResolveMember(leftUnwrapped, out var leftProperty, out var leftPath) && IsSimpleValue(rightUnwrapped))
         {
-            // Numeric cast on the member side changes comparison semantics — fall back.
-            if (HasNumericConvert(be.Left, leftProperty!.ClrType))
-                return null;
+            // A WIDENING numeric cast or an IDENTITY-LIKE cast on the member side is absorbed (the field ref
+            // is the stored field exactly as for a bare member); anything else still changes comparison
+            // semantics, so it declines THIS BRANCH and — as of Task 7 — falls THROUGH to the general $expr
+            // path below instead of declining the whole comparison, where the cast renders as an explicit
+            // MongoConvertExpression ($toX). See HasNumericConvert for the three-outcome classification; this
+            // site only consumes it, it does not alter it.
+            if (HasNumericConvert(be.Left, leftProperty!.ClrType, out var leftWideningTarget, out var leftIdentityLike))
+            {
+                if (!CanFallThroughToExpr(leftProperty))
+                    return null;
+            }
+            else
+            {
+                var mongoOp = MapComparisonOperator(be.NodeType);
+                if (mongoOp is null)
+                    return null;
 
-            var mongoOp = MapComparisonOperator(be.NodeType);
-            if (mongoOp is null)
-                return null;
+                var valueExpr = TranslateValue(
+                    rightUnwrapped, ConstantSerializationContext(leftProperty, leftWideningTarget, leftIdentityLike));
+                if (valueExpr is null)
+                    return null;
 
-            var valueExpr = TranslateValue(rightUnwrapped, leftProperty);
-            if (valueExpr is null)
-                return null;
-
-            return new MongoBinaryExpression(mongoOp.Value, new MongoFieldExpression(leftProperty, leftPath!), valueExpr);
+                return new MongoBinaryExpression(
+                    mongoOp.Value, new MongoFieldExpression(leftProperty, leftPath!), valueExpr);
+            }
         }
 
-        if (TryResolveMember(rightUnwrapped, out var rightProperty, out var rightPath) && IsSimpleValue(leftUnwrapped))
+        // The mirrored shape, and the SAME fall-through rule. Note the $expr path does NOT mirror the operator
+        // — it keeps the original left/right order, which is what a non-commutative comparison inside $expr
+        // needs, so this is a genuinely different emission from the branch above rather than a spelling of it.
+        else if (TryResolveMember(rightUnwrapped, out var rightProperty, out var rightPath)
+                 && IsSimpleValue(leftUnwrapped))
         {
-            // Numeric cast on the member side changes comparison semantics — fall back.
-            if (HasNumericConvert(be.Right, rightProperty!.ClrType))
-                return null;
+            if (HasNumericConvert(be.Right, rightProperty!.ClrType, out var rightWideningTarget, out var rightIdentityLike))
+            {
+                if (!CanFallThroughToExpr(rightProperty))
+                    return null;
+            }
+            else
+            {
+                // Mirror the operator since the member is on the right-hand side but must render on the Left.
+                var mongoOp = MapComparisonOperator(Mirror(be.NodeType));
+                if (mongoOp is null)
+                    return null;
 
-            // Mirror the operator since the member is on the right-hand side but must render on the Left.
-            var mongoOp = MapComparisonOperator(Mirror(be.NodeType));
-            if (mongoOp is null)
-                return null;
+                var valueExpr = TranslateValue(
+                    leftUnwrapped, ConstantSerializationContext(rightProperty, rightWideningTarget, rightIdentityLike));
+                if (valueExpr is null)
+                    return null;
 
-            var valueExpr = TranslateValue(leftUnwrapped, rightProperty);
-            if (valueExpr is null)
-                return null;
-
-            return new MongoBinaryExpression(mongoOp.Value, new MongoFieldExpression(rightProperty, rightPath!), valueExpr);
+                return new MongoBinaryExpression(
+                    mongoOp.Value, new MongoFieldExpression(rightProperty, rightPath!), valueExpr);
+            }
         }
 
         // --- Field-to-field / arithmetic-operand shape: always routes to $expr ---
@@ -555,6 +672,176 @@ internal sealed partial class MongoExpressionTranslator
 
         return new MongoBinaryExpression(generalOp.Value, leftOperand, rightOperand);
     }
+
+    /// <summary>
+    /// EF-403 (slice A1, Task 7). Gates the site-B fall-through: <see langword="true"/> when a comparison whose
+    /// cast the query-native branch could not absorb may fall through to the general <c>$expr</c> path,
+    /// <see langword="false"/> when it must keep DECLINING the whole comparison as it did before Task 7.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is Guard B, reached from a third site — the same
+    /// <see cref="NativeGroupByBinder.HasDefaultKeySerialization"/> predicate the GroupBy key, the
+    /// <c>OfType</c> discriminator, and <see cref="AllFieldsDefaultSerialized"/> (Task 6's projection-leaf
+    /// gate) already use — and it is LOAD-BEARING, not defence-in-depth. It was added because the
+    /// fall-through MEASURABLY produced silently wrong rows without it.</b>
+    /// </para>
+    /// <para>
+    /// <b>MEASURED, on the tree with the fall-through in place and this guard removed:</b> a <c>double</c>
+    /// property carrying a value-TRANSFORMING converter (<c>v =&gt; v * 2</c>), CLR value <c>3.5</c>, stored
+    /// <c>7.0</c>, under <c>Where(x =&gt; (int)x.Weight &gt; 3)</c>. The correct answer is ZERO rows
+    /// (<c>(int)3.5 == 3</c>, and <c>3 &gt; 3</c> is false). The fall-through emits
+    /// <c>{$expr: {$gt: [{$toInt: "$Weight"}, 3]}}</c> over the RAW STORED value, so <c>(int)7.0 == 7 &gt; 3</c>
+    /// matched and it returned ONE row — silently, under the DEFAULT <c>Native</c> mode, for a shape that
+    /// declined cleanly before this task. That is the exact failure class this codebase has now hit three
+    /// times in this area (see the "GOVERNING HAZARD" note in <c>Query/AGENTS.md</c>), so it is closed here
+    /// rather than recorded as a residual.
+    /// </para>
+    /// <para>
+    /// <b>Why the member's own property is enough, rather than a walk of the translated tree.</b> This site is
+    /// reached only from the query-native (member-vs-value) shape, so there is exactly ONE field in the
+    /// comparison — the member this method is handed. The constant side carries no property at all on the
+    /// <c>$expr</c> path (<see cref="TranslateOperand"/> serializes it via <c>BsonValue.Create</c>).
+    /// <see cref="AllFieldsDefaultSerialized"/> over the translated operand would give the same answer for this
+    /// shape; the property check is used because it can run BEFORE translation, so a declining comparison never
+    /// builds a node it then discards.
+    /// </para>
+    /// <para>
+    /// <b>PROVENANCE CORRECTION (fix round 1) — the earlier wording here was wrong, and the wrong kind of
+    /// wrong.</b> This remark used to say the general <c>$expr</c> path below was left unguarded because it
+    /// "has been reachable since EF-329 … a shipped path". That is true of a PLAIN field-to-field comparison
+    /// and FALSE of the cast subset: <see cref="TranslateOperand"/>'s <see cref="MongoConvertExpression"/>
+    /// branch was introduced by Task 3 of THIS slice (<c>94101da5</c>, unreleased), so
+    /// <c>Where(o =&gt; (int)o.EncWeight &gt; o.Other)</c> was a WITHIN-SLICE regression, not an inherited
+    /// exposure — and "don't touch a shipped path" never applied to it. It was MEASURED against the slice base
+    /// and CLOSED at <see cref="TranslateOperand"/>'s own convert branch (see the guard there for the figures).
+    /// A wrong provenance is what makes a future editor defer the wrong thing, so it is corrected here rather
+    /// than quietly replaced.
+    /// </para>
+    /// <para>
+    /// <b>Relationship to that deeper guard, measured rather than assumed.</b> Once
+    /// <see cref="TranslateOperand"/> refuses to build a <see cref="MongoConvertExpression"/> over a
+    /// non-default-serialized field, this early check is SUBSUMED for every shape reachable here: a member-side
+    /// convert that <see cref="HasNumericConvert"/> declines is exactly a convert
+    /// <see cref="TranslateOperand"/> would then build (or already refuse, for an unrenderable target).
+    /// <b>MEASURED, and the number is stated rather than softened: forcing this method to return
+    /// <see langword="true"/> unconditionally turns ZERO tests red — 0 of 33 in <c>NativeCastTests</c> and 0 of
+    /// 121 in <c>MongoExpressionTranslatorTests</c>.</b> The same mutation applied to the deeper guard turns 1
+    /// red (<c>NativeCastTests.Field_to_field_cast_over_a_value_converted_property_still_declines</c>, with
+    /// <c>returned p</c> — the wrong row — in the assertion message), which is what shows the two are not
+    /// symmetric: the deeper guard is netted, this one is not.
+    /// </para>
+    /// <para>
+    /// <b>It is kept anyway, as an EARLY-OUT, and that word is load-bearing: it is NOT an independent
+    /// protection and must not be cited as a second line of defence.</b> Two reasons to keep it: it declines
+    /// BEFORE translation, so a doomed comparison never builds a node it discards; and it states the site-B
+    /// fall-through's own precondition AT the fall-through, rather than leaving it to a guard two call levels
+    /// away that a future edit to <see cref="TranslateOperand"/> could move. If a later change makes that
+    /// double statement a liability rather than an aid, DELETE this method — do not add a test to "cover" it,
+    /// which would only pin the redundancy in place.
+    /// </para>
+    /// <para>
+    /// <b>What is still unguarded, stated narrowly:</b> a PLAIN field-to-field / arithmetic comparison with no
+    /// cast (<c>o.EncWeight &gt; o.Other</c>). That path predates this slice, has shipped, and its own question
+    /// needs its own measurement. Neither this method nor the guard in <see cref="TranslateOperand"/> is a
+    /// general statement about the <c>$expr</c> dialect's safety.
+    /// </para>
+    /// </remarks>
+    private static bool CanFallThroughToExpr(IProperty property)
+        => NativeGroupByBinder.HasDefaultKeySerialization(property);
+
+    /// <summary>
+    /// Chooses the serialization context for the CONSTANT side of a query-native comparison: the property's
+    /// own serializer (<paramref name="property"/>), or none at all (<see langword="null"/> ⇒
+    /// <c>BsonValue.Create</c> over the constant's own CLR value, i.e. the COMPARISON's type).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EF-403 (slice A1, Task 5). <paramref name="isIdentityLikeConvert"/> is checked FIRST and
+    /// unconditionally overrides the widening rule below it: an identity-like convert (enum ↔ underlying,
+    /// <c>char</c> → <c>int</c>, boxing to <c>object</c>) does not move the comparison to a different STORED
+    /// representation — it is the exact same stored value under a different declared CLR type — so the
+    /// constant must go through the SAME serializer the property itself uses. This is NOT the same rule as
+    /// the widening arm below, and collapsing the two is exactly the blanket mistake Task 4 measured wrong
+    /// (see <see cref="HasNumericConvert"/>): an enum-as-string property's constant would render as a raw
+    /// number instead of the mapped string, and the comparison would silently match nothing.
+    /// </para>
+    /// <para>
+    /// <b>THIS RULE IS NOT OPTIONAL, AND IT IS NOT BLANKET. Both halves are MEASURED (spike §6.2).</b>
+    /// </para>
+    /// <para>
+    /// <b>Why the comparison type is needed at all.</b> Absorbing a widening cast moves the comparison from the
+    /// STORED type to the CAST's type. Serializing the constant through the stored property COERCES it to the
+    /// stored CLR type — so a fractional constant is TRUNCATED to an integral stored type and the query returns
+    /// WRONG ROWS, silently, under the default <c>Native</c> mode. MEASURED: <c>(double)x.I &gt;= 2.5</c> emitted
+    /// <c>{"I": {"$gte": 2}}</c> and returned <c>b,c,d,e</c> where <c>b,c,e</c> is correct (both the CLR and
+    /// driver-LINQ). With the comparison type it emits <c>{"I": {"$gte": 2.5}}</c>, returns the correct rows,
+    /// and the emitted MQL matches the driver byte for byte.
+    /// </para>
+    /// <para>
+    /// <b>Why it must NOT be applied unconditionally.</b> The spike's blanket variant (re-serialize EVERY
+    /// convert layer's constant in the comparison type) cost 5 specification and 23 functional failures, all
+    /// enum-as-string or value-converted properties. RE-MEASURED here, on this tree, by forcing this method to
+    /// return <see langword="null"/> unconditionally: <b>5 specification failures — the identical set,
+    /// <c>BuiltInDataTypesMongoTest.Can_query_using_any_data_type{,_shadow,_nullable_shadow}</c> +
+    /// <c>Can_query_using_any_nullable_data_type{,_as_literal}</c> — and 47 functional</b>, essentially all
+    /// <c>ValueConverterTests.*_can_deserialize_and_query_from_*</c> plus
+    /// <c>NativeGateRoutingTests.A_string_as_objectId_where_equals_parity</c>. (47 rather than 23 because that
+    /// mutation is BROADER than the spike's: it drops the property serializer for every query-native
+    /// comparison, cast or not, where the spike's only touched convert layers.)
+    /// </para>
+    /// <para>
+    /// <b>Which guard actually holds the ENUM arm, corrected against the spike's framing:</b> not this
+    /// conjunct — <see cref="HasNumericConvert"/> is. An <c>enum -&gt; underlying</c> convert is not in
+    /// <c>WideningNumericConversions</c> (that table holds primitive pairs only), so as of Task 4 it still
+    /// DECLINED and never reached this method with a tolerated target at all. MEASURED (Task 4): neither
+    /// <c>ValueConverterTests.Enum_can_deserialize_and_query_from_string</c> nor
+    /// <c>NativeGateRoutingTests.A_enum_as_string_where_equals_parity</c> — the two the spike named — was among
+    /// the 47 above.
+    /// </para>
+    /// <para>
+    /// <b>Superseded by Task 5, and stated precisely because the sentence above is now historical, not
+    /// current.</b> An enum ↔ underlying convert now DOES reach this method — via
+    /// <paramref name="isIdentityLikeConvert"/>, a THIRD, separately-tracked signal, never via
+    /// <paramref name="toleratedWideningTarget"/>. <see cref="HasNumericConvert"/> still never puts an
+    /// enum/underlying pair into <c>WideningNumericConversions</c>'s bucket; it now has a second bucket for it
+    /// instead. The two buckets exist because they demand OPPOSITE constant treatment (see this method's own
+    /// remarks above), so merging them back into one flag is exactly the mistake this task's brief warns
+    /// against repeating.
+    /// </para>
+    /// <para>
+    /// <b>So what THIS conjunct holds is the value-converted / non-default-represented property reached through
+    /// a genuinely widening numeric cast — and that is also the fixture that SEPARATES
+    /// <see cref="NativeGroupByBinder.HasDefaultKeySerialization"/> from the cheaper "the property's CLR type is
+    /// not an enum", which the spike left UNVERIFIED (§6.2, §11).</b> A plain <c>int</c> carried through a value
+    /// converter to a string satisfies "not an enum" but NOT <c>HasDefaultKeySerialization</c>, and the two
+    /// rules disagree observably: with the shipped conjunct <c>(long)x.Coded &gt;= 2L</c> emits
+    /// <c>{"Coded": {"$gte": "2"}}</c> and returns rows, while "not an enum" would emit the raw number <c>2</c>,
+    /// which MongoDB type-brackets against a string-stored field, returning NO rows. MEASURED: dropping ONLY
+    /// this conjunct (leaving the tolerated-target one) turns exactly THREE tests red across the whole EF10
+    /// solution, and zero specification tests — the two functional
+    /// <c>NativeCastTests.Widening_cast_comparison_over_a_value_converted_property_keeps_the_property_serializer</c>
+    /// and <c>…over_a_value_transforming_converter_returns_the_right_rows</c>, plus the unit
+    /// <c>MongoExpressionTranslatorTests.Widening_cast_over_a_value_converted_property_keeps_the_property_serializer</c>.
+    /// Those three are the conjunct's ONLY nets in the tree, so do not delete it as untested.
+    /// </para>
+    /// <para>
+    /// <b>Two sub-families are reachable, and only one of them fails loudly</b> — which is why this conjunct is
+    /// load-bearing rather than defence-in-depth. A <b>value-TRANSFORMING</b> numeric converter (e.g.
+    /// <c>v =&gt; v * 2</c>) would emit the UNCONVERTED constant against converted stored values and return
+    /// silently WRONG ROWS; a <b>re-encoding</b> converter or <c>BsonRepresentation</c> (int stored as a string)
+    /// would emit a raw number against a string field, which MongoDB type-brackets to ZERO rows. Both are
+    /// covered end to end — the transforming case by
+    /// <c>NativeCastTests.Widening_cast_comparison_over_a_value_transforming_converter_returns_the_right_rows</c>.
+    /// </para>
+    /// </remarks>
+    private static IProperty? ConstantSerializationContext(
+        IProperty property, Type? toleratedWideningTarget, bool isIdentityLikeConvert)
+        => isIdentityLikeConvert
+            ? property // identity-like: SAME stored value — the constant must use the property's own serializer
+            : toleratedWideningTarget is not null && NativeGroupByBinder.HasDefaultKeySerialization(property)
+                ? null
+                : property;
 
     // A "simple value" comparison operand — a bare constant or query parameter, not a member and not an
     // arithmetic sub-expression. Used to detect the query-native (member vs. value) shape.
@@ -620,7 +907,45 @@ internal sealed partial class MongoExpressionTranslator
             var fromType = Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type;
             var toType = Nullable.GetUnderlyingType(unary.Type) ?? unary.Type;
             if (fromType != toType && !(allowNumericWidening && IsWideningNumericConvert(fromType, toType)))
-                return null; // type-changing cast (narrowing, or any cast on the comparison path) — fall back
+            {
+                // A type-changing cast MQL can express becomes an explicit $toX over the translated operand —
+                // which is what the driver's own LINQ provider emits in this position (MEASURED, spike §3.1).
+                // An unrenderable target still declines, matching the driver, which throws for those.
+                if (MongoConvertExpression.ToOperatorFor(toType) is null)
+                    return null;
+
+                var converted = TranslateOperand(unary.Operand, allowNumericWidening);
+                if (converted is null)
+                    return null;
+
+                // GUARD B, ON THE CAST SUBSET ONLY (EF-403 slice A1, Task 7 fix round 1). A $toX renders over
+                // the RAW STORED value, so a value-converted / non-default-represented field underneath it is
+                // converted at the WRONG point: the cast is applied to the provider value instead of the model
+                // value. MEASURED, on this branch as originally shipped by Task 3 (94101da5) and again at the
+                // slice base for comparison — `Where(o => (int)o.EncWeight > o.Other)` over a double carrying
+                // `v => v * 2`, CLR 3.5 / stored 7.0, against Other = 5:
+                //
+                //   slice base fd6bd8ba : NativeOnly threw, default Native THREW (declined, then the driver's
+                //                         own ValueConverterSerializer limitation), in-memory LINQ []
+                //   with this branch    : NativeOnly returned [p], default Native RETURNED [p]  <-- WRONG
+                //   correct answer      : [] ((int)3.5 == 3, and 3 > 5 is false)
+                //
+                // So this was a WITHIN-SLICE regression (Task 3 is unreleased), not a pre-existing EF-329-era
+                // exposure and not an EF-359-family accepted divergence — the driver does not agree with
+                // native here, it cannot answer this shape at all. Closed at the branch that originates the
+                // node rather than at any one call site, so every caller inherits it.
+                //
+                // SCOPE: this guards the CAST subset only. A PLAIN field-to-field comparison
+                // (`o.EncWeight > o.Other`, no cast) still goes native unguarded — that path predates the
+                // slice, has shipped, and its own question (does comparing two converted fields against each
+                // other need the same treatment?) needs its own measurement. Tracked separately; do not read
+                // this guard as a claim about that.
+                if (!AllFieldsDefaultSerialized(converted))
+                    return null;
+
+                return new MongoConvertExpression(converted, toType);
+            }
+
             return TranslateOperand(unary.Operand, allowNumericWidening); // benign or widening convert — unwrap and recurse
         }
 
@@ -784,21 +1109,230 @@ internal sealed partial class MongoExpressionTranslator
         return null; // any other node shape (method call, sub-expression, etc.) is not supported
     }
 
-    // True when the operand wraps the member in a Convert/ConvertChecked to a semantically different
-    // type — i.e. a numeric cast that changes the comparison semantics. A nullable<->underlying widening
-    // convert is benign (EF adds it automatically) and is not treated as a cast.
-    private static bool HasNumericConvert(Expression operand, Type propertyClrType)
+    /// <summary>
+    /// Classifies the <c>Convert</c>/<c>ConvertChecked</c> layers wrapping the MEMBER side of a
+    /// <c>member &lt;op&gt; constant</c> comparison. Returns <see langword="true"/> when the comparison must
+    /// be declined, <see langword="false"/> when it may proceed.
+    /// </summary>
+    /// <param name="operand">The raw (un-unwrapped) member-side operand.</param>
+    /// <param name="propertyClrType">The resolved property's CLR type.</param>
+    /// <param name="toleratedWideningTarget">
+    /// On a <see langword="false"/> return: the OUTERMOST tolerated WIDENING NUMERIC target — the type the
+    /// comparison actually happens in — or <see langword="null"/> when no widening layer was absorbed (a bare
+    /// member, only benign nullable&lt;-&gt;underlying converts, or an identity-like convert instead — see
+    /// <paramref name="isIdentityLikeConvert"/>). The caller uses this to decide the constant's serialization
+    /// context; see <see cref="TranslateComparison"/>.
+    /// </param>
+    /// <param name="isIdentityLikeConvert">
+    /// EF-403 (slice A1, Task 5). On a <see langword="false"/> return: <see langword="true"/> when at least one
+    /// absorbed layer was IDENTITY-LIKE (enum ↔ its own underlying type or a WIDENING of it, <c>char</c> →
+    /// <c>int</c>, or boxing to <c>object</c>) rather than a widening numeric conversion. This is a SEPARATE,
+    /// THIRD outcome from <paramref name="toleratedWideningTarget"/> — both are "tolerate", but they demand
+    /// OPPOSITE constant treatment (see <see cref="ConstantSerializationContext"/>), so they are tracked
+    /// independently rather than folded into one flag. <b>PRECEDENCE (fix round 1):</b> if the SAME chain also
+    /// sets <paramref name="toleratedWideningTarget"/> (e.g. <c>(object)(double)x.I</c> — boxing wrapping a
+    /// widening numeric cast), this parameter comes back <see langword="false"/> — the widening arm wins,
+    /// because it determines the type the comparison actually happens in, and an identity-like wrapper around
+    /// it changes nothing about that. See the precedence comment at this method's final assignment.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// EF-403 (slice A1, Task 4). This method used to be a pure VETO — any layer whose target differed from the
+    /// property's own CLR type declined the whole comparison, with no fall-through to the <c>$expr</c> path
+    /// below it. MEASURED (spike §7.2): it is the single highest-volume cast decline site in the whole
+    /// specification suite (140 declining occurrences, against 40 at <c>TranslateOperand</c>'s <c>Convert</c>
+    /// branch, and almost none of those 40 numeric) — so relaxing it, not <c>TranslateOperand</c>, is where
+    /// A1's yield lives. It now CLASSIFIES instead: a WIDENING numeric layer is tolerated (absorbed, i.e. the
+    /// field ref is the stored field exactly as for a bare member), anything else still declines.
+    /// </para>
+    /// <para>
+    /// EF-403 (slice A1, Task 5) widens the tolerated set a second time, with a THIRD outcome rather than
+    /// folding into the widening one: an IDENTITY-LIKE layer (see <see cref="IsIdentityLikeConvert"/>) is ALSO
+    /// tolerated — the comparison stays on the SAME stored value, so the field ref is again the stored field
+    /// unchanged — but it is reported via <paramref name="isIdentityLikeConvert"/>, never via
+    /// <paramref name="toleratedWideningTarget"/>, because the two outcomes need opposite constant serialization
+    /// (see <see cref="ConstantSerializationContext"/>). Keep the three outcomes — widening / identity-like /
+    /// decline — visibly distinct in this method's body; collapsing the first two into one "tolerate" bucket is
+    /// the exact blanket rule Task 4 measured to be wrong for a DIFFERENT pair of arms, and doing it again here
+    /// would reintroduce the same class of defect for enum-as-string constants.
+    /// </para>
+    /// <para>
+    /// <b>Absorbing rather than rendering a <c>$toX</c> is justified by DRIVER PARITY, not by value
+    /// preservation — the value-preservation half of that argument is FALSE for two admitted pairs and must not
+    /// be restated.</b> What holds unconditionally: on the query-dialect (member-vs-constant) path the driver's
+    /// own LINQ provider drops a widening cast entirely (spike §3.3, P10), so absorbing it keeps native and
+    /// driver-LINQ — this branch's oracle — in agreement, which is the whole basis for the relaxation.
+    /// </para>
+    /// <para>
+    /// What does NOT hold: <c>(long, double)</c> and <c>(ulong, double)</c> are in
+    /// <see cref="WideningNumericConversions"/> and <see cref="MongoConvertExpression.ToOperatorFor"/> admits
+    /// <see cref="double"/>, so <c>(double)x.SomeLong == 9007199254740992.0</c> is absorbed — and those pairs are
+    /// <b>not</b> value-preserving above 2^53 (see <see cref="UnwrapOrderPreserving"/>'s own remarks, which
+    /// record the same family for the sort path: IEEE round-to-nearest collapses distinct integers onto one
+    /// double). Native then compares the RAW stored <see cref="long"/> against the double, where in-memory LINQ
+    /// would have rounded the operand first, so the two can disagree. Native still equals driver-LINQ (the
+    /// driver drops the cast identically), so this joins the EF-359 <b>accepted-divergence</b> family — native
+    /// and driver-LINQ agree with each other and both differ from the CLR — rather than being wrong data.
+    /// MEASURED end-to-end by
+    /// <c>NativeCastTests.Widening_long_to_double_cast_above_2_53_diverges_from_in_memory_linq</c>; UNVERIFIED
+    /// at any other boundary (no probe crossed <see cref="ulong"/>'s range, or fed a NaN/Infinity).
+    /// </para>
+    /// <para>
+    /// The admissible TARGET set is <see cref="MongoConvertExpression.ToOperatorFor"/>'s — the single definition
+    /// of what MQL can express — rather than a second hand-rolled list. It costs nothing here: MEASURED (spike
+    /// §7.2), every widening pair in the suite's declining population targets <c>Int32</c>, <c>Int64</c> or
+    /// <c>Double</c>, all of which it admits. What it buys is that a tolerated comparison type is always one
+    /// whose constant <c>BsonValue.Create</c> renders unambiguously, which the constant rule below relies on.
+    /// </para>
+    /// </remarks>
+    private static bool HasNumericConvert(
+        Expression operand, Type propertyClrType, out Type? toleratedWideningTarget, out bool isIdentityLikeConvert)
     {
+        toleratedWideningTarget = null;
+        var sawIdentityLike = false;
         var underlying = Nullable.GetUnderlyingType(propertyClrType) ?? propertyClrType;
         while (operand is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u)
         {
             var to = Nullable.GetUnderlyingType(u.Type) ?? u.Type;
-            if (to != underlying)
-                return true;
+            var from = Nullable.GetUnderlyingType(u.Operand.Type) ?? u.Operand.Type;
+
+            // A layer that changes nothing but nullability (long -> long?) is benign and must be SKIPPED, not
+            // classified: `from == to`, so the widening test below would answer false and decline it. This is
+            // not hypothetical — MEASURED, it is the ONLY thing separating the 16 specification cases this arm
+            // converts from the spike's predicted 18: EF lowers
+            // `Where_method_call_nullable_type_reverse_closure_via_query_cache` to
+            // `Convert(Convert(e.EmployeeID, Int64), Nullable<Int64>) > <param>`, i.e. a genuine uint -> long
+            // widening wearing a nullable lift on the outside. The pre-existing `to != underlying` test below
+            // does not catch it either, because it compares against the PROPERTY's type, not this layer's own
+            // operand type.
+            if (from != to && to != underlying)
+            {
+                // Three outcomes, kept VISIBLY DISTINCT — collapsing the first two ("tolerate") loses the
+                // signal ConstantSerializationContext needs to pick the right constant treatment.
+                if (IsWideningNumericConvert(from, to) && MongoConvertExpression.ToOperatorFor(to) is not null)
+                {
+                    // WIDENING NUMERIC: tolerate, and record the outermost tolerated target — the comparison
+                    // happens in the outermost type, so the first one found is the one to report (e.g.
+                    // (double)(long)x.I compares in double).
+                    toleratedWideningTarget ??= to;
+                }
+                else if (IsIdentityLikeConvert(from, to))
+                {
+                    // IDENTITY-LIKE: tolerate — the SAME stored value, only its declared CLR type changes. Not
+                    // reported to the out param yet: a WIDENING layer elsewhere in the SAME chain must win
+                    // precedence (see the final assignment below) — fix round 1 found this reachable via
+                    // (object)(double)x.I, where the outer boxing layer must NOT mask the inner widening one.
+                    sawIdentityLike = true;
+                }
+                else
+                {
+                    toleratedWideningTarget = null;
+                    isIdentityLikeConvert = false;
+                    return true; // narrowing, signed/unsigned, or an unrenderable target — decline
+                }
+            }
+
             operand = u.Operand;
         }
 
+        // PRECEDENCE, fix round 1: a widening target found ANYWHERE in the chain wins over an identity-like
+        // layer found anywhere else in it. Both flags can be set by a single chain — (object)(double)x.I sets
+        // toleratedWideningTarget=double (from the inner cast) AND sawIdentityLike=true (from the outer boxing
+        // cast) — and ConstantSerializationContext checks isIdentityLikeConvert FIRST, so reporting both would
+        // let the identity-like arm's "always keep the property serializer" rule mask the widening arm's
+        // truncation protection, reopening case 9's silent-wrong-rows defect for a comparison that used to
+        // decline outright before this task. Widening must win because it is what determines the type the
+        // comparison ACTUALLY happens in; an identity-like layer merely wrapping it changes nothing about that.
+        isIdentityLikeConvert = sawIdentityLike && toleratedWideningTarget is null;
         return false;
+    }
+
+    /// <summary>
+    /// Identity-like converts: the comparison happens on the SAME stored value, so the member side needs no
+    /// <c>$toX</c> and the constant KEEPS the property's serializer (that is how an enum-as-string constant
+    /// renders at all — see <see cref="ConstantSerializationContext"/>'s remarks).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EF-403 (slice A1, Task 5). Four shapes, all identity-like:
+    /// <list type="bullet">
+    /// <item>enum → its own <see cref="Enum.GetUnderlyingType(Type)"/> OR a WIDENING of it, and back (see the
+    /// promotion correction below)</item>
+    /// <item><see cref="char"/> → <see cref="int"/></item>
+    /// <item><c>T</c> → <see cref="object"/> (boxing for a value type; a plain reference upcast for a reference
+    /// type — see the naming note below)</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Fix round 1 correction — an enum backed by a SUB-<c>int</c> underlying type (<c>short</c>,
+    /// <c>byte</c>, <c>ushort</c>, <c>sbyte</c>) reaches this method with a Convert target WIDER than its own
+    /// underlying type, and the exact-match rule alone declined it.</b> C# applies its ordinary binary numeric
+    /// promotion to an enum equality/relational comparison exactly as it would to any other sub-<c>int</c>
+    /// integral operand: the enum unwraps to its underlying type first, and if THAT is narrower than
+    /// <see cref="int"/> the comparison promotes to <see cref="int"/> — so a <c>short</c>-backed enum's member
+    /// side arrives as <c>Convert(member, Int32)</c>, not <c>Convert(member, Int16)</c>. MEASURED by a compiled
+    /// probe (not merely reasoned): <c>Enum64</c>/<c>Enum32</c>-backed comparisons arrive as
+    /// <c>Convert(m, Int64)</c>/<c>Convert(m, Int32)</c> (their own underlying type, exact match, unaffected by
+    /// this fix); <c>Enum16</c>/<c>Enum8</c>/<c>EnumU16</c>/<c>EnumS8</c>-backed comparisons ALL arrive as
+    /// <c>Convert(m, Int32)</c> — a genuine widening of the underlying type, not an exact match. The exact-match
+    /// rule alone declined all four of the narrower-than-<c>int</c> backings; this is why the shipped arm
+    /// admits <c>toType == underlying OR IsWideningNumericConvert(underlying, toType)</c> for the enum
+    /// direction, checked against the enum's OWN underlying type, not the outer <c>int</c>. This is exactly the
+    /// gap that cost this task its whole <c>BuiltInDataTypesMongoTest.Can_query_using_any_(nullable_)data_type*</c>
+    /// family on first delivery (6 specification cases) — every enum fixture added before this fix was
+    /// <c>int</c>-backed and so could never expose a promotion the rule already handled by exact match.
+    /// </para>
+    /// <para>
+    /// <b>The reverse direction (<c>underlying → enum</c>) is widened symmetrically, for consistency with the
+    /// forward direction's own "and back" contract, though no failing case forced it.</b> A member whose CLR
+    /// type is NARROWER than an enum's own underlying type, converted up to that enum type, is the same shape
+    /// in reverse — e.g. a <c>byte</c> member compared against a <see cref="int"/>-backed enum constant.
+    /// </para>
+    /// <para>
+    /// <b>What this fix deliberately still declines, and why that is correct, not incomplete:</b> a
+    /// LONG-backed enum narrowed to <see cref="int"/> (<c>(int)someLongBackedEnum == 5</c>) is a genuine
+    /// narrowing of the underlying type — <c>IsWideningNumericConvert(Int64, Int32)</c> is false — and stays
+    /// declined. This is the shape the design review named as needing to stay closed, and it does: the widening
+    /// check is directional (narrower-underlying → wider-target only), never the reverse.
+    /// </para>
+    /// <para>
+    /// <b>Known edge, recorded rather than fixed:</b> <c>char</c> → <c>long</c>/<c>double</c> still declines —
+    /// only <c>char</c> → <c>int</c> is admitted, per the brief. This is conservative (a decline still falls
+    /// back correctly), and it matches this same file's <c>WideningNumericConversions</c> table, which
+    /// similarly omits <c>char</c>'s own widening conversions and is documented there as making callers "MORE
+    /// conservative", not less.
+    /// </para>
+    /// <para>
+    /// <b>Naming, made precise:</b> <c>toType == typeof(object)</c> is broader than "boxing" — it also admits a
+    /// plain REFERENCE upcast for a reference-typed mapped member (e.g. <c>(object)x.SomeString</c>), which
+    /// involves no boxing at all. Both are identity-like for the same reason: the stored value does not change,
+    /// only its declared CLR type does. The method name is kept for its "widened over Task 4's numeric/enum
+    /// arms" resonance, not as a literal claim that every admitted shape boxes.
+    /// </para>
+    /// </remarks>
+    private static bool IsIdentityLikeConvert(Type fromType, Type toType)
+    {
+        if (fromType.IsEnum)
+        {
+            var underlying = Enum.GetUnderlyingType(fromType);
+            // Fix round 2: the widening disjunct is restricted to an INTEGRAL target. Without this, an
+            // int-backed enum cast to double/float/decimal (e.g. `(double)x.EnumProp >= 2.5`) also satisfies
+            // IsWideningNumericConvert(Int32, Double) and was wrongly admitted as identity-like — the constant
+            // then kept the ENUM property's serializer, and BsonValueSerializer.Coerce's Enum.ToObject throws
+            // ArgumentException for a non-integral value, an UNCAUGHT crash under the default Native mode (see
+            // this method's remarks). Every genuine C# enum-comparison PROMOTION this arm exists for
+            // (short/byte/ushort/sbyte -> Int32) is itself integral, so this restriction costs nothing there;
+            // it only closes the floating-point hole. See IsIntegerType.
+            return toType == underlying || (IsIntegerType(toType) && IsWideningNumericConvert(underlying, toType));
+        }
+
+        if (toType.IsEnum)
+        {
+            var underlying = Enum.GetUnderlyingType(toType);
+            return fromType == underlying || (IsIntegerType(fromType) && IsWideningNumericConvert(fromType, underlying));
+        }
+
+        return (fromType == typeof(char) && toType == typeof(int)) || toType == typeof(object);
     }
 
     // Mirror a relational operator for the case where the member is on the right-hand side.

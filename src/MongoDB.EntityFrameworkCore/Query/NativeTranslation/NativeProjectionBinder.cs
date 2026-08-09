@@ -124,8 +124,10 @@ internal static class NativeProjectionBinder
             // path. That equality is what makes the alias-addressed read and the document-path read the SAME
             // read, so the shaper built here stays correct when a LATE fallback hands it whole documents
             // instead of the projected ones (see ShouldStripBareProjectionOnFallback). A COMPUTED leaf (a
-            // count, a filtered count, arithmetic) has no document path and is declined below; admitting it
-            // needs the synthetic-alias tier, which is a separate change.
+            // count, a filtered count, arithmetic, OR — EF-322 slice A1, Task 6 — a numeric CAST) has no
+            // document path and is declined below; admitting it needs the synthetic-alias tier, which is a
+            // separate change (see NativeCastTests.Bare_cast_projection_leaf_declines_and_returns_correct_values
+            // for the cast case specifically).
             default:
             {
                 // A bare body appended onto an ALREADY-POPULATED projection is declined outright. Reaching
@@ -435,8 +437,62 @@ internal static class NativeProjectionBinder
         // (MongoExpressionNegator) all keep failing CLOSED for it by construction — see MongoFilteredSizeExpression's
         // own remarks for the full "sibling, not a flag" argument. This is still a node-kind gate, not "translation
         // succeeded": that is what keeps a bare constant/parameter leaf out (see the measurement above).
+        //
+        // EF-322 slice A1, Task 6 (fix round 1) folds a numeric CAST leaf (`new { X = (int)x.D }`) into this
+        // SAME call/gate, rather than giving it a second `TryTranslateValue` call — the two node kinds
+        // (MongoConvertExpression here, MongoSizeExpression/MongoFilteredSizeExpression above) are mutually
+        // exclusive outcomes of ONE translation attempt on the SAME leafExpression, so trying it twice would
+        // silently reintroduce the "avoids calling TryTranslateValue twice" property this comment's own ordering
+        // paragraph claims a few lines up — which a separate cast branch (this task's first-round shape) broke
+        // without saying so. No structural pre-filter on leafExpression's own top-level node kind is needed for
+        // the cast half either, for the identical reason it is not needed for the count half: MongoConvertExpression
+        // has exactly ONE construction site that originates a genuinely NEW node — TranslateOperand's Convert
+        // branch (MongoExpressionTranslator.cs) — so `value is MongoConvertExpression` already IMPLIES
+        // leafExpression was Convert-shaped. (A SECOND call site, MongoFieldPrefixRewriter.cs, exists too, but it
+        // only REWRITES an already-existing MongoConvertExpression's operand while prefixing a SelectMany scope —
+        // it never originates one from an unrelated leaf shape, so it has no bearing on this gate. An earlier
+        // draft of this comment said "exactly one construction site in the whole codebase", which is what the
+        // second site makes literally false; corrected here rather than repeated.)
+        //
+        // GUARD B — NOT THIS GATE — IS WHAT KEEPS A CAST OVER A VALUE-CONVERTED PROPERTY (OR A NON-DEFAULT
+        // BsonRepresentation) OFF THIS PATH, and that dependency belongs in this comment, not only in the read
+        // side's. TryTranslateValue applies Guard B (AllFieldsDefaultSerialized) to whatever TranslateOperand
+        // returns; its `MongoConvertExpression c => AllFieldsDefaultSerialized(c.Operand)` arm recurses THROUGH
+        // the cast into the field, and HasDefaultKeySerialization rejects a converter or a non-default
+        // representation there exactly as it does for the arithmetic/count/comparison gates elsewhere in this
+        // file — so `$toInt`/`$toLong`/`$toDouble`/`$toDecimal` over a RAW STORED (converted) value is never
+        // emitted; TryTranslateValue returns false and the leaf declines at TRANSLATE time, before this line is
+        // even reached. This is the fact that makes the read side's raw-alias bypass
+        // (MongoProjectionBindingRemovingExpressionVisitor's UnaryExpression{Convert} branch) safe: that bypass
+        // is reached only for a leaf THIS gate admitted, and this gate can never admit one backed by a converted
+        // field. If a future edit relaxes Guard B, or adds a cast-leaf path that does not route through
+        // TryTranslateValue, this dependency breaks silently and reopens the EF-402 defect class (see the A5
+        // `.Value`-peel note elsewhere in this file for that class's own read-side account) with no guard at
+        // this site. Pinned functionally by
+        // NativeCastTests.Cast_over_a_value_converted_property_declines_instead_of_reading_the_raw_stored_value,
+        // which asserts the NativeOnly OUTCOME AS A STRING ("threw NativeTranslationNotSupportedException")
+        // rather than a bare Assert.Throws — a regression that wrongly admits the leaf would print the WRONG
+        // VALUE it returned (the raw stored value, unconverted) instead of merely failing on a missing
+        // exception. (There is no working driver-LINQ oracle for this shape either — the same
+        // ValueConverterSerializer/IHasRepresentationSerializer limitation cases 12/13 measure for a numeric
+        // cast over a converted property in comparison position — so Native/DriverLinq are asserted only to
+        // throw, not to return a value; the NativeOnly assertion is what proves the guard.) The A5 precedent
+        // this mirrors is
+        // NativeNullableMemberTests.Value_converted_nullable_Value_projection_leaf_declines_instead_of_reading_the_raw_stored_value.
+        //
+        // A WIDENING cast (`(long)x.I`, `(double)x.I`) is a DELIBERATE, DOCUMENTED BOUNDARY, not a defect this
+        // gate fails to close. TranslateOperand's Convert branch UNWRAPS a widening conversion entirely rather
+        // than wrapping it in a MongoConvertExpression, so the translated result is a bare MongoFieldExpression
+        // (or, for a widened arithmetic/constant/parameter operand, whatever THAT resolves to) — a node kind
+        // this gate correctly declines, since it is not one of the three admitted kinds. The whole WRAPPED
+        // projection then falls back gracefully (correct values via driver-LINQ), exactly like any other
+        // declined leaf. Admitting an unwrapped field ref here would mean projecting the RAW STORED field under
+        // an alias whose declared CLR type is the CAST's target type — a read-back type question distinct from
+        // anything this task measured, and deliberately NOT taken up in this round (see the task report's
+        // recommendation for a possible follow-up ticket). Pinned as a boundary, not a residual, by
+        // NativeCastTests.Widening_cast_projection_leaf_still_falls_back_gracefully.
         if (translator.TryTranslateValue(leafExpression, out var value)
-            && value is MongoSizeExpression or MongoFilteredSizeExpression)
+            && value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression)
         {
             result = value;
             return true;

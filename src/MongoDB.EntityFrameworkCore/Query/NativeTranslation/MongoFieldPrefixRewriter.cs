@@ -51,6 +51,8 @@ internal static class MongoFieldPrefixRewriter
             // field paths are ELEMENT-relative (that is what the $filter variable addresses), so rewriting them would
             // mis-address every field inside the $filter.
             MongoFilteredSizeExpression f => new MongoFilteredSizeExpression(prefix + "." + f.ArrayPath, f.ElementPredicate, f.Type),
+            // The operand carries the field path; the conversion itself has nothing to prefix.
+            MongoConvertExpression c => new MongoConvertExpression(Rewrite(c.Operand, prefix), c.Type),
             MongoConstantExpression or MongoParameterExpression => expr,
             _ => throw new NativeTranslationNotSupportedException(
                 $"Cannot prefix-rewrite MongoExpression node '{expr.GetType().Name}'.")

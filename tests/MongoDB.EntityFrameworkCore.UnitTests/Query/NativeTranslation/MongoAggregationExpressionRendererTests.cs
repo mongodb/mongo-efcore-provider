@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -304,5 +305,58 @@ public class MongoAggregationExpressionRendererTests
                     new MongoConstantExpression("x", forSerialization: null), negated: false),
                 typeof(int))
         ];
+    }
+
+    // ------------------------------------------------------------------
+    // MongoConvertExpression — the $toX node (EF-322 slice A1, Task 3)
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(typeof(int), "$toInt")]
+    [InlineData(typeof(long), "$toLong")]
+    [InlineData(typeof(double), "$toDouble")]
+    [InlineData(typeof(decimal), "$toDecimal")]
+    public void Convert_node_renders_the_matching_to_operator(Type target, string op)
+    {
+        var node = new MongoConvertExpression(new MongoElementRefExpression("D", typeof(double)), target);
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse($$"""{ "{{op}}" : "$D" }"""), rendered.AsBsonDocument);
+    }
+
+    [Theory]
+    [InlineData(typeof(short))]
+    [InlineData(typeof(uint))]
+    [InlineData(typeof(float))]
+    public void Convert_node_to_a_target_MQL_cannot_express_is_not_renderable(Type target)
+    {
+        // MQL has no $toShort/$toUInt/$toFloat, and the driver's own LINQ provider throws for these targets too —
+        // so declining is the same boundary the oracle has, not a coverage choice.
+        Assert.Null(MongoConvertExpression.ToOperatorFor(target));
+        Assert.False(MongoAggregationExpressionRenderer.CanRender(
+            new MongoConvertExpression(new MongoElementRefExpression("I", typeof(int)), target)));
+    }
+
+    [Fact]
+    public void Convert_node_is_NOT_query_dialect_renderable()
+    {
+        // LOAD-BEARING: $expr is a hard server error inside $elemMatch, so a node that only the aggregation
+        // dialect can express must never be admitted by the query-dialect classifier.
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
+            new MongoConvertExpression(new MongoElementRefExpression("D", typeof(double)), typeof(int))));
+    }
+
+    [Fact]
+    public void Convert_node_reports_unrenderable_when_its_OPERAND_is()
+    {
+        // MongoUnaryExpression is one of the node kinds the aggregation dialect cannot express (CanRender admits
+        // field/element refs, constants/parameters, binaries over its listed operators, and the two size nodes —
+        // nothing else). Wrapping it in a convert must not launder it into renderability.
+        var unrenderable = new MongoUnaryExpression(
+            MongoUnaryOperator.Not, new MongoElementRefExpression("Flag", typeof(bool)));
+
+        Assert.False(MongoAggregationExpressionRenderer.CanRender(
+            new MongoConvertExpression(unrenderable, typeof(int))));
     }
 }

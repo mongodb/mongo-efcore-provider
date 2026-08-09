@@ -236,46 +236,81 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Carol"], nativeMod); // confirms $mod's non-C#-matching sign for -7 % 2 is exercised
     }
 
-    // ── 4. Numeric-cast operand: falls back to driver-LINQ rather than diverge ─────────────────────
+    // ── 4. Numeric-cast operand: EF-403 Task 3 (EF-322 slice A1) made this go NATIVE ───────────────
     //
-    // Empirically (see task-7-report.md), the driver's own LINQ translator renders a numeric cast
-    // inconsistently depending on shape: `(double)c.Age > c.Score` → explicit $toDouble on both operands;
-    // `(double)c.Age + c.Score > 5` → the cast is silently dropped. Reproducing this exactly would require
-    // re-deriving the driver's internal numeric-promotion rules, so MongoExpressionTranslator falls back
-    // for both shapes (TranslateOperand rejects any type-changing convert) rather than risk diverging.
-    // These tests prove the fallback still executes correctly (just not via native $expr).
+    // This section documents a FLIP, not a still-standing limitation — the two "NativeOnly_..._throws"
+    // pins below used to assert exactly that: a decline. Before Task 3, MongoExpressionTranslator's
+    // TranslateOperand rejected ANY type-changing convert on the comparison-operand path unconditionally
+    // (the driver's own LINQ translator renders the SAME cast inconsistently depending on shape — explicit
+    // $toDouble on a bare field-to-field comparison, silently dropped inside arithmetic — and reproducing
+    // that exactly would have meant re-deriving driver-internal numeric-promotion rules). Task 3 instead
+    // renders a type-changing cast to a renderable target (int/long/double/decimal) as an explicit
+    // MongoConvertExpression ($toX) in BOTH positions, which matches the driver's rendering for the
+    // field-to-field shape and merely differs cosmetically (cast rendered vs. dropped) for the arithmetic
+    // shape — the arithmetic OPERATORS work on the raw BSON numeric value regardless, so values agree
+    // either way (see NativeCastTests for the dedicated cast-breadth coverage this generalizes into).
 
     [Fact]
-    public void NativeOnly_cast_in_field_to_field_comparison_throws()
+    public void NativeOnly_cast_in_field_to_field_comparison_now_goes_native()
     {
-        var (collection, logs) = SeedCustomers(nameof(NativeOnly_cast_in_field_to_field_comparison_throws));
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_cast_in_field_to_field_comparison_now_goes_native));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
-
-        var query = db.Entities.Where(c => (double)c.Age > c.Score);
-
-        Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
-    }
-
-    [Fact]
-    public void Native_mode_cast_in_field_to_field_comparison_falls_back_and_returns_correct_results()
-    {
-        var (collection, logs) = SeedCustomers(nameof(Native_mode_cast_in_field_to_field_comparison_falls_back_and_returns_correct_results));
-        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
 
         var results = db.Entities.Where(c => (double)c.Age > c.Score).OrderBy(c => c.Name).ToList();
 
         Assert.Equal(["Alice"], results.Select(c => c.Name).ToArray()); // 7.0 > 2 true; 20 > 20 false; -7 > 2 false
+
+        var mql = Mql(logs);
+        Assert.Contains("$expr", mql);
+        Assert.Contains("$toDouble", mql);
     }
 
     [Fact]
-    public void NativeOnly_cast_in_arithmetic_operand_throws()
+    public void Cast_in_field_to_field_comparison_matches_driver_linq_results()
     {
-        var (collection, logs) = SeedCustomers(nameof(NativeOnly_cast_in_arithmetic_operand_throws));
+        var (collection, logs) = SeedCustomers(nameof(Cast_in_field_to_field_comparison_matches_driver_linq_results));
+        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+
+        var nativeNames = native.Entities.Where(c => (double)c.Age > c.Score).Select(c => c.Name).OrderBy(n => n).ToList();
+        var driverNames = driver.Entities.Where(c => (double)c.Age > c.Score).Select(c => c.Name).OrderBy(n => n).ToList();
+
+        // Parity ALONE passes when both paths agree on the same WRONG rows — this is the direct descendant of
+        // the pre-Task-3 Native_mode_..._falls_back_and_returns_correct_results test, whose absolute-value
+        // assertion (Alice: 7.0 > 2 true; Bob: 20 > 20 false; Carol: -7 > 2 false) is restored alongside parity.
+        Assert.Equal(["Alice"], nativeNames);
+        Assert.Equal(driverNames, nativeNames);
+    }
+
+    [Fact]
+    public void NativeOnly_cast_in_arithmetic_operand_now_goes_native()
+    {
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_cast_in_arithmetic_operand_now_goes_native));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        var query = db.Entities.Where(c => (double)c.Age + c.Score > 5);
+        var results = db.Entities.Where(c => (double)c.Age + c.Score > 5).OrderBy(c => c.Name).ToList();
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
+        // Alice: 7+2=9>5 true; Bob: 20+20=40>5 true; Carol: -7+2=-5, not >5.
+        Assert.Equal(["Alice", "Bob"], results.Select(c => c.Name).ToArray());
+
+        var mql = Mql(logs);
+        Assert.Contains("$expr", mql);
+        Assert.Contains("$add", mql);
+        // $toDouble is the operator this task exists to add — pin it, not just the pre-existing $add/$expr.
+        Assert.Contains("$toDouble", mql);
+    }
+
+    [Fact]
+    public void Cast_in_arithmetic_operand_matches_driver_linq_results()
+    {
+        var (collection, logs) = SeedCustomers(nameof(Cast_in_arithmetic_operand_matches_driver_linq_results));
+        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+
+        var nativeNames = native.Entities.Where(c => (double)c.Age + c.Score > 5).Select(c => c.Name).OrderBy(n => n).ToList();
+        var driverNames = driver.Entities.Where(c => (double)c.Age + c.Score > 5).Select(c => c.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(driverNames, nativeNames);
     }
 
     // ── 5. The !(comparison) widening (EF-335 / EF-322 Task 1) ─────────────────────────────────────

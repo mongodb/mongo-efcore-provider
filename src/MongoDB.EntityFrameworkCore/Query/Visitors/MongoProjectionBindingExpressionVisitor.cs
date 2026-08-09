@@ -180,6 +180,39 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 _projectionMapping[arithProjectionMember] = binaryExpression;
                 return new ProjectionBindingExpression(_queryExpression, arithProjectionMember, expression.Type);
 
+            // Native numeric-cast projection leaf (EF-322 slice A1, Task 6): register the WHOLE
+            // UnaryExpression{Convert} node as ONE projection member, exactly like the arithmetic case above —
+            // this is the A2-lesson fix. Without it, the default visitor walk (base.Visit -> VisitUnary's
+            // default recursion) visits only the OPERAND (the raw member access) and drops the Convert from
+            // _projectionMapping entirely; the read side (MongoProjectionBindingRemovingExpressionVisitor) then
+            // has no way to know a CONVERTED value ($toInt/$toLong/$toDouble/$toDecimal) was projected under
+            // this alias and misreads it through the PRE-CAST property's own serializer — e.g. re-interpreting
+            // the $toInt output as the source double property's raw representation. See that visitor's
+            // ProjectionBindingExpression case for the read-side half of this fix, and its own comment for why
+            // its pre-existing type-mismatch guard would otherwise convert this into a translate-time crash in
+            // EVERY query mode (not merely a silent misread) once this leaf is admitted.
+            // The Route == Projection guard is load-bearing for the same reason it is on the arithmetic case:
+            // NativeProjectionBinder sets Route = Projection only when EVERY leaf -- including this one -- is
+            // natively representable (i.e. translates to a MongoConvertExpression, never a bare unwrapped
+            // value); a mixed/fallback shape must fall through to the ordinary default walk untouched.
+            // The `Operand is not StructuralTypeShaperExpression` exclusion keeps this case disjoint from the
+            // UNRELATED structural navigation-Convert shape VisitMember's own switch matches on, at
+            // VisitMember's `case UnaryExpression unaryExpression: shaperExpression = unaryExpression.Operand as
+            // StructuralTypeShaperExpression; ...` (this file, VisitMember) -- a SINGLE-level
+            // `Convert(structuralTypeShaperExpression, T)`, produced when navigating into an embedded/entity
+            // sub-member. (An earlier draft of this comment named a DOUBLY-nested shape,
+            // `Convert(Convert(entityProjection, object), ValueBuffer)` -- that shape's OWN outer Operand is
+            // itself a UnaryExpression, not a StructuralTypeShaperExpression, so this conjunct would not have
+            // excluded it; the shape actually excluded is the single-level one VisitMember matches directly.
+            // Corrected here rather than repeated.) That shape's operand is a shaper/entity-projection node,
+            // never a plain member/constant/parameter/arithmetic operand a numeric cast leaf can be built from.
+            case UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked,
+                    Operand: not StructuralTypeShaperExpression } castExpression
+                when _queryExpression.Select.Route == NativeRoute.Projection:
+                var castProjectionMember = GetCurrentProjectionMember();
+                _projectionMapping[castProjectionMember] = castExpression;
+                return new ProjectionBindingExpression(_queryExpression, castProjectionMember, expression.Type);
+
             case MethodCallExpression methodCallExpression
                 when IsScalarMethodPropertyAccess(methodCallExpression):
                 var projMember = GetCurrentProjectionMember();

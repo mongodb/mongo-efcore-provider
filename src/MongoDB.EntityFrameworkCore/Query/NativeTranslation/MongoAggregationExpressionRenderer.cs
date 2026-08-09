@@ -58,6 +58,13 @@ internal static class MongoAggregationExpressionRenderer
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
             MongoFilteredSizeExpression filtered => RenderFilteredSize(filtered, placeholders, elementVariable),
+            MongoConvertExpression convert
+                => new BsonDocument(
+                    MongoConvertExpression.ToOperatorFor(convert.Type)
+                        ?? throw new NativeTranslationNotSupportedException(
+                            $"MQL has no conversion operator for '{convert.Type.Name}'. A convert to an "
+                            + "unrenderable target should have been declined at translate time."),
+                    Render(convert.Operand, placeholders, elementVariable)),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
@@ -83,6 +90,8 @@ internal static class MongoAggregationExpressionRenderer
                 => IsRenderableOperator(binary.Operator) && CanRender(binary.Left) && CanRender(binary.Right),
             MongoSizeExpression => true,
             MongoFilteredSizeExpression filtered => CanRender(filtered.ElementPredicate),
+            MongoConvertExpression convert
+                => MongoConvertExpression.ToOperatorFor(convert.Type) is not null && CanRender(convert.Operand),
             _ => false
         };
 

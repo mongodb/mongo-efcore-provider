@@ -33,6 +33,25 @@ public class MongoExpressionTranslatorTests
 {
     // --- Entity model used across tests ---
 
+    // EF-403 (slice A1, Task 5) identity-like-convert fixture. Tier is a plain (unconverted) enum — the
+    // constant-serializer discriminator for an enum-as-string CONSTANT is covered functionally
+    // (NativeCastTests.Enum_as_string_comparison_goes_native_and_returns_the_right_values); these unit tests
+    // pin the CLASSIFICATION only (does the comparison get admitted, and via which of the two tolerate arms).
+    private enum Tier { Bronze, Silver, Gold }
+
+    // Fix round 1 (EF-403 Task 5): a SUB-int-backed enum. C#'s own binary numeric promotion promotes a
+    // short/byte/ushort/sbyte-backed enum's equality/relational comparison to Int32 — a WIDENING of the
+    // enum's own underlying type, not an exact match — so the member-side Convert here targets Int32, not
+    // ShortTier's own Int16. This is the shape that cost the whole BuiltInDataTypesMongoTest family on first
+    // delivery, because Tier (above) is Int32-backed and so never exposed a promotion the exact-match rule
+    // already covered by coincidence.
+    private enum ShortTier : short { Bronze, Silver, Gold }
+
+    // Fix round 1 regression pin: a LONG-backed enum NARROWED to int is a genuine narrowing of the underlying
+    // type and must stay declined — the widening check is directional (narrower-underlying -> wider-target
+    // only), never the reverse.
+    private enum LongTier : long { Bronze, Silver, Gold }
+
     private class Customer
     {
         public ObjectId Id { get; set; }
@@ -41,6 +60,10 @@ public class MongoExpressionTranslatorTests
         public double DoubleScore { get; set; }
         public string Name { get; set; } = "";
         public bool Active { get; set; }
+        public Tier Level { get; set; }
+        public ShortTier ShortLevel { get; set; }
+        public LongTier LongLevel { get; set; }
+        public char Grade { get; set; }
         public int? NullableAge { get; set; }
         public bool? NullableFlag { get; set; }
     }
@@ -93,6 +116,14 @@ public class MongoExpressionTranslatorTests
         public double Weight { get; set; }
         public string Tag { get; set; } = "";
         public int EncStatus { get; set; }
+        // A CONVERTED, NON-int property, needed (and EncStatus above is NOT enough) to pin
+        // AllFieldsDefaultSerialized's MongoConvertExpression case: an int->long/double cast of EncStatus is
+        // WIDENING and unwraps in TranslateOperand's Convert branch before ever reaching a MongoConvertExpression
+        // — allowNumericWidening is true for TryTranslateValue and int->double/int->long are both admitted
+        // widenings, so the guard would never be exercised. A NARROWING cast of a converted double (double->int)
+        // is genuinely type-changing regardless of allowNumericWidening, so it always builds a
+        // MongoConvertExpression wrapping the converted field — the shape the guard must inspect.
+        public double EncWeight { get; set; }
     }
 
     // Fixtures for owned single-reference dotted-path resolution (EF-322 Task 2).
@@ -204,9 +235,9 @@ public class MongoExpressionTranslatorTests
 
     /// <summary>
     /// Builds a <see cref="MongoExpressionTranslator"/> over a fresh <see cref="Order"/> model (with
-    /// <see cref="Order.EncStatus"/> configured with a value converter, for guard-B coverage) and extracts
-    /// the body of a numeric value-selector lambda, for <see cref="MongoExpressionTranslator.TryTranslateValue"/>
-    /// tests.
+    /// <see cref="Order.EncStatus"/> and <see cref="Order.EncWeight"/> each configured with a value converter,
+    /// for guard-B coverage) and extracts the body of a numeric value-selector lambda, for
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> tests.
     /// </summary>
     private static (MongoExpressionTranslator Translator, Expression Body) BuildValueBody<T>(
         Expression<Func<T, object>> valueSelector) where T : class
@@ -214,7 +245,10 @@ public class MongoExpressionTranslatorTests
         using var db = SingleEntityDbContext.Create<T>(mb =>
         {
             if (typeof(T) == typeof(Order))
+            {
                 mb.Entity<Order>().Property(o => o.EncStatus).HasConversion(v => v * 2, v => v / 2);
+                mb.Entity<Order>().Property(o => o.EncWeight).HasConversion(v => v * 2, v => v / 2);
+            }
         });
         var entityType = db.Model.FindEntityType(typeof(T))!;
         // Value-selector lambdas returning a numeric type get an implicit Convert-to-object wrapper —
@@ -890,49 +924,497 @@ public class MongoExpressionTranslatorTests
         Assert.Null(result);
     }
 
-    // A numeric cast inside a field-to-field/arithmetic-operand comparison is rejected (falls back):
-    // empirically the driver's own LINQ translator renders the SAME cast inconsistently depending on
-    // shape (explicit $toDouble on a bare field-to-field comparison, silently dropped inside arithmetic)
-    // — reproducing that exactly would mean re-deriving driver-internal numeric-promotion rules, so this
-    // shape falls back to driver-LINQ rather than risk diverging from it. See task-7-report.md.
+    // EF-322 slice A1, Task 3: a numeric cast inside a field-to-field/arithmetic-operand comparison NOW
+    // TRANSLATES — TranslateOperand's Convert branch renders a type-changing cast to a renderable target as
+    // an explicit MongoConvertExpression ($toX) rather than declining, matching the shape the driver's own
+    // LINQ translator renders in this exact position (spike §3.1, P05/P14). Values agree regardless — $add
+    // et al. operate on the raw BSON numeric value, so an explicit $toDouble changes nothing about the
+    // arithmetic result. These two used to assert "reports_not_translatable"; they now assert the converted
+    // shape. See NativeCastTests (functional) for the end-to-end Native == DriverLinq == CLR proof.
 
     [Fact]
-    public void Cast_in_field_to_field_comparison_reports_not_translatable()
+    public void Cast_in_field_to_field_comparison_translates_to_a_convert_node()
     {
         var translator = NewTranslator(GetEntityType<Customer>());
         Expression<Func<Customer, bool>> predicate = c => (double)c.Age > c.Score;
 
-        var translated = translator.TryTranslate(predicate.Body, out var result);
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
 
-        Assert.False(translated);
-        Assert.Null(result);
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, cmp.Operator);
+        var convert = Assert.IsType<MongoConvertExpression>(cmp.Left);
+        Assert.Equal(typeof(double), convert.Type);
+        Assert.IsType<MongoFieldExpression>(convert.Operand);
+        // c.Score (int) also implicitly widens to double to compare against the explicitly-cast left side.
+        var rightConvert = Assert.IsType<MongoConvertExpression>(cmp.Right);
+        Assert.Equal(typeof(double), rightConvert.Type);
+        Assert.IsType<MongoFieldExpression>(rightConvert.Operand);
     }
 
     [Fact]
-    public void Cast_in_arithmetic_operand_reports_not_translatable()
+    public void Cast_in_arithmetic_operand_translates_to_a_convert_node()
     {
         var translator = NewTranslator(GetEntityType<Customer>());
         Expression<Func<Customer, bool>> predicate = c => (double)c.Age + c.Score > 5;
 
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, cmp.Operator);
+        var add = Assert.IsType<MongoBinaryExpression>(cmp.Left);
+        Assert.Equal(MongoBinaryOperator.Add, add.Operator);
+        // Both operands widen to double for the +, so both sides are explicit converts — same depth of
+        // assertion (Type plus operand kind) as the field-to-field sibling above.
+        var leftConvert = Assert.IsType<MongoConvertExpression>(add.Left);
+        Assert.Equal(typeof(double), leftConvert.Type);
+        Assert.IsType<MongoFieldExpression>(leftConvert.Operand);
+        var rightConvert = Assert.IsType<MongoConvertExpression>(add.Right);
+        Assert.Equal(typeof(double), rightConvert.Type);
+        Assert.IsType<MongoFieldExpression>(rightConvert.Operand);
+        Assert.IsType<MongoConstantExpression>(cmp.Right);
+    }
+
+    // EF-403 (slice A1, Task 4) re-baselines the tripwire that used to sit here,
+    // `Cast_on_member_vs_constant_still_reports_not_translatable`, into the four cases below. The
+    // query-native member-vs-constant cast guard (HasNumericConvert) no longer VETOES every cast — it
+    // CLASSIFIES, tolerating a widening numeric layer whose target MQL can express, and still declining
+    // everything else. The tripwire was written for EF-329, which deliberately did not move this guard;
+    // this task is the one that does.
+
+    [Fact]
+    public void Widening_cast_on_member_vs_constant_now_translates_with_the_constant_in_the_comparison_type()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (double)c.Age > 5.0;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, cmp.Operator);
+
+        // The widening layer is ABSORBED, not rendered: the field ref is the plain stored field, exactly as
+        // for a bare `c.Age > 5.0`, and NOT a MongoConvertExpression. That is what keeps the comparison in the
+        // indexable query dialect (a $toDouble would force $expr) and what makes the emitted MQL identical to
+        // the driver's, which drops a widening cast on this path too.
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Age", field.ElementName);
+
+        // The load-bearing half: the constant carries NO serialization context, so it renders in the
+        // COMPARISON's type (double) rather than being coerced back to the stored int. With the property
+        // attached, a fractional constant would be TRUNCATED and the query would return wrong rows.
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.Null(constant.ForSerialization);
+        Assert.Equal(5.0, constant.Value);
+    }
+
+    [Fact]
+    public void Widening_cast_with_the_member_on_the_RIGHT_also_serializes_the_constant_in_the_comparison_type()
+    {
+        // TranslateComparison has TWO query-native branches — member-on-left and the MIRRORED member-on-right —
+        // each with its own HasNumericConvert call and its own TranslateValue call site. Every other case for
+        // this task puts the member on the left, so without this the mirrored branch's constant rule would be
+        // revertible with nothing red. The shape is reachable: the provider carries `Mirror` precisely because
+        // EF does not normalise operand order.
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => 5.0 < (double)c.Age;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        // Mirrored: `5.0 < (double)c.Age` becomes `c.Age > 5.0` with the field on Left.
+        Assert.Equal(MongoBinaryOperator.GreaterThan, cmp.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.Null(constant.ForSerialization);
+        Assert.Equal(5.0, constant.Value);
+    }
+
+    [Fact]
+    public void Widening_cast_under_a_nullable_lift_on_member_vs_constant_now_translates()
+    {
+        // The shape EF actually produces for a nullable closure comparison:
+        // Convert(Convert(c.Age, Int64), Nullable<Int64>) > <value>. The OUTER layer changes nothing but
+        // nullability, so it must be SKIPPED rather than classified — `from == to` there, so a widening test
+        // applied to it would answer false and decline the whole comparison. MEASURED: this is exactly what
+        // separated 16 converted specification cases from the spike's predicted 18
+        // (NorthwindWhereQueryMongoTest.Where_method_call_nullable_type_reverse_closure_via_query_cache).
+        // The threshold is written as a LITERAL, not a captured local: a captured local compiles to a closure
+        // MemberExpression, which IsSimpleValue rejects (only a ConstantExpression or an EF query parameter is
+        // a "simple value"), so the comparison would decline for a reason that has nothing to do with the cast.
+        // In the specification suite the same slot is an EF query parameter, which IS simple.
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (long?)c.Age > (long?)5L;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.Null(constant.ForSerialization);
+    }
+
+    // EF-403 (slice A1, Task 7) — RENAMED from `Narrowing_cast_on_member_vs_constant_still_reports_not_
+    // translatable`, and the assertions inverted, because this shape's disposition is exactly what Task 7
+    // changes. HasNumericConvert still DECLINES the narrowing cast (its three-outcome classification is
+    // untouched); what changed is what that decline LANDS ON — the whole comparison used to be vetoed
+    // (`return null`), and now only the query-native BRANCH declines and control falls through to the general
+    // $expr path.
+    //
+    // The node shape is the discriminating part, not merely "it translated". Absorption (the bug this must
+    // never become) would produce a bare MongoFieldExpression on the left with the constant carrying the
+    // property's own serializer — i.e. the raw stored value compared untruncated, silently answering a
+    // different question. The fall-through produces a MongoConvertExpression WRAPPING that field, and a
+    // constant with NO serialization context (the $expr path serializes via BsonValue.Create).
+    [Fact]
+    public void Narrowing_cast_on_member_vs_constant_falls_through_to_the_expr_path()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (int)c.DoubleScore > 5;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, cmp.Operator);
+
+        var convert = Assert.IsType<MongoConvertExpression>(cmp.Left);
+        Assert.Equal(typeof(int), convert.Type);
+        var field = Assert.IsType<MongoFieldExpression>(convert.Operand);
+        Assert.Equal("DoubleScore", field.ElementName);
+
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.Null(constant.ForSerialization);
+    }
+
+    // The MIRRORED operand order reaches the SAME fall-through, through the second of TranslateComparison's
+    // two classification sites. The $expr path deliberately does NOT mirror the operator, so unlike the
+    // query-native branch the constant stays on the LEFT — that asymmetry is the thing worth pinning here.
+    [Fact]
+    public void Mirrored_narrowing_cast_on_constant_vs_member_falls_through_to_the_expr_path()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => 5 < (int)c.DoubleScore;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.LessThan, cmp.Operator); // NOT mirrored to GreaterThan
+
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Left);
+        Assert.Null(constant.ForSerialization);
+
+        var convert = Assert.IsType<MongoConvertExpression>(cmp.Right);
+        var field = Assert.IsType<MongoFieldExpression>(convert.Operand);
+        Assert.Equal("DoubleScore", field.ElementName);
+    }
+
+    [Fact]
+    public void Widening_cast_to_an_unrenderable_target_on_member_vs_constant_still_reports_not_translatable()
+    {
+        // int -> float IS a widening conversion, but MQL has no $toFloat, so
+        // MongoConvertExpression.ToOperatorFor declines it — the guard consults that single definition of the
+        // admissible set rather than a second hand-rolled list. Without that conjunct this shape would be
+        // tolerated on the strength of the widening test alone.
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (float)c.Age > 5.0f;
+
         var translated = translator.TryTranslate(predicate.Body, out var result);
 
         Assert.False(translated);
         Assert.Null(result);
     }
 
-    // The existing query-native member-vs-constant cast guard (HasNumericConvert) is unchanged by
-    // EF-329: it still causes the whole predicate to fall back rather than route through $expr.
-
     [Fact]
-    public void Cast_on_member_vs_constant_still_reports_not_translatable()
+    public void Widening_cast_over_a_value_converted_property_keeps_the_property_serializer()
     {
-        var translator = NewTranslator(GetEntityType<Customer>());
-        Expression<Func<Customer, bool>> predicate = c => (double)c.Age > 5.0;
+        // The conjunct the spike left UNVERIFIED (§6.2, §11): HasDefaultKeySerialization, not "the property's
+        // CLR type is not an enum". EncStatus is a plain int (so "not an enum" holds) carried through a value
+        // converter (so HasDefaultKeySerialization does NOT), and the two rules disagree — the shipped one
+        // keeps the property serializer, which is the only thing that renders the constant in the STORED form.
+        var (translator, body) = BuildOrderPredicateBody(o => (long)o.EncStatus > 5L);
 
-        var translated = translator.TryTranslate(predicate.Body, out var result);
+        Assert.True(translator.TryTranslate(body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.NotNull(constant.ForSerialization);
+        Assert.Equal("EncStatus", constant.ForSerialization!.Name);
+    }
+
+    /// <summary>
+    /// Builds a translator over the same value-converted <see cref="Order"/> model
+    /// <see cref="BuildValueBody{T}"/> uses, but for a PREDICATE lambda.
+    /// </summary>
+    private static (MongoExpressionTranslator Translator, Expression Body) BuildOrderPredicateBody(
+        Expression<Func<Order, bool>> predicate)
+    {
+        using var db = SingleEntityDbContext.Create<Order>(mb =>
+        {
+            mb.Entity<Order>().Property(o => o.EncStatus).HasConversion(v => v * 2, v => v / 2);
+            mb.Entity<Order>().Property(o => o.EncWeight).HasConversion(v => v * 2, v => v / 2);
+        });
+        var entityType = db.Model.FindEntityType(typeof(Order))!;
+        return (new MongoExpressionTranslator(entityType), predicate.Body);
+    }
+
+    // EF-403 (slice A1, Task 7) — GUARD B on the site-B fall-through. A cast the query-native branch cannot
+    // absorb now falls through to the $expr path, but ONLY when the member's property is default-serialized:
+    // the $expr path renders `{$toInt: "$EncWeight"}` over the RAW STORED value, which for a value-converted
+    // property is not the value the comparison is about. MEASURED end to end (see
+    // NativeCastTests.Narrowing_cast_comparison_over_a_value_converted_property_still_declines): without the
+    // guard the shape returned one row where zero is correct, silently, under the DEFAULT Native mode.
+    //
+    // Asserting `!translated` here is the whole point — this shape must keep the PRE-Task-7 disposition (veto
+    // the comparison, fall back to driver-LINQ), not merely avoid absorption.
+    [Fact]
+    public void Narrowing_cast_over_a_value_converted_property_does_not_fall_through_to_expr()
+    {
+        var (translator, body) = BuildOrderPredicateBody(o => (int)o.EncWeight > 3);
+
+        var translated = translator.TryTranslate(body, out var result);
 
         Assert.False(translated);
         Assert.Null(result);
+    }
+
+    // The control that stops the guard above from being read as "any cast over any Order property declines":
+    // Weight is the SAME CLR type (double) on the SAME entity, with NO converter, and it DOES fall through.
+    [Fact]
+    public void Narrowing_cast_over_a_default_serialized_property_on_the_same_entity_still_falls_through()
+    {
+        var (translator, body) = BuildOrderPredicateBody(o => (int)o.Weight > 3);
+
+        Assert.True(translator.TryTranslate(body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var convert = Assert.IsType<MongoConvertExpression>(cmp.Left);
+        var field = Assert.IsType<MongoFieldExpression>(convert.Operand);
+        Assert.Equal("Weight", field.ElementName);
+    }
+
+    // EF-403 (slice A1, Task 5) — the IDENTITY-LIKE arm. HasNumericConvert now tolerates a SECOND family of
+    // member-side converts (enum ↔ underlying, char -> int, boxing to object), reported separately from the
+    // widening-numeric arm above because the two demand OPPOSITE constant treatment (ConstantSerializationContext).
+
+    [Fact]
+    public void Enum_to_underlying_convert_on_member_vs_constant_translates_and_keeps_the_field_unconverted()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (int)c.Level == (int)Tier.Gold;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, cmp.Operator);
+
+        // The identity-like layer is ABSORBED, not rendered: the field ref is the plain stored field, exactly
+        // as for a bare `c.Level == Tier.Gold` — never a MongoConvertExpression.
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Level", field.ElementName);
+
+        // The load-bearing half of THIS arm (the opposite of the widening arm's rule): the constant KEEPS the
+        // property's own serializer, because this is the SAME stored value under a different declared CLR
+        // type — not a comparison moved into a different type.
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.NotNull(constant.ForSerialization);
+        Assert.Equal("Level", constant.ForSerialization!.Name);
+    }
+
+    [Fact]
+    public void Underlying_to_enum_convert_on_member_vs_constant_translates()
+    {
+        // The symmetric direction — IsIdentityLikeConvert admits BOTH `enum -> underlying` and
+        // `underlying -> enum`, not just the one the enum-as-string spec fixture happens to exercise.
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (Tier)c.Age == Tier.Silver;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.NotNull(constant.ForSerialization);
+        Assert.Equal("Age", constant.ForSerialization!.Name);
+    }
+
+    [Fact]
+    public void Char_to_int_convert_on_member_vs_constant_translates()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (int)c.Grade == 65;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Grade", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.NotNull(constant.ForSerialization);
+        Assert.Equal("Grade", constant.ForSerialization!.Name);
+    }
+
+    [Fact]
+    public void Boxing_convert_to_object_on_member_vs_constant_translates()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (object)c.Age == (object)5;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.NotNull(constant.ForSerialization);
+        Assert.Equal("Age", constant.ForSerialization!.Name);
+        Assert.Equal(5, constant.Value);
+    }
+
+    [Fact]
+    public void Boxing_convert_with_the_member_on_the_RIGHT_also_keeps_the_property_serializer()
+    {
+        // The mirrored branch has its own separate HasNumericConvert call and its own separate
+        // ConstantSerializationContext call site — without this, reverting only that branch to the widening
+        // treatment would be revertible with nothing red.
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (object)5 == (object)c.Age;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, cmp.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.NotNull(constant.ForSerialization);
+        Assert.Equal("Age", constant.ForSerialization!.Name);
+    }
+
+    [Fact]
+    public void Identity_like_convert_over_a_value_converted_property_also_keeps_the_property_serializer()
+    {
+        // The identity-like arm's rule is UNCONDITIONAL (unlike the widening arm, which only keeps the
+        // property serializer when HasDefaultKeySerialization is false) — it always keeps the property
+        // serializer, so a value-converted property behind an identity-like convert must still render through
+        // its own converter/serializer, not the raw boxed value.
+        var (translator, body) = BuildOrderPredicateBody(o => (object)o.EncStatus == (object)5);
+
+        Assert.True(translator.TryTranslate(body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.NotNull(constant.ForSerialization);
+        Assert.Equal("EncStatus", constant.ForSerialization!.Name);
+    }
+
+    // EF-403 (slice A1, Task 5) FIX ROUND 1 — the enum-promotion gap the spec-suite measurement found.
+    // C# promotes a SUB-int-backed (short/byte/ushort/sbyte) enum's equality comparison to Int32, which is a
+    // WIDENING of the enum's own underlying type, not an exact match to it. Every enum fixture added before
+    // this fix was Int32-backed and so could never expose the gap.
+
+    [Fact]
+    public void Short_backed_enum_comparison_promoted_to_int_by_the_compiler_still_translates()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => c.ShortLevel == ShortTier.Gold;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, cmp.Operator);
+
+        // Absorbed, not rendered: the field ref is the plain stored field, exactly as for a bare
+        // `c.ShortLevel == ShortTier.Gold` — never a MongoConvertExpression.
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("ShortLevel", field.ElementName);
+
+        // Identity-like, not widening-numeric: the constant keeps the property's own serializer.
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.NotNull(constant.ForSerialization);
+        Assert.Equal("ShortLevel", constant.ForSerialization!.Name);
+    }
+
+    [Fact]
+    public void Long_backed_enum_narrowed_to_int_is_not_absorbed_as_identity_like()
+    {
+        // Regression pin for the boundary the identity-like arm must NOT cross: a LONG-backed enum's
+        // underlying type (Int64) narrowed down to Int32 is a genuine narrowing, not a promotion —
+        // IsWideningNumericConvert is directional (narrower -> wider only) and must never admit this shape.
+        //
+        // EF-403 (slice A1, Task 7) — RENAMED from `Long_backed_enum_narrowed_to_int_still_declines`, and the
+        // assertion changed from "does not translate" to "does not ABSORB", because Task 7 changed what the
+        // decline lands on: the comparison is no longer vetoed, it falls through to the $expr path and renders
+        // the cast explicitly as $toInt. THE DISCRIMINATION IS UNCHANGED IN STRENGTH — it just moved from the
+        // translated/not-translated axis to the node-shape axis. If IsIdentityLikeConvert wrongly admitted
+        // Int64 -> Int32, HasNumericConvert would return FALSE, the query-native branch would be taken, and
+        // cmp.Left would be a bare MongoFieldExpression (the raw stored long compared untruncated, with the
+        // constant carrying the enum property's own serializer) — which is what this test now rejects.
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (int)c.LongLevel == (int)LongTier.Gold;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var convert = Assert.IsType<MongoConvertExpression>(cmp.Left);
+        Assert.Equal(typeof(int), convert.Type);
+        var field = Assert.IsType<MongoFieldExpression>(convert.Operand);
+        Assert.Equal("LongLevel", field.ElementName);
+
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.Null(constant.ForSerialization);
+    }
+
+    // EF-403 (slice A1, Task 5) FIX ROUND 1 — the flag-precedence fix. A single Convert CHAIN can set both
+    // toleratedWideningTarget (from an inner widening layer) AND identity-like (from an outer boxing layer);
+    // the widening arm must win, or an identity-like layer merely wrapping a widening one would mask the
+    // truncation protection case 9 exists to pin.
+
+    [Fact]
+    public void Boxing_over_a_widening_cast_lets_the_widening_arm_win_precedence()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (object)(double)c.Age == (object)5.5;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Age", field.ElementName);
+
+        // The DISCRIMINATING assertion is ForSerialization, not Value. Truncation happens later, at render
+        // time, in MongoValueRenderer.ToBsonValue -> BsonValueSerializer.Coerce(int, 5.5) -> 6 — constant.Value
+        // itself stays 5.5 either way at THIS (translation) layer, so asserting it does not by itself
+        // discriminate the two arms (fix round 2 correction: an earlier version of this test called it "the
+        // load-bearing assertion", which is wrong). Had the identity-like (boxing) layer wrongly won,
+        // ForSerialization would be non-null (Age's own serializer), which is what drives that truncation at
+        // render time — case 9's silent-wrong-rows shape end to end. See
+        // NativeCastTests.Boxing_over_a_widening_cast_precedence_returns_the_untruncated_row for the
+        // ROWS-level functional pin of the render-time consequence this unit test cannot reach.
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.Null(constant.ForSerialization);
+        Assert.Equal(5.5, constant.Value);
+    }
+
+    [Fact]
+    public void Boxing_over_a_widening_cast_with_the_member_on_the_RIGHT_also_lets_widening_win()
+    {
+        // The mirrored branch has its own separate HasNumericConvert call and its own separate
+        // ConstantSerializationContext call site — pinned in both directions, per the fix-round instruction.
+        // As with the sibling test above, ForSerialization is the discriminating assertion; Value is not.
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (object)5.5 == (object)(double)c.Age;
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, cmp.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(cmp.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
+        Assert.Null(constant.ForSerialization);
+        Assert.Equal(5.5, constant.Value);
     }
 
     // A plain field-vs-constant comparison (no arithmetic, no field-to-field) must still translate via
@@ -1089,13 +1571,21 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void TryTranslateValue_top_level_narrowing_cast_is_rejected()
+    public void TryTranslateValue_top_level_narrowing_cast_renders_as_an_explicit_convert()
     {
         // (int)o.Weight is a double->int TRUNCATING cast at the very top of the value body. MongoDB has no
-        // truncating-cast equivalent, so silently stripping it would return the raw double — a wrong-data bug.
-        // TryTranslateValue must NOT Unwrap the top-level node, so the narrowing-aware Convert branch rejects it.
+        // truncating-cast equivalent, so silently STRIPPING it would return the raw double — a wrong-data bug.
+        // TryTranslateValue must NOT Unwrap the top-level node, so the narrowing-aware Convert branch used to
+        // reject it outright. EF-322 slice A1, Task 3: since int IS a renderable $toX target, this now
+        // translates to an explicit MongoConvertExpression instead of declining — the cast is preserved by
+        // being RENDERED ($toInt), not by being dropped.
         var (translator, body) = BuildValueBody<Order>(o => (int)o.Weight);
-        Assert.False(translator.TryTranslateValue(body, out _));
+
+        Assert.True(translator.TryTranslateValue(body, out var result));
+
+        var convert = Assert.IsType<MongoConvertExpression>(result);
+        Assert.Equal(typeof(int), convert.Type);
+        Assert.IsType<MongoFieldExpression>(convert.Operand);
     }
 
     [Fact]
@@ -1104,6 +1594,21 @@ public class MongoExpressionTranslatorTests
         // (short)(o.Price + o.Qty) is an int->short narrowing cast wrapping a whole $add subtree — same class
         // of silent-truncation bug as the bare narrowing cast above; must be rejected, not silently dropped.
         var (translator, body) = BuildValueBody<Order>(o => (short)(o.Price + o.Qty));
+        Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TryTranslateValue_narrowing_cast_over_a_converted_operand_is_rejected() // guard B, via MongoConvertExpression
+    {
+        // (int)o.EncWeight is a double->int NARROWING cast of a VALUE-CONVERTED property, so it builds a
+        // MongoConvertExpression wrapping the converted field (EncWeight is not "int", so it can't take the
+        // widening-unwrap branch the way an (int)o.EncStatus cast could — see EncWeight's own doc comment).
+        // AllFieldsDefaultSerialized MUST recurse into the operand of a MongoConvertExpression rather than
+        // falling into its own catch-all (which answers `true` unconditionally): without that recursion, this
+        // would pass Guard B and build a computed sort key over EncWeight's RAW STORED value — silent wrong
+        // ORDER under default Native, since the value converter (v => v*2 / v => v/2) is never applied.
+        var (translator, body) = BuildValueBody<Order>(o => (int)o.EncWeight);
+
         Assert.False(translator.TryTranslateValue(body, out _));
     }
 
@@ -1903,5 +2408,31 @@ public class MongoExpressionTranslatorTests
             Expression.Property(param, nameof(CodedEntity.Amount)), "Value");
         Assert.True(translator.TryTranslateField(realNullable, out var amount));
         Assert.Equal("Amount", amount!.ElementName);
+    }
+
+    // ------------------------------------------------------------------
+    // EF-403: a cast-bearing sort key must not be stripped to the raw field (Task 2)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Sort_key_keeps_a_narrowing_cast_so_it_declines_rather_than_sorting_by_the_raw_value()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+
+        // (int)c.DoubleScore — order-CHANGING, so TryTranslateField must NOT resolve it to the raw field.
+        Assert.False(translator.TryTranslateField(FieldBody<Customer>(c => (int)c.DoubleScore), out _));
+    }
+
+    [Fact]
+    public void Sort_key_still_strips_an_order_preserving_cast()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+
+        // Widening, boxing and nullable converts are all value-preserving and must still resolve to the field.
+        Assert.True(translator.TryTranslateField(FieldBody<Customer>(c => (double)c.Age), out var widened));
+        Assert.Equal("Age", widened!.ElementName);
+
+        Assert.True(translator.TryTranslateField(FieldBody<Customer>(c => (object)c.Age), out var boxed));
+        Assert.Equal("Age", boxed!.ElementName);
     }
 }
