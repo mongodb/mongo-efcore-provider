@@ -388,7 +388,16 @@ internal sealed class MongoSelectLowerer
     /// map a property to any element name, including one of these, via <c>HasElementName</c>.
     /// </para>
     /// <para>
-    /// <b>Two KNOWN, ACCEPTED gaps in the reserved set, both UNVERIFIED (not reachable until Task 3 lands):</b>
+    /// <b>THIS GUARD IS INCOMPLETE. It is NOT "collisions are handled" — TWO KNOWN HOLES ARE OPEN, TRACKED AS
+    /// EF-408, AND EITHER ONE SILENTLY OVERWRITES A USER FIELD.</b> A property renamed onto a synthetic name via
+    /// <c>HasElementName</c> in either of the two shapes below is not in the reserved set, so <c>$set</c>
+    /// clobbers it and the query returns the sort key where the user's stored value should be — no exception,
+    /// under the default <c>Native</c> mode. Both holes are UNVERIFIED (neither has been shown reachable, and
+    /// neither has a test); "unverified" here means UNMEASURED, not "known safe". Do not read the reserved set
+    /// as complete hardening.
+    /// </para>
+    /// <para>
+    /// <b>The two gaps (EF-408), both accepted deliberately for this slice:</b>
     /// (1) a set-op operand of a DIFFERENT entity type (only reachable via a projected different-collection
     /// operand, EF-347 slice C1) is not covered — the reserved set is built once, from the ROOT entity type,
     /// and <see cref="MongoSetOperation"/> exposes only <c>OperandSelect</c>/<c>OperandCollectionName</c>, not

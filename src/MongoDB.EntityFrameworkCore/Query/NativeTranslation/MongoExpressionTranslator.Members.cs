@@ -193,7 +193,15 @@ internal sealed partial class MongoExpressionTranslator
         {
             var navigation = scopeType.FindNavigation(names[i]);
             if (navigation is null || !navigation.IsEmbedded() || navigation.IsCollection)
-                return false; // cross-collection or owned-collection intermediate → fall back
+            {
+                // Cross-collection or owned-COLLECTION intermediate → fall back. The owned-collection half is a
+                // real capability gap, not just a scoping rule: an array intermediate has no single dotted path
+                // to address, so a leaf underneath one (e.g. b.Posts[..].Title as a predicate/sort/projection
+                // leaf) has no native form here at all. TODO(EF-424) tracks it. Note an `Any`/`All` quantifier
+                // over the same collection is a DIFFERENT resolver (TryResolveOwnedCollectionPath) and does go
+                // native — do not read this decline as covering quantifiers.
+                return false;
+            }
             scopeType = navigation.TargetEntityType;
         }
 

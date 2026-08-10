@@ -1440,8 +1440,11 @@ Customers.
         // provider separately rejects Reverse inside a join (CSHARP-5836, the same reason the EF8/EF9 arm
         // above throws). Only the exception source/type changes here — driver-side Reverse rejection becomes
         // a provider-side translation decline — not a throw-where-it-used-to-succeed change.
-        // TODO(CSHARP-6017): on driver fix, revert to the ExpressionNotSupportedException assertion with a
-        // real MQL baseline.
+        // TODO(EF-406): on driver fix, revert to the ExpressionNotSupportedException assertion with a
+        // real MQL baseline. "On driver fix" means the tripwire
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes: it is already Closed/Done at fixVersion 3.10.0, the driver
+        // version this branch pins, and the fold is MEASURED still live against it.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Reverse_in_join_inner_with_skip(async));
 

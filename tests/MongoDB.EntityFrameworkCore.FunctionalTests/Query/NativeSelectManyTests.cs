@@ -3118,9 +3118,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // resultSelector.Body is literally `o` and the shaper ends up as the OUTER (Owner) entity's own shaper
         // with UnwindSource still set — a pre-existing gap in TranslateSelectMany/BuildBareNavWrappedShaper
         // (unaffected by this Task's TranslateSelect-only changes) that currently surfaces as a confusing
-        // runtime InvalidOperationException rather than a clean decline. Reported as a known, pre-existing,
-        // out-of-scope finding for a future ticket — NOT fixed here, since it is orthogonal to the whole-INNER
-        // owned-element recognition this Task adds.
+        // runtime InvalidOperationException rather than a clean decline. TRACKED AS EF-422 (EF-347 SelectMany
+        // leftovers) — the "future ticket" this comment used to leave unnamed. NOT fixed here, since it is
+        // orthogonal to the whole-INNER owned-element recognition this Task adds.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             var seed = SeedOwners();

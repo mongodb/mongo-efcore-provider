@@ -792,7 +792,7 @@ the four derivation sites plus the fifth reader, and why there is deliberately *
      and a null `ElementPath`, so a dotted scalar name is a literal-key lookup; only the ARRAY read got the
      segment walk. **Pre-existing and byte-identical at step 3a's base** — neither caused nor closed by that
      slice — and pinned as *measured*, not as correct, by
-     `Ef362OwnedHopArrayProjectionTests.Owned_hop_SCALAR_leaf_alongside_the_array_leaf_is_still_declined_and_still_loses_the_scalar`.
+     `Ef362OwnedHopArrayProjectionTests.Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_as_wrong_data_null_EF390`.
      It is also what keeps a bare `Select(b => b.Home.City)` declining. ~~**No ticket has been filed for it.**~~
      **STALE — corrected 2026-08-07: it is now tracked as EF-390** (filed by `99d74735`). Note the category:
      this is a **silent-wrong-data** item reachable under the default `Native` mode, which is why §9.5 carries
@@ -1642,7 +1642,7 @@ environment on 2026-08-07, so the statuses below are **CITED from §6**, not re-
 - **EF-390** — a dotted owned-hop **scalar** leaf silently returns `null` (`Select(b => new { b.Home.City,
   b.Home.Notes })` loses `City` while the array beside it is correct). Pre-existing and byte-identical at step
   3a's base; pinned as *measured, not correct* by
-  `Ef362OwnedHopArrayProjectionTests.Owned_hop_SCALAR_leaf_alongside_the_array_leaf_is_still_declined_and_still_loses_the_scalar`.
+  `Ef362OwnedHopArrayProjectionTests.Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_as_wrong_data_null_EF390`.
   Newly ticketed by `99d74735` (§5 bullet 4a said "no ticket has been filed" and is corrected there).
 - **EF-380** — a `ThenInclude` nested under an **owned (embedded)** hop classifies as `Unclassifiable`, falls
   through to the root tiers and returns a **silently null navigation** under default `Native`. Measured in all

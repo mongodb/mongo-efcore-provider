@@ -33,10 +33,17 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// key-matched subset for that one outer row (at most one document when the join key is unique in the inner
 /// collection, as in this file's fixture) instead of once over the whole inner sequence. The fallback therefore
 /// returns silently WRONG rows, so the shape must hard-decline rather than fall back.
-/// TODO(CSHARP-6017): delete MOST of this file when the driver is fixed — NOT all of it. See the removal
-/// checklist in docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §2.6, which
-/// enumerates the split; the tripwire test below is what announces the fix. The split, restated here so it is
-/// visible at the point of deletion:
+/// TODO(EF-406): delete MOST of this file when the driver is fixed — NOT all of it.
+/// <b>"When the driver is fixed" means THE TRIPWIRE TEST BELOW GOES RED. It does NOT mean CSHARP-6017 has
+/// closed.</b> CSHARP-6017 is already Closed/Done with fixVersion 3.10.0 — the driver version this branch pins
+/// (Versions.props) — and MEASURED against that version the fold is still live: the tripwire
+/// (Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017), written to FAIL once the
+/// driver stops folding, still PASSES. CSHARP-6017 was never the ticket that governs this guard; it is the
+/// LeftJoin feature work that introduced the fold, and is retained here purely as the defect's provenance.
+/// EF-406 is the ticket that owns the guard's lifecycle. Removing the guard while the tripwire still passes
+/// reintroduces silently wrong join results (measured: 0 rows where 453 is correct).
+/// See the removal checklist in docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §2.6,
+/// which enumerates the split. The split, restated here so it is visible at the point of deletion:
 ///   DELETE (they exist only because the driver folds): Join_with_paged_inner_declines_under_native,
 ///   Join_with_paged_inner_declines_under_native_only, Join_with_paged_inner_never_returns_the_wrong_rows_under_native,
 ///   Join_with_paged_inner_still_runs_under_driver_linq, GroupJoin_with_paged_inner_declines_under_native,
@@ -126,9 +133,15 @@ public class NativeJoinPagedInnerDeclineTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017()
     {
-        // EXPIRY TRIPWIRE, not a desired behavior. It pins the CSHARP-6017 driver defect that the provider guard
-        // exists for, using the only mode that still reaches the driver. The CORRECT answer is CorrectRows (3
-        // rows); the driver returns 5 because it folds $sort/$limit into the correlated $lookup sub-pipeline.
+        // EXPIRY TRIPWIRE, not a desired behavior. It pins the driver defect that the provider guard exists for
+        // (EF-406; CSHARP-6017 is that defect's historical ticket), using the only mode that still reaches the
+        // driver. The CORRECT answer is CorrectRows (3 rows); the driver returns 5 because it folds
+        // $sort/$limit into the correlated $lookup sub-pipeline.
+        //
+        // THIS TEST — NOT THE STATE OF CSHARP-6017 — IS THE ONLY VALID SIGNAL THAT THE DRIVER IS FIXED.
+        // CSHARP-6017 is already Closed/Done at fixVersion 3.10.0, which is the driver version this branch pins,
+        // and this test still passes against it: the fold is live, the guard is required. Do not delete the
+        // guard because the driver ticket looks resolved.
         //
         // WHEN THIS TEST FAILS, THE DRIVER HAS BEEN FIXED. Follow the removal checklist in
         // docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §2.6:
@@ -281,8 +294,10 @@ public class NativeJoinPagedInnerDeclineTests(TemporaryDatabaseFixture database)
         // exactly this shape). MongoShapedQueryCompilingExpressionVisitor.VisitShapedQuery must report BOTH
         // causes in the thrown message, not silently drop one to the other (the pre-Task-4 ternary did exactly
         // that, always naming the paged-inner cause and never the GroupBy+Join one).
-        // TODO(CSHARP-6017): once the paged-inner cause is removed from the gate, this test's message assertion
-        // degenerates to the single GroupBy+Join fragment; update it together with the rest of the removal
+        // TODO(EF-406): once the paged-inner cause is removed from the gate — which happens when the tripwire
+        // test above goes red, NOT when CSHARP-6017 closes (it already has, at fixVersion 3.10.0, while the fold
+        // is still live) — this test's message assertion degenerates to the single GroupBy+Join fragment; update
+        // it together with the rest of the removal
         // checklist (see the TODO at MongoShapedQueryCompilingExpressionVisitor.cs and
         // MongoQueryableMethodTranslatingExpressionVisitor.TranslateJoinCore).
         using var db = CreateContext(MongoQueryMode.Native,

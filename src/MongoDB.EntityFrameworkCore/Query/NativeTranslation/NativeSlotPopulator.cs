@@ -78,7 +78,12 @@ internal static class NativeSlotPopulator
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
             && IsPostGroupSlotOperator(methodDefinition))
         {
-            // TODO(CSHARP-6017): delete this MarkSawUnrecordedPaging call with the rest of the paging guard.
+            // TODO(EF-406): delete this MarkSawUnrecordedPaging call with the rest of the paging guard — the
+            // trigger is the tripwire test
+            // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+            // going RED, NOT CSHARP-6017 closing (it is already Closed/Done at fixVersion 3.10.0, the driver
+            // version this branch pins, and the fold is MEASURED still live). See the full account at the
+            // HasPagingAnywhere guard in MongoQueryableMethodTranslatingExpressionVisitor.TranslateJoinCore.
             // This return happens BEFORE the AppendSkip/AppendLimit arms below, so a Skip/Take reaching here is
             // never recorded as an op and MongoSelectDefinition.HasPagingAnywhere would not see it — yet the
             // Skip/Take IS still in the captured method chain the driver-LINQ fallback executes, so CSHARP-6017
@@ -141,12 +146,14 @@ internal static class NativeSlotPopulator
             var count = TranslateCountExpression(call.Arguments[1]);
             if (count is null)
             {
-                // TODO(CSHARP-6017): delete MarkSawUnrecordedPaging with the rest of the paging guard. Same
-                // reasoning as the post-terminal early return above — the Skip is declined rather than recorded,
-                // but it stays in the captured chain the fallback executes. Unlike that path this one has not
-                // been shown reachable from ordinary LINQ (EF parameterizes a captured/computed count, so
-                // TranslateCountExpression essentially always succeeds), so it is defence-in-depth against a
-                // silent-wrong-data hole, not a measured bug — see the design spec §2.9.
+                // TODO(EF-406): delete MarkSawUnrecordedPaging with the rest of the paging guard (trigger: the
+                // tripwire test going red, NOT CSHARP-6017 closing — see the post-terminal early return above).
+                // Same reasoning as that early return — the Skip is declined rather than recorded, but it stays
+                // in the captured chain the fallback executes. Unlike that path this one has not been shown
+                // reachable from ordinary LINQ (EF parameterizes a captured/computed count, so
+                // TranslateCountExpression essentially always succeeds), so it is HARDENING against a
+                // silent-wrong-data hole rather than tested protection for a measured bug — no test
+                // discriminates this arm — see the design spec §2.9.
                 mongoQ.Select.MarkSawUnrecordedPaging();
                 mongoQ.Select.MarkNotNativelyRepresentable();
             }
@@ -159,8 +166,9 @@ internal static class NativeSlotPopulator
             var count = TranslateCountExpression(call.Arguments[1]);
             if (count is null)
             {
-                // TODO(CSHARP-6017): same as the Skip arm immediately above — declined, not recorded, but still
-                // in the captured chain. Defence-in-depth; not shown reachable from ordinary LINQ.
+                // TODO(EF-406): same as the Skip arm immediately above — declined, not recorded, but still in
+                // the captured chain, and removable only when the tripwire test goes red rather than when
+                // CSHARP-6017 closes. Hardening, not tested protection; not shown reachable from ordinary LINQ.
                 mongoQ.Select.MarkSawUnrecordedPaging();
                 mongoQ.Select.MarkNotNativelyRepresentable();
             }
@@ -353,6 +361,8 @@ internal static class NativeSlotPopulator
     /// <c>MongoElemMatchExpression</c> or <c>MongoUnaryExpression</c>. The stream-1 spike's §7 imposes this
     /// only on slices introducing a NEW node kind, so A6 (<c>Contains</c>) and A13 (<c>Not</c>) — whose node
     /// kinds already exist — fall outside it and would otherwise ship with their sort columns silently dead.
+    /// <b>The missing arms are TRACKED AS EF-413</b> (aggregation-dialect <c>Render</c>/<c>CanRender</c> arms for
+    /// <c>MongoInExpression</c> and <c>MongoUnaryExpression</c>, at least 36 sort-position cases across A6/A13).
     /// </para>
     /// <para>
     /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> brings its own two guards with it: an
@@ -374,7 +384,8 @@ internal static class NativeSlotPopulator
     /// FORWARD guard for the capability-A slices this file's remarks describe above (a count, a regex, an
     /// <c>$in</c> test, a quantifier) — each of those DOES introduce a node kind <c>CanRender</c> currently
     /// declines, and the gate is what turns that into a clean decline instead of a render-time throw once one
-    /// of them lands. Until then, this call has no discriminating power of its own.
+    /// of them lands. Until then, this call is HARDENING, not tested protection: it has no discriminating power
+    /// of its own, and a green suite says nothing about it. The slices it is waiting for are tracked as EF-413.
     /// </para>
     /// <para>
     /// <b>A bare top-level constant/parameter is a SEPARATE, value-level hazard <c>CanRender</c> cannot see

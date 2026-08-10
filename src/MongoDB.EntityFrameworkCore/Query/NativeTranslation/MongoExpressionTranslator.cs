@@ -1026,8 +1026,10 @@ internal sealed partial class MongoExpressionTranslator
                 // SCOPE: this guards the CAST subset only. A PLAIN field-to-field comparison
                 // (`o.EncWeight > o.Other`, no cast) still goes native unguarded — that path predates the
                 // slice, has shipped, and its own question (does comparing two converted fields against each
-                // other need the same treatment?) needs its own measurement. Tracked separately; do not read
-                // this guard as a claim about that.
+                // other need the same treatment?) needs its own measurement. TRACKED AS EF-404 — named here and
+                // not only at CanFallThroughToExpr's remarks ~200 lines above, because a reader arriving at
+                // TranslateOperand alone could not otherwise find the key. Do not read this guard as a claim
+                // about that.
                 if (!AllFieldsDefaultSerialized(converted))
                     return null;
 

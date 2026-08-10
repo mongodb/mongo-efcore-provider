@@ -712,12 +712,24 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 // the transitive resolution either gets a scoped prefix or DECLINES translation outright — it
                 // is never emitted with a silently-missing prefix.
                 //
-                // That is NOT the same as "every chain reaching here is fully scoped", and the difference was
-                // MEASURED: a hop is only routed into the transitive resolution once no navigation off the
-                // ROOT matches, and that root match (see MongoQueryableMethodTranslatingExpressionVisitor,
-                // RebindInnerShaperToOuterQuery) selects by FK-property name / target entity type, so a root
-                // that carries its own navigation to the hop's target type is treated as a ROOT-level hop and
-                // emits an unprefixed localField against the root's own field. See TODO(EF-379).
+                // That is NOT the same as "every chain reaching here is fully scoped", and the difference is
+                // MEASURED. The version of this paragraph that used to sit here said a hop reaches the
+                // transitive resolution only once no ROOT navigation matches, so a root carrying its own
+                // navigation to the hop's target type is treated as ROOT-level; EF-379 has since SHIPPED on this
+                // branch and closed exactly that, by classifying the hop from the key selector's RECEIVER
+                // (MongoQueryableMethodTranslatingExpressionVisitor.ClassifyJoinHop) BEFORE either root tier
+                // runs — so a hop recognised as transitive can no longer be short-circuited by a root
+                // navigation. Corrected here rather than left standing.
+                //
+                // TODO(EF-407) — what is STILL open, and why an unprefixed localField remains reachable: the
+                // classifier's Unclassifiable family falls through to the root tiers unchanged (deliberately —
+                // see ClassifyJoinHop's remarks). The reachable member of that family is a receiver that is
+                // itself an EF.Property hop, i.e. a real ThenInclude nested underneath an OWNED (embedded) hop:
+                // Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region). MEASURED
+                // at this branch's base and at HEAD alike (so not a regression): it emits an unprefixed
+                // localField and returns the deep navigation SILENTLY NULL under BOTH Native and DriverLinq;
+                // only NativeOnly throws. EF-379 is the shipped context, EF-407 is the residual — do not read
+                // the EF-379 reference as closing this.
                 //
                 // Grouping is still correct for that case, which is why it is not a caveat on this reasoning:
                 // an unprefixed localField reads a root field and so depends on no earlier lookup at all, and

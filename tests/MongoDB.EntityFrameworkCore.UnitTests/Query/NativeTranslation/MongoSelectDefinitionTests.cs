@@ -135,7 +135,8 @@ public class MongoSelectDefinitionTests
     public void HasPagingAnywhere_sees_trailing_ops_after_a_set_op()
     {
         // A Take composed AFTER a set operation records into _trailingOps, which HasPaging deliberately does
-        // not scan (its consumer gates a PRE-terminal GroupBy). The CSHARP-6017 join guard must still see it.
+        // not scan (its consumer gates a PRE-terminal GroupBy). The paged-join-inner guard (EF-406, for the
+        // CSHARP-6017 fold) must still see it.
         var s = new MongoSelectDefinition();
         s.SetOperation = new MongoSetOperation(
             MongoSetOperationKind.Union, new MongoSelectDefinition(), "OtherCollection");
@@ -149,9 +150,12 @@ public class MongoSelectDefinitionTests
     [Fact]
     public void HasPagingAnywhere_sees_declined_unrecorded_paging()
     {
-        // TODO(CSHARP-6017): delete with the rest of the paging guard (this test AND the two HasPagingAnywhere_*
+        // TODO(EF-406): delete with the rest of the paging guard (this test AND the two HasPagingAnywhere_*
         // tests above; keep the Fallback_wrong_data_* / PropagateFallbackWrongDataFrom_* tests below, which pin
-        // the permanent EF-344 mechanism).
+        // the permanent EF-344 mechanism). The trigger for that removal is the tripwire test
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // going RED, NOT CSHARP-6017 closing — it is already Closed/Done at fixVersion 3.10.0, the driver
+        // version this branch pins, and the fold is MEASURED still live against it.
         // A Skip/Take composed after a NON-set-op terminal (e.g. a natively-bound projected Distinct) is DECLINED
         // by NativeSlotPopulator's post-terminal early return rather than recorded, so it lands in NEITHER op
         // list — yet it is still in the captured method chain the driver-LINQ fallback executes, where the driver
@@ -354,11 +358,19 @@ public class MongoSelectDefinitionTests
     // ── Reference-Include candidate join counting (EF-368, fix round 1) ────────────
     //
     // These exercise MarkSawCandidateReferenceIncludeJoin/MarkReferenceIncludeConfirmed directly at the IR
-    // level. Task 4 wires the candidate-recording call site (NativeSlotPopulator) but NOT the confirming one
-    // (that is Task 5's job) — so there is no LINQ shape yet that reaches MarkReferenceIncludeConfirmed. Unit
-    // testing the counters directly is the only way to pin the two-candidate-joins-one-confirmation case
-    // before Task 5 exists; a functional/end-to-end test would be vacuous today (nothing can confirm), so
-    // this is deliberately at the IR level, not end-to-end.
+    // level.
+    //
+    // STALE-COMMENT CORRECTION: this note used to say "Task 4 wires the candidate-recording call site
+    // (NativeSlotPopulator) but NOT the confirming one (that is Task 5's job) — so there is no LINQ shape yet
+    // that reaches MarkReferenceIncludeConfirmed ... a functional/end-to-end test would be vacuous today
+    // (nothing can confirm)". THAT IS NO LONGER TRUE. Task 5 shipped (EF-368): single-level reference Include
+    // goes native, and MongoQueryableMethodTranslatingExpressionVisitor.TryConfirmReferenceInclude calls
+    // MarkReferenceIncludeConfirmed on an ordinary LINQ shape. End-to-end coverage exists in
+    // NativeReferenceIncludeTests and is NOT vacuous.
+    //
+    // These IR-level tests are kept anyway, for the reason that still holds: they pin the
+    // two-candidate-joins-one-confirmation counter arithmetic directly, which no single end-to-end query
+    // shape isolates.
 
     [Fact]
     public void HasUnconfirmedCandidateJoin_false_with_no_candidates()

@@ -1289,7 +1289,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         predicate = null!;
         var discriminatorProperty = targetType.FindDiscriminatorProperty();
         if (discriminatorProperty is null)
-            return false; // Non-TPH / no discriminator → fall back.
+        {
+            // Non-TPH / no discriminator → fall back. TODO(EF-423): a non-TPH OfType has no native form at all
+            // AND is invisible to the specification suite (Northwind has no non-TPH narrowing), so nothing in
+            // CI would notice this arm regressing. Ticketed rather than fixed here.
+            return false;
+        }
 
         // The driver-LINQ discriminator filter (built from MongoEFDiscriminator.GetDiscriminatorsForTypeAndSubTypes
         // → BsonValue.Create(GetDiscriminatorValue())) uses the RAW discriminator value and bypasses any value
@@ -1558,14 +1563,25 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // only be written as SelectMany, which TranslateSelectMany declines (=> null) so EF fails translation
         // outright — measured. A filtered Include's paging lives on a NAVIGATION and never reaches here, which
         // is why it keeps working (its per-outer-row sub-pipeline is exactly what Include means).
-        // TODO(CSHARP-6017): delete this block, MongoSelectDefinition.MarkPagedJoinInnerFallbackUnsafe /
+        // TODO(EF-406) — READ THIS BEFORE DELETING ANYTHING HERE ON THE STRENGTH OF THE DRIVER TICKET.
+        // CSHARP-6017 is ALREADY Closed/Done, with fixVersion 3.10.0 — the very driver version this branch pins
+        // (Versions.props, CSharpDriverVersion 3.10.0) — and the fold described above is STILL LIVE against it.
+        // MEASURED: the tripwire test
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017,
+        // which is written to FAIL once the driver stops folding, still PASSES on 3.10.0. So CSHARP-6017 was
+        // never the ticket that governs this guard (it is the LeftJoin feature work that introduced the fold);
+        // the ticket for the guard's own lifecycle is EF-406, and the reference to CSHARP-6017 is kept only as
+        // the historical provenance of the defect.
+        // THE REMOVAL TRIGGER IS THE TRIPWIRE TEST GOING RED, NOT A TICKET CLOSING. Deleting this block while
+        // the driver still folds reintroduces silently wrong join results (measured: 0 rows where 453 is
+        // correct).
+        // When the tripwire does go red, delete this block, MongoSelectDefinition.MarkPagedJoinInnerFallbackUnsafe /
         // IsPagedJoinInnerFallbackUnsafe / HasPagingAnywhere / MarkSawUnrecordedPaging, the three
         // MarkSawUnrecordedPaging call sites in NativeSlotPopulator, and the GUARD-ONLY tests in
-        // NativeJoinPagedInnerDeclineTests when the driver stops folding — NOT that whole file: two of its facts
-        // are general join-correctness controls that must survive, and one pins the permanent
-        // PropagateFallbackWrongDataFrom. The full DELETE/KEEP split is in design spec §2.6 and restated in that
-        // file's own class comment. The tripwire test in it announces the fix. Do NOT delete the
-        // PropagateFallbackWrongDataFrom call below — it closes an independent EF-344 nesting hole.
+        // NativeJoinPagedInnerDeclineTests — NOT that whole file: two of its facts are general join-correctness
+        // controls that must survive, and one pins the permanent PropagateFallbackWrongDataFrom. The full
+        // DELETE/KEEP split is in design spec §2.6 and restated in that file's own class comment. Do NOT delete
+        // the PropagateFallbackWrongDataFrom call below — it closes an independent EF-344 nesting hole.
         if (innerQueryExpression.Select.HasPagingAnywhere)
         {
             outerQueryExpression.Select.MarkPagedJoinInnerFallbackUnsafe();
@@ -1576,7 +1592,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // inner, MarkGroupByFallbackUnsafe/MarkPagedJoinInnerFallbackUnsafe wrote to that intermediate select
         // and the verdict would otherwise be lost — measured: the spec's Join_GroupBy_Aggregate_in_subquery
         // inner declines correctly when promoted to top level but executes and returns 0 rows (expected 133)
-        // when nested. Independent of CSHARP-6017; keep on driver fix.
+        // when nested. Independent of CSHARP-6017 and of the EF-406 guard above; keep it when that guard goes.
         outerQueryExpression.Select.PropagateFallbackWrongDataFrom(innerQueryExpression.Select);
 
         // EF-368 final fix wave, Finding 1. The reference-Include path emits a flat $lookup with NO
@@ -1996,6 +2012,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// the very symptom EF-379 was filed for, left open by that fix rather than closed by it. It is NOT a
     /// regression — base and HEAD are identical — and classifying this family would be a WIDENING, deliberately
     /// out of scope here; the fall-through preserves the (wrong) pre-existing disposition exactly.
+    /// <b>TODO(EF-407) — this residual, not EF-379, is what is still open.</b> EF-379 has SHIPPED on this branch
+    /// and closed the root-tier misclassification for a hop the classifier can recognise as transitive; it is
+    /// cited above as the delivered context. The live defect is the one this item describes: a deep
+    /// <c>ThenInclude</c> chain whose hop classifies as <see cref="JoinHopKind.Unclassifiable"/> falls through to
+    /// the root tiers and returns the deep navigation SILENTLY NULL under both <c>Native</c> and
+    /// <c>DriverLinq</c>. Do not read the EF-379 reference here as "already fixed".
     /// </item>
     /// </list>
     /// </para>

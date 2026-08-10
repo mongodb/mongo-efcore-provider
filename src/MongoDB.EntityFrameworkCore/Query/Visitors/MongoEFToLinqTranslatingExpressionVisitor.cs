@@ -623,7 +623,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// EF-368 Task 5 fix round 1 (C1). Defence-in-depth ONLY — called from <see cref="Translate"/> (the
     /// WHOLE-ENTITY shaper path) and only when its <c>guardUnstrippableForceUnwindJoin</c> argument is set,
     /// which the BULK path deliberately clears (EF-368 final fix wave, Finding 3: there is no shaper on that
-    /// path, so this guard's premise does not hold there). Never called from
+    /// path, so this guard's premise does not hold there). <b>That bulk-path premise is ASSERTED, not tested —
+    /// no test discriminates it, so treat it as hardening rather than proven protection; the bulk path's
+    /// coupling to this driver-LINQ bridge is tracked as EF-416.</b> Never called from
     /// <see cref="TranslateProjected"/> (see the note at that call site for why the same guard there turned a
     /// correct, pre-existing fallback into a regression).
     /// <para>

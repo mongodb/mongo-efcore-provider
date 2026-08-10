@@ -22,8 +22,12 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 public class NativeDispositionTests
 {
-    // TODO(CSHARP-6017): part of the removal checklist in
-    // docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §2.6. Collapsing
+    // TODO(EF-406): part of the removal checklist in
+    // docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §2.6, which is
+    // triggered by the tripwire test
+    // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+    // going RED — NOT by CSHARP-6017 closing (already Closed/Done at fixVersion 3.10.0, the driver version this
+    // branch pins, with the fold MEASURED still live). Collapsing
     // MongoSelectDefinition.IsFallbackWrongData back to IsGroupByFallbackUnsafe when the paging guard is deleted
     // means renaming this helper's `isFallbackWrongData` parameter back to `isGroupByFallbackUnsafe` and renaming
     // the four tests below that use it (Fallback_wrong_data_* / the DriverLinq and vector-search cases). The

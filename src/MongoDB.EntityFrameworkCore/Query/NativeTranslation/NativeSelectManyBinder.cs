@@ -577,7 +577,9 @@ internal static class NativeSelectManyBinder
     /// <see cref="MongoFieldPrefixRewriter"/> — exactly as the bare-member branch prefixes a single field. Declines
     /// (returns <see langword="false"/>, with NO mutation) for a cross-scope leaf, a leaf with no scope-rooted
     /// operand, or anything <see cref="MongoExpressionTranslator.TryTranslateValue"/> rejects. Cross-scope leaves
-    /// (e.g. <c>o.Discount * i.Price</c>) are a deferred follow-on.
+    /// (e.g. <c>o.Discount * i.Price</c>) are a deferred follow-on, <b>tracked as EF-422</b> (the EF-347
+    /// SelectMany leftovers: this cross-scope computed leaf plus the inner-<c>Select</c>-form binder, which
+    /// structurally rejects any computed leaf nested inside the collection selector itself).
     /// </summary>
     private static bool TryTranslateSingleScopeComputedLeaf(
         Expression leaf,

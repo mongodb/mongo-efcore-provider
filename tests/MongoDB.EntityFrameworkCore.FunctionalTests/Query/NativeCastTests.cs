@@ -1733,8 +1733,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     // roughly HALF of ordinary numeric-cast projection shapes are still on the fallback path after this task.
     // Recorded as a boundary, not fixed here: admitting an unwrapped field ref through this gate would mean
     // projecting the raw stored field under a leaf whose declared CLR type is the CAST's target type, and the
-    // read-back type question that raises needs its own measurement (see the task report for the
-    // recommendation to file it as a follow-up rather than take it up in this round).
+    // read-back type question that raises needs its own measurement. TRACKED AS EF-410 — the follow-up the task
+    // report recommended is now filed, so this comment is no longer the only record of the gap.
 
     [Fact]
     public void Widening_cast_projection_leaf_still_falls_back_gracefully()

@@ -150,8 +150,11 @@ internal sealed class MongoSelectDefinition
     /// so it still reaches the driver and CSHARP-6017 still applies; <see cref="HasPagingAnywhere"/> must
     /// therefore see it. Deliberately does NOT mark the query non-native — every caller already does that for
     /// its own reason.
-    /// TODO(CSHARP-6017): delete together with <see cref="HasPagingAnywhere"/> and
-    /// <see cref="MarkPagedJoinInnerFallbackUnsafe"/> when the driver stops folding.
+    /// TODO(EF-406): delete together with <see cref="HasPagingAnywhere"/> and
+    /// <see cref="MarkPagedJoinInnerFallbackUnsafe"/> when the driver stops folding — signalled by the tripwire
+    /// test <c>NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017</c>
+    /// going RED, NOT by CSHARP-6017 closing (that driver ticket is already Closed/Done at fixVersion 3.10.0,
+    /// the driver version this branch pins, and the fold is MEASURED still live against it).
     /// </summary>
     internal void MarkSawUnrecordedPaging() => _sawUnrecordedPaging = true;
 
@@ -163,12 +166,15 @@ internal sealed class MongoSelectDefinition
     /// set op — this must see paging wherever it appeared, including a <c>Take</c> composed AFTER a set operation
     /// (which lands in <see cref="TrailingOps"/>) and a <c>Take</c> composed after a NON-set-op terminal (which
     /// lands in neither list).
-    /// Read by the QMTEV's <c>TranslateJoinCore</c> CSHARP-6017 guard. The question it answers is "was a
+    /// Read by the QMTEV's <c>TranslateJoinCore</c> paged-join-inner guard (EF-406; CSHARP-6017 is the defect's
+    /// historical provenance, not its removal trigger). The question it answers is "was a
     /// <c>Skip</c>/<c>Take</c> RECORDED ANYWHERE on this sequence?", which is the right question because the
     /// guard's real subject is the captured method chain the driver-LINQ fallback executes, not the native op
     /// lists — a <c>Skip</c>/<c>Take</c> the native path declined is still in that chain and still folded.
-    /// TODO(CSHARP-6017): delete together with <see cref="MarkPagedJoinInnerFallbackUnsafe"/> when the driver
-    /// stops folding an uncorrelated join inner's paging into the correlated <c>$lookup</c> sub-pipeline.
+    /// TODO(EF-406): delete together with <see cref="MarkPagedJoinInnerFallbackUnsafe"/> when the driver stops
+    /// folding an uncorrelated join inner's paging into the correlated <c>$lookup</c> sub-pipeline — signalled
+    /// by the tripwire test going red, NOT by CSHARP-6017 closing (already Closed/Done at fixVersion 3.10.0,
+    /// the version this branch pins; the fold is MEASURED still live). See <see cref="MarkSawUnrecordedPaging"/>.
     /// </summary>
     internal bool HasPagingAnywhere
         => HasPaging || _trailingOps.Exists(o => o is MongoSkipOp or MongoLimitOp) || _sawUnrecordedPaging;
@@ -566,8 +572,13 @@ internal sealed class MongoSelectDefinition
     /// <c>Native</c>/<c>NativeOnly</c> rather than fall back; explicit <c>DriverLinq</c> stays the user's opt-in.
     /// A separate flag from <see cref="IsGroupByFallbackUnsafe"/> so the decline message can name the real cause
     /// and so this one can be deleted wholesale when the driver is fixed.
-    /// TODO(CSHARP-6017): delete this flag, its setter and <see cref="HasPagingAnywhere"/> on driver fix — see
-    /// the removal checklist in docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §2.6.
+    /// TODO(EF-406): delete this flag, its setter and <see cref="HasPagingAnywhere"/> on driver fix — see the
+    /// removal checklist in docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §2.6.
+    /// <b>The trigger is the tripwire test
+    /// <c>NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017</c>
+    /// going RED, not CSHARP-6017 closing.</b> That driver ticket is already Closed/Done with fixVersion 3.10.0
+    /// — the driver version this branch pins — and the fold is MEASURED still live against it, so the ticket
+    /// number names the defect's history, not the guard's lifecycle.
     /// </summary>
     internal bool IsPagedJoinInnerFallbackUnsafe => _isPagedJoinInnerFallbackUnsafe;
 
@@ -599,8 +610,8 @@ internal sealed class MongoSelectDefinition
     /// nesting-insensitive <em>along join-inner chains</em> — deliberately not more than that: this has exactly
     /// one call site, <c>TranslateJoinCore</c>, so a verdict recorded on a subquery used in any position OTHER
     /// than a join's inner still never reaches the gate.
-    /// NOT part of the CSHARP-6017 guard: this closes an independent EF-344 hole and must SURVIVE the driver
-    /// fix. Do not delete it with the paged-inner flag.
+    /// NOT part of the paged-join-inner guard (EF-406 / CSHARP-6017): this closes an independent EF-344 hole and
+    /// must SURVIVE the driver fix. Do not delete it with the paged-inner flag.
     /// </summary>
     internal void PropagateFallbackWrongDataFrom(MongoSelectDefinition inner)
     {

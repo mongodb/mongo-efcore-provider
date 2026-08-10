@@ -80,6 +80,15 @@ internal static class MongoAggregationExpressionRenderer
     /// (<c>Select(b =&gt; new { N = b.Posts.Count(pred) })</c> and its bare spelling) have NO working fallback to
     /// land on, so a render-time throw makes the query fail DIFFERENTLY from how it fails today rather than
     /// identically, which is the disposition this slice is obliged to preserve for anything it does not fix.
+    /// <para>
+    /// <b>KNOWN MISSING ARMS, tracked as EF-413:</b> <c>MongoInExpression</c> and <c>MongoUnaryExpression</c>
+    /// have no aggregation-dialect rendering, so both fall to the <c>_ =&gt; false</c> catch-all below. That is
+    /// fail-closed and therefore safe, but it is not free: a computed SORT KEY gates on this method
+    /// (<c>NativeSlotPopulator.TryTranslateComputedSortKey</c>), so a client-collection <c>Contains</c> (A6) or a
+    /// unary <c>Not</c> (A13) in sort position declines. At least 36 sort-position specification cases are
+    /// waiting on those two arms. Adding either means adding it to <see cref="Render"/> at the same time, per
+    /// the contract above.
+    /// </para>
     /// </remarks>
     public static bool CanRender(MongoExpression node)
         => node switch

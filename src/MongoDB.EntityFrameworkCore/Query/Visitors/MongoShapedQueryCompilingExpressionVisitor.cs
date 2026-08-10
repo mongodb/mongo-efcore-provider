@@ -170,11 +170,16 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
         if (ClassifyNativeDisposition(mongoQueryExpression, mode) == NativeDisposition.HardDecline)
         {
-            // TODO(CSHARP-6017): drop the paged-inner cause (and its list entry below) when the driver stops
-            // folding an uncorrelated join inner's $sort/$skip/$limit into the correlated $lookup sub-pipeline.
+            // TODO(EF-406): drop the paged-inner cause (and its list entry below) when the driver stops folding
+            // an uncorrelated join inner's $sort/$skip/$limit into the correlated $lookup sub-pipeline. THE
+            // TRIGGER IS THE TRIPWIRE TEST GOING RED —
+            // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+            // — NOT CSHARP-6017 closing: that driver ticket is already Closed/Done at fixVersion 3.10.0, the
+            // driver version this branch pins, and the fold is MEASURED still live against it (the tripwire
+            // still passes). CSHARP-6017 is kept here as the defect's historical provenance only.
             // At that point NativeJoinPagedInnerDeclineTests.Join_with_grouped_outer_and_paged_inner_reports_both_causes
             // degenerates to a single-cause message and should be updated (or removed) together with the rest
-            // of the CSHARP-6017 removal checklist.
+            // of the EF-406 removal checklist.
             // The two causes are independent provenances that can BOTH be set on the SAME query — e.g.
             // db.Orders.GroupBy(o => o.Country).Select(g => new { g.Key, Max = g.Max(o => o.Amount) })
             //     .Join(db.Regions.OrderBy(r => r.Country).Take(2), a => a.Key, r => r.Country, (a, r) => new { r })
@@ -457,6 +462,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// at all — leaving the driver's own push-down in place is exactly what makes that read hit, and stripping
     /// it instead was measured to turn a working query into
     /// <c>Document element '_v' is missing but required</c>.
+    /// </para>
+    /// <para>
+    /// <b>The <see cref="ProjectionAliasTier.Synthetic"/> arm's long-term disposition is OPEN and tracked as
+    /// EF-418</b> — depending on the driver's own <c>_v</c> push-down is what makes that arm work, so the tier
+    /// cannot simply be deleted when the driver-LINQ fallback is retired. Nothing here blocks merging; EF-418
+    /// exists so that decision has an owner. (The merge plan's §5.3 account of this is STALE — read EF-418.)
     /// </para>
     /// <para>
     /// The tier is read as DATA off the override the emit side registered — never by sniffing the alias string
@@ -1198,6 +1209,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     // Builds a driver query that yields the raw stored BsonDocuments for the bulk source, by reusing the
     // read path's TranslateQuery (which applies Where/OrderBy/Skip/Take/Distinct via the driver and reads the
     // ambient transaction session) and asking the driver provider for BsonDocument results.
+    //
+    // ARCHITECTURE DEBT — TRACKED AS EF-416. This is the coupling that stops the driver-LINQ bridge being
+    // retired along with the query fallback: the EF9+ bulk path routes through it unconditionally, so
+    // MongoEFToLinqTranslatingExpressionVisitor stays live even once no READ query falls back. Nothing here
+    // blocks merging the native work; EF-416 exists so the decision has an owner rather than being silence.
     // Note: this fetches whole documents and keeps only _id; a future optimization could push a
     // { _id: 1 } projection server-side to reduce transfer for large target sets.
     private static IQueryable<BsonDocument> BuildIdDocumentQuery<TSource>(

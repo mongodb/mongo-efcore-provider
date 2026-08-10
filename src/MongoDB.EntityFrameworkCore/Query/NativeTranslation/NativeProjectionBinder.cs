@@ -539,9 +539,11 @@ internal static class NativeProjectionBinder
         // projection then falls back gracefully (correct values via driver-LINQ), exactly like any other
         // declined leaf. Admitting an unwrapped field ref here would mean projecting the RAW STORED field under
         // an alias whose declared CLR type is the CAST's target type — a read-back type question distinct from
-        // anything this task measured, and deliberately NOT taken up in this round (see the task report's
-        // recommendation for a possible follow-up ticket). Pinned as a boundary, not a residual, by
-        // NativeCastTests.Widening_cast_projection_leaf_still_falls_back_gracefully.
+        // anything this task measured, and deliberately NOT taken up in this round. TRACKED AS EF-410 — the
+        // follow-up the task report only recommended is now filed, and its scope is worth stating because the
+        // boundary is wider than it reads: a widening Convert is what the C# compiler inserts for ordinary
+        // numeric-cast projection shapes, so roughly HALF of them fall back here. Pinned as a boundary, not a
+        // residual, by NativeCastTests.Widening_cast_projection_leaf_still_falls_back_gracefully.
         if (translator.TryTranslateValue(leafExpression, out var value)
             && value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression)
         {
@@ -1341,6 +1343,14 @@ internal static class NativeProjectionBinder
     /// document with a single computed <c>_v</c>, so nothing downstream can still be looking for the stored
     /// one. The arithmetic case even reads a stored <c>_v</c> as INPUT while writing <c>_v</c> as output, and
     /// returns correct values.
+    /// </para>
+    /// <para>
+    /// <b>OPEN QUESTION, TRACKED AS EF-418 — read it before assuming this tier survives the driver-LINQ
+    /// fallback being retired.</b> The tier's safety rests on the driver's own un-stripped push-down writing
+    /// <c>_v</c> on a late fallback. If the fallback route ever goes away (or stops emitting the driver's
+    /// push-down), this arm needs a different answer, not a rename. Nothing here blocks merging the native
+    /// work; EF-418 exists so the disposition has an owner and a decision on record. The merge plan's §5.3
+    /// account of this is STALE — read the ticket, not §5.3.
     /// </para>
     /// </remarks>
     private const string SyntheticBareProjectionAlias = "_v";

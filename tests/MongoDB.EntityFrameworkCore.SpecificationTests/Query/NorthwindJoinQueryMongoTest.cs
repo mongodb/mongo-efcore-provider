@@ -165,7 +165,10 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         // sub-pipeline. The provider hard-declines rather than return the driver's wrong rows, so this is now a
         // translation failure rather than a skip. Its non-Take sibling
         // (Join_customers_orders_with_subquery) is unaffected and still asserts real data.
-        // TODO(CSHARP-6017): on driver fix, revert to `await base.…` with a real MQL baseline.
+        // TODO(EF-406): on driver fix, revert to `await base.…` with a real MQL baseline. "On driver fix" means
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes. That driver ticket is already Closed/Done at fixVersion
+        // 3.10.0, the version this branch pins, and the fold is MEASURED still live against it.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Join_customers_orders_with_subquery_with_take(async));
 
@@ -185,7 +188,10 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         // driver 3.10 mistranslates (CSHARP-6017) by folding $sort/$limit into the correlated $lookup
         // sub-pipeline. The provider hard-declines rather than return the driver's wrong rows, so this is now a
         // translation failure rather than a skip.
-        // TODO(CSHARP-6017): on driver fix, revert to `await base.…` with a real MQL baseline.
+        // TODO(EF-406): on driver fix, revert to `await base.…` with a real MQL baseline. "On driver fix" means
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes. That driver ticket is already Closed/Done at fixVersion
+        // 3.10.0, the version this branch pins, and the fold is MEASURED still live against it.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Join_customers_orders_with_subquery_anonymous_property_method_with_take(async));
 
@@ -210,7 +216,10 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         // inner, which driver 3.10 mistranslates (CSHARP-6017) by folding $sort/$limit into the correlated
         // $lookup sub-pipeline. The provider hard-declines rather than return the driver's wrong rows, so this
         // is now a translation failure rather than a skip.
-        // TODO(CSHARP-6017): on driver fix, revert to `await base.…` with a real MQL baseline.
+        // TODO(EF-406): on driver fix, revert to `await base.…` with a real MQL baseline. "On driver fix" means
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes. That driver ticket is already Closed/Done at fixVersion
+        // 3.10.0, the version this branch pins, and the fold is MEASURED still live against it.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Join_customers_orders_with_subquery_predicate_with_take(async));
 
@@ -311,7 +320,10 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         // driver 3.10 mistranslates (CSHARP-6017) by folding $sort/$limit into the correlated $lookup
         // sub-pipeline. The provider hard-declines rather than return the driver's wrong rows, so this is now a
         // translation failure rather than a skip.
-        // TODO(CSHARP-6017): on driver fix, revert to `await base.…` with a real MQL baseline.
+        // TODO(EF-406): on driver fix, revert to `await base.…` with a real MQL baseline. "On driver fix" means
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes. That driver ticket is already Closed/Done at fixVersion
+        // 3.10.0, the version this branch pins, and the fold is MEASURED still live against it.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.GroupJoin_simple_subquery(async));
 
@@ -535,7 +547,10 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         // driver 3.10 mistranslates (CSHARP-6017) by folding $sort/$limit into the correlated $lookup
         // sub-pipeline. The provider hard-declines rather than return the driver's wrong rows, so this is now a
         // translation failure rather than a skip.
-        // TODO(CSHARP-6017): on driver fix, revert to `await base.…` with a real MQL baseline.
+        // TODO(EF-406): on driver fix, revert to `await base.…` with a real MQL baseline. "On driver fix" means
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes. That driver ticket is already Closed/Done at fixVersion
+        // 3.10.0, the version this branch pins, and the fold is MEASURED still live against it.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.GroupJoin_Subquery_with_Take_Then_SelectMany_Where(async));
 
@@ -554,7 +569,9 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         // the exception type is now NativeTranslationNotSupportedException rather than the driver's
         // ExpressionNotSupportedException. This spelling reaches TranslateJoin on ALL THREE EF versions (an
         // ordinary inner join needs no DefaultIfEmpty normalization, unlike the Left_join_... sibling below).
-        // TODO(CSHARP-6017): on driver fix, re-verify which of the two unsupported shapes surfaces first.
+        // TODO(EF-406): on driver fix, re-verify which of the two unsupported shapes surfaces first. "On driver
+        // fix" means the NativeJoinPagedInnerDeclineTests tripwire goes RED — NOT that CSHARP-6017 closes
+        // (already Closed/Done at fixVersion 3.10.0, the pinned version, with the fold still live).
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Inner_join_with_tautology_predicate_converts_to_cross_join(async));
 
@@ -582,7 +599,9 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         //         paged-inner guard cannot fire on those versions; this is the same pre-existing
         //         SelectMany-over-a-GroupJoin-grouping gap documented at
         //         NativeJoinPagedInnerDeclineTests.GroupJoin_with_paged_inner_declines_under_native.
-        // TODO(CSHARP-6017): on driver fix, re-verify which of the two unsupported shapes surfaces first — and
+        // TODO(EF-406): on driver fix — the NativeJoinPagedInnerDeclineTests tripwire going RED, NOT CSHARP-6017
+        // closing (already Closed/Done at fixVersion 3.10.0, the pinned version, with the fold still live) —
+        // re-verify which of the two unsupported shapes surfaces first, and
         // note the per-version split has to come back for EF10 ONLY: on EF10 removing the guard changes what
         // throws here, while on EF8/EF9 the InvalidOperationException is unaffected by the guard entirely.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
@@ -771,7 +790,10 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         // driver 3.10 mistranslates (CSHARP-6017) by folding $sort/$limit into the correlated $lookup
         // sub-pipeline. The provider hard-declines rather than return the driver's wrong rows, so this is now a
         // translation failure rather than a skip.
-        // TODO(CSHARP-6017): on driver fix, revert to `await base.…` with a real MQL baseline.
+        // TODO(EF-406): on driver fix, revert to `await base.…` with a real MQL baseline. "On driver fix" means
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes. That driver ticket is already Closed/Done at fixVersion
+        // 3.10.0, the version this branch pins, and the fold is MEASURED still live against it.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.GroupJoin_customers_employees_subquery_shadow_take(async));
 

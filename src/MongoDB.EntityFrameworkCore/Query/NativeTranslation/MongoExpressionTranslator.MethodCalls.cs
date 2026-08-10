@@ -247,8 +247,8 @@ internal sealed partial class MongoExpressionTranslator
     /// predicate (<c>Any(i =&gt; i.Name == captured)</c>) would otherwise decline on those versions only.
     /// </para>
     /// <para>
-    /// <b>Deferred, not impossible.</b> Supporting a correlated element predicate is a legitimate follow-on
-    /// slice, but it needs more than a two-scope translator: <c>$elemMatch</c> itself cannot reference the
+    /// <b>Deferred, not impossible — tracked as EF-421.</b> Supporting a correlated element predicate is a
+    /// legitimate follow-on slice, but it needs more than a two-scope translator: <c>$elemMatch</c> itself cannot reference the
     /// enclosing document at all, so the correlated form would have to render as a top-level <c>$expr</c> over
     /// <c>$filter</c>/<c>$anyElementTrue</c> instead. Declining keeps the shape on the driver-LINQ path, which
     /// translates it correctly today.

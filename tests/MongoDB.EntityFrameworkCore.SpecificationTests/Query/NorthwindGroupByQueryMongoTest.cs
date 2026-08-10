@@ -964,7 +964,11 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Declines: the join's inner is `Customers.Where(…).OrderBy(City).Skip(10).Take(50)` — a self-paging
         // inner, which driver 3.10 mistranslates (CSHARP-6017) into a $lookup sub-pipeline that returns 0 rows
         // instead of 29. The provider hard-declines the shape rather than route to that fallback, so no MQL is
-        // emitted. TODO(CSHARP-6017): on driver fix this goes back to `await base.…` with a real MQL baseline.
+        // emitted. TODO(EF-406): on driver fix this goes back to `await base.…` with a real MQL baseline. "On
+        // driver fix" means the tripwire
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes: it is already Closed/Done at fixVersion 3.10.0, the driver
+        // version this branch pins, and the fold is MEASURED still live against it.
         await AssertTranslationFailed(() => base.Join_complex_GroupBy_Aggregate(async));
 
         AssertMql();
@@ -1029,7 +1033,11 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Declines: the join's inner is `Orders.Where(< 10400).OrderBy(OrderDate).Take(100)` — a self-paging
         // inner, which driver 3.10 mistranslates (CSHARP-6017) into a $lookup sub-pipeline that returns 27 rows
         // instead of 20. The provider hard-declines the shape rather than route to that fallback, so no MQL is
-        // emitted. TODO(CSHARP-6017): on driver fix this goes back to `await base.…` with a real MQL baseline.
+        // emitted. TODO(EF-406): on driver fix this goes back to `await base.…` with a real MQL baseline. "On
+        // driver fix" means the tripwire
+        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
+        // goes RED — NOT that CSHARP-6017 closes: it is already Closed/Done at fixVersion 3.10.0, the driver
+        // version this branch pins, and the fold is MEASURED still live against it.
         await AssertTranslationFailed(() => base.GroupJoin_complex_GroupBy_Aggregate(async));
 
         AssertMql();

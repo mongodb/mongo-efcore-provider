@@ -225,7 +225,8 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         }
 
         // Releases a fetched-but-not-yet-released RawBsonDocument byte buffer (the dormant, pre-SP7 streaming
-        // row type — retained but currently unreachable, see the class-level notes). The default one-pass
+        // row type — retained but currently unreachable, see the class-level notes; TODO(EF-419) tracks
+        // removing that row type along with BsonRowReader). The default one-pass
         // native streaming row is the materialized entity itself (TSource == TResult), which must NEVER be
         // disposed here — disposing it would dispose the entity the caller just received (and, on the tracked
         // path, an entity now owned by the state manager). Narrowly typed to RawBsonDocument specifically

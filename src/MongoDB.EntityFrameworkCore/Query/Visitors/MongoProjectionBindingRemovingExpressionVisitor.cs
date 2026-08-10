@@ -1059,7 +1059,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         IClrCollectionAccessor accessor,
         IEnumerable<TEntity> entities)
     {
-        // TODO: throw a better exception for non-ICollection navigations
+        // TODO(EF-409): throw a diagnosable exception for a non-ICollection<T> collection navigation. As it
+        // stands, such a model surfaces as a bare InvalidCastException from the cast below, naming driver/EF
+        // internal types rather than the navigation the user got wrong.
         var collection = (ICollection<TEntity>)accessor.Create();
         foreach (var entity in entities)
         {

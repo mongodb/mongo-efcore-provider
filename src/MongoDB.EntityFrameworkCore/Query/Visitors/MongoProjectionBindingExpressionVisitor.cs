@@ -623,6 +623,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 // `_collectionShaperMapping.Add` in the adjacent Select case, reached via a second Visit of the
                 // SAME Distinct-call subtree. So `break`'s safety here rests on THIS input never reaching that
                 // `.Add` on a second pass, not on the fall-through being side-effect-free in general.
+                // TODO(EF-425) tracks that interposed-operator family (Distinct/Take/Reverse/DefaultIfEmpty/
+                // Concat between an owned-collection Select and a terminal operator, which hard-fails at
+                // translation in EVERY mode). It was previously recorded only as a comment on the EF-322 epic;
+                // it now has its own ticket.
                 //
                 // No LINQ shape has been found that reaches THIS case's decline branch with a
                 // non-CollectionShaperExpression source — the closest candidate,
